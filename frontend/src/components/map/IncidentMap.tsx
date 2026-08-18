@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AttributionControl,
   GeolocateControl,
@@ -26,6 +26,7 @@ import {
   REGION_BOUNDS,
 } from '@/config/map'
 import { toFeatureCollection } from '@/lib/geojson'
+import { attachMapDiagnostics } from '@/lib/mapDiagnostics'
 import {
   INCIDENT_HIT_LAYER_ID,
   INCIDENT_SOURCE_ID,
@@ -81,24 +82,17 @@ export function IncidentMap({
 
   /**
    * Un mapa en blanco sin nada en consola es el peor modo de falla: no se sabe
-   * si falló el estilo, el WebGL o el encuadre. Estos dos handlers convierten
-   * ese silencio en un diagnóstico. Solo en desarrollo: en producción el
-   * usuario no puede hacer nada con esto y `StalenessBanner` ya cubre lo suyo.
+   * si falló el estilo, el WebGL, el worker o el encuadre.
+   *
+   * Las sondas se enganchan en un efecto y no en `onLoad` a propósito: el fallo
+   * más difícil de ver es justamente aquel en el que `load` no se dispara nunca.
+   * Un handler de `load` no puede observar su propia ausencia; un `setTimeout`
+   * registrado al montar, sí. Ver `lib/mapDiagnostics.ts`.
    */
-  const handleLoad = useCallback(() => {
-    if (!import.meta.env.DEV) return
+  useEffect(() => {
     const map = mapRef.current?.getMap()
     if (!map) return
-    const canvas = map.getCanvas()
-    console.info('[AlertaV/mapa] load', {
-      estiloCargado: map.isStyleLoaded(),
-      centro: map.getCenter().toArray(),
-      zoom: map.getZoom(),
-      canvasCSS: [canvas.clientWidth, canvas.clientHeight],
-      canvasBuffer: [canvas.width, canvas.height],
-      webgl: canvas.getContext('webgl2') ? 'webgl2' : 'sin contexto webgl2',
-      capasDelEstilo: map.getStyle()?.layers?.length ?? 0,
-    })
+    return attachMapDiagnostics(map)
   }, [])
 
   const handleError = useCallback((event: ErrorEvent) => {
@@ -116,7 +110,6 @@ export function IncidentMap({
       style={{ position: 'absolute', inset: 0 }}
       interactiveLayerIds={[INCIDENT_HIT_LAYER_ID]}
       onClick={handleClick}
-      onLoad={handleLoad}
       onError={handleError}
       onMouseEnter={() => setHovering(true)}
       onMouseLeave={() => setHovering(false)}
