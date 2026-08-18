@@ -1,0 +1,31 @@
+# PostGIS + Redis para desarrollo local.
+# Redis todavía no se usa; queda listo para la cola del correlation engine.
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: alertav-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-alertav}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-alertav}
+      POSTGRES_DB: ${POSTGRES_DB:-alertav}
+    ports:
+      - "5432:5432"
+    volumes:
+      - alertav_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-alertav} -d ${POSTGRES_DB:-alertav}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: alertav-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - alertav_redisdata:/data
+
+volumes:
+  alertav_pgdata:
+  alertav_redisdata:

@@ -1,0 +1,55 @@
+@import 'tailwindcss';
+
+/**
+ * Tokens de la paleta.
+ *
+ * Los valores autoritativos viven en `src/domain/symbology.ts`, porque MapLibre
+ * necesita colores como valores de JavaScript y no puede leer variables CSS
+ * dentro de sus expresiones. Estos tokens son el espejo para el resto de la
+ * interfaz: si cambia uno, cambia el otro.
+ */
+@theme {
+  --color-phenomenon-confirmed: #dc2626;
+  --color-phenomenon-corroborated: #ea580c;
+  --color-phenomenon-single: #eab308;
+  --color-phenomenon-closed: #475569;
+
+  --color-alert-roja: #e11d48;
+  --color-alert-amarilla: #f59e0b;
+  --color-alert-preventiva: #3b82f6;
+  --color-alert-verde: #22c55e;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* El mapa gestiona su propio paneo; el rebote de la página solo estorba. */
+  overscroll-behavior: none;
+}
+
+/* Los controles de MapLibre son chicos para un dedo. */
+.maplibregl-ctrl-group button {
+  width: 36px;
+  height: 36px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

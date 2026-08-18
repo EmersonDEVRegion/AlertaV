@@ -1,0 +1,22 @@
+# --- Núcleo -------------------------------------------------------------------
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# --- Base de datos ------------------------------------------------------------
+SQLAlchemy==2.0.36
+asyncpg==0.30.0            # driver async de la aplicación
+psycopg2-binary==2.9.10    	   # driver sync que usa Alembic
+GeoAlchemy2==0.16.0        # tipos PostGIS para SQLAlchemy
+alembic==1.14.0
+
+# --- Cliente HTTP -------------------------------------------------------------
+httpx==0.28.1
+
+# --- Desarrollo y pruebas -----------------------------------------------------
+pytest==8.3.4
+pytest-asyncio==0.25.0
+respx==0.22.0              # mock de httpx para testear collectors sin red
+ruff==0.8.6
+mypy==1.14.1
