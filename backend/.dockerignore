@@ -1,0 +1,46 @@
+# Todo lo que no debe entrar a la imagen.
+#
+# La primera línea no es cosmética: `.env` tiene la FIRMS_MAP_KEY y la
+# contraseña de la base. Una capa de Docker es pública para cualquiera que
+# pueda hacer `docker pull`, y borrar el archivo en una capa posterior NO lo
+# elimina del historial. En producción los secretos llegan por variables de
+# entorno de la plataforma, nunca dentro del build.
+.env
+.env.*
+!.env.example
+
+# Entornos virtuales locales: cientos de MB de wheels compilados para el SO del
+# desarrollador, inservibles dentro de la imagen.
+.venv/
+venv/
+
+# Cachés
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+pytest-cache-files-*/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Artefactos de build
+dist/
+build/
+
+# Control de versiones y herramientas
+.git/
+.gitignore
+.github/
+.idea/
+.vscode/
+.DS_Store
+
+# Desarrollo: PostGIS local, no se usa en producción
+docker-compose.yml
+
+# Documentación: no cambia el comportamiento y su edición invalidaría la caché
+# de capas en cada commit de texto.
+README.md
+DEPLOY.md

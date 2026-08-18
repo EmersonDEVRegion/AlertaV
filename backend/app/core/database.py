@@ -19,6 +19,11 @@ engine: AsyncEngine = create_async_engine(
     pool_size=settings.DB_POOL_SIZE,
     max_overflow=settings.DB_MAX_OVERFLOW,
     pool_pre_ping=True,
+    # Un pooler gestionado corta las conexiones ociosas sin avisar y una
+    # conexión muerta reciclada aborta la primera consulta que la toque.
+    # `pool_pre_ping` cubre el caso, pero reciclar antes evita pagar el ping.
+    pool_recycle=1800,
+    connect_args=settings.db_connect_args,
     future=True,
 )
 

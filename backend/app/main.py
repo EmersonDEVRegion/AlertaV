@@ -49,12 +49,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# El frontend vive en Vercel, en otro origen: sin esto el navegador descarta
+# toda respuesta de la API. Dos listas complementarias:
+#   - CORS_ORIGINS: dominios exactos (producción y localhost).
+#   - CORS_ORIGIN_REGEX: los previews de Vercel, cuyo subdominio cambia con cada
+#     rama y no se pueden enumerar de antemano.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origin_regex=settings.CORS_ORIGIN_REGEX or None,
+    allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
+    # El preflight de un endpoint que no cambia de forma no necesita repetirse
+    # en cada carga del mapa.
+    max_age=3600,
 )
 
 register_exception_handlers(app)

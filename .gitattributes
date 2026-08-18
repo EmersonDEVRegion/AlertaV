@@ -1,0 +1,8 @@
+# El repositorio se edita en Windows y se ejecuta en Linux. Sin esto, Git
+# entrega start.sh con CRLF en el checkout y el contenedor falla al arrancar con
+# un error que no menciona los saltos de línea: el kernel busca un intérprete
+# llamado `bash\r` y responde "no such file or directory".
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

@@ -41,6 +41,27 @@ export function buildQuery(params: Record<string, QueryValue>): string {
   return qs ? `?${qs}` : ''
 }
 
+/** Convierte una respuesta no-2xx en `ApiError`, preservando el cuerpo. */
+async function toApiError(
+  response: Response,
+  path: string,
+  url: string,
+): Promise<ApiError> {
+  const body = await response.text().catch(() => '')
+  let parsed: unknown = body
+  try {
+    parsed = JSON.parse(body)
+  } catch {
+    /* el cuerpo no era JSON; se conserva el texto crudo */
+  }
+  return new ApiError(
+    `${response.status} ${response.statusText} en ${path}`,
+    response.status,
+    url,
+    parsed,
+  )
+}
+
 export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> {
   const url = `${env.apiBaseUrl}${path}`
 
@@ -56,21 +77,36 @@ export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> 
     throw new ApiError('No se pudo contactar al servidor', 0, url, cause)
   }
 
-  if (!response.ok) {
-    const body = await response.text().catch(() => '')
-    let parsed: unknown = body
-    try {
-      parsed = JSON.parse(body)
-    } catch {
-      /* el cuerpo no era JSON; se conserva el texto crudo */
-    }
-    throw new ApiError(
-      `${response.status} ${response.statusText} en ${path}`,
-      response.status,
-      url,
-      parsed,
-    )
+  if (!response.ok) throw await toApiError(response, path, url)
+
+  return (await response.json()) as T
+}
+
+export async function apiPost<T>(
+  path: string,
+  payload: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
+  const url = `${env.apiBaseUrl}${path}`
+
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      signal: signal ?? null,
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(payload),
+    })
+  } catch (cause) {
+    if (cause instanceof DOMException && cause.name === 'AbortError') throw cause
+    throw new ApiError('No se pudo contactar al servidor', 0, url, cause)
   }
+
+  if (!response.ok) throw await toApiError(response, path, url)
+
+  // 204 no trae cuerpo. Hoy ningún POST devuelve 204, pero asumir que siempre
+  // hay JSON es la clase de supuesto que revienta en producción.
+  if (response.status === 204) return undefined as T
 
   return (await response.json()) as T
 }

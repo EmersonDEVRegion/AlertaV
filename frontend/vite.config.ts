@@ -13,6 +13,22 @@ export default defineConfig(({ mode }) => {
       alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
     },
 
+    optimizeDeps: {
+      // maplibre-gl v6 resuelve la URL de su Web Worker en tiempo de ejecucion:
+      //
+      //   new URL('./maplibre-gl-worker.mjs', import.meta.url)
+      //
+      // Si Vite lo pre-empaqueta, `import.meta.url` pasa a apuntar a
+      // node_modules/.vite/deps/, donde el worker no existe. El `new Worker()`
+      // se construye igual, falla al cargar en segundo plano y nadie escucha ese
+      // error: el dispatcher queda esperando para siempre, `load` no se dispara
+      // nunca y el lienzo se queda en blanco sin una sola linea en consola.
+      //
+      // Excluirlo lo deja servido desde su carpeta real, donde el worker y su
+      // dependencia `maplibre-gl-shared.mjs` viven como hermanos.
+      exclude: ['maplibre-gl'],
+    },
+
     server: {
       port: 5173,
       // El backend ya trae http://localhost:5173 en CORS_ORIGINS, pero pasar por

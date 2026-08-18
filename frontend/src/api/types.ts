@@ -166,6 +166,54 @@ export interface IncidentStats {
   by_type: Record<string, number>
 }
 
+// --- Reporte ciudadano -------------------------------------------------------
+
+/**
+ * Cuerpo de `POST /api/v1/events/citizen-report`.
+ *
+ * Espejo de `CitizenReportCreate` (backend/app/schemas/event.py), que declara
+ * `extra="forbid"`: cualquier campo de mas es un 422, no un campo ignorado.
+ *
+ * Lo que el cliente NO manda, a proposito: `source` y `confidence` los fija el
+ * servidor. Si el cliente pudiera declararse `conaf` o asignarse confianza 1.0,
+ * falsificar un incidente confirmado seria trivial.
+ *
+ * El backend acepta ademas `type`, `reported_at`, `accuracy_m` y `media_url`.
+ * Se dejan fuera por ahora: `type` cae al default `smoke` del servidor y el
+ * resto no tiene UI todavia.
+ */
+export interface CitizenReportPayload {
+  lat: number
+  lon: number
+  /** Entre 3 y 2000 caracteres. El backend rechaza fuera de ese rango. */
+  text: string
+}
+
+/**
+ * `EventRead` — respuesta 201 del reporte ciudadano.
+ *
+ * Es una SEÑAL, no un incidente. Recien cuando el motor de correlacion corra
+ * (cada 120 s) puede quedar unida a un incidente y aparecer en el mapa.
+ */
+export interface RawEvent {
+  id: number
+  public_id: string
+  timestamp: string
+  source: EventSource
+  type: string
+  lat: number | null
+  lon: number | null
+  text: string | null
+  external_id: string | null
+  confidence: number
+  raw_data: Record<string, unknown>
+  commune: string | null
+  province: string | null
+  ingested_at: string
+  processed_at: string | null
+  incident_id: number | null
+}
+
 /** Parametros de `GET /api/v1/incidents/active`. */
 export interface ActiveIncidentsQuery {
   hours?: number

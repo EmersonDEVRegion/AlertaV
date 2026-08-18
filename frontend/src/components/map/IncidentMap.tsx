@@ -8,7 +8,11 @@ import {
   ScaleControl,
   Source,
 } from 'react-map-gl/maplibre'
-import type { MapLayerMouseEvent, MapRef } from 'react-map-gl/maplibre'
+import type {
+  ErrorEvent,
+  MapLayerMouseEvent,
+  MapRef,
+} from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 import type { Incident } from '@/api/types'
@@ -72,6 +76,32 @@ export function IncidentMap({
     [onSelect],
   )
 
+  /**
+   * Un mapa en blanco sin nada en consola es el peor modo de falla: no se sabe
+   * si falló el estilo, el WebGL o el encuadre. Estos dos handlers convierten
+   * ese silencio en un diagnóstico. Solo en desarrollo: en producción el
+   * usuario no puede hacer nada con esto y `StalenessBanner` ya cubre lo suyo.
+   */
+  const handleLoad = useCallback(() => {
+    if (!import.meta.env.DEV) return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    const canvas = map.getCanvas()
+    console.info('[AlertaV/mapa] load', {
+      estiloCargado: map.isStyleLoaded(),
+      centro: map.getCenter().toArray(),
+      zoom: map.getZoom(),
+      canvasCSS: [canvas.clientWidth, canvas.clientHeight],
+      canvasBuffer: [canvas.width, canvas.height],
+      webgl: canvas.getContext('webgl2') ? 'webgl2' : 'sin contexto webgl2',
+      capasDelEstilo: map.getStyle()?.layers?.length ?? 0,
+    })
+  }, [])
+
+  const handleError = useCallback((event: ErrorEvent) => {
+    console.error('[AlertaV/mapa] error', event.error ?? event)
+  }, [])
+
   return (
     <Map
       ref={mapRef}
@@ -83,6 +113,8 @@ export function IncidentMap({
       style={{ position: 'absolute', inset: 0 }}
       interactiveLayerIds={[INCIDENT_HIT_LAYER_ID]}
       onClick={handleClick}
+      onLoad={handleLoad}
+      onError={handleError}
       onMouseEnter={() => setHovering(true)}
       onMouseLeave={() => setHovering(false)}
       cursor={hovering ? 'pointer' : 'grab'}
@@ -92,7 +124,6 @@ export function IncidentMap({
       dragRotate={false}
       pitchWithRotate={false}
       touchZoomRotate={{ around: 'center' }}
-      reuseMaps
     >
       <AttributionControl compact customAttribution={MAP_ATTRIBUTION} />
       <NavigationControl position="top-right" showCompass={false} />

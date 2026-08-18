@@ -3,6 +3,7 @@ import type { ActiveIncidentsQuery } from '@/api/types'
 import { IncidentMap } from '@/components/map/IncidentMap'
 import { MapLegend } from '@/components/map/MapLegend'
 import { IncidentSheet } from '@/components/incident/IncidentSheet'
+import { CitizenReportControl } from '@/components/report/CitizenReportControl'
 import { AppHeader } from '@/components/ui/AppHeader'
 import { MapOverlayState } from '@/components/ui/MapOverlayState'
 import { StalenessBanner } from '@/components/ui/StalenessBanner'
@@ -67,6 +68,14 @@ export default function App() {
         />
 
         <MapLegend />
+
+        {/*
+          El botón vive dentro del `main` relativo, no en el árbol del mapa: así
+          no compite con los controles de MapLibre ni se pierde en un repintado
+          del canvas. En teléfono se oculta mientras la ficha del incidente está
+          abierta, porque esa ficha ocupa el mismo borde inferior.
+        */}
+        <CitizenReportControl hiddenOnMobile={selected !== null} />
 
         {isPending && (
           <MapOverlayState

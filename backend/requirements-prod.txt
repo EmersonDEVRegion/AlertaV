@@ -1,0 +1,22 @@
+# Dependencias de RUNTIME. Este es el archivo que instala la imagen Docker.
+#
+# Está separado de requirements.txt a propósito: pytest, ruff y mypy no tienen
+# nada que hacer dentro de un contenedor de producción —son ~60 MB de imagen y
+# de superficie de ataque que nunca se ejecutan. requirements.txt incluye este
+# archivo con `-r`, así que las versiones de runtime se declaran una sola vez.
+
+# --- Núcleo -------------------------------------------------------------------
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# --- Base de datos ------------------------------------------------------------
+SQLAlchemy==2.0.36
+asyncpg==0.30.0            # driver async de la aplicación
+psycopg2-binary==2.9.10    # driver sync que usa Alembic
+GeoAlchemy2==0.16.0        # tipos PostGIS para SQLAlchemy
+alembic==1.14.0
+
+# --- Cliente HTTP -------------------------------------------------------------
+httpx==0.28.1

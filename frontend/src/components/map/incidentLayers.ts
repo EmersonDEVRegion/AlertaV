@@ -28,18 +28,36 @@ export const INCIDENT_HIT_LAYER_ID = 'incidents-hit'
  * Radio del disco. Crece con el zoom y, dentro de cada zoom, lo confirmado se
  * dibuja más grande: la jerarquía visual debe coincidir con la jerarquía
  * informativa.
+ *
+ * MapLibre exige que `["zoom"]` aparezca únicamente como entrada de un
+ * `interpolate`/`step` de primer nivel: no se puede envolver el resultado en
+ * otra operación (`["+", CORE_RADIUS, 6]` aborta el renderizado del estilo).
+ * Por eso el desplazamiento se aplica a cada parada en vez de a la expresión
+ * completa, y las capas derivadas (selección, hit) piden su propio radio.
  */
-const CORE_RADIUS: ExpressionSpecification = [
-  'interpolate',
-  ['linear'],
-  ['zoom'],
-  6,
-  ['case', ['get', 'is_official_confirmed'], 6, 4],
-  10,
-  ['case', ['get', 'is_official_confirmed'], 11, 8],
-  14,
-  ['case', ['get', 'is_official_confirmed'], 18, 13],
-]
+function coreRadius(offset = 0): ExpressionSpecification {
+  const stop = (confirmed: number, tentative: number): ExpressionSpecification =>
+    [
+      'case',
+      ['get', 'is_official_confirmed'],
+      confirmed + offset,
+      tentative + offset,
+    ] as unknown as ExpressionSpecification
+
+  return [
+    'interpolate',
+    ['linear'],
+    ['zoom'],
+    6,
+    stop(6, 4),
+    10,
+    stop(11, 8),
+    14,
+    stop(18, 13),
+  ] as unknown as ExpressionSpecification
+}
+
+const CORE_RADIUS: ExpressionSpecification = coreRadius()
 
 const HALO_RADIUS: ExpressionSpecification = [
   'interpolate',
@@ -98,7 +116,7 @@ export function selectedLayer(code: string | null): IncidentLayer {
     type: 'circle',
     filter: ['==', ['get', 'code'], code ?? ' '],
     paint: {
-      'circle-radius': ['+', CORE_RADIUS, 6],
+      'circle-radius': coreRadius(6),
       'circle-color': 'transparent',
       'circle-stroke-color': '#0f172a',
       'circle-stroke-width': 3,
@@ -115,7 +133,7 @@ export const hitLayer: IncidentLayer = {
   id: INCIDENT_HIT_LAYER_ID,
   type: 'circle',
   paint: {
-    'circle-radius': ['+', CORE_RADIUS, 12],
+    'circle-radius': coreRadius(12),
     'circle-color': '#000000',
     'circle-opacity': 0,
   },

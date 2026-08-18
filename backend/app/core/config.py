@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Annotated, Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import Field, PostgresDsn, computed_field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -18,6 +19,11 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 #: el validador `mode="before"` reciba el string crudo. Sin esto,
 #: `CORS_ORIGINS=http://a,http://b` revienta con un JSONDecodeError.
 CsvList = Annotated[list[str], NoDecode]
+
+#: Esquemas que pueden aparecer en un `DATABASE_URL` copiado de un panel de
+#: proveedor. Se normalizan al driver que corresponde en cada caso: la app habla
+#: asyncpg, Alembic habla psycopg2.
+_DSN_SCHEMES = {"postgres", "postgresql", "postgresql+asyncpg", "postgresql+psycopg2"}
 
 
 class BoundingBox(BaseSettings):
@@ -52,8 +58,22 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
     CORS_ORIGINS: CsvList = Field(default_factory=lambda: ["http://localhost:5173"])
+    #: Vercel publica cada rama en un subdominio distinto
+    #: (`alertav-git-<rama>-<org>.vercel.app`). Enumerarlos uno por uno en
+    #: `CORS_ORIGINS` es imposible, así que los previews se cubren con una
+    #: expresión regular. Vacío = desactivado. Debe anclarse con `^...$`.
+    CORS_ORIGIN_REGEX: str = ""
+    #: La API no usa cookies ni sesiones: no hay nada que enviar con
+    #: credenciales. Dejarlo en False evita además la trampa silenciosa de
+    #: `allow_origins=["*"]`, que el navegador ignora si hay credenciales.
+    CORS_ALLOW_CREDENTIALS: bool = False
 
     # -- Base de datos -------------------------------------------------------
+    #: DSN completo. Si viene definido, **manda sobre los `POSTGRES_*`**: es lo
+    #: que entregan Supabase, Neon o Render de una sola pieza y descomponerlo a
+    #: mano sólo invita a erratas. En local se deja vacío y siguen mandando las
+    #: variables sueltas de abajo.
+    DATABASE_URL: str = ""
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432
     POSTGRES_USER: str = "alertav"
@@ -61,8 +81,22 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = "alertav"
     DB_SCHEMA: str = "alertav"
     DB_ECHO: bool = False
+    #: Tres procesos comparten la misma base (API + collectors + correlación) y
+    #: cada uno abre su propio pool. El techo real de conexiones es
+    #: `(POOL_SIZE + MAX_OVERFLOW) * 3`. En la capa gratuita de Supabase conviene
+    #: bajarlo a 2/3; los valores de acá son los de desarrollo local.
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
+    #: Modo SSL de asyncpg: "", "prefer", "require", "verify-full"…
+    #: Vacío = sin TLS (local). Cualquier base gestionada exige "require".
+    DB_SSL_MODE: str = ""
+    #: Los poolers en modo transacción (PgBouncer, Supavisor puerto 6543) no
+    #: soportan prepared statements: asyncpg crea `asyncpg_stmt_N` en una
+    #: conexión y lo reusa en otra, y la consulta revienta con
+    #: `prepared statement "asyncpg_stmt_N" does not exist`. Activar esto apaga
+    #: la caché de sentencias. Innecesario contra una conexión directa o un
+    #: pooler en modo sesión.
+    DB_DISABLE_PREPARED_STATEMENTS: bool = False
 
     # -- Dominio geográfico: Región de Valparaíso (continental) --------------
     REGION_WEST: float = -72.0
@@ -207,10 +241,38 @@ class Settings(BaseSettings):
             north=self.REGION_NORTH,
         )
 
+    def _rewrite_dsn(self, scheme: str, *, keep_query: bool) -> str | None:
+        """Reescribe `DATABASE_URL` al driver pedido. None si no está definida.
+
+        Se toca sólo el esquema y, cuando corresponde, el query string. El
+        usuario y la contraseña se dejan intactos —vienen percent-encoded desde
+        el panel del proveedor y volver a codificarlos los rompería.
+
+        `keep_query` distingue los dos drivers: psycopg2 entiende `sslmode`,
+        `options` y compañía; asyncpg no y aborta la conexión si se los pasan.
+        Para asyncpg el TLS viaja aparte, en `DB_SSL_MODE`.
+        """
+        raw = self.DATABASE_URL.strip()
+        if not raw:
+            return None
+
+        parts = urlsplit(raw)
+        if parts.scheme not in _DSN_SCHEMES:
+            raise ValueError(
+                f"DATABASE_URL usa el esquema '{parts.scheme}'; se esperaba uno de "
+                f"{sorted(_DSN_SCHEMES)}"
+            )
+        return urlunsplit(
+            (scheme, parts.netloc, parts.path, parts.query if keep_query else "", "")
+        )
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def database_url(self) -> str:
         """DSN async (asyncpg) para la aplicación."""
+        override = self._rewrite_dsn("postgresql+asyncpg", keep_query=False)
+        if override:
+            return override
         return str(
             PostgresDsn.build(
                 scheme="postgresql+asyncpg",
@@ -226,6 +288,9 @@ class Settings(BaseSettings):
     @property
     def sync_database_url(self) -> str:
         """DSN síncrono (psycopg2) — lo usa Alembic."""
+        override = self._rewrite_dsn("postgresql+psycopg2", keep_query=True)
+        if override:
+            return override
         return str(
             PostgresDsn.build(
                 scheme="postgresql+psycopg2",
@@ -236,6 +301,20 @@ class Settings(BaseSettings):
                 path=self.POSTGRES_DB,
             )
         )
+
+    @property
+    def db_connect_args(self) -> dict[str, object]:
+        """`connect_args` de asyncpg. Vacío en local; poblado en producción."""
+        args: dict[str, object] = {}
+        if self.DB_SSL_MODE:
+            args["ssl"] = self.DB_SSL_MODE
+        if self.DB_DISABLE_PREPARED_STATEMENTS:
+            # `statement_cache_size` es de asyncpg; `prepared_statement_cache_size`
+            # es del dialecto de SQLAlchemy. Hay que apagar los dos: cada uno
+            # cachea por su cuenta.
+            args["statement_cache_size"] = 0
+            args["prepared_statement_cache_size"] = 0
+        return args
 
 
 @lru_cache
