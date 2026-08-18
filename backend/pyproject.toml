@@ -30,6 +30,8 @@ dev = [
 [project.scripts]
 alertav-collect = "app.collectors.runner:main"
 alertav-correlate = "app.services.correlation.runner:main"
+# Los dos anteriores en un solo proceso. Es lo que corre en producción.
+alertav-workers = "app.workers:main"
 
 [build-system]
 requires = ["setuptools>=68"]

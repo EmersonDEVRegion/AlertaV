@@ -2,17 +2,24 @@
 # =============================================================================
 #  AlertaV — orquestador de un solo contenedor
 #
-#  Arranca y supervisa los tres procesos que en local se ejecutan por separado:
+#  Arranca y supervisa los procesos que en local se ejecutan por separado:
 #
-#    1. uvicorn                             — la API que consume el frontend
-#    2. app.collectors.runner --loop        — recolección de FIRMS/CONAF/SENAPRED
-#    3. app.services.correlation.runner     — agrupación de señales en incidentes
+#    1. uvicorn        — la API que consume el frontend
+#    2. app.workers    — recolección + correlación en un solo intérprete
+#
+#  En local son tres procesos; acá son dos. La fusión de los dos motores de
+#  fondo (WORKER_MODE=combined, el defecto) ahorra un intérprete de Python
+#  completo —~46 MB medidos, de los 512 disponibles— y reduce a la mitad las
+#  conexiones abiertas contra Supabase. Los detalles están en app/workers.py.
+#
+#  WORKER_MODE=split vuelve al esquema de tres procesos. Sirve para depurar:
+#  con los motores separados, un cuelgue o una fuga se le puede atribuir a uno
+#  de los dos sin ambigüedad.
 #
 #  Se eligió bash y no supervisord por una razón concreta: la instancia gratuita
-#  tiene 512 MB de RAM y 0.1 vCPU, y los tres procesos Python ya ocupan unos
-#  350 MB. Un supervisor en Python encima serían 25 MB más y un archivo de
-#  configuración que oculta, tras una capa de indirección, exactamente lo que
-#  hacen estas 40 líneas.
+#  tiene 512 MB de RAM y 0.1 vCPU. Un supervisor en Python encima serían 25 MB
+#  más y un archivo de configuración que oculta, tras una capa de indirección,
+#  exactamente lo que hacen estas 40 líneas.
 #
 #  Tres propiedades que este script sí garantiza:
 #
@@ -37,6 +44,7 @@ readonly RUN_MIGRATIONS="${RUN_MIGRATIONS:-0}"
 readonly ENABLE_COLLECTORS="${ENABLE_COLLECTORS:-1}"
 readonly ENABLE_CORRELATION="${ENABLE_CORRELATION:-1}"
 readonly BACKOFF_MAX_SECONDS="${BACKOFF_MAX_SECONDS:-60}"
+readonly WORKER_MODE="${WORKER_MODE:-combined}"
 
 # Mismo formato JSON que app/core/logging.py, para que un solo filtro sirva
 # sobre toda la salida del contenedor.
@@ -97,12 +105,25 @@ SHUTDOWN=0
 shutdown() {
     [ "$SHUTDOWN" -eq 1 ] && return 0
     SHUTDOWN=1
-    log INFO "señal de término recibida; deteniendo los tres procesos"
+    log INFO "señal de término recibida; deteniendo ${#PIDS[@]} proceso(s)"
     for pid in "${PIDS[@]}"; do
         kill -TERM "$pid" 2>/dev/null
     done
 }
 trap shutdown TERM INT
+
+# -----------------------------------------------------------------------------
+#  Validación de la configuración
+# -----------------------------------------------------------------------------
+# Antes de arrancar nada. Un valor inválido detectado más abajo obligaría a
+# matar procesos ya lanzados, y un script que aborta a medias deja huérfanos.
+case "$WORKER_MODE" in
+    combined|split) ;;
+    *)
+        log ERROR "WORKER_MODE='$WORKER_MODE' no es válido; use 'combined' o 'split'"
+        exit 1
+        ;;
+esac
 
 # -----------------------------------------------------------------------------
 #  Migraciones (opcional)
@@ -143,19 +164,40 @@ supervise api \
         --no-use-colors &
 PIDS+=($!)
 
-if [ "$ENABLE_COLLECTORS" = "1" ]; then
-    supervise collectors python -m app.collectors.runner --loop &
-    PIDS+=($!)
-else
-    log WARN "collectors desactivados por ENABLE_COLLECTORS=0"
-fi
+[ "$ENABLE_COLLECTORS" = "1" ] || log WARN "recolección desactivada por ENABLE_COLLECTORS=0"
+[ "$ENABLE_CORRELATION" = "1" ] || log WARN "correlación desactivada por ENABLE_CORRELATION=0"
 
-if [ "$ENABLE_CORRELATION" = "1" ]; then
-    supervise correlation python -m app.services.correlation.runner --loop &
-    PIDS+=($!)
-else
-    log WARN "motor de correlación desactivado por ENABLE_CORRELATION=0"
-fi
+case "$WORKER_MODE" in
+    combined)
+        # Un solo intérprete para los dos motores. Los interruptores ENABLE_*
+        # se traducen en flags del proceso en vez de en procesos que no se
+        # lanzan; el comportamiento visible es el mismo.
+        worker_flags=()
+        [ "$ENABLE_COLLECTORS" = "1" ] || worker_flags+=(--no-collectors)
+        [ "$ENABLE_CORRELATION" = "1" ] || worker_flags+=(--no-correlation)
+
+        if [ "$ENABLE_COLLECTORS" = "1" ] || [ "$ENABLE_CORRELATION" = "1" ]; then
+            log INFO "modo combinado: recolección y correlación comparten proceso"
+            supervise workers python -m app.workers ${worker_flags[@]+"${worker_flags[@]}"} &
+            PIDS+=($!)
+        else
+            log WARN "ambos motores desactivados: sólo se levanta la API"
+        fi
+        ;;
+
+    split)
+        # Esquema de tres procesos, igual que en desarrollo. Cuesta ~46 MB más.
+        log INFO "modo split: un proceso por motor"
+        if [ "$ENABLE_COLLECTORS" = "1" ]; then
+            supervise collectors python -m app.collectors.runner --loop &
+            PIDS+=($!)
+        fi
+        if [ "$ENABLE_CORRELATION" = "1" ]; then
+            supervise correlation python -m app.services.correlation.runner --loop &
+            PIDS+=($!)
+        fi
+        ;;
+esac
 
 log INFO "procesos supervisados: ${#PIDS[@]}"
 

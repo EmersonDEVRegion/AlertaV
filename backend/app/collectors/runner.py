@@ -19,6 +19,11 @@ Se ejecuta como proceso aparte de la API a propósito: la recolección no debe
 competir por los workers que atienden a los ciudadanos, ni caerse con un
 redeploy del backend.
 
+En producción sobre la capa gratuita, este bucle y el de correlación comparten
+un único proceso —ver `app/workers.py`— porque 512 MB no alcanzan para tres
+intérpretes de Python. Este módulo sigue siendo ejecutable por su cuenta, que es
+como se usa en desarrollo y como se depura un collector en particular.
+
 En modo `--loop` cada collector corre en su propia tarea, con su propio
 intervalo. Un incendio de CONAF cambia de estado en minutos; una pasada de
 satélite de FIRMS ocurre unas pocas veces al día. Forzar una cadencia común
@@ -31,7 +36,6 @@ import argparse
 import asyncio
 import logging
 import random
-import signal
 import sys
 from collections.abc import Sequence
 
@@ -44,12 +48,15 @@ from app.collectors.registry import (
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, dispose_engine
 from app.core.logging import configure_logging
+from app.core.shutdown import (
+    install_signal_handlers,
+    is_shutting_down,
+    sleep_unless_stopped,
+)
 from app.models.enums import CollectorStatus
 from app.services.ingest_service import IngestService
 
 logger = logging.getLogger("alertav.runner")
-
-_shutdown = asyncio.Event()
 
 #: Dispersión aleatoria del primer disparo de cada collector, como fracción del
 #: intervalo. Evita que todos golpeen los servicios institucionales en el mismo
@@ -129,13 +136,10 @@ async def _collector_loop(name: str, interval: int) -> None:
         "collector programado",
         extra={"collector": name, "interval_s": interval, "first_run_in_s": round(delay)},
     )
-    try:
-        await asyncio.wait_for(_shutdown.wait(), timeout=delay)
+    if not await sleep_unless_stopped(delay):
         return  # apagado durante el arranque escalonado
-    except TimeoutError:
-        pass
 
-    while not _shutdown.is_set():
+    while not is_shutting_down():
         try:
             await run_collector(name)
         except Exception:
@@ -144,10 +148,8 @@ async def _collector_loop(name: str, interval: int) -> None:
             # ejemplo). Se registra y se reintenta en el siguiente ciclo.
             logger.exception("ciclo del collector falló", extra={"collector": name})
 
-        try:
-            await asyncio.wait_for(_shutdown.wait(), timeout=interval)
-        except TimeoutError:
-            continue
+        if not await sleep_unless_stopped(interval):
+            break
     logger.info("collector detenido", extra={"collector": name})
 
 
@@ -158,14 +160,6 @@ async def run_loop(names: Sequence[str] | None, interval: int | None = None) -> 
         *(_collector_loop(name, seconds) for name, seconds in plan.items())
     )
     logger.info("runner detenido")
-
-
-def _install_signal_handlers(loop: asyncio.AbstractEventLoop) -> None:
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, _shutdown.set)
-        except NotImplementedError:  # Windows
-            signal.signal(sig, lambda *_: _shutdown.set())
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -198,7 +192,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 async def _main(argv: Sequence[str] | None = None) -> int:
     configure_logging()
     args = parse_args(argv)
-    _install_signal_handlers(asyncio.get_running_loop())
+    install_signal_handlers()
 
     if args.show_schedule:
         for name, seconds in schedule(args.collectors, args.interval).items():

@@ -14,6 +14,10 @@ correlación abre transacciones largas sobre la tabla de señales y no debe
 competir por los workers que atienden a los ciudadanos, ni caerse con un
 redeploy del backend.
 
+En producción sobre la capa gratuita comparte proceso con los collectors —ver
+`app/workers.py`—, no con la API. Este módulo sigue siendo ejecutable por su
+cuenta, que es como se calibran el radio y la ventana contra datos reales.
+
 Cadencia recomendada: **entre 60 y 300 segundos**. El motor es idempotente —una
 pasada sobre una ventana ya correlacionada no duplica nada— así que el costo de
 correr de más es sólo CPU. El costo de correr de menos es que un incendio real
@@ -27,18 +31,20 @@ import argparse
 import asyncio
 import json
 import logging
-import signal
 import sys
 from collections.abc import Sequence
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, dispose_engine
 from app.core.logging import configure_logging
+from app.core.shutdown import (
+    install_signal_handlers,
+    is_shutting_down,
+    sleep_unless_stopped,
+)
 from app.services.correlation.engine import CorrelationEngine, CorrelationPass
 
 logger = logging.getLogger("alertav.correlation")
-
-_shutdown = asyncio.Event()
 
 
 async def run_once(**overrides: object) -> CorrelationPass:
@@ -50,7 +56,7 @@ async def run_once(**overrides: object) -> CorrelationPass:
 
 async def run_loop(interval: int, **overrides: object) -> None:
     logger.info("motor de correlación iniciado", extra={"interval_s": interval})
-    while not _shutdown.is_set():
+    while not is_shutting_down():
         try:
             await run_once(**overrides)
         except Exception:
@@ -60,19 +66,9 @@ async def run_loop(interval: int, **overrides: object) -> None:
             # de tumbar el worker y dejar el mapa congelado.
             logger.exception("pasada de correlación fallida; se reintenta")
 
-        try:
-            await asyncio.wait_for(_shutdown.wait(), timeout=interval)
-        except TimeoutError:
-            continue
+        if not await sleep_unless_stopped(interval):
+            break
     logger.info("motor de correlación detenido")
-
-
-def _install_signal_handlers(loop: asyncio.AbstractEventLoop) -> None:
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, _shutdown.set)
-        except NotImplementedError:  # Windows
-            signal.signal(sig, lambda *_: _shutdown.set())
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -131,7 +127,7 @@ def _overrides(args: argparse.Namespace) -> dict[str, object]:
 async def _main(argv: Sequence[str] | None = None) -> int:
     configure_logging()
     args = parse_args(argv)
-    _install_signal_handlers(asyncio.get_running_loop())
+    install_signal_handlers()
     overrides = _overrides(args)
 
     try:
