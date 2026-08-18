@@ -14,6 +14,9 @@ import type {
   MapRef,
 } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
+// Debe ejecutarse antes de que se instancie el mapa: sin esto el worker queda
+// apuntando a una URL inexistente en produccion y el lienzo sale en blanco.
+import '@/lib/maplibreWorker'
 
 import type { Incident } from '@/api/types'
 import {

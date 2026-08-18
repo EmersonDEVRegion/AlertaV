@@ -26,7 +26,18 @@ export default defineConfig(({ mode }) => {
       //
       // Excluirlo lo deja servido desde su carpeta real, donde el worker y su
       // dependencia `maplibre-gl-shared.mjs` viven como hermanos.
+      //
+      // Esto cubre solo dev. El build tenia el mismo modo de falla (la URL
+      // caia en /assets/maplibre-gl-worker.mjs, inexistente) y lo resuelve
+      // `src/lib/maplibreWorker.ts`, que fija la URL explicitamente.
       exclude: ['maplibre-gl'],
+    },
+
+    // maplibre instancia su worker con `new Worker(url, { type: 'module' })`.
+    // El default de Vite es 'iife', que rompe si el bundle del worker necesita
+    // dividirse. Ver src/lib/maplibreWorker.ts.
+    worker: {
+      format: 'es',
     },
 
     server: {
@@ -91,7 +102,10 @@ export default defineConfig(({ mode }) => {
         },
 
         workbox: {
-          globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+          // `mjs` incluido a proposito: el bundle del worker de maplibre puede
+          // emitirse con esa extension y sin precachearlo la app no abre el
+          // mapa sin señal, que es justamente el caso de uso en terreno.
+          globPatterns: ['**/*.{js,mjs,css,html,svg,png,ico,woff2}'],
           maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
           cleanupOutdatedCaches: true,
           clientsClaim: true,
