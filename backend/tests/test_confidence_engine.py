@@ -16,10 +16,15 @@ import pytest
 
 from app.models.enums import EventSource, EventType, IncidentStatus, IncidentType
 from app.services.correlation.confidence import (
+    CONFIRMED_THRESHOLD,
+    OFFICIAL_DISPATCH_WEIGHT,
     POLICY_VERSION,
     UNCONFIRMED_CEILING,
+    UNSAFE_THRESHOLD,
+    ConfidenceLevel,
     SignalView,
     build_title,
+    level_for,
     resolve_status,
     resolve_type,
     rule_for,
@@ -53,6 +58,13 @@ def firms(n: int, confidence: float = 0.55) -> list[SignalView]:
 def citizens(n: int, confidence: float = 0.50) -> list[SignalView]:
     return [
         signal(EventSource.CITIZEN, confidence, type=EventType.SMOKE, minutes=i)
+        for i in range(n)
+    ]
+
+
+def dispatches(n: int, confidence: float = 0.65) -> list[SignalView]:
+    return [
+        signal(EventSource.BROADCASTIFY, confidence, type=EventType.DISPATCH, minutes=i)
         for i in range(n)
     ]
 
@@ -91,21 +103,36 @@ class TestFuentesConfirmatorias:
 
 
 class TestSatelite:
-    def test_una_deteccion_no_confirma(self) -> None:
-        result = score(firms(1))
-        assert result.confidence == pytest.approx(0.55)
-        assert result.is_official_confirmed is False
+    def test_el_peso_base_es_40(self) -> None:
+        """La recalibración v2: una anomalía térmica vale 0.40, ni más ni menos.
 
-    def test_muchas_detecciones_no_llegan_nunca_al_100(self) -> None:
-        """La regla explícita del proyecto: FIRMS corrobora, no confirma.
+        La banda está colapsada a propósito. La confianza que trae el píxel mide
+        la certeza del algoritmo sobre la anomalía, no la probabilidad de que la
+        anomalía sea un incendio: una lectura excelente de una chimenea sigue
+        siendo una chimenea.
+        """
+        for entrada in (0.10, 0.55, 0.99):
+            result = score(firms(1, confidence=entrada))
+            assert result.confidence == pytest.approx(0.40)
+            assert result.is_official_confirmed is False
 
-        Sin techo, veinte píxeles de la misma pasada de VIIRS —que son casi una
-        sola observación— empujarían el noisy-OR hasta la certeza.
+    def test_una_deteccion_aislada_es_solo_posible_emergencia(self) -> None:
+        assert score(firms(1)).level is ConfidenceLevel.POSSIBLE
+
+    def test_ningun_racimo_satelital_llega_a_incendio_confirmado(self) -> None:
+        """La regla dura del proyecto, y la razón de esta recalibración.
+
+        Sin techo bajo 0.60, veinte píxeles de la misma pasada de VIIRS —que son
+        casi una sola observación— cruzarían solos a `CONFIRMED`. En la V Región
+        eso significaría rotular la fundición de Ventanas como incendio.
         """
         ceiling = rule_for(EventSource.NASA_FIRMS).ceiling
+        assert ceiling < CONFIRMED_THRESHOLD
+
         for count in (5, 20, 100):
             result = score(firms(count, confidence=0.80))
-            assert result.confidence <= ceiling < 1.0
+            assert result.confidence <= ceiling
+            assert result.level is ConfidenceLevel.POSSIBLE
             assert result.is_official_confirmed is False
 
     def test_mas_detecciones_nunca_bajan_la_confianza(self) -> None:
@@ -121,11 +148,96 @@ class TestSatelite:
         assert cruzado > rule_for(EventSource.NASA_FIRMS).ceiling
 
 
+class TestSumaEntreFuentes:
+    """La combinación es aditiva desde la v2.0.0: `min(Σ wᵢ, 1.0)`."""
+
+    def test_satelite_mas_ciudadano_suma_los_porcentajes(self) -> None:
+        """El caso de calibración: 40 % + 25 % = 65 %.
+
+        Es el ejemplo con el que se fijó la política. Si este test cambia, la
+        política cambió.
+        """
+        result = score([*firms(1), *citizens(1, confidence=0.10)])
+        assert result.confidence == pytest.approx(0.65)
+        assert result.level is ConfidenceLevel.CONFIRMED
+
+    def test_el_breakdown_permite_rehacer_la_cuenta_a_mano(self) -> None:
+        result = score([*firms(1), *citizens(1, confidence=0.10)])
+        aportes = [
+            entry["contribution"] for entry in result.breakdown["by_source"].values()
+        ]
+        assert sum(aportes) == pytest.approx(result.breakdown["combined"])
+        assert result.breakdown["combination"] == "additive_capped"
+
+    def test_la_suma_satura_en_uno_sin_confirmacion_no_llega_a_la_certeza(self) -> None:
+        result = score([*firms(4), *citizens(4), *dispatches(3)])
+        assert result.confidence == pytest.approx(UNCONFIRMED_CEILING)
+        assert result.is_official_confirmed is False
+
+
+class TestDespachosOficiales:
+    def test_un_despacho_por_radio_pesa_80(self) -> None:
+        result = score(dispatches(1))
+        assert result.confidence == pytest.approx(OFFICIAL_DISPATCH_WEIGHT)
+
+    def test_un_solo_despacho_basta_para_confirmar_el_tramo(self) -> None:
+        """0.80 > 0.60: cuando la central manda carros, hay una decisión humana
+        con autoridad detrás del punto en el mapa."""
+        assert score(dispatches(1)).level is ConfidenceLevel.CONFIRMED
+
+    def test_pero_no_es_confirmacion_institucional(self) -> None:
+        """`CONFIRMED` es un juicio del motor; `is_official_confirmed` es un
+        hecho: alguien fue al lugar. La UI tiene que poder distinguirlos."""
+        result = score(dispatches(2))
+        assert result.level is ConfidenceLevel.CONFIRMED
+        assert result.is_official_confirmed is False
+
+    def test_el_peso_no_depende_de_la_calidad_del_audio(self) -> None:
+        flojo = score(dispatches(1, confidence=0.10)).confidence
+        nitido = score(dispatches(1, confidence=0.95)).confidence
+        assert flojo == pytest.approx(nitido) == pytest.approx(OFFICIAL_DISPATCH_WEIGHT)
+
+    def test_bomberos_sigue_confirmando_al_100(self) -> None:
+        result = score([signal(EventSource.BOMBEROS, 1.0, type=EventType.DISPATCH)])
+        assert result.confidence == 1.0
+        assert result.is_official_confirmed is True
+
+
+class TestTramos:
+    def test_los_cortes_son_30_y_60(self) -> None:
+        assert level_for(0.0) is ConfidenceLevel.UNSAFE
+        assert level_for(0.2999) is ConfidenceLevel.UNSAFE
+        # 0.30 exacto ya es "posible"; 0.60 exacto TODAVÍA lo es.
+        assert level_for(UNSAFE_THRESHOLD) is ConfidenceLevel.POSSIBLE
+        assert level_for(CONFIRMED_THRESHOLD) is ConfidenceLevel.POSSIBLE
+        assert level_for(0.6001) is ConfidenceLevel.CONFIRMED
+        assert level_for(1.0) is ConfidenceLevel.CONFIRMED
+
+    def test_una_señal_suelta_de_baja_calidad_queda_en_unsafe(self) -> None:
+        assert score(citizens(1, confidence=0.10)).level is ConfidenceLevel.UNSAFE
+        assert score([signal(EventSource.OTHER, 0.1)]).level is ConfidenceLevel.UNSAFE
+
+    def test_sin_señales_el_tramo_es_unsafe(self) -> None:
+        assert score([]).level is ConfidenceLevel.UNSAFE
+
+    def test_el_tramo_es_consistente_con_la_confianza(self) -> None:
+        casos = [firms(1), citizens(3), dispatches(1), [CONAF_EN_COMBATE], []]
+        for señales in casos:
+            result = score(señales)
+            assert result.level is level_for(result.confidence)
+            assert result.breakdown["level"] == result.level.value
+
+
 class TestReportesCiudadanos:
-    def test_parten_en_la_banda_40_60(self) -> None:
-        for entrada, esperado in ((0.10, 0.40), (0.50, 0.50), (0.99, 0.60)):
+    def test_parten_en_la_banda_25_40(self) -> None:
+        for entrada, esperado in ((0.10, 0.25), (0.30, 0.30), (0.99, 0.40)):
             result = score(citizens(1, confidence=entrada))
             assert result.confidence == pytest.approx(esperado, abs=1e-6)
+
+    def test_un_reporte_suelto_sin_verificar_no_afirma_nada(self) -> None:
+        """0.25 < 0.30: queda en `unsafe`. Se registra, pero el mapa no lo
+        sostiene. Es la defensa contra el reporte falso o el spam."""
+        assert score(citizens(1, confidence=0.10)).level is ConfidenceLevel.UNSAFE
 
     def test_suben_progresivamente_con_rendimientos_decrecientes(self) -> None:
         serie = [score(citizens(n)).confidence for n in range(1, 6)]

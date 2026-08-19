@@ -9,10 +9,12 @@
  * interfaz: si cambia uno, cambia el otro.
  */
 @theme {
-  --color-phenomenon-confirmed: #dc2626;
-  --color-phenomenon-corroborated: #ea580c;
-  --color-phenomenon-single: #eab308;
-  --color-phenomenon-closed: #475569;
+  /* Tramos de confianza (política v2.0.0). Ojo con el orden: el rojo es el
+     tramo BAJO, el naranja el alto. Ver domain/symbology.ts. */
+  --color-level-unsafe: #dc2626;
+  --color-level-possible: #eab308;
+  --color-level-confirmed: #ea580c;
+  --color-level-closed: #475569;
 
   --color-alert-roja: #e11d48;
   --color-alert-amarilla: #f59e0b;

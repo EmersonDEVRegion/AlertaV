@@ -1,12 +1,20 @@
 """Enumeraciones de dominio.
 
-Estos valores deben coincidir exactamente con los tipos ENUM de PostgreSQL
-definidos en `sql/001_schema.sql`. Agregar un valor requiere una migración con
-`ALTER TYPE ... ADD VALUE`.
+La mayoría de estos valores deben coincidir exactamente con los tipos ENUM de
+PostgreSQL definidos en `sql/001_schema.sql`. Agregar un valor requiere una
+migración con `ALTER TYPE ... ADD VALUE`.
+
+Las excepciones —`ConfidenceLevel`, `SOURCE_BASE_CONFIDENCE`, `INCIDENT_FAMILY`—
+no son columnas: son vocabulario derivado. Viven acá porque `app.schemas` y
+`app.services` los necesitan a los dos lados, y `app.models` es la única capa que
+ambos pueden importar sin invertir la dependencia. Ponerlos en `services` creaba
+un ciclo real (`schemas.incident` → `services.correlation` → `services.__init__`
+→ `services.incident_service` → `schemas.incident`).
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 
 
@@ -24,6 +32,7 @@ class EventSource(str, Enum):
     SOCIAL_MEDIA = "social_media"
     WEATHER = "weather"
     CAMERA = "camera"
+    USGS = "usgs"
     OTHER = "other"
 
 
@@ -34,6 +43,8 @@ class EventType(str, Enum):
       - THERMAL_ANOMALY: detección satelital. NO es un incendio confirmado.
       - SMOKE: avistamiento. NO es un incendio confirmado.
       - WILDFIRE / STRUCTURAL_FIRE: sólo cuando la fuente lo confirma.
+      - EARTHQUAKE: medición instrumental de una red sismológica. Es un hecho
+        confirmado, pero NO es un siniestro: es la causa posible de varios.
     """
 
     WILDFIRE = "wildfire"
@@ -47,6 +58,7 @@ class EventType(str, Enum):
     ACCIDENT = "accident"
     FLOOD = "flood"
     LANDSLIDE = "landslide"
+    EARTHQUAKE = "earthquake"
     WEATHER_OBSERVATION = "weather_observation"
     OTHER = "other"
     UNKNOWN = "unknown"
@@ -109,6 +121,75 @@ OPEN_INCIDENT_STATUSES: frozenset[IncidentStatus] = frozenset(
 )
 
 
+class ConfidenceLevel(str, Enum):
+    """Tramo de confianza del incidente. Es lo que decide el color del mapa.
+
+    **No confundir con `is_official_confirmed`.** `CONFIRMED` acá significa
+    "la evidencia acumulada supera el 60 %", que es un juicio del motor;
+    `is_official_confirmed` significa "CONAF o Bomberos fueron al lugar", que es
+    un hecho institucional. Un racimo de despachos radiales llega a `CONFIRMED`
+    con `is_official_confirmed = False`, y esa diferencia tiene que seguir siendo
+    legible en la UI: son las dos preguntas distintas que el sistema responde.
+
+    No es una columna: se recalcula desde `confidence` en cada lectura. Guardarlo
+    sería tener el mismo dato en dos sitios con dos políticas distintas.
+    """
+
+    #: < 30 %. Señal aislada o ruido. Rojo de ADVERTENCIA, no de emergencia.
+    UNSAFE = "unsafe"
+    #: 30 % – 60 %. Hay algo, no sabemos qué. Amarillo.
+    POSSIBLE = "possible"
+    #: > 60 %. Naranja/fuego.
+    CONFIRMED = "confirmed"
+
+
+#: Cortes de los tramos. Se declaran una sola vez, acá, porque el color del mapa,
+#: la etiqueta de la tarjeta y el filtro de la API tienen que salir del mismo
+#: número o el operador verá tres verdades distintas sobre el mismo incidente.
+UNSAFE_THRESHOLD = 0.30
+CONFIRMED_THRESHOLD = 0.60
+
+
+@dataclass(frozen=True, slots=True)
+class LevelStyle:
+    label: str
+    color: str
+    meaning: str
+
+
+LEVEL_STYLES: dict[ConfidenceLevel, LevelStyle] = {
+    ConfidenceLevel.UNSAFE: LevelStyle(
+        label="Baja confianza",
+        color="#dc2626",
+        meaning="Señal aislada sin corroborar. Puede ser ruido o spam.",
+    ),
+    ConfidenceLevel.POSSIBLE: LevelStyle(
+        label="Posible emergencia",
+        color="#eab308",
+        meaning="Hay evidencia, no alcanza para afirmar que hay fuego.",
+    ),
+    ConfidenceLevel.CONFIRMED: LevelStyle(
+        label="Incendio confirmado",
+        color="#ea580c",
+        meaning="Evidencia acumulada por sobre el 60 %.",
+    ),
+}
+
+
+def level_for(confidence: float) -> ConfidenceLevel:
+    """Tramo de una confianza.
+
+    Los bordes están fijados como los describe la política: 0.30 ya es
+    `POSSIBLE` y 0.60 exacto **todavía** lo es. Sólo se cruza a `CONFIRMED`
+    *por encima* de 0.60, para que un empate en el borde no ascienda solo.
+    """
+    if confidence < UNSAFE_THRESHOLD:
+        return ConfidenceLevel.UNSAFE
+    if confidence > CONFIRMED_THRESHOLD:
+        return ConfidenceLevel.CONFIRMED
+    return ConfidenceLevel.POSSIBLE
+
+
 class LinkMethod(str, Enum):
     """Por qué una señal quedó unida a un incidente.
 
@@ -125,6 +206,16 @@ class LinkMethod(str, Enum):
 #: Tipos de señal que el Paso A puede agrupar geométricamente.
 #: Se excluyen los actos administrativos (`alert`, `evacuation`), que entran por
 #: el Paso B, y el contexto meteorológico, que no es evidencia de emergencia.
+#:
+#: `earthquake` queda fuera por una razón distinta a las anteriores y que conviene
+#: dejar escrita: no es que sea poco confiable —es la señal más confiable que
+#: entra al sistema—, es que el motor está construido para resolver *incertidumbre
+#: por corroboración*, y un sismo no tiene ninguna que resolver. Agruparlo haría
+#: daño: el radio de 1500 m y la ventana de 4 h son exactamente la escala de una
+#: réplica, así que DBSCAN fusionaría el sismo principal con sus réplicas en un
+#: solo "incidente" y borraría la secuencia, que es el dato sismológico relevante.
+#: Un sismo es contexto —causa posible de incendios, derrumbes o tsunami—, no un
+#: siniestro con ubicación puntual en el mapa. Mismo tratamiento que `weather_observation`.
 CORRELATABLE_EVENT_TYPES: frozenset[EventType] = frozenset(
     {
         EventType.WILDFIRE,
@@ -179,6 +270,10 @@ SOURCE_BASE_CONFIDENCE: dict[EventSource, float] = {
     EventSource.BOMBEROS: 1.00,
     EventSource.SENAPRED: 1.00,
     EventSource.CONAF: 1.00,
+    # Red sismológica global. Mide un fenómeno físico con instrumentos: que el
+    # sismo ocurrió no está en duda. Su 1.0 dice eso y sólo eso; no dice que
+    # haya un siniestro en ese punto.
+    EventSource.USGS: 1.00,
     EventSource.MUNICIPALITY: 0.90,
     EventSource.MEDIA: 0.70,
     EventSource.BROADCASTIFY: 0.65,

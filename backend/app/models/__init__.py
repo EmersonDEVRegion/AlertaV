@@ -14,6 +14,7 @@ from app.models.enums import (
 )
 from app.models.event import CollectorRun, RawEvent, SourceConfidence
 from app.models.incident import Incident, IncidentCounter, IncidentEvent
+from app.models.seismic import SeismicDetail
 
 __all__ = [
     "CORRELATABLE_EVENT_TYPES",
@@ -33,5 +34,6 @@ __all__ = [
     "IncidentType",
     "LinkMethod",
     "RawEvent",
+    "SeismicDetail",
     "SourceConfidence",
 ]

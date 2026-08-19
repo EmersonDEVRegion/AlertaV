@@ -93,6 +93,29 @@ class EventRepository:
         inserted = sum(flags)
         return (inserted, len(flags) - inserted)
 
+    async def ids_by_external_id(
+        self, source: EventSource, external_ids: Sequence[str]
+    ) -> dict[str, int]:
+        """Mapa `external_id → id` para una fuente. Vacío si no se pide nada.
+
+        `upsert_many` devuelve cuántas filas entraron, no cuáles: la sentencia es
+        un INSERT masivo y hacerle devolver los ids obligaría a cambiar su
+        contrato para todos los collectors. Los que necesitan colgar datos
+        propios de la fila recién escrita —hoy sólo el de sismos, con
+        `seismic_details`— los recuperan acá con un SELECT acotado por el índice
+        único `uq_raw_events_source_external_id`. Es una consulta por corrida
+        sobre un puñado de filas.
+        """
+        wanted = [external_id for external_id in external_ids if external_id]
+        if not wanted:
+            return {}
+
+        stmt = select(RawEvent.external_id, RawEvent.id).where(
+            RawEvent.source == source, RawEvent.external_id.in_(wanted)
+        )
+        result = await self.session.execute(stmt)
+        return dict(result.all())  # type: ignore[arg-type]
+
     async def add(self, event: EventCreate) -> RawEvent:
         """Inserta un evento y devuelve la entidad persistida."""
         entity = RawEvent(**event.to_orm_kwargs())

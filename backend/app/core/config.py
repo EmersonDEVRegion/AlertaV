@@ -175,6 +175,40 @@ class Settings(BaseSettings):
     SENAPRED_PAGE_SIZE: int = Field(default=1000, ge=1, le=5000)
     SENAPRED_POLL_INTERVAL_SECONDS: int = 600  # 10 min
 
+    # -- USGS — sismos en tiempo real ----------------------------------------
+    # Feed público del United States Geological Survey. Sin credenciales, sin
+    # cuota declarada. `2.5_day` = magnitud ≥ 2.5 de las últimas 24 h; el feed
+    # se regenera cada minuto, así que releerlo cada 5 no pierde eventos.
+    # Alternativas si se quiere más o menos ruido: `4.5_day`, `all_hour`,
+    # `significant_week`. Mismo formato de declaración que CONAF/SENAPRED, con
+    # cadena de respaldos: `geojson|url`, separadas por ';'.
+    USGS_SOURCES: str = (
+        "geojson|https://earthquake.usgs.gov/earthquakes/feed/v1.0/"
+        "summary/2.5_day.geojson"
+    )
+    #: Caja de la zona central de Chile. **No** es `region_bbox`: un sismo a 200 km
+    #: de Valparaíso se siente en Valparaíso, así que el recorte útil para sismos
+    #: es más ancho que el de incendios. Se filtra en el cliente porque el feed
+    #: resumen es global y no admite parámetros de consulta.
+    USGS_WEST: float = -73.0
+    USGS_SOUTH: float = -35.0
+    USGS_EAST: float = -69.0
+    USGS_NORTH: float = -31.0
+    #: Magnitud mínima a ingerir, sobre la que ya trae el feed. 0.0 = todo lo que
+    #: llegue. Subirlo filtra micro-sismicidad sin cambiar de feed.
+    USGS_MIN_MAGNITUDE: float = Field(default=0.0, ge=0.0, le=10.0)
+    #: Tipos de evento del catálogo a conservar. El feed incluye explosiones de
+    #: cantera y eventos de hielo bajo el mismo esquema; ingerirlos como sismos
+    #: sería un error de dominio, no de mapeo.
+    USGS_EVENT_TYPES: CsvList = Field(default_factory=lambda: ["earthquake"])
+    #: Ingerir también las soluciones automáticas (`status = automatic`), que se
+    #: revisan y corrigen horas después. Conviene dejarlo en True: el upsert por
+    #: `external_id` actualiza la fila cuando llega la solución revisada, y para
+    #: una app de emergencias llegar tarde es peor que llegar con ±0.2 de magnitud.
+    USGS_INCLUDE_AUTOMATIC: bool = True
+    USGS_TIMEOUT_SECONDS: float = 30.0
+    USGS_POLL_INTERVAL_SECONDS: int = 300  # 5 min
+
     # -- Motor de correlación -------------------------------------------------
     # Todos estos valores son hipótesis de partida, no constantes físicas. Se
     # calibran contra la ventana de recolección con `/events/{id}/neighbours`.
@@ -222,6 +256,7 @@ class Settings(BaseSettings):
         "CONAF_STATES",
         "CONAF_REGIONS",
         "SENAPRED_REGIONS",
+        "USGS_EVENT_TYPES",
         mode="before",
     )
     @classmethod
@@ -239,6 +274,17 @@ class Settings(BaseSettings):
             south=self.REGION_SOUTH,
             east=self.REGION_EAST,
             north=self.REGION_NORTH,
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def usgs_bbox(self) -> BoundingBox:
+        """Zona central de Chile para el recorte de sismos. Ver `USGS_WEST`."""
+        return BoundingBox(
+            west=self.USGS_WEST,
+            south=self.USGS_SOUTH,
+            east=self.USGS_EAST,
+            north=self.USGS_NORTH,
         )
 
     def _rewrite_dsn(self, scheme: str, *, keep_query: bool) -> str | None:

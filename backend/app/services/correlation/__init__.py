@@ -17,9 +17,15 @@ fixtures reales, en segundos, sin levantar nada.
 """
 
 from app.services.correlation.confidence import (
+    CONFIRMED_THRESHOLD,
+    LEVEL_STYLES,
+    POLICY_VERSION,
+    UNSAFE_THRESHOLD,
+    ConfidenceLevel,
     ConfidenceResult,
     SignalView,
     build_title,
+    level_for,
     resolve_status,
     resolve_type,
     score,
@@ -27,11 +33,17 @@ from app.services.correlation.confidence import (
 from app.services.correlation.engine import CorrelationEngine, CorrelationPass
 
 __all__ = [
+    "CONFIRMED_THRESHOLD",
+    "LEVEL_STYLES",
+    "POLICY_VERSION",
+    "UNSAFE_THRESHOLD",
+    "ConfidenceLevel",
     "ConfidenceResult",
     "CorrelationEngine",
     "CorrelationPass",
     "SignalView",
     "build_title",
+    "level_for",
     "resolve_status",
     "resolve_type",
     "score",

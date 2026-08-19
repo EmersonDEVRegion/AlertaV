@@ -27,6 +27,8 @@ from app.collectors.conaf.collector import ConafCollector, ConafMapping
 from app.collectors.geoservices import GeoFeature
 from app.collectors.senapred.client import SenapredClient
 from app.collectors.senapred.collector import SenapredCollector, SenapredMapping
+from app.collectors.usgs.client import UsgsClient
+from app.collectors.usgs.collector import UsgsCollector, UsgsMapping
 from app.core.config import settings
 from app.core.exceptions import AlertaVError
 from app.core.logging import configure_logging
@@ -134,20 +136,68 @@ async def revisar_senapred(limite: int) -> bool:
     return not faltantes
 
 
+async def revisar_usgs(limite: int) -> bool:
+    _titulo("USGS — sismos en tiempo real")
+    collector = UsgsCollector.__new__(UsgsCollector)
+    collector._mapping = UsgsMapping.from_settings()
+
+    try:
+        collector.client = UsgsClient()
+        registros = await collector.fetch()
+    except AlertaVError as exc:
+        print(f"  FALLO: {exc.message}")
+        if exc.detail:
+            print(f"  detalle: {exc.detail}")
+        return False
+
+    eventos = collector.normalize(registros)
+    bbox = collector.mapping.bbox
+
+    print(f"  fuentes        : {[spec.label for spec in collector.client.sources]}")
+    print(f"  sismos mundo   : {len(registros)}")
+    print(
+        f"  caja zona centr: lat [{bbox.south}, {bbox.north}] "
+        f"lon [{bbox.west}, {bbox.east}]"
+    )
+    print(f"  eventos en caja: {len(eventos)}")
+    for advertencia in collector.warnings:
+        print(f"  advertencia    : {advertencia}")
+
+    # El feed es global y la caja chilena filtra casi todo. Mostrar los mayores
+    # del planeta sirve para distinguir "no hubo sismos en Chile" —que es lo
+    # habitual— de "el feed vino vacío", que es un problema.
+    print("  mayores del planeta en la ventana:")
+    for registro in sorted(
+        registros, key=lambda r: (r.magnitude or -99), reverse=True
+    )[:5]:
+        magnitud = "  ?" if registro.magnitude is None else f"{registro.magnitude:4.1f}"
+        profundidad = "?" if registro.depth_km is None else f"{registro.depth_km:5.1f}"
+        print(
+            f"    M{magnitud}  prof {profundidad} km  "
+            f"({registro.lat:8.3f}, {registro.lon:9.3f})  {registro.place or ''}"
+        )
+    _mostrar(eventos, limite)
+    return True
+
+
 async def _main() -> int:
     parser = argparse.ArgumentParser(description="Chequeo en vivo de las fuentes")
-    parser.add_argument("--collector", choices=("conaf", "senapred"), action="append")
+    parser.add_argument(
+        "--collector", choices=("conaf", "senapred", "usgs"), action="append"
+    )
     parser.add_argument("--sample", type=int, default=3, help="Eventos a mostrar.")
     args = parser.parse_args()
 
     configure_logging()
-    seleccion = args.collector or ["conaf", "senapred"]
+    seleccion = args.collector or ["conaf", "senapred", "usgs"]
     resultados = []
 
     if "conaf" in seleccion:
         resultados.append(await revisar_conaf(args.sample))
     if "senapred" in seleccion:
         resultados.append(await revisar_senapred(args.sample))
+    if "usgs" in seleccion:
+        resultados.append(await revisar_usgs(args.sample))
 
     print()
     return 0 if all(resultados) else 1

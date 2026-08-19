@@ -96,6 +96,24 @@ class BaseCollector(abc.ABC):
         puede testear el mapeo con fixtures reales sin levantar nada.
         """
 
+    async def after_ingest(self, events: Sequence[EventCreate]) -> None:
+        """Persistencia complementaria de la fuente. No-op por defecto.
+
+        Existe para las fuentes que tienen campos propios que no caben en el
+        esquema común de `raw_events` y merecen una tabla satélite: hoy sólo los
+        sismos del USGS, con su magnitud y su profundidad en `seismic_details`.
+
+        Va después de `ingest_batch` —no dentro— porque una tabla satélite
+        referencia `raw_events.id`, que la fila no tiene hasta estar escrita. El
+        commit del lote ya ocurrió, así que la implementación puede recuperar los
+        ids por `external_id` y colgar de ahí lo suyo.
+
+        Se llama dentro del `try` de `run()` a propósito: si esto falla, la
+        corrida queda `failed` y visible en `collector_runs`. Guardar la señal y
+        perder su detalle en silencio sería el peor de los dos resultados.
+        """
+        return None
+
     def run_params(self) -> dict[str, Any]:
         """Parámetros de la corrida, guardados en `collector_runs.params`."""
         return {}
@@ -119,6 +137,7 @@ class BaseCollector(abc.ABC):
                 ingest = await self.service.ingest_batch(events)
                 result.inserted = ingest.inserted
                 result.duplicated = ingest.duplicated
+                await self.after_ingest(events)
 
             # Se descartaron filas: la corrida se completó pero no íntegramente.
             # Queda registrado para poder distinguir después, al analizar la

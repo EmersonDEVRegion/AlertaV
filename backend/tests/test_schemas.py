@@ -1,14 +1,16 @@
-"""Tests de la capa de validación de ingesta."""
+"""Tests de la capa de validación de ingesta y del contrato de salida."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
 
-from app.models.enums import EventSource, EventType
+from app.models.enums import ConfidenceLevel, EventSource, EventType
 from app.schemas.event import CitizenReportCreate, EventBatchCreate, EventCreate
+from app.schemas.incident import IncidentRead
 
 
 def _now() -> datetime:
@@ -185,3 +187,72 @@ class TestBatch:
             ]
         )
         assert len(batch.events) == 1
+
+
+def _incident(confidence: float, *, confirmed: bool = False) -> IncidentRead:
+    now = _now()
+    return IncidentRead.model_validate(
+        {
+            "code": "INC-2026-00001",
+            "public_id": uuid4(),
+            "type": "possible_fire",
+            "status": "active",
+            "lat": -33.0,
+            "lon": -71.5,
+            "confidence": confidence,
+            "is_official_confirmed": confirmed,
+            "alert_confidence": 0.0,
+            "event_count": 1,
+            "source_count": 1,
+            "sources": ["nasa_firms"],
+            "first_seen_at": now,
+            "last_seen_at": now,
+            "correlated_at": now,
+        }
+    )
+
+
+class TestTramoDeConfianzaEnLaSalida:
+    """`confidence_level` es lo que la PWA usa para elegir el color."""
+
+    def test_viaja_en_el_payload_serializado(self) -> None:
+        payload = _incident(0.40).model_dump(mode="json")
+        assert payload["confidence_level"] == "possible"
+
+    def test_esta_declarado_en_el_esquema_de_respuesta(self) -> None:
+        """Si no aparece acá, no aparece en el OpenAPI y el cliente no puede
+        tipar contra él."""
+        schema = IncidentRead.model_json_schema(mode="serialization")
+        assert "confidence_level" in schema["properties"]
+        assert schema["$defs"]["ConfidenceLevel"]["enum"] == [
+            "unsafe",
+            "possible",
+            "confirmed",
+        ]
+
+    @pytest.mark.parametrize(
+        ("confidence", "esperado"),
+        [
+            (0.0, ConfidenceLevel.UNSAFE),
+            (0.29, ConfidenceLevel.UNSAFE),
+            (0.30, ConfidenceLevel.POSSIBLE),
+            (0.60, ConfidenceLevel.POSSIBLE),
+            (0.61, ConfidenceLevel.CONFIRMED),
+            (1.0, ConfidenceLevel.CONFIRMED),
+        ],
+    )
+    def test_respeta_los_cortes_30_y_60(
+        self, confidence: float, esperado: ConfidenceLevel
+    ) -> None:
+        assert _incident(confidence).confidence_level is esperado
+
+    def test_no_se_deja_arrastrar_por_la_confirmacion_institucional(self) -> None:
+        """Los dos ejes son independientes en ambas direcciones.
+
+        Un incidente puede estar `confirmed` por acumulación sin que nadie haya
+        ido al lugar; el booleano institucional es el que autoriza a decir
+        "CONAF lo confirmó", y no se deduce del tramo.
+        """
+        acumulado = _incident(0.80, confirmed=False)
+        assert acumulado.confidence_level is ConfidenceLevel.CONFIRMED
+        assert acumulado.is_official_confirmed is False

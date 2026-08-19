@@ -20,6 +20,7 @@ export const EVENT_SOURCES = [
   'social_media',
   'weather',
   'camera',
+  'usgs',
   'other',
 ] as const
 export type EventSource = (typeof EVENT_SOURCES)[number]
@@ -58,6 +59,29 @@ export const INCIDENT_STATUSES = [
   'dismissed',
 ] as const
 export type IncidentStatus = (typeof INCIDENT_STATUSES)[number]
+
+/**
+ * `ConfidenceLevel` — tramo operativo que decide el color del mapa (política v2.0.0).
+ *
+ * **No es `is_official_confirmed`.** `confirmed` acá significa "la evidencia
+ * acumulada supera el 60 %", que es un juicio del motor de correlación.
+ * `is_official_confirmed` significa "CONAF o Bomberos fueron al lugar", que es un
+ * hecho institucional. Un racimo de despachos radiales llega a `confirmed` con
+ * `is_official_confirmed = false`, y la UI tiene que dejar ver la diferencia.
+ */
+export const CONFIDENCE_LEVELS = ['unsafe', 'possible', 'confirmed'] as const
+export type ConfidenceLevel = (typeof CONFIDENCE_LEVELS)[number]
+
+/**
+ * Cortes de los tramos. Espejo de `UNSAFE_THRESHOLD` / `CONFIRMED_THRESHOLD` en
+ * `backend/app/models/enums.py`.
+ *
+ * El backend es la autoridad: el cliente sólo recalcula el tramo cuando la
+ * respuesta no trae `confidence_level` (por ejemplo, una respuesta vieja
+ * servida desde la caché del service worker).
+ */
+export const UNSAFE_THRESHOLD = 0.3
+export const CONFIRMED_THRESHOLD = 0.6
 
 export type AlertLevel = 'roja' | 'amarilla' | 'temprana_preventiva' | 'verde'
 
@@ -127,6 +151,11 @@ export interface Incident {
   confidence_breakdown: ConfidenceBreakdown
 
   // Campos calculados por el backend (`computed_field`).
+  /**
+   * Tramo operativo derivado de `confidence`, no de `is_official_confirmed`.
+   * Es lo que decide el color del pin.
+   */
+  confidence_level: ConfidenceLevel
   confidence_label: ConfidenceLabel
   is_multi_source: boolean
 }

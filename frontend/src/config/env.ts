@@ -130,6 +130,11 @@ export const env = {
    * que eso gasta batería del teléfono sin traer datos nuevos.
    */
   pollIntervalMs: num(import.meta.env.VITE_POLL_INTERVAL_MS, 60_000),
+  /**
+   * Cadencia de los sismos. Más lenta: el collector del USGS corre cada 5 min y
+   * un sismo no cambia de estado una vez ocurrido.
+   */
+  seismicPollIntervalMs: num(import.meta.env.VITE_SEISMIC_POLL_INTERVAL_MS, 180_000),
   /** A partir de aquí la UI avisa que el dato puede no describir el presente. */
   staleAfterMs: num(import.meta.env.VITE_STALE_AFTER_MS, 180_000),
   mapStyle: url(

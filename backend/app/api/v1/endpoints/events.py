@@ -12,7 +12,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.api.deps import IngestServiceDep
+from app.api.deps import IngestServiceDep, SeismicServiceDep
 from app.api.v1.params import parse_bbox
 from app.models.enums import EventSource, EventType
 from app.schemas.event import (
@@ -24,6 +24,7 @@ from app.schemas.event import (
     GeoJSONFeatureCollection,
     IngestResult,
 )
+from app.schemas.seismic import SeismicEventRead, SeismicStats
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -169,6 +170,101 @@ async def event_neighbours(
         exclude_id=event.id,
     )
     return [EventRead.model_validate(item) for item in neighbours]
+
+
+# -- Sismos (USGS) -----------------------------------------------------------
+#
+# Un sismo es una señal como cualquier otra y vive en `raw_events`, pero tiene
+# dos dimensiones que ninguna otra fuente tiene —magnitud y profundidad— y que
+# viven en la tabla satélite `seismic_details`. Estas rutas son el JOIN de las
+# dos, y existen aparte de `/events` genérico por dos motivos:
+#
+#   * el mapa las consume como una capa independiente, con su propia cadencia;
+#   * el JOIN no tiene por qué pesar en cada consulta de incendios.
+#
+# IMPORTANTE: van declaradas antes de `/{public_id}`. FastAPI resuelve por orden
+# de registro y, puestas después, "seismic" entraría por la ruta del detalle y
+# fallaría al parsearlo como UUID.
+
+
+@router.get(
+    "/seismic",
+    response_model=list[SeismicEventRead],
+    summary="Sismos recientes con su detalle sismológico",
+    description=(
+        "Sismos del USGS con magnitud y profundidad. **Un sismo no es un "
+        "incidente**: no pasa por el motor de correlación, no tiene `confidence` "
+        "y no implica que haya un siniestro en el epicentro. Es contexto, y "
+        "causa posible de incendios, derrumbes o tsunami.\n\n"
+        "El recorte geográfico es el de `usgs_bbox`, más ancho que la Región de "
+        "Valparaíso: un sismo a 200 km se siente igual."
+    ),
+)
+async def list_seismic_events(
+    service: SeismicServiceDep,
+    hours: Annotated[
+        int, Query(ge=1, le=720, description="Ventana hacia atrás.")
+    ] = 72,
+    min_magnitude: Annotated[float | None, Query(ge=-2.0, le=10.5)] = None,
+    max_depth_km: Annotated[float | None, Query(ge=-15.0, le=800.0)] = None,
+    tsunami_only: Annotated[
+        bool,
+        Query(
+            description=(
+                "Sólo los marcados por el USGS para evaluación de tsunami. NO "
+                "equivale a una alerta vigente en Chile: eso lo declara SENAPRED."
+            )
+        ),
+    ] = False,
+    limit: Annotated[int, Query(ge=1, le=2000)] = 500,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[SeismicEventRead]:
+    return await service.list_recent(
+        hours=hours,
+        min_magnitude=min_magnitude,
+        max_depth_km=max_depth_km,
+        tsunami_only=tsunami_only,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/seismic/geojson",
+    response_model=GeoJSONFeatureCollection,
+    summary="Sismos como GeoJSON",
+    description=(
+        "Mismo conjunto que `/events/seismic`, en el formato que MapLibre GL JS "
+        "consume directamente. `magnitude` puede venir en `null` cuando el USGS "
+        "publicó una solución preliminar; la capa del mapa tiene que preverlo."
+    ),
+)
+async def seismic_geojson(
+    service: SeismicServiceDep,
+    hours: Annotated[int, Query(ge=1, le=720)] = 72,
+    min_magnitude: Annotated[float | None, Query(ge=-2.0, le=10.5)] = None,
+    max_depth_km: Annotated[float | None, Query(ge=-15.0, le=800.0)] = None,
+    limit: Annotated[int, Query(ge=1, le=2000)] = 500,
+) -> GeoJSONFeatureCollection:
+    events = await service.list_recent(
+        hours=hours,
+        min_magnitude=min_magnitude,
+        max_depth_km=max_depth_km,
+        limit=limit,
+    )
+    return service.to_geojson(events)
+
+
+@router.get(
+    "/seismic/stats",
+    response_model=SeismicStats,
+    summary="Resumen de la ventana sísmica",
+)
+async def seismic_stats(
+    service: SeismicServiceDep,
+    hours: Annotated[int, Query(ge=1, le=720)] = 72,
+) -> SeismicStats:
+    return service.stats(await service.list_recent(hours=hours, limit=2000))
 
 
 @router.get("/{public_id}", response_model=EventRead, summary="Detalle de un evento")

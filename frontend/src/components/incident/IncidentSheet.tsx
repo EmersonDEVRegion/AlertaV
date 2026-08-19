@@ -1,7 +1,13 @@
 import { useEffect } from 'react'
 import type { Incident } from '@/api/types'
 import { LINK_METHOD_LABEL, STATUS_LABEL, TYPE_LABEL, sourceLabel } from '@/domain/labels'
-import { PHENOMENON, phenomenonKey } from '@/domain/symbology'
+import {
+  LEVEL,
+  MUTED_LEVEL,
+  isClosed,
+  levelOf,
+  needsVerificationCaveat,
+} from '@/domain/symbology'
 import { useIncidentDetail } from '@/hooks/useIncidentDetail'
 import { formatDateTime, formatDistance, formatRelative } from '@/lib/format'
 import { AlertBadge } from './AlertBadge'
@@ -35,7 +41,12 @@ export function IncidentSheet({ incident, onClose }: IncidentSheetProps) {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const phenomenon = PHENOMENON[phenomenonKey(incident)]
+  const level = levelOf(incident)
+  const style = LEVEL[level]
+  const closed = isClosed(incident.status)
+  // El color de la ficha sigue exactamente al del pin, atenuado incluido.
+  const levelColor = closed ? MUTED_LEVEL[level] : style.color
+  const unverified = needsVerificationCaveat(incident)
   const events = detail?.events ?? []
 
   return (
@@ -56,7 +67,7 @@ export function IncidentSheet({ incident, onClose }: IncidentSheetProps) {
         <span
           aria-hidden
           className="mt-1 size-3.5 shrink-0 rounded-full ring-2 ring-white"
-          style={{ backgroundColor: phenomenon.color }}
+          style={{ backgroundColor: levelColor }}
         />
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-base font-bold text-slate-900">
@@ -84,10 +95,15 @@ export function IncidentSheet({ incident, onClose }: IncidentSheetProps) {
       <div className="flex-1 overflow-y-auto overscroll-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
         <div className="flex flex-wrap items-center gap-2">
           <span
-            className={`rounded-full px-2.5 py-1 text-xs font-semibold ${phenomenon.chip}`}
+            className={`rounded-full px-2.5 py-1 text-xs font-semibold ${style.chip}`}
           >
-            {phenomenon.label}
+            {style.label}
           </span>
+          {closed && (
+            <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700">
+              {STATUS_LABEL[incident.status]}
+            </span>
+          )}
           <AlertBadge level={incident.alert_level} />
           {incident.is_multi_source && (
             <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200">
@@ -95,6 +111,14 @@ export function IncidentSheet({ incident, onClose }: IncidentSheetProps) {
             </span>
           )}
         </div>
+
+        {unverified && (
+          <p className="mt-3 rounded-lg bg-amber-50 px-2.5 py-2 text-[11px] leading-snug text-amber-900 ring-1 ring-amber-200">
+            <strong>Nivel confirmado por acumulación de evidencia.</strong> Ninguna
+            fuente lo verificó en terreno: ni CONAF ni Bomberos han reportado
+            haber llegado al lugar.
+          </p>
+        )}
 
         {(incident.commune || incident.province) && (
           <p className="mt-3 text-sm text-slate-700">
@@ -107,12 +131,12 @@ export function IncidentSheet({ incident, onClose }: IncidentSheetProps) {
           <ConfidenceBar
             label="Confianza del hecho"
             value={incident.confidence}
-            color={phenomenon.color}
-            emphasis={incident.confidence_label}
+            color={levelColor}
+            emphasis={`${style.label} · ${style.range}`}
             caption={
               incident.is_official_confirmed
                 ? 'CONAF o Bomberos confirmaron el hecho en terreno.'
-                : 'Cuán probable es que el fenómeno sea real, según las señales recibidas. Nadie lo ha confirmado en terreno.'
+                : `${style.meaning} Ninguna fuente lo verificó en terreno.`
             }
           />
           <ConfidenceBar

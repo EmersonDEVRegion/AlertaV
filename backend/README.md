@@ -289,6 +289,9 @@ publicar una alerta oficial — hay un test que lo comprueba.
 | GET | `/api/v1/events/geojson` | FeatureCollection para MapLibre GL JS |
 | GET | `/api/v1/events/stats` | Resumen de la ventana de recolección |
 | GET | `/api/v1/events/{public_id}/neighbours` | Señales cercanas en espacio y tiempo |
+| GET | `/api/v1/events/seismic` | **Sismos del USGS** con magnitud y profundidad (JOIN con `seismic_details`) |
+| GET | `/api/v1/events/seismic/geojson` | Los mismos, como FeatureCollection para la capa sísmica |
+| GET | `/api/v1/events/seismic/stats` | Resumen de la ventana sísmica |
 | GET | `/api/v1/incidents/active` | **Incidentes consolidados para el mapa** |
 | GET | `/api/v1/incidents/geojson` | Los mismos, como FeatureCollection |
 | GET | `/api/v1/incidents/stats` | Resumen de la correlación |
@@ -298,6 +301,18 @@ publicar una alerta oficial — hay un test que lo comprueba.
 | POST | `/api/v1/collectors/{name}/run` | Disparo manual |
 | GET | `/api/v1/collectors/runs` | Historial de ejecuciones |
 | GET | `/api/v1/health/ready` | Readiness (verifica PostGIS, 503 si falta) |
+
+Las rutas `/events/seismic*` van declaradas **antes** de `/events/{public_id}`:
+FastAPI resuelve por orden de registro y, puestas después, "seismic" entraría
+por la ruta del detalle y fallaría al parsearlo como UUID. Hay un test que lo
+fija (`tests/test_seismic_endpoint.py::TestSeismicRouting`).
+
+Su recorte geográfico es `usgs_bbox`, no `region_bbox`. La diferencia es
+deliberada: un sismo a 200 km de Valparaíso se siente en Valparaíso, así que
+aplicarle el recorte pensado para incendios puntuales borraría del mapa justo
+los eventos que explican por qué tembló. Y `magnitude` puede venir en `null`
+—el USGS publica la detección antes de terminar de calcularla—, así que ningún
+consumidor puede asumir que siempre hay un número.
 
 `/events` expone **señales**; `/incidents` expone **hechos**. La PWA consume la
 segunda; la primera queda para calibrar, auditar y depurar.
@@ -311,6 +326,7 @@ Un incidente de `/incidents/active` se ve así:
   "status": "active",
   "lat": -33.02771, "lon": -71.52043,
   "confidence": 1.0,
+  "confidence_level": "confirmed",
   "confidence_label": "confirmado",
   "is_official_confirmed": true,
   "alert_level": "roja",
@@ -321,14 +337,19 @@ Un incidente de `/incidents/active` se ve así:
   "sources": ["citizen", "conaf", "nasa_firms", "senapred"],
   "is_multi_source": true,
   "confidence_breakdown": {
-    "policy_version": "1.0.0",
+    "policy_version": "2.0.0",
     "by_source": {
       "conaf":      {"signals": 1, "contribution": 1.0,  "ceiling": 1.0,  "confirming": true},
-      "nasa_firms": {"signals": 4, "contribution": 0.75, "ceiling": 0.75, "confirming": false},
-      "citizen":    {"signals": 1, "contribution": 0.5,  "ceiling": 0.8,  "confirming": false},
+      "nasa_firms": {"signals": 4, "contribution": 0.55, "ceiling": 0.55, "confirming": false},
+      "citizen":    {"signals": 1, "contribution": 0.4,  "ceiling": 0.75, "confirming": false},
       "senapred":   {"signals": 1, "contribution": 0.85, "ceiling": 0.85, "confirming": false}
     },
+    "combined": 1.0,
+    "combination": "additive_capped",
     "ceiling_applied": "confirming_source",
+    "level": "confirmed",
+    "level_label": "Incendio confirmado",
+    "thresholds": {"unsafe_below": 0.3, "confirmed_above": 0.6},
     "alert": {"level": "roja", "confidence": 1.0}
   }
 }
@@ -561,28 +582,59 @@ permitirse.
 
 Las reglas, en el orden en que mandan:
 
+Política **v2.0.0** (recalibrada con datos geoespaciales reales).
+
 | Fuente | Aporte | Techo propio | ¿Confirma? |
 |---|---|---|---|
 | CONAF, Bomberos | 1.00 | 1.00 | **Sí** |
 | SENAPRED | 0.85 | 0.85 | No (pero `alert_confidence = 1.0`) |
-| Municipalidad | 0.60–0.80 | 0.85 | No |
+| Broadcastify (despacho) | **0.80** | 0.90 | No |
+| Municipalidad (despacho) | **0.80** | 0.90 | No |
+| Municipalidad (otro) | 0.60–0.80 | 0.90 | No |
 | Medios | 0.40–0.60 | 0.75 | No |
-| Broadcastify | 0.40–0.60 | 0.80 | No |
-| NASA FIRMS | 0.30–0.60 | **0.75** | No |
-| Ciudadanos | **0.40–0.60** | 0.80 | No |
+| NASA FIRMS | **0.40 fijo** | **0.55** | No |
 | Cámaras | 0.35–0.55 | 0.70 | No |
-| Redes sociales | 0.25–0.45 | 0.65 | No |
-| Clima | 0.00 | 0.00 | No |
+| Ciudadanos | **0.25–0.40** | 0.75 | No |
+| Redes sociales | 0.20–0.35 | 0.55 | No |
+| Clima, USGS | 0.00 | 0.00 | No |
 
 Y un techo global: **sin fuente confirmatoria, ninguna combinación pasa de 0.95.**
+
+**Tramos de estado.** `confidence_level` sale de dos cortes y de nada más:
+
+| Confianza | `confidence_level` | Etiqueta | Color |
+|---|---|---|---|
+| < 0.30 | `unsafe` | Baja confianza | `#dc2626` rojo de *advertencia* |
+| 0.30 – 0.60 | `possible` | Posible emergencia | `#eab308` amarillo |
+| > 0.60 | `confirmed` | Incendio confirmado | `#ea580c` naranja |
+
+`confirmed` es un juicio del motor sobre la evidencia acumulada.
+`is_official_confirmed` es un hecho institucional: CONAF o Bomberos fueron al
+lugar. **No son lo mismo y la UI no debe colapsarlos**: un racimo de despachos
+radiales llega a `confirmed` con `is_official_confirmed = False`.
 
 **Cómo se combinan.** Dentro de una misma fuente las señales son *parcialmente
 redundantes* —cuatro píxeles de la misma pasada de VIIRS son casi una sola
 observación, y tres vecinos del mismo cerro miran el mismo humo—, así que el
-aporte de la señal `k`-ésima se descuenta por `decay^k`. Entre fuentes distintas
-sí hay independencia, y se combinan con *noisy-OR*: `1 - Π(1 - wᵢ)`. Dos indicios
-mediocres de origen distinto valen más que cuatro del mismo origen, que es
-exactamente lo que uno querría que dijera el número.
+aporte de la señal `k`-ésima se descuenta por `decay^k` y el total se recorta en
+el techo de la fuente. Entre fuentes distintas hay independencia, y desde la
+v2.0.0 los aportes se **suman**, saturando en 1.0: `min(Σ wᵢ, 1.0)`. Si el
+satélite pone 40 % y un vecino pone 25 %, el incidente vale 65 %, y esa cuenta se
+puede rehacer a mano leyendo `by_source` en el breakdown.
+
+La v1.0.0 usaba *noisy-OR* (`1 - Π(1 - wᵢ)`), que para ese mismo caso daba 55 %:
+más conservador, pero un número que nadie puede reconstruir mentalmente en una
+sala de operaciones. El riesgo de sumar —que satura rápido— se contiene con
+pesos base bajos, techo por fuente y el techo global de 0.95.
+
+*Por qué FIRMS bajó a 0.40 con techo 0.55.* Es el cambio central de la v2.
+FIRMS detecta **anomalías térmicas**, y en la V Región eso incluye las chimeneas
+de Ventanas, quemas agrícolas autorizadas y hornos de ladrillo. La banda está
+colapsada a un valor fijo a propósito: la confianza que trae el píxel mide la
+certeza del algoritmo sobre la anomalía, no la probabilidad de que la anomalía
+sea un incendio. Una lectura excelente de una chimenea sigue siendo una
+chimenea. Con techo `0.55 < 0.60`, **ningún racimo puramente satelital, por
+grande que sea, se rotula "incendio confirmado"**.
 
 **Las tres reglas que valía la pena escribir con cuidado:**
 

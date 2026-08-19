@@ -31,4 +31,9 @@ export const queryKeys = {
     detail: (code: string) => ['incidents', 'detail', code] as const,
     stats: (hours?: number) => ['incidents', 'stats', hours ?? null] as const,
   },
+  seismic: {
+    all: ['seismic'] as const,
+    list: (params: unknown) => ['seismic', 'list', params] as const,
+    stats: (hours?: number) => ['seismic', 'stats', hours ?? null] as const,
+  },
 } as const

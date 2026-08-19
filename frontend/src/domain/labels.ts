@@ -18,7 +18,8 @@ export const SOURCE_LABEL: Record<EventSource, string> = {
   media: 'Prensa',
   social_media: 'Redes sociales',
   weather: 'Meteorología',
-  camera: 'Camara',
+  camera: 'Cámara',
+  usgs: 'USGS (sismos)',
   other: 'Otra fuente',
 }
 

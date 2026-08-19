@@ -14,6 +14,7 @@ from app.collectors.base import BaseCollector
 from app.collectors.conaf.collector import ConafCollector
 from app.collectors.firms.collector import FirmsCollector
 from app.collectors.senapred.collector import SenapredCollector
+from app.collectors.usgs.collector import UsgsCollector
 
 CollectorFactory = Callable[[AsyncSession], BaseCollector]
 
@@ -21,6 +22,7 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     FirmsCollector.name: FirmsCollector,
     ConafCollector.name: ConafCollector,
     SenapredCollector.name: SenapredCollector,
+    UsgsCollector.name: UsgsCollector,
     # Próximos hitos:
     #   BroadcastifyCollector.name: BroadcastifyCollector,  # STT → evento
 }

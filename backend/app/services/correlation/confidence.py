@@ -11,7 +11,13 @@ Las reglas
    registro *es* la confirmación del hecho. Una sola señal suya lleva el
    incidente a 1.0.
 
-2. **SENAPRED declara la respuesta, no el fenómeno.** Su alerta es cierta al
+2. **Los despachos oficiales pesan 0.80.** Un despacho por radio —Broadcastify,
+   la central municipal— es una *persona con autoridad* diciendo que mandó
+   carros a un punto. No es todavía la constatación en terreno que hace CONAF,
+   pero está mucho más cerca de eso que de un indicio: un solo despacho basta
+   para cruzar a `confirmed`.
+
+3. **SENAPRED declara la respuesta, no el fenómeno.** Su alerta es cierta al
    100 % —el acto administrativo existe, lo firmó el organismo— y eso se refleja
    en `alert_confidence = 1.0` y en `alert_level`. Sobre el fenómeno aporta
    corroboración muy fuerte, pero **no saturante**, por dos razones concretas:
@@ -21,13 +27,18 @@ Las reglas
    Confundir ambos ejes sería declarar "aquí hay fuego, 100 % seguro" en un
    punto que ninguna fuente observó.
 
-3. **FIRMS corrobora, no confirma.** Un techo explícito (`ceiling`) impide que
-   cualquier cantidad de píxeles satelitales llegue sola a 1.0. Cruzada con otra
-   fuente sí empuja hacia arriba: para eso existe el motor.
+4. **FIRMS vale 0.40 y su techo está bajo 0.60.** Es la recalibración central de
+   esta política. NASA FIRMS detecta *anomalías térmicas*, y en la V Región eso
+   incluye chimeneas de Ventanas, quemas agrícolas autorizadas y hornos de
+   ladrillo. Un píxel satelital no confirma nada: entra en 0.40 —mitad de la
+   banda "posible emergencia"— y ninguna cantidad de píxeles lo saca de ahí,
+   porque `ceiling = 0.55 < 0.60`. Sólo el cruce con otra fuente lo escala.
 
-4. **Los reportes ciudadanos parten en la banda 0.40–0.60** y suben de forma
-   progresiva con cada reporte cercano adicional, con rendimientos decrecientes
-   y un techo por debajo de la confirmación institucional.
+5. **Los reportes ciudadanos parten en la banda 0.25–0.40.** Un reporte suelto
+   queda por debajo de 0.30, o sea en `unsafe`: se registra, pero el mapa no
+   afirma nada con él. Suben de forma progresiva con cada reporte cercano
+   adicional, con rendimientos decrecientes y un techo por debajo de la
+   confirmación institucional.
 
 Cómo se combinan
 ----------------
@@ -35,12 +46,21 @@ Cómo se combinan
 Dentro de una misma fuente las señales son **parcialmente redundantes**: cuatro
 píxeles de la misma pasada de VIIRS son casi una sola observación, y tres
 vecinos del mismo cerro miran el mismo humo. Por eso el aporte de la señal
-`k`-ésima de una fuente se descuenta por `decay^k`.
+`k`-ésima de una fuente se descuenta por `decay^k` y el total de la fuente se
+recorta en su `ceiling`.
 
-Entre fuentes distintas sí hay independencia —ahí está todo el valor de
-correlacionar— y se combinan con *noisy-OR*: ``1 - Π(1 - wᵢ)``. Dos indicios
-mediocres de origen distinto valen más que cuatro del mismo origen, que es
-exactamente lo que uno querría que dijera el número.
+Entre fuentes distintas hay independencia —ahí está todo el valor de
+correlacionar— y desde la v2.0.0 los aportes se **suman**, saturando en 1.0:
+``min(Σ wᵢ, 1.0)``. Es una lectura deliberadamente directa: si el satélite pone
+40 % y un vecino pone 25 %, el incidente vale 65 % y el operador puede rehacer
+esa cuenta de cabeza mirando `by_source` en el breakdown. La versión anterior
+usaba *noisy-OR* (``1 - Π(1 - wᵢ)``), que daba 55 % para ese mismo caso: más
+conservador, pero imposible de explicar en una sala de operaciones.
+
+El riesgo conocido de sumar es que satura rápido. Se contiene en tres puntos, no
+en la fórmula: los pesos base son bajos, cada fuente tiene `ceiling` propio, y
+`UNCONFIRMED_CEILING` impide que nada llegue a la certeza sin una fuente que
+haya ido al lugar.
 """
 
 from __future__ import annotations
@@ -53,21 +73,68 @@ from typing import Any
 
 from app.collectors.geoservices import normalise_text
 from app.models.enums import (
+    CONFIRMED_THRESHOLD,
     EVENT_TO_INCIDENT_TYPE,
+    LEVEL_STYLES,
+    UNSAFE_THRESHOLD,
+    ConfidenceLevel,
     EventSource,
     EventType,
     IncidentStatus,
     IncidentType,
+    level_for,
 )
+
+#: Los tramos y sus cortes viven en `app.models.enums` —ver el docstring de ese
+#: módulo: `app.schemas` también los necesita y no puede depender de services sin
+#: cerrar un ciclo—. Se re-exportan acá porque conceptualmente son parte de esta
+#: política: quien viene a leer cómo se calibra el motor los espera en este
+#: archivo, no en el de las enumeraciones.
+__all__ = [
+    "CONFIRMED_THRESHOLD",
+    "LEVEL_STYLES",
+    "OFFICIAL_DISPATCH_WEIGHT",
+    "POLICY_VERSION",
+    "RULES",
+    "UNCONFIRMED_CEILING",
+    "UNSAFE_THRESHOLD",
+    "ConfidenceLevel",
+    "ConfidenceResult",
+    "SignalView",
+    "SourceRule",
+    "build_title",
+    "level_for",
+    "resolve_status",
+    "resolve_type",
+    "rule_for",
+    "score",
+    "signal_weight",
+]
 
 #: Se versiona porque queda escrito en `incidents.confidence_breakdown`. Cuando
 #: la calibración cambie los pesos, los incidentes viejos siguen diciendo con qué
 #: reglas se calcularon.
-POLICY_VERSION = "1.0.0"
+#:
+#: 2.0.0 — recalibración con datos geoespaciales reales: FIRMS baja a 0.40 con
+#: techo bajo 0.60, el ciudadano baja a la banda 0.25–0.40, los despachos
+#: oficiales suben a 0.80, y la combinación entre fuentes pasa de noisy-OR a
+#: suma saturada. Es un cambio de mayor porque los números dejan de ser
+#: comparables con los de la v1: un incidente reprocesado puede cambiar de tramo.
+POLICY_VERSION = "2.0.0"
 
 #: Ninguna combinación de señales no confirmatorias alcanza la certeza. Sólo un
 #: organismo que fue al lugar puede cerrar ese último tramo.
 UNCONFIRMED_CEILING = 0.95
+
+#: Peso de un despacho oficial por radio. Es una confirmación *humana* con
+#: autoridad —alguien mandó carros— aunque todavía no sea constatación en
+#: terreno. Ver la regla 2 del docstring.
+OFFICIAL_DISPATCH_WEIGHT = 0.80
+
+#: Tipos de señal que constituyen un despacho.
+_DISPATCH_TYPES: frozenset[EventType] = frozenset(
+    {EventType.DISPATCH, EventType.RESCUE}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,30 +156,57 @@ class SourceRule:
     confirming: bool = False
     #: ¿Declara un estado de alerta oficial? Alimenta `alert_confidence`.
     declares_alert: bool = False
+    #: ¿Sus despachos son oficiales? Un `dispatch` de esta fuente pesa al menos
+    #: `OFFICIAL_DISPATCH_WEIGHT`, por encima de su banda habitual.
+    official_dispatch: bool = False
 
 
 RULES: dict[EventSource, SourceRule] = {
     # -- Confirman el hecho --------------------------------------------------
     EventSource.CONAF: SourceRule(1.0, 1.0, 1.0, 1.0, confirming=True),
-    EventSource.BOMBEROS: SourceRule(1.0, 1.0, 1.0, 1.0, confirming=True),
+    EventSource.BOMBEROS: SourceRule(
+        1.0, 1.0, 1.0, 1.0, confirming=True, official_dispatch=True
+    ),
     # -- Declara la respuesta del Estado -------------------------------------
     # Techo 0.85 sobre el fenómeno; 1.0 sobre el estado de alerta, que va aparte.
     EventSource.SENAPRED: SourceRule(0.85, 0.85, 0.5, 0.85, declares_alert=True),
+    # -- Despachos oficiales: 0.80 -------------------------------------------
+    # Un despacho basta para cruzar a `CONFIRMED` (0.80 > 0.60). Es intencional:
+    # cuando la central manda carros, ya hay una decisión humana con autoridad
+    # detrás del punto en el mapa.
+    EventSource.BROADCASTIFY: SourceRule(
+        0.60, 0.80, 0.4, 0.90, official_dispatch=True
+    ),
+    EventSource.MUNICIPALITY: SourceRule(
+        0.60, 0.80, 0.5, 0.90, official_dispatch=True
+    ),
     # -- Corroboran ----------------------------------------------------------
-    EventSource.MUNICIPALITY: SourceRule(0.60, 0.80, 0.5, 0.85),
     EventSource.MEDIA: SourceRule(0.40, 0.60, 0.5, 0.75),
-    EventSource.BROADCASTIFY: SourceRule(0.40, 0.60, 0.6, 0.80),
-    # FIRMS: por sí sola nunca da 100 %. Es la regla explícita del proyecto.
-    EventSource.NASA_FIRMS: SourceRule(0.30, 0.60, 0.5, 0.75),
+    # FIRMS: 0.40 fijo, techo 0.55. La banda se colapsa a propósito —la
+    # "confianza" que trae un píxel VIIRS mide la certeza del ALGORITMO sobre la
+    # anomalía térmica, no la probabilidad de que esa anomalía sea un incendio,
+    # que es lo único que este número debería decir. Un píxel de alta calidad
+    # sobre la fundición de Ventanas es una lectura excelente de una chimenea.
+    # El techo bajo 0.60 es la regla dura: ningún racimo puramente satelital,
+    # por grande que sea, se rotula "incendio confirmado".
+    EventSource.NASA_FIRMS: SourceRule(0.40, 0.40, 0.35, 0.55),
     EventSource.CAMERA: SourceRule(0.35, 0.55, 0.5, 0.70),
-    # Ciudadanos: banda de partida 0.40–0.60, progresivo, techo por debajo de
-    # la confirmación institucional.
-    EventSource.CITIZEN: SourceRule(0.40, 0.60, 0.6, 0.80),
-    EventSource.SOCIAL_MEDIA: SourceRule(0.25, 0.45, 0.5, 0.65),
+    # Ciudadanos: banda 0.25–0.40. Uno solo queda en `unsafe` (<0.30); con foto o
+    # verificación llega a 0.40 y entra a `possible`. Progresivo, con techo por
+    # debajo de la confirmación institucional.
+    EventSource.CITIZEN: SourceRule(0.25, 0.40, 0.45, 0.75),
+    EventSource.SOCIAL_MEDIA: SourceRule(0.20, 0.35, 0.5, 0.55),
     EventSource.OTHER: SourceRule(0.15, 0.30, 0.5, 0.45),
     # -- Contexto, no evidencia ----------------------------------------------
     # Que haya viento y 34 °C no es prueba de que algo se esté quemando.
     EventSource.WEATHER: SourceRule(0.0, 0.0, 0.0, 0.0),
+    # USGS mide un sismo con instrumentos: el hecho es cierto. Pero eso no
+    # corrobora nada sobre el incidente al que se acercara geométricamente, y un
+    # epicentro no es la ubicación de un siniestro. Hoy `earthquake` ni siquiera
+    # está en CORRELATABLE_EVENT_TYPES, así que esta regla no se ejecuta nunca:
+    # está escrita para que, si alguien decide correlacionar sismos más adelante,
+    # el peso por defecto (0.15–0.30) no le regale corroboración inventada.
+    EventSource.USGS: SourceRule(0.0, 0.0, 0.0, 0.0),
 }
 
 DEFAULT_RULE = SourceRule(0.15, 0.30, 0.5, 0.45)
@@ -183,6 +277,7 @@ class SignalView:
 @dataclass(frozen=True, slots=True)
 class ConfidenceResult:
     confidence: float
+    level: ConfidenceLevel
     is_official_confirmed: bool
     alert_confidence: float
     alert_level: str | None
@@ -194,21 +289,39 @@ def rule_for(source: EventSource) -> SourceRule:
     return RULES.get(source, DEFAULT_RULE)
 
 
-def _source_contribution(rule: SourceRule, confidences: Sequence[float]) -> float:
+def signal_weight(rule: SourceRule, signal: SignalView) -> float:
+    """Peso de UNA señal, antes de descontar redundancia.
+
+    La confianza que trae la señal desde la ingesta modula dentro de la banda de
+    su fuente; nunca la saca de ella. Un despacho oficial es la única excepción:
+    entra por `OFFICIAL_DISPATCH_WEIGHT` aunque el colector le haya puesto menos,
+    porque lo que pesa ahí no es la calidad del audio sino quién lo emitió.
+    """
+    if rule.max_weight <= 0.0:
+        return 0.0
+    bounded = min(max(float(signal.confidence), rule.min_weight), rule.max_weight)
+    if rule.official_dispatch and signal.type in _DISPATCH_TYPES:
+        return max(bounded, min(OFFICIAL_DISPATCH_WEIGHT, rule.ceiling))
+    return bounded
+
+
+def _source_contribution(rule: SourceRule, weights: Sequence[float]) -> float:
     """Aporte agregado de una fuente, con redundancia intra-fuente descontada.
 
-    Las señales se ordenan de mayor a menor confianza para que la más creíble
-    sea la que pesa sin descuento; las siguientes son, en el mejor de los casos,
-    la misma observación repetida.
+    Suma `w_k * decay^k` sobre las señales ordenadas de mayor a menor peso: la
+    más creíble pesa entera y las siguientes son, en el mejor de los casos, la
+    misma observación repetida. El total se recorta en el `ceiling` de la fuente,
+    que es lo que impide que veinte píxeles de una misma pasada de VIIRS
+    acumulen la certeza que no tiene ninguno de ellos.
     """
-    if not confidences or rule.max_weight <= 0.0:
+    if not weights or rule.max_weight <= 0.0:
         return 0.0
 
-    complement = 1.0
-    for rank, raw in enumerate(sorted(confidences, reverse=True)):
-        bounded = min(max(raw, rule.min_weight), rule.max_weight)
-        complement *= 1.0 - bounded * (rule.redundancy_decay**rank)
-    return min(1.0 - complement, rule.ceiling)
+    total = sum(
+        weight * (rule.redundancy_decay**rank)
+        for rank, weight in enumerate(sorted(weights, reverse=True))
+    )
+    return min(total, rule.ceiling)
 
 
 def score(signals: Iterable[SignalView]) -> ConfidenceResult:
@@ -218,9 +331,9 @@ def score(signals: Iterable[SignalView]) -> ConfidenceResult:
     alert_severity = -1
 
     for signal in signals:
-        grouped[signal.source].append(float(signal.confidence))
-
         rule = rule_for(signal.source)
+        grouped[signal.source].append(signal_weight(rule, signal))
+
         if rule.declares_alert and signal.type in (
             EventType.ALERT,
             EventType.EVACUATION,
@@ -231,25 +344,24 @@ def score(signals: Iterable[SignalView]) -> ConfidenceResult:
                 alert_severity, alert_level = severity, level
 
     by_source: dict[str, Any] = {}
-    contributions: list[float] = []
     confirmed = False
+    combined = 0.0
 
-    for source, confidences in grouped.items():
+    for source, weights in grouped.items():
         rule = rule_for(source)
-        contribution = _source_contribution(rule, confidences)
-        confirmed = confirmed or (rule.confirming and bool(confidences))
-        contributions.append(contribution)
+        contribution = _source_contribution(rule, weights)
+        confirmed = confirmed or (rule.confirming and bool(weights))
+        # Suma entre fuentes. Ver "Cómo se combinan" en el docstring del módulo:
+        # el operador tiene que poder rehacer esta cuenta leyendo `by_source`.
+        combined += contribution
         by_source[source.value] = {
-            "signals": len(confidences),
+            "signals": len(weights),
             "contribution": round(contribution, 4),
             "ceiling": rule.ceiling,
             "confirming": rule.confirming,
         }
 
-    complement = 1.0
-    for contribution in contributions:
-        complement *= 1.0 - contribution
-    combined = 1.0 - complement
+    combined = min(combined, 1.0)
 
     if confirmed:
         confidence, applied = 1.0, "confirming_source"
@@ -260,10 +372,13 @@ def score(signals: Iterable[SignalView]) -> ConfidenceResult:
         # `_source_contribution`: una fuente sola nunca supera su `ceiling`.
         confidence, applied = combined, None
 
+    confidence = round(confidence, 4)
     alert_confidence = 1.0 if alert_level is not None else 0.0
+    level = level_for(confidence)
 
     return ConfidenceResult(
-        confidence=round(confidence, 4),
+        confidence=confidence,
+        level=level,
         is_official_confirmed=confirmed,
         alert_confidence=alert_confidence,
         alert_level=alert_level,
@@ -274,6 +389,13 @@ def score(signals: Iterable[SignalView]) -> ConfidenceResult:
             "by_source": by_source,
             "combined": round(combined, 4),
             "ceiling_applied": applied,
+            "combination": "additive_capped",
+            "level": level.value,
+            "level_label": LEVEL_STYLES[level].label,
+            "thresholds": {
+                "unsafe_below": UNSAFE_THRESHOLD,
+                "confirmed_above": CONFIRMED_THRESHOLD,
+            },
             "alert": {"level": alert_level, "confidence": alert_confidence},
         },
     )

@@ -18,7 +18,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.enums import IncidentStatus, IncidentType
+from app.models.enums import IncidentStatus, IncidentType, level_for
 from app.models.incident import Incident
 from app.repositories.incident_repository import IncidentRepository
 from app.schemas.event import GeoJSONFeature, GeoJSONFeatureCollection
@@ -132,6 +132,10 @@ class IncidentService:
                     "confidence_label": confidence_label(
                         incident.confidence, confirmed=incident.is_official_confirmed
                     ),
+                    # Tramo operativo. Va en las propiedades para que la
+                    # expresión `match` de MapLibre lea una clave ya calculada y
+                    # no sea una segunda copia de los umbrales.
+                    "confidence_level": level_for(incident.confidence).value,
                     "is_confirmed_incident": incident.is_official_confirmed,
                     "alert_level": incident.alert_level,
                     "alert_confidence": incident.alert_confidence,

@@ -18,6 +18,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 // apuntando a una URL inexistente en produccion y el lienzo sale en blanco.
 import '@/lib/maplibreWorker'
 
+import type { SeismicEvent } from '@/api/seismicTypes'
 import type { Incident } from '@/api/types'
 import {
   INITIAL_VIEW_STATE,
@@ -26,26 +27,49 @@ import {
   REGION_BOUNDS,
 } from '@/config/map'
 import { toFeatureCollection } from '@/lib/geojson'
+import { toSeismicFeatureCollection } from '@/lib/seismicGeojson'
 import { attachMapDiagnostics } from '@/lib/mapDiagnostics'
 import {
   INCIDENT_HIT_LAYER_ID,
   INCIDENT_SOURCE_ID,
   alertHaloLayer,
+  casingLayer,
+  closedRingLayer,
   coreLayer,
   hitLayer,
   selectedLayer,
+  unverifiedLayer,
 } from './incidentLayers'
+import {
+  SEISMIC_HIT_LAYER_ID,
+  SEISMIC_SOURCE_ID,
+  seismicCoreLayer,
+  seismicHitLayer,
+  seismicRingLayer,
+  seismicSelectedLayer,
+} from './seismicLayers'
 
 interface IncidentMapProps {
   incidents: readonly Incident[]
+  seismic: readonly SeismicEvent[]
+  /** Capas encendidas desde el control de capas. */
+  showIncidents: boolean
+  showSeismic: boolean
   selectedCode: string | null
+  selectedUsgsId: string | null
   onSelect: (code: string | null) => void
+  onSelectSeismic: (usgsId: string | null) => void
 }
 
 export function IncidentMap({
   incidents,
+  seismic,
+  showIncidents,
+  showSeismic,
   selectedCode,
+  selectedUsgsId,
   onSelect,
+  onSelectSeismic,
 }: IncidentMapProps) {
   const mapRef = useRef<MapRef>(null)
   const [hovering, setHovering] = useState(false)
@@ -53,16 +77,40 @@ export function IncidentMap({
   // Se recalcula solo cuando cambia el arreglo de incidentes, no en cada
   // repintado: el polling entrega un arreglo nuevo cada minuto, no cada frame.
   const data = useMemo(() => toFeatureCollection(incidents), [incidents])
+  const seismicData = useMemo(() => toSeismicFeatureCollection(seismic), [seismic])
+
+  // Sólo las capas visibles reciben el toque. Si no se filtrara, un sismo
+  // oculto seguiría capturando el clic sobre el incidente que hay debajo.
+  const interactiveLayers = useMemo(() => {
+    const ids: string[] = []
+    if (showIncidents) ids.push(INCIDENT_HIT_LAYER_ID)
+    if (showSeismic) ids.push(SEISMIC_HIT_LAYER_ID)
+    return ids
+  }, [showIncidents, showSeismic])
 
   const handleClick = useCallback(
     (event: MapLayerMouseEvent) => {
-      const feature = event.features?.[0]
-      const code = feature?.properties?.['code']
-      if (typeof code !== 'string') {
+      // Los incidentes tienen prioridad sobre los sismos: si ambos caen bajo el
+      // dedo, gana la emergencia. El orden de `interactiveLayerIds` no lo
+      // garantiza, así que se resuelve explícitamente.
+      const features = event.features ?? []
+      const incident = features.find((f) => typeof f.properties?.['code'] === 'string')
+      const quake = features.find((f) => typeof f.properties?.['usgs_id'] === 'string')
+
+      if (!incident && quake) {
         onSelect(null)
+        onSelectSeismic(String(quake.properties!['usgs_id']))
         return
       }
 
+      const code = incident?.properties?.['code']
+      if (typeof code !== 'string') {
+        onSelect(null)
+        onSelectSeismic(null)
+        return
+      }
+
+      onSelectSeismic(null)
       onSelect(code)
 
       // La tarjeta ocupa el tercio inferior en teléfono. Centrar el incidente
@@ -77,7 +125,7 @@ export function IncidentMap({
         })
       }
     },
-    [onSelect],
+    [onSelect, onSelectSeismic],
   )
 
   /**
@@ -108,7 +156,7 @@ export function IncidentMap({
       minZoom={7}
       maxZoom={17}
       style={{ position: 'absolute', inset: 0 }}
-      interactiveLayerIds={[INCIDENT_HIT_LAYER_ID]}
+      interactiveLayerIds={interactiveLayers}
       onClick={handleClick}
       onError={handleError}
       onMouseEnter={() => setHovering(true)}
@@ -130,6 +178,17 @@ export function IncidentMap({
       />
       <ScaleControl position="bottom-left" unit="metric" />
 
+      {/* Los sismos van debajo: son contexto, no el sujeto del mapa. */}
+      {showSeismic && (
+        <Source id={SEISMIC_SOURCE_ID} type="geojson" data={seismicData}>
+          <Layer {...seismicRingLayer} />
+          <Layer {...seismicCoreLayer} />
+          <Layer {...seismicSelectedLayer(selectedUsgsId)} />
+          <Layer {...seismicHitLayer} />
+        </Source>
+      )}
+
+      {showIncidents && (
       <Source
         id={INCIDENT_SOURCE_ID}
         type="geojson"
@@ -137,10 +196,14 @@ export function IncidentMap({
         promoteId="code"
       >
         <Layer {...alertHaloLayer} />
+        <Layer {...casingLayer} />
         <Layer {...coreLayer} />
+        <Layer {...closedRingLayer} />
+        <Layer {...unverifiedLayer} />
         <Layer {...selectedLayer(selectedCode)} />
         <Layer {...hitLayer} />
       </Source>
+      )}
     </Map>
   )
 }

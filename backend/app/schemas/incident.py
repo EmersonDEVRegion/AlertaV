@@ -3,9 +3,12 @@
 Lo que sale por aquí es lo que la PWA pinta en el mapa, así que el schema está
 diseñado para que sea **difícil dibujar algo falso**:
 
-* `confidence` viaja siempre acompañada de `confidence_label` y de
-  `is_official_confirmed`. Un cliente que sólo quiera "¿lo pinto en rojo?" tiene
-  un booleano explícito y no necesita inventarse un umbral.
+* `confidence` viaja siempre acompañada de `confidence_level`, `confidence_label`
+  y `is_official_confirmed`. Un cliente que sólo quiera "¿lo pinto en rojo?"
+  tiene un enum y un booleano explícitos, y no necesita inventarse un umbral.
+  `confidence_level` sale de `models.enums`, no de este módulo: el corte que
+  decide el color del mapa y el corte que usa el motor son el mismo número o no
+  sirven.
 * `alert_level` y `alert_confidence` van separados de `confidence`. Son ejes
   distintos: uno dice cuán seguros estamos de que hay fuego, el otro qué
   declaró SENAPRED. Mezclarlos en un solo número perdería justo la distinción
@@ -23,16 +26,23 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from app.models.enums import (
+    ConfidenceLevel,
     EventSource,
     IncidentStatus,
     IncidentType,
     LinkMethod,
+    level_for,
 )
 
 Confidence = Annotated[float, Field(ge=0.0, le=1.0)]
 
-#: Cortes de la etiqueta legible. Se declaran acá, una sola vez, para que el
-#: backend y la PWA no puedan discrepar sobre qué es "probable".
+#: Cortes de la etiqueta legible, **independientes** de `ConfidenceLevel`.
+#:
+#: Conviven dos escalas a propósito y no hay que fusionarlas sin decidirlo:
+#: `confidence_label` es prosa para la tarjeta de detalle ("muy probable") y ya
+#: es contrato con la PWA (`ConfidenceLabel` en `api/types.ts`);
+#: `confidence_level` es el tramo operativo de tres estados que decide el color.
+#: Cambiar los strings de acá rompe el tipo del frontend; agregar el enum, no.
 CONFIDENCE_LABELS: tuple[tuple[float, str], ...] = (
     (0.95, "confirmado"),
     (0.75, "muy probable"),
@@ -98,6 +108,18 @@ class IncidentRead(BaseModel):
     correlated_at: datetime
 
     confidence_breakdown: dict[str, Any] = Field(default_factory=dict)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def confidence_level(self) -> ConfidenceLevel:
+        """Tramo operativo: `unsafe` (<30 %), `possible` (30–60 %), `confirmed` (>60 %).
+
+        Se deriva de `confidence` y NO de `is_official_confirmed`: son las dos
+        preguntas distintas que el sistema responde. Un incidente puede salir
+        `confirmed` por acumulación de despachos radiales con
+        `is_official_confirmed = False`, y el cliente tiene que poder distinguirlo.
+        """
+        return level_for(self.confidence)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
