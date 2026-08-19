@@ -33,6 +33,12 @@ class EventSource(str, Enum):
     WEATHER = "weather"
     CAMERA = "camera"
     USGS = "usgs"
+    #: Reportes de tránsito de la comunidad de Waze (feed CCP). Son avisos de
+    #: conductores: masivos y rápidos, pero sin verificar por nadie.
+    WAZE = "waze"
+    #: Cuenta oficial del Ministerio de Transportes. Publica en texto libre, sin
+    #: coordenadas: la georreferenciación es reconstruida, no informada.
+    TRANSPORTE_INFORMA = "transporte_informa"
     OTHER = "other"
 
 
@@ -257,10 +263,45 @@ INCIDENT_FAMILY: dict[IncidentType, str] = {
     IncidentType.STRUCTURAL_FIRE: "fire",
     IncidentType.FLOOD: "hydro",
     IncidentType.LANDSLIDE: "hydro",
-    IncidentType.ACCIDENT: "other",
+    # `traffic` es familia propia desde que existe la capa de accidentes viales.
+    # Antes compartía "other" con rescates y despachos genéricos, y eso bastaba
+    # mientras nadie reportara accidentes: hoy sería el camino por el cual un
+    # choque en la Ruta 68 termina fundido con un despacho de origen desconocido
+    # ocurrido a 800 m. Ver `FAMILY_OF_EVENT` más abajo.
+    IncidentType.ACCIDENT: "traffic",
     IncidentType.RESCUE: "other",
     IncidentType.OTHER: "other",
 }
+
+#: Familia por defecto cuando el tipo no está mapeado. Se declara como constante
+#: porque el SQL de la partición y el filtro en memoria tienen que coincidir: si
+#: uno cae en "other" y el otro en NULL, el motor agruparía distinto de lo que
+#: dice esta tabla.
+DEFAULT_FAMILY = "other"
+
+
+def family_of_incident(incident_type: IncidentType) -> str:
+    return INCIDENT_FAMILY.get(incident_type, DEFAULT_FAMILY)
+
+
+def family_of_event(event_type: EventType) -> str:
+    """Familia de fenómeno a la que pertenece una señal cruda.
+
+    Es la clave por la que el Paso A particiona antes de medir distancias. Un
+    `smoke` y un `wildfire` caen ambos en `fire` y por eso siguen corroborándose
+    —que es de lo que vive este sistema—, mientras que un `accident` cae en
+    `traffic` y no puede fundirse con ninguno de los dos por más que compartan
+    coordenada y minuto.
+
+    Los tipos que no producen incidente (`alert`, `evacuation`, `earthquake`,
+    `weather_observation`) no llegan nunca acá: quedan fuera de
+    `CORRELATABLE_EVENT_TYPES`. Si alguno llegara, cae en la familia por defecto
+    en vez de reventar.
+    """
+    incident_type = EVENT_TO_INCIDENT_TYPE.get(event_type)
+    if incident_type is None:
+        return DEFAULT_FAMILY
+    return family_of_incident(incident_type)
 
 
 #: Confianza base por fuente. Espejo de `alertav.source_confidence`; sirve como
@@ -281,6 +322,15 @@ SOURCE_BASE_CONFIDENCE: dict[EventSource, float] = {
     EventSource.CITIZEN: 0.50,
     EventSource.CAMERA: 0.50,
     EventSource.SOCIAL_MEDIA: 0.45,
+    # Organismo del Estado informando por su canal oficial. No va al lugar a
+    # constatar —por eso no llega a 1.0 como Bomberos o CONAF— pero lo que
+    # publica es institucional.
+    EventSource.TRANSPORTE_INFORMA: 0.80,
+    # Reporte de un conductor sin verificar. Vale más que una red social genérica
+    # porque el aviso es contemporáneo y georreferenciado por el propio GPS del
+    # teléfono, y menos que un ciudadano que llama a reportar: en Waze basta
+    # pulsar un botón, y los falsos positivos por congestión son habituales.
+    EventSource.WAZE: 0.40,
     EventSource.OTHER: 0.30,
     EventSource.WEATHER: 0.10,
 }

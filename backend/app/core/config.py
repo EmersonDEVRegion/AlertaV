@@ -209,6 +209,60 @@ class Settings(BaseSettings):
     USGS_TIMEOUT_SECONDS: float = 30.0
     USGS_POLL_INTERVAL_SECONDS: int = 300  # 5 min
 
+    # -- Accidentes viales: Waze ---------------------------------------------
+    # Feed del Waze for Cities / CCP. Es un endpoint privado que Waze entrega a
+    # cada municipio o gobierno con convenio: NO hay una URL pública que sirva
+    # para todos, y por eso no hay valor por defecto. Vacío = collector apagado.
+    WAZE_FEED_URL: str = ""
+    #: Tipos de alerta a conservar. El feed trae ACCIDENT, JAM, ROAD_CLOSED,
+    #: WEATHERHAZARD, HAZARD y POLICE; sólo el primero es un siniestro.
+    WAZE_ALERT_TYPES: CsvList = Field(default_factory=lambda: ["ACCIDENT"])
+    WAZE_TIMEOUT_SECONDS: float = 30.0
+    WAZE_POLL_INTERVAL_SECONDS: int = 300  # 5 min
+    #: Antigüedad máxima de un reporte. Waze mantiene alertas vivas mientras los
+    #: conductores las confirmen; una de hace seis horas ya no describe el
+    #: presente del tránsito.
+    WAZE_MAX_AGE_MINUTES: int = Field(default=120, ge=5, le=1440)
+
+    # -- Accidentes viales: despachos de Bomberos ----------------------------
+    #: Portal de despachos a raspar. Sin valor por defecto por la misma razón que
+    #: Waze: cada Cuerpo de Bomberos publica en su propio sitio, y adivinar uno
+    #: sería recolectar de una fuente que nadie verificó. Vacío = apagado.
+    BOMBEROS_DISPATCH_URL: str = ""
+    #: Claves radiales que denotan rescate vehicular. La 10-4 es la del Sistema
+    #: Nacional de Claves; se dejan configurables porque varias regiones usan
+    #: variantes propias.
+    BOMBEROS_ACCIDENT_KEYS: CsvList = Field(default_factory=lambda: ["10-4"])
+    BOMBEROS_TIMEOUT_SECONDS: float = 30.0
+    BOMBEROS_POLL_INTERVAL_SECONDS: int = 180  # 3 min
+
+    # -- Accidentes viales: Transporte Informa -------------------------------
+    #: Fuente de avisos en texto libre del MTT. Vacío = apagado.
+    TRANSPORTE_INFORMA_URL: str = ""
+    TRANSPORTE_INFORMA_TIMEOUT_SECONDS: float = 30.0
+    TRANSPORTE_INFORMA_POLL_INTERVAL_SECONDS: int = 600  # 10 min
+    #: Tope de geocodificaciones por corrida. A 1 s por llamada (ver
+    #: NOMINATIM_MIN_INTERVAL_SECONDS), 20 avisos son 20 segundos de corrida.
+    #: Sin tope, un día de temporal con 300 avisos dejaría al worker cinco
+    #: minutos colgado del rate limit ajeno.
+    TRANSPORTE_INFORMA_MAX_GEOCODES: int = Field(default=20, ge=1, le=200)
+
+    # -- Nominatim (OpenStreetMap) -------------------------------------------
+    NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
+    #: Intervalo MÍNIMO entre llamadas, en segundos. La política de uso de
+    #: Nominatim exige un máximo de 1 req/s **por IP**, y el castigo por
+    #: excederlo es el bloqueo de la IP, no un 429. Como todo el backend sale por
+    #: una sola IP, el limitador es global al proceso: ver
+    #: `app.collectors.nominatim.RateLimiter`. No bajar de 1.0.
+    NOMINATIM_MIN_INTERVAL_SECONDS: float = Field(default=1.0, ge=1.0, le=60.0)
+    NOMINATIM_TIMEOUT_SECONDS: float = 20.0
+    #: Nominatim exige un User-Agent identificable con contacto real; las
+    #: peticiones anónimas se rechazan. Cambiar el correo por el del operador.
+    NOMINATIM_USER_AGENT: str = "AlertaV/0.1 (contacto: alertav@example.cl)"
+    #: Sesgo de la búsqueda hacia Chile. Evita que "Avenida Argentina" resuelva
+    #: en Buenos Aires, que es exactamente lo que hace Nominatim sin esto.
+    NOMINATIM_COUNTRY_CODES: str = "cl"
+
     # -- Motor de correlación -------------------------------------------------
     # Todos estos valores son hipótesis de partida, no constantes físicas. Se
     # calibran contra la ventana de recolección con `/events/{id}/neighbours`.
@@ -257,6 +311,8 @@ class Settings(BaseSettings):
         "CONAF_REGIONS",
         "SENAPRED_REGIONS",
         "USGS_EVENT_TYPES",
+        "WAZE_ALERT_TYPES",
+        "BOMBEROS_ACCIDENT_KEYS",
         mode="before",
     )
     @classmethod

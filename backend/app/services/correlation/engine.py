@@ -3,7 +3,8 @@
 Una pasada hace cuatro cosas, en este orden y por esta razón:
 
 1. **Paso A — geometría.** Agrupa señales georreferenciadas y las convierte en
-   incidentes. Es el paso que *crea* incidentes; ningún otro lo hace.
+   incidentes. Es el paso que *crea* incidentes; ningún otro lo hace. Agrupa
+   **dentro de cada familia de fenómeno**, nunca entre familias: ver más abajo.
 2. **Fusión.** Dos racimos que crecieron uno hacia el otro son el mismo
    incendio. Se resuelve antes del Paso B para que una alerta no se adose a un
    incidente que está a punto de desaparecer absorbido.
@@ -15,6 +16,31 @@ El Paso B se **reconstruye entero** en cada pasada: sus enlaces se borran y se
 recalculan. Una alerta levantada tiene que dejar de teñir el mapa, y
 reconstruir es más simple de auditar que caducar enlace por enlace. Los vínculos
 espaciales, en cambio, son historia: no se tocan nunca.
+
+Aislamiento entre familias de fenómeno
+--------------------------------------
+
+Un incendio y un accidente vial pueden ocurrir en la misma esquina en el mismo
+minuto sin tener nada que ver, y de hecho es lo esperable en una ciudad. El
+motor sólo mide distancias y tiempos, así que sin una barrera explícita los
+fundiría en un incidente que no existe. La barrera tiene **tres puertas**, y
+hacen falta las tres porque cada una tapa un camino distinto hacia la misma
+fusión:
+
+1. `cluster_unassigned_events` particiona el DBSCAN por familia — señales nuevas
+   entre sí.
+2. `find_nearest_open_incident` filtra por familia — señal nueva contra
+   incidente que ya existe.
+3. `find_mergeable` exige familia común — dos incidentes que crecieron uno hacia
+   el otro.
+
+Dejar una sola abierta anula a las otras dos: bastaría con que el choque se
+adhiriera al incendio ya existente para que todo el trabajo de particionar el
+Paso A no sirviera de nada.
+
+Lo que NO separa: los grados de certeza sobre un mismo fenómeno. `smoke`,
+`thermal_anomaly` y `wildfire` caen todos en la familia `fire` y se corroboran
+entre sí. Eso es el sistema funcionando, no una fuga.
 """
 
 from __future__ import annotations
@@ -30,6 +56,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.enums import (
+    EVENT_TO_INCIDENT_TYPE,
     EventSource,
     IncidentStatus,
     IncidentType,
@@ -229,16 +256,24 @@ class CorrelationEngine:
         if not clustered:
             return
 
-        clusters: dict[int | None, list[ClusteredEvent]] = defaultdict(list)
+        # La clave incluye la familia. `ST_ClusterDBSCAN` numera desde 0 en cada
+        # partición, así que agrupar sólo por `cluster_id` volvería a mezclar
+        # exactamente lo que el SQL acaba de separar — un incendio y un choque
+        # compartirían el racimo 0 y terminarían en el mismo incidente.
+        clusters: dict[tuple[str, int | None], list[ClusteredEvent]] = defaultdict(list)
         for event in clustered:
-            clusters[event.cluster_id].append(event)
+            clusters[event.cluster_key].append(event)
         result.clusters = len(clusters)
 
-        for members in clusters.values():
+        for (family, _), members in clusters.items():
             lat, lon = weighted_centroid(members)
 
             nearby = await self.repo.find_nearest_open_incident(
-                lat=lat, lon=lon, radius_m=self.radius_m, since=match_since
+                lat=lat,
+                lon=lon,
+                radius_m=self.radius_m,
+                since=match_since,
+                family=family,
             )
 
             if nearby is not None:
@@ -295,11 +330,40 @@ class CorrelationEngine:
         return await self.repo.create_incident(
             lat=lat,
             lon=lon,
-            type=IncidentType.POSSIBLE_FIRE,
+            type=self._seed_type(members),
             status=IncidentStatus.ACTIVE,
             first_seen_at=min(timestamps),
             last_seen_at=max(timestamps),
         )
+
+    @staticmethod
+    def _seed_type(members: Sequence[ClusteredEvent]) -> IncidentType:
+        """Tipo con el que nace el incidente, antes del primer `_refresh`.
+
+        Hasta la capa de accidentes esto era `POSSIBLE_FIRE` fijo, y funcionaba
+        porque todo lo que el motor agrupaba era fuego: `_refresh` recalculaba el
+        tipo real medio segundo después y el valor sembrado no llegaba a
+        significar nada.
+
+        Con más de una familia en juego dejó de ser inocuo. `find_nearest_open_incident`
+        filtra por familia, así que un incidente de accidente que naciera rotulado
+        `possible_fire` quedaría en la familia equivocada durante esa ventana: las
+        señales siguientes del mismo choque no lo encontrarían y abrirían un
+        incidente duplicado a metros del primero.
+
+        Se siembra con el tipo mejor sostenido por confianza dentro del racimo.
+        `resolve_type` hace el juicio definitivo enseguida, con la política
+        completa; esto sólo tiene que caer en la familia correcta.
+        """
+        weighted: dict[IncidentType, float] = defaultdict(float)
+        for member in members:
+            incident_type = EVENT_TO_INCIDENT_TYPE.get(member.type)
+            if incident_type is not None:
+                weighted[incident_type] += max(member.confidence, 0.0)
+
+        if not weighted:
+            return IncidentType.POSSIBLE_FIRE
+        return max(weighted.items(), key=lambda item: (item[1], item[0].value))[0]
 
     # -- Fusión ---------------------------------------------------------------
 

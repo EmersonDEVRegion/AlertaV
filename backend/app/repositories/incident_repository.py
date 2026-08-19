@@ -10,7 +10,8 @@ Dos primitivas geométricas, cada una para lo suyo:
   incremental —"cada señal se pega a la primera vecina que encuentre"— produce
   racimos distintos según el orden de lectura, y eso es indefendible en algo
   que decide dónde hay un incendio. `eps` va en metros porque se proyecta a
-  UTM 19S antes de agrupar.
+  UTM 19S antes de agrupar. Va **particionado por familia de fenómeno**: ver
+  `cluster_unassigned_events`.
 * `ST_DWithin` sobre `geography` para pegar una señal nueva a un incidente que
   ya existe. Aquí sí interesa la distancia en metros reales sobre el elipsoide,
   y el índice GiST sigue haciendo el prefiltrado por caja envolvente.
@@ -25,19 +26,22 @@ from typing import Any
 from uuid import UUID
 
 from geoalchemy2 import Geography
-from sqlalchemy import Select, delete, func, select, update
+from sqlalchemy import Case, ColumnElement, Select, Text, case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.enums import (
     CORRELATABLE_EVENT_TYPES,
+    DEFAULT_FAMILY,
+    INCIDENT_FAMILY,
     OPEN_INCIDENT_STATUSES,
     EventSource,
     EventType,
     IncidentStatus,
     IncidentType,
     LinkMethod,
+    family_of_event,
 )
 from app.models.event import RawEvent
 from app.models.incident import Incident, IncidentEvent
@@ -54,6 +58,39 @@ _MIN_WEIGHT = 0.01
 CORRELATION_LOCK_KEY = 0x_A1E2_7A00
 
 
+def event_family_sql(column: ColumnElement[Any]) -> Case:
+    """Traduce en SQL una columna `event_type` a su familia de fenómeno.
+
+    El CASE se **genera** desde `family_of_event`, no se escribe a mano. Es la
+    diferencia entre una tabla de traducción y dos: si alguien agrega un tipo de
+    señal nuevo a `EVENT_TO_INCIDENT_TYPE` y esta función estuviera hardcodeada,
+    el motor agruparía según una tabla que ya nadie mantiene, sin fallar y sin
+    avisar. Del `else_` cuelgan sólo los tipos no correlacionables, que la
+    consulta ya filtró antes.
+    """
+    # `sorted` porque `CORRELATABLE_EVENT_TYPES` es un frozenset: sin ordenar, el
+    # SQL sale con las ramas en orden distinto en cada arranque del proceso. No
+    # cambia el resultado, pero ensucia los diffs de logs y desperdicia la caché
+    # de planes de PostgreSQL, que indexa por texto de la consulta.
+    return case(
+        {
+            kind.value: family_of_event(kind)
+            for kind in sorted(CORRELATABLE_EVENT_TYPES, key=lambda item: item.value)
+        },
+        value=func.cast(column, Text),
+        else_=DEFAULT_FAMILY,
+    )
+
+
+def incident_family_sql(column: ColumnElement[Any]) -> Case:
+    """Lo mismo para una columna `incident_type`. Generado desde INCIDENT_FAMILY."""
+    return case(
+        {kind.value: family for kind, family in INCIDENT_FAMILY.items()},
+        value=func.cast(column, Text),
+        else_=DEFAULT_FAMILY,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ClusteredEvent:
     """Una señal con el racimo que le asignó DBSCAN en esta pasada."""
@@ -66,6 +103,22 @@ class ClusteredEvent:
     timestamp: datetime
     source: EventSource
     type: EventType
+    #: Familia de fenómeno: `fire`, `traffic`, `hydro`, `other`. Es la partición
+    #: dentro de la cual se calcularon las distancias.
+    family: str = DEFAULT_FAMILY
+
+    @property
+    def cluster_key(self) -> tuple[str, int | None]:
+        """Identidad del racimo **dentro de la pasada**.
+
+        La familia forma parte de la clave y no es un detalle: `ST_ClusterDBSCAN`
+        numera desde 0 en CADA partición, así que el racimo 0 de `fire` y el
+        racimo 0 de `traffic` son dos cosas distintas que comparten número.
+        Agrupar sólo por `cluster_id` volvería a fundir justo lo que la partición
+        acaba de separar — y de la forma más silenciosa posible, porque el SQL
+        habría hecho su trabajo bien.
+        """
+        return (self.family, self.cluster_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +179,25 @@ class IncidentRepository:
 
         La ventana temporal es el `WHERE`: DBSCAN agrupa en el espacio, y sólo ve
         señales que ya son contemporáneas por construcción.
+
+        Partición por familia
+        ---------------------
+        El `PARTITION BY familia` de la ventana es lo que impide que un choque y
+        un incendio se fundan en un mismo incidente por ocurrir en la misma
+        esquina. La coincidencia espaciotemporal entre fenómenos distintos es
+        justamente lo esperable en una ciudad —un accidente en la Ruta 68 y una
+        quema agrícola al lado del camino comparten coordenada y minuto sin tener
+        absolutamente nada que ver— y sin la partición DBSCAN los agruparía
+        porque sólo mira distancias.
+
+        Dentro de una familia el agrupamiento sigue intacto: `smoke`,
+        `thermal_anomaly` y `wildfire` caen todos en `fire` y se corroboran entre
+        sí, que es de lo que vive este motor. Lo que se separa son fenómenos, no
+        grados de certeza sobre el mismo fenómeno.
+
+        **`ST_ClusterDBSCAN` reinicia la numeración en cada partición.** El
+        `cluster_id` sólo es único dentro de su familia; quien consuma esto debe
+        agrupar por `ClusteredEvent.cluster_key`.
         """
         srid = utm_srid or settings.CORRELATION_UTM_SRID
 
@@ -139,6 +211,7 @@ class IncidentRepository:
                 RawEvent.source.label("source"),
                 RawEvent.type.label("type"),
                 RawEvent.geom.label("geom"),
+                event_family_sql(RawEvent.type).label("family"),
             )
             .where(RawEvent.geom.isnot(None))
             .where(RawEvent.incident_id.is_(None))
@@ -153,7 +226,7 @@ class IncidentRepository:
 
         cluster_id = func.ST_ClusterDBSCAN(
             func.ST_Transform(candidates.c.geom, srid), radius_m, 1
-        ).over()
+        ).over(partition_by=candidates.c.family)
 
         stmt = select(
             candidates.c.id,
@@ -163,6 +236,7 @@ class IncidentRepository:
             candidates.c.timestamp,
             candidates.c.source,
             candidates.c.type,
+            candidates.c.family,
             cluster_id.label("cluster_id"),
         )
 
@@ -177,14 +251,30 @@ class IncidentRepository:
                 timestamp=row.timestamp,
                 source=EventSource(getattr(row.source, "value", row.source)),
                 type=EventType(getattr(row.type, "value", row.type)),
+                family=str(row.family),
             )
             for row in rows
         ]
 
     async def find_nearest_open_incident(
-        self, *, lat: float, lon: float, radius_m: float, since: datetime
+        self,
+        *,
+        lat: float,
+        lon: float,
+        radius_m: float,
+        since: datetime,
+        family: str | None = None,
     ) -> NearbyIncident | None:
-        """Incidente abierto más cercano dentro del radio y aún vivo."""
+        """Incidente abierto más cercano dentro del radio y aún vivo.
+
+        `family` es la segunda mitad del aislamiento entre fenómenos. Particionar
+        el DBSCAN separa los racimos nuevos entre sí, pero un racimo de
+        accidentes todavía podría adherirse a un incendio que ya existe en esa
+        esquina —y ahí la contaminación es peor, porque el incidente de incendio
+        ya tiene folio, confianza y quizá una alerta de SENAPRED colgando—.
+        Se deja opcional para no romper a quien busque el incidente más cercano
+        sin importar su tipo.
+        """
         point = func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326)
         distance = func.ST_Distance(
             func.cast(Incident.geom, _GEOGRAPHY), func.cast(point, _GEOGRAPHY)
@@ -209,6 +299,8 @@ class IncidentRepository:
             # viejos y el motor recentraría el incidente sobre datos rancios.
             .execution_options(populate_existing=True)
         )
+        if family is not None:
+            stmt = stmt.where(incident_family_sql(Incident.type) == family)
         row = (await self.session.execute(stmt)).first()
         if row is None:
             return None
@@ -437,6 +529,12 @@ class IncidentRepository:
 
         Devuelve `(superviviente, absorbido)`. Sobrevive el más antiguo: es el
         que ya tiene folio circulando por radio.
+
+        Sólo funde incidentes de la **misma familia**. Es la tercera y última
+        puerta del aislamiento: sin esta condición, un incendio y un accidente
+        que nacieron separados —porque la partición del Paso A hizo su trabajo—
+        se reunirían igual acá al crecer uno hacia el otro, y el resultado sería
+        idéntico a no haber particionado nada.
         """
         left = Incident.__table__.alias("a")
         right = Incident.__table__.alias("b")
@@ -460,6 +558,7 @@ class IncidentRepository:
             .where(right.c.status.in_(_open_statuses()))
             .where(left.c.last_seen_at >= since)
             .where(right.c.last_seen_at >= since)
+            .where(incident_family_sql(left.c.type) == incident_family_sql(right.c.type))
             .order_by(left.c.id.asc(), right.c.id.asc())
         )
         rows = (await self.session.execute(stmt)).all()
@@ -677,4 +776,6 @@ __all__ = [
     "EventLink",
     "IncidentRepository",
     "NearbyIncident",
+    "event_family_sql",
+    "incident_family_sql",
 ]

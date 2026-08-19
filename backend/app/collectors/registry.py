@@ -14,15 +14,27 @@ from app.collectors.base import BaseCollector
 from app.collectors.conaf.collector import ConafCollector
 from app.collectors.firms.collector import FirmsCollector
 from app.collectors.senapred.collector import SenapredCollector
+from app.collectors.traffic.bomberos_10_4_worker import Bomberos104Collector
+from app.collectors.traffic.transporteinforma_worker import TransporteInformaCollector
+from app.collectors.traffic.waze_worker import WazeCollector
 from app.collectors.usgs.collector import UsgsCollector
 
 CollectorFactory = Callable[[AsyncSession], BaseCollector]
 
 COLLECTORS: dict[str, type[BaseCollector]] = {
+    # -- Incendios y emergencias ---------------------------------------------
     FirmsCollector.name: FirmsCollector,
     ConafCollector.name: ConafCollector,
     SenapredCollector.name: SenapredCollector,
     UsgsCollector.name: UsgsCollector,
+    # -- Accidentes viales ----------------------------------------------------
+    # Los tres emiten `type=accident` y quedan aislados de la familia `fire` por
+    # la partición del motor. Ninguno arranca sin su URL configurada: si falta,
+    # el constructor lanza y el runner deja una corrida `failed` visible en
+    # `collector_runs` en vez de fallar en silencio.
+    WazeCollector.name: WazeCollector,
+    Bomberos104Collector.name: Bomberos104Collector,
+    TransporteInformaCollector.name: TransporteInformaCollector,
     # Próximos hitos:
     #   BroadcastifyCollector.name: BroadcastifyCollector,  # STT → evento
 }

@@ -191,6 +191,32 @@ RULES: dict[EventSource, SourceRule] = {
     # por grande que sea, se rotula "incendio confirmado".
     EventSource.NASA_FIRMS: SourceRule(0.40, 0.40, 0.35, 0.55),
     EventSource.CAMERA: SourceRule(0.35, 0.55, 0.5, 0.70),
+    # -- Capa de accidentes viales -------------------------------------------
+    # Transporte Informa (MTT): 0.80. Un organismo del Estado publicando por su
+    # canal oficial, así que un solo aviso cruza a `confirmed` (0.80 > 0.60). No
+    # llega a 1.0 porque no constata en terreno: informa lo que le reportaron.
+    # Techo 0.90 para que la certeza siga requiriendo a alguien que fue al lugar.
+    #
+    # Sin `official_dispatch`: ese flag existe para quien MANDA carros, y el MTT
+    # no despacha nada. El 0.80 sale de la banda, no de una excepción.
+    #
+    # Hay una segunda razón, específica de esta fuente: su coordenada NO viene
+    # informada, la reconstruye este backend geocodificando texto libre. El peso
+    # 0.80 califica la credibilidad del HECHO ("hay un accidente en la Ruta 68"),
+    # no la del PUNTO. El error de la geocodificación queda en `raw_data` para
+    # que sea auditable, y por eso su decay es alto: dos avisos del MTT sobre el
+    # mismo tramo son el mismo hecho contado dos veces.
+    EventSource.TRANSPORTE_INFORMA: SourceRule(0.60, 0.80, 0.5, 0.90),
+    # Waze: 0.40 fijo, techo 0.65. Misma lógica que FIRMS y por el mismo motivo:
+    # la banda se colapsa porque la "confiabilidad" que trae un reporte de Waze
+    # mide cuántos conductores confirmaron el ícono, no si hubo un accidente.
+    # Un atasco por obras acumula confirmaciones igual que un choque.
+    #
+    # El techo 0.65 sí supera 0.60 —a diferencia de FIRMS— porque un racimo de
+    # reportes independientes de Waze en el mismo punto es evidencia real de que
+    # ALGO interrumpe el tránsito ahí. Lo que no puede es alcanzar la certeza:
+    # para eso hace falta Bomberos o el MTT.
+    EventSource.WAZE: SourceRule(0.40, 0.40, 0.40, 0.65),
     # Ciudadanos: banda 0.25–0.40. Uno solo queda en `unsafe` (<0.30); con foto o
     # verificación llega a 0.40 y entra a `possible`. Progresivo, con techo por
     # debajo de la confirmación institucional.
