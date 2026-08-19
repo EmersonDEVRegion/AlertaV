@@ -103,6 +103,7 @@ def mtt(url: str = PORTAL_URL) -> TransporteInformaCollector:
     collector = TransporteInformaCollector.__new__(TransporteInformaCollector)
     collector.url = url
     collector.max_geocodes = 5
+    collector.max_llm_calls = 5
     collector.service = FakeIngestService()
     return collector
 
@@ -390,13 +391,13 @@ def test_mtt_las_palabras_clave_son_la_red_gruesa_no_el_filtro_final():
     """"Restricción" es un aviso de tránsito pero NO un siniestro.
 
     El filtro por palabras clave selecciona bloques relevantes; decidir si hay
-    accidente es trabajo de `extract_streets_via_llm.is_accident`.
+    accidente es trabajo de `looks_like_accident`, con reglas deterministas.
     """
-    from app.collectors.traffic.transporteinforma_worker import extract_streets_via_llm
+    from app.collectors.traffic.transporteinforma_worker import looks_like_accident
 
     avisos = parse_notices(HTML_PORTAL)
     restriccion = next(a for a in avisos if "Restricción" in a.text)
     accidente = next(a for a in avisos if "Av. España" in a.text)
 
-    assert extract_streets_via_llm(restriccion.text)["is_accident"] is False
-    assert extract_streets_via_llm(accidente.text)["is_accident"] is True
+    assert looks_like_accident(restriccion.text) is False
+    assert looks_like_accident(accidente.text) is True

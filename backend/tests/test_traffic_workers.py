@@ -33,7 +33,8 @@ from app.collectors.traffic.bomberos_10_4_worker import (
 from app.collectors.traffic.transporteinforma_worker import (
     TrafficNotice,
     TransporteInformaCollector,
-    extract_streets_via_llm,
+    extract_streets_heuristic,
+    looks_like_accident,
     parse_notice,
 )
 from app.collectors.traffic.waze_worker import (
@@ -393,13 +394,13 @@ def test_bomberos_html_sin_filas_no_produce_despachos():
     ],
 )
 def test_extraccion_devuelve_diccionario_limpio(aviso, calle, transversal, ciudad):
-    resultado = extract_streets_via_llm(aviso)
+    """La heurística de respaldo, que es lo que corre sin GEMINI_API_KEY."""
+    resultado = extract_streets_heuristic(aviso)
 
-    assert resultado["street"] == calle
-    assert resultado["cross_street"] == transversal
+    assert resultado is not None
+    assert resultado["street_1"] == calle
+    assert resultado["street_2"] == transversal
     assert resultado["city"] == ciudad
-    assert resultado["is_accident"] is True
-    assert resultado["mode"] == "mock"
 
 
 @pytest.mark.parametrize(
@@ -419,23 +420,25 @@ def test_extraccion_no_corta_en_el_punto_de_las_abreviaturas(aviso, calle):
     devolvía una calle, y Nominatim geocodificaba esa calle inexistente a
     cualquier cosa o a nada. El fallo no se veía en ninguna métrica.
     """
-    assert extract_streets_via_llm(aviso)["street"] == calle
+    assert extract_streets_heuristic(aviso)["street_1"] == calle
 
 
 def test_extraccion_sigue_cortando_en_el_fin_de_frase_real():
     """La protección de abreviaturas no puede desactivar el corte narrativo."""
-    resultado = extract_streets_via_llm(
+    resultado = extract_streets_heuristic(
         "Accidente en Ruta 68. Tránsito lento hacia Casablanca."
     )
-    assert resultado["street"] == "Ruta 68"
+    assert resultado["street_1"] == "Ruta 68"
 
 
 def test_extraccion_distingue_avisos_que_no_son_siniestros():
-    """El MTT publica cortes programados y desvíos: no son accidentes."""
-    resultado = extract_streets_via_llm(
-        "Corte programado en Av. Alemania por obras, Valparaíso."
-    )
-    assert resultado["is_accident"] is False
+    """El MTT publica cortes programados y desvíos: no son accidentes.
+
+    La clasificación es de `looks_like_accident`, NO del modelo: ver el
+    docstring de esa función.
+    """
+    assert looks_like_accident("Corte programado en Av. Alemania por obras.") is False
+    assert looks_like_accident("Accidente vehicular en Av. Alemania.") is True
 
 
 def test_extraccion_prefiere_none_antes_que_adivinar():
@@ -444,21 +447,21 @@ def test_extraccion_prefiere_none_antes_que_adivinar():
     Es peor que un aviso sin ubicación: el segundo se ve, el primero no.
     """
     for aviso in ("", "   ", "Accidente vehicular con dos lesionados."):
-        resultado = extract_streets_via_llm(aviso)
-        assert resultado["street"] is None
+        assert extract_streets_heuristic(aviso) is None
 
 
 def test_extraccion_nunca_devuelve_coordenadas():
-    """Contrato con el LLB: inferir lat/lon es trabajo de Nominatim, que es auditable."""
-    resultado = extract_streets_via_llm(
+    """Inferir lat/lon es trabajo de Nominatim, que es verificable y auditable."""
+    resultado = extract_streets_heuristic(
         "Accidente en Av. España con Uno Norte, Viña del Mar."
     )
     assert "lat" not in resultado and "lon" not in resultado
 
 
 def test_extraccion_respeta_el_contrato_de_claves():
-    esperadas = {"street", "cross_street", "city", "region", "is_accident", "mode"}
-    assert set(extract_streets_via_llm("Accidente en Ruta 68.")) == esperadas
+    """Las tres claves exactas, ni una más: es lo que `build_query` consume."""
+    esperadas = {"street_1", "street_2", "city"}
+    assert set(extract_streets_heuristic("Accidente en Ruta 68.")) == esperadas
 
 
 # --- Transporte Informa: Paso B (consulta a Nominatim) -----------------------
@@ -466,12 +469,7 @@ def test_extraccion_respeta_el_contrato_de_claves():
 
 def test_build_query_arma_la_interseccion():
     consulta = build_query(
-        {
-            "street": "Av. España",
-            "cross_street": "Uno Norte",
-            "city": "Viña del Mar",
-            "region": "Región de Valparaíso",
-        }
+        {"street_1": "Av. España", "street_2": "Uno Norte", "city": "Viña del Mar"}
     )
     assert consulta == "Av. España y Uno Norte, Viña del Mar, Región de Valparaíso"
 
@@ -482,7 +480,7 @@ def test_build_query_sin_calle_no_consulta():
     Como ubicación de un accidente eso es peor que no tener ubicación: parece un
     dato y no lo es.
     """
-    assert build_query({"street": None, "city": "Valparaíso"}) is None
+    assert build_query({"street_1": None, "city": "Valparaíso"}) is None
 
 
 # --- Transporte Informa: normalización ---------------------------------------
@@ -498,7 +496,7 @@ def test_mtt_normaliza_con_y_sin_geocodificacion():
         published_at=AHORA,
         raw={"id": "42"},
     )
-    extraccion = extract_streets_via_llm(aviso.text)
+    extraccion = extract_streets_heuristic(aviso.text)
     punto = GeocodeResult(
         lat=-33.0245, lon=-71.5518, display_name="Av. España, Viña del Mar",
         importance=0.42, query="Av. España y Uno Norte, Viña del Mar",
@@ -527,10 +525,10 @@ def test_mtt_deja_los_dos_pasos_separados_y_auditables():
     collector = TransporteInformaCollector.__new__(TransporteInformaCollector)
     aviso = TrafficNotice(notice_id="1", text="Choque en Ruta 68.", published_at=AHORA)
     evento = collector.normalize(
-        [(aviso, extract_streets_via_llm(aviso.text), GeocodeResult(lat=-33.0, lon=-71.5))]
+        [(aviso, extract_streets_heuristic(aviso.text), GeocodeResult(lat=-33.0, lon=-71.5))]
     )[0]
 
-    assert evento.raw_data["_extraction"]["mode"] == "mock"
+    assert evento.raw_data["_extraction"]["mode"] == "heuristic"
     assert evento.raw_data["_geocoding"]["provider"] == "nominatim"
 
 

@@ -116,24 +116,32 @@ class GeocodeResult:
         }
 
 
-def build_query(streets: dict[str, Any]) -> str | None:
+#: Región que se añade a toda consulta. El sistema sólo cubre la V, y sin ella
+#: "Av. Argentina" resuelve en Buenos Aires con toda naturalidad.
+DEFAULT_REGION = "Región de Valparaíso"
+
+
+def build_query(streets: dict[str, Any], *, region: str = DEFAULT_REGION) -> str | None:
     """Arma la cadena de búsqueda desde el diccionario del Paso A.
 
     Formato `calle y calle, ciudad, región`: es el que mejor resuelve Nominatim
-    para intersecciones en Chile. Si no hay ninguna calle, devuelve None — buscar
-    sólo por ciudad devolvería el centroide comunal, que como ubicación de un
+    para intersecciones en Chile. Si no hay vía principal devuelve None — buscar
+    sólo por ciudad daría el centroide comunal, que como ubicación de un
     accidente es peor que no tener ubicación: parece un dato y no lo es.
+
+    Las claves son `street_1`/`street_2`/`city`, el mismo vocabulario que produce
+    el extractor. La región no viene del extractor a propósito: es una constante
+    del despliegue, no algo que un modelo deba inferir de cada aviso.
     """
-    primary = (streets.get("street") or "").strip()
-    secondary = (streets.get("cross_street") or "").strip()
+    primary = (streets.get("street_1") or "").strip()
+    secondary = (streets.get("street_2") or "").strip()
     city = (streets.get("city") or "").strip()
-    region = (streets.get("region") or "").strip()
 
     if not primary:
         return None
 
     head = f"{primary} y {secondary}" if secondary else primary
-    parts = [head, *[part for part in (city, region) if part]]
+    parts = [head, *[part for part in (city, region.strip()) if part]]
     return ", ".join(parts)
 
 

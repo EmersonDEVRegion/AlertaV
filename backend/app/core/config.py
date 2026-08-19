@@ -252,6 +252,29 @@ class Settings(BaseSettings):
     #: minutos colgado del rate limit ajeno.
     TRANSPORTE_INFORMA_MAX_GEOCODES: int = Field(default=20, ge=1, le=200)
 
+    # -- Gemini: extracción de entidades desde texto libre -------------------
+    #: Clave de la API de Google AI Studio. Vacía = el extractor cae a la
+    #: heurística de reglas y lo deja anotado en cada señal. No se apaga el
+    #: collector: media capa funcionando es mejor que ninguna.
+    GEMINI_API_KEY: str = ""
+    #: Modelo. Un `flash-lite` estable: la tarea es extracción de entidades de
+    #: una frase, no razonamiento, y la latencia entra en el presupuesto de una
+    #: corrida que además paga 1 s por geocodificación.
+    #:
+    #: Se fija un modelo ESTABLE y no un alias `-latest` a propósito: `latest`
+    #: se intercambia solo con cada versión nueva y un cambio de comportamiento
+    #: del extractor llegaría a producción sin que nadie desplegara nada. Con un
+    #: nombre fijo, actualizar es una decisión.
+    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
+    GEMINI_TIMEOUT_SECONDS: float = 20.0
+    #: Tope de llamadas por corrida. Acota el gasto y la latencia: un día de
+    #: temporal con 300 avisos no puede convertirse en 300 llamadas facturadas.
+    GEMINI_MAX_CALLS_PER_RUN: int = Field(default=25, ge=1, le=500)
+    #: Temperatura 0: se quiere extracción determinista, no redacción. Con
+    #: temperatura alta el modelo "mejora" los nombres de calle, que es
+    #: exactamente lo que no debe hacer.
+    GEMINI_TEMPERATURE: float = Field(default=0.0, ge=0.0, le=2.0)
+
     # -- Nominatim (OpenStreetMap) -------------------------------------------
     NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
     #: Intervalo MÍNIMO entre llamadas, en segundos. La política de uso de

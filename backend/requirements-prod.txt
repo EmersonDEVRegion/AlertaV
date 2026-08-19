@@ -28,3 +28,10 @@ feedparser==6.0.11         # RSS/Atom tolerante a feeds mal formados
 beautifulsoup4==4.12.3     # scraping del portal del MTT
 lxml==5.3.0                # parser de bs4: más rápido y mucho más indulgente
                            # con HTML roto que el html.parser de la stdlib
+
+# --- Extracción de entidades con LLM ------------------------------------------
+# `google-genai`, NO `google-generativeai`. El segundo es el SDK antiguo: está
+# archivado, no recibe modelos nuevos y sus módulos de Vertex se eliminaron el
+# 24 de junio de 2026. El unificado trae `client.aio`, que es async nativo — ver
+# app/collectors/traffic/gemini.py.
+google-genai==1.21.0

@@ -18,29 +18,37 @@ Ninguna de las dos soluciones obvias funciona:
 
 El enfoque híbrido
 ------------------
-**Paso A — extracción (`extract_streets_via_llm`).** Un LLM ligero convierte
-prosa en un diccionario limpio: calle, calle transversal, ciudad, región. Es
-exactamente la tarea para la que sirve un modelo de lenguaje —comprensión de
-texto no estructurado— y exactamente donde NO debe tomar decisiones: no inventa
-coordenadas, no juzga gravedad, no decide si es accidente. Sólo extrae.
+**Paso 0 — clasificación (`looks_like_accident`).** Reglas deterministas deciden
+si el aviso describe un siniestro. Va antes del modelo y no después, por dos
+motivos: el MTT publica cortes programados y desvíos que no son accidentes, y
+cada llamada al LLM se paga.
+
+**Paso A — extracción (`extract_streets_via_llm`).** Gemini convierte prosa en
+`{street_1, street_2, city}`. Es exactamente la tarea para la que sirve un modelo
+de lenguaje —comprensión de texto no estructurado— y exactamente donde NO debe
+tomar decisiones: no inventa coordenadas, no juzga gravedad y no decide si hubo
+accidente. Sólo extrae.
 
 **Paso B — geocodificación (`app.collectors.nominatim`).** El diccionario limpio
 se convierte en una consulta que Nominatim sí entiende, con el rate limit de
 1 req/s respetado por un limitador global al proceso.
 
-La división importa porque acota el daño de un error del LLM: lo peor que puede
-hacer es devolver una calle mal leída, y eso produce una geocodificación fallida
-o un punto discutible —marcado como tal en `raw_data._geocoding`— pero jamás un
-accidente inventado ni un punto sin trazabilidad.
+La división importa porque acota el daño de un error del modelo: lo peor que
+puede hacer es devolver una calle mal leída, y eso produce una geocodificación
+fallida o un punto discutible —marcado como tal en `raw_data._geocoding`— pero
+jamás un accidente inventado ni un punto sin trazabilidad.
 
-Estado de la implementación
----------------------------
-`extract_streets_via_llm` está **mockeada**: no llama a ningún modelo. La
-heurística que trae es deliberadamente simple y sirve como línea base honesta
-para medir contra ella cuando se conecte el modelo real. `_MOCK_MODE` deja
-constancia en cada señal (`raw_data._extraction.mode == "mock"`), de modo que
-mañana se pueda distinguir en la base qué se extrajo con reglas y qué con el LLM
-— sin esa marca, la comparación sería imposible retroactivamente.
+Modelo y respaldo
+-----------------
+La llamada vive en `app.collectors.traffic.gemini` y es **asíncrona nativa**: no
+bloquea el event loop, que en producción comparte con el motor de correlación
+(ver `app/workers.py`).
+
+Si falta `GEMINI_API_KEY`, o si el modelo falla o alucina, se cae a
+`extract_streets_heuristic`: reglas que resuelven la estructura "en <calle> con
+<calle>, <ciudad>". No es tan buena, pero media capa funcionando es mejor que
+ninguna, y sirve de línea base para medir al modelo sobre datos reales. Qué
+camino produjo cada señal queda en `raw_data._extraction.mode`.
 
 Confianza
 ---------
@@ -67,6 +75,7 @@ from bs4 import BeautifulSoup, Tag
 from app.collectors.base import BaseCollector
 from app.collectors.geoservices import normalise_text, parse_timestamp, request_text
 from app.collectors.nominatim import GeocodeResult, build_client, geocode
+from app.collectors.traffic import gemini
 from app.core.config import settings
 from app.core.exceptions import CollectorError
 from app.models.enums import EventSource, EventType
@@ -77,9 +86,6 @@ logger = logging.getLogger(__name__)
 #: Canal oficial del MTT. Ver el docstring: califica el hecho, no el punto.
 TRANSPORTE_INFORMA_CONFIDENCE = 0.80
 
-#: Marca que queda en cada señal mientras el LLM sea un mock. Permitirá separar
-#: en la base lo extraído con reglas de lo extraído con modelo.
-_MOCK_MODE = "mock"
 
 #: Palabras que denotan un siniestro vial. Se comparan sin tildes.
 _ACCIDENT_MARKERS: tuple[str, ...] = (
@@ -186,41 +192,69 @@ class TrafficNotice:
 # --- Paso A: extracción del lugar -------------------------------------------
 
 
-def extract_streets_via_llm(text: str) -> dict[str, Any]:
-    """Prosa → diccionario limpio de lugar. **Mockeada**: no llama a ningún LLM.
+def looks_like_accident(text: str) -> bool:
+    """¿El aviso describe un siniestro vial?
 
-    Contrato de salida, que el modelo real deberá respetar tal cual::
+    **Esta decisión NO la toma el modelo, y es deliberado.** El contrato de
+    salida de Gemini son tres campos —dos calles y una ciudad— sin ningún juicio
+    sobre la naturaleza del hecho. La clasificación se queda acá, en reglas
+    deterministas y auditables.
 
-        {
-          "street":       "Av. España" | None,   # vía principal
-          "cross_street": "Uno Norte"  | None,   # transversal, si hay intersección
-          "city":         "Viña del Mar" | None,
-          "region":       "Región de Valparaíso",
-          "is_accident":  True,                  # ¿el aviso describe un siniestro?
-          "mode":         "mock",                # "llm" cuando se conecte el modelo
-        }
+    El motivo es la asimetría del daño. Si el modelo se equivoca extrayendo una
+    calle, el resultado es una geocodificación fallida o un punto discutible:
+    visible, marcado en `raw_data._geocoding`, corregible. Si se le permitiera
+    decidir "esto es un accidente", podría inventar un siniestro que nadie
+    reportó, y eso llegaría al mapa como un hecho con la confianza 0.80 de una
+    fuente oficial detrás. Se le da al modelo la tarea donde sus errores son
+    baratos.
 
-    Cuando se conecte el modelo, el prompt debe ser explícito en tres cosas, que
-    son las que hacen que este paso sea seguro:
+    Es también el filtro que separa las palabras clave del scraper —que incluyen
+    "Restricción" y "Tránsito suspendido", avisos de tránsito que NO son
+    siniestros— de lo que entra a la capa de accidentes.
+    """
+    return any(marker in normalise_text(text or "") for marker in _ACCIDENT_MARKERS)
 
-    1. Devolver **sólo** JSON con esas claves. Nada de prosa explicativa.
-    2. `null` antes que adivinar. Una calle inventada produce un punto plausible
-       y falso en el mapa, que es mucho peor que un aviso sin ubicación: el
-       segundo se ve, el primero no.
-    3. No inferir coordenadas jamás. Eso es trabajo de Nominatim, que es
-       verificable y auditable; un LLM recitando lat/lon de memoria no lo es.
 
-    La heurística de abajo es la línea base contra la que habrá que medir el
-    modelo. Resuelve los avisos con estructura "en <calle> con <calle>, <ciudad>"
-    y falla —devolviendo None, que es el fallo correcto— con los tramos de ruta
-    por kilómetro.
+async def extract_streets_via_llm(text: str) -> dict[str, Any] | None:
+    """Prosa → `{street_1, street_2, city}`. None si no se pudo extraer.
+
+    Llama a Gemini de forma asíncrona (ver `app.collectors.traffic.gemini`). Si
+    no hay `GEMINI_API_KEY`, o si el modelo falla o alucina, cae a la heurística
+    de reglas en vez de perder el aviso.
+
+    Ese respaldo es una decisión, no una comodidad: la alternativa era que una
+    clave sin provisionar apagara la mitad de la capa de accidentes en silencio.
+    La heurística resuelve los avisos con estructura "en <calle> con <calle>,
+    <ciudad>" —que son la mayoría— y falla devolviendo None con los tramos de
+    ruta por kilómetro, que es el fallo correcto.
+
+    Qué camino se usó queda en `raw_data._extraction.mode` de cada señal, para
+    poder medir uno contra otro sobre datos reales.
+    """
+    payload = " ".join(str(text or "").split())
+    if not payload:
+        return None
+
+    if gemini.is_configured():
+        streets = await gemini.extract_streets(payload)
+        if streets is not None:
+            return streets
+        logger.debug("Gemini no resolvió el aviso; se intenta con la heurística")
+
+    return extract_streets_heuristic(payload)
+
+
+def extract_streets_heuristic(text: str) -> dict[str, Any] | None:
+    """Extracción por reglas. Respaldo y línea base contra la que medir el modelo.
+
+    Resuelve la estructura "en <calle> con <calle>, <ciudad>", que cubre la
+    mayoría de los avisos del MTT. Devuelve None cuando no reconoce una vía —el
+    fallo correcto: una calle inventada geocodifica a un punto plausible y falso,
+    peor que no tener ubicación.
     """
     cleaned = " ".join(str(text or "").split())
     if not cleaned:
-        return _empty_extraction()
-
-    normalised = normalise_text(cleaned)
-    is_accident = any(marker in normalised for marker in _ACCIDENT_MARKERS)
+        return None
 
     # A partir de acá se trabaja con los puntos de las abreviaturas neutralizados;
     # se restauran al construir el resultado.
@@ -228,7 +262,7 @@ def extract_streets_via_llm(text: str) -> dict[str, Any]:
 
     place_match = _PLACE_LEAD.search(protected)
     if not place_match:
-        return _empty_extraction(is_accident=is_accident)
+        return None
 
     place = place_match.group("place")
     stop = _PLACE_STOP.search(place)
@@ -248,7 +282,7 @@ def extract_streets_via_llm(text: str) -> dict[str, Any]:
 
     street_part = ", ".join(segments).strip()
     if not street_part:
-        return _empty_extraction(is_accident=is_accident, city=city)
+        return None
 
     pieces = [piece.strip(" ,.") for piece in _INTERSECTION_SPLIT.split(street_part, 1)]
     street = pieces[0] or None
@@ -261,26 +295,14 @@ def extract_streets_via_llm(text: str) -> dict[str, Any]:
     if city is None and street:
         street, city = _split_trailing_city(street)
 
+    street_1 = _restore_abbreviations(street)
+    if not street_1:
+        return None
+
     return {
-        "street": _restore_abbreviations(street),
-        "cross_street": _restore_abbreviations(cross),
+        "street_1": street_1,
+        "street_2": _restore_abbreviations(cross),
         "city": _restore_abbreviations(city),
-        "region": _DEFAULT_REGION,
-        "is_accident": is_accident,
-        "mode": _MOCK_MODE,
-    }
-
-
-def _empty_extraction(
-    *, is_accident: bool = False, city: str | None = None
-) -> dict[str, Any]:
-    return {
-        "street": None,
-        "cross_street": None,
-        "city": city,
-        "region": _DEFAULT_REGION,
-        "is_accident": is_accident,
-        "mode": _MOCK_MODE,
     }
 
 
@@ -535,11 +557,27 @@ class TransporteInformaCollector(BaseCollector):
             )
         self.url = settings.TRANSPORTE_INFORMA_URL.strip()
         self.max_geocodes = settings.TRANSPORTE_INFORMA_MAX_GEOCODES
+        self.max_llm_calls = settings.GEMINI_MAX_CALLS_PER_RUN
+
+        if not gemini.is_configured():
+            # No es fatal: la heurística cubre la mayoría de los avisos. Pero
+            # tiene que verse, porque la diferencia de cobertura entre ambos
+            # caminos no es despreciable y nadie debería descubrir meses después
+            # que el modelo nunca se llamó.
+            logger.warning(
+                "GEMINI_API_KEY no está configurada: la extracción de calles "
+                "usará la heurística de reglas",
+                extra={"collector": self.name},
+            )
 
     def run_params(self) -> dict[str, Any]:
         return {
             "max_geocodes": self.max_geocodes,
-            "extraction_mode": _MOCK_MODE,
+            "max_llm_calls": self.max_llm_calls,
+            "extraction_mode": (
+                gemini.MODE_GEMINI if gemini.is_configured() else gemini.MODE_HEURISTIC
+            ),
+            "gemini_model": settings.GEMINI_MODEL if gemini.is_configured() else None,
             "nominatim_min_interval_s": settings.NOMINATIM_MIN_INTERVAL_SECONDS,
         }
 
@@ -591,21 +629,40 @@ class TransporteInformaCollector(BaseCollector):
 
         resolved: list[tuple[TrafficNotice, dict[str, Any], GeocodeResult | None]] = []
         geocoded = 0
+        llm_calls = 0
 
         # Un solo cliente para todas las llamadas a Nominatim: reutiliza la
         # conexión TLS y, sobre todo, mantiene un único User-Agent identificable,
         # que es parte del contrato de uso del servicio.
         async with build_client() as geo_client:
             for notice in notices:
-                streets = extract_streets_via_llm(notice.text)
+                # El filtro de siniestro va ANTES del modelo, no después. Dos
+                # razones: el MTT publica cortes programados y desvíos que no
+                # son accidentes, y cada llamada al LLM se paga — filtrar
+                # primero evita gastar tokens en avisos que se van a descartar.
+                if not looks_like_accident(notice.text):
+                    continue
 
-                if not streets.get("is_accident"):
-                    # El MTT publica también cortes programados y desvíos. No son
-                    # siniestros y no deben entrar a la capa de accidentes.
+                if llm_calls >= self.max_llm_calls:
+                    self.warn(
+                        f"se alcanzó el tope de {self.max_llm_calls} llamadas al "
+                        f"modelo por corrida; el resto queda sin ubicación"
+                    )
+                    streets = None
+                else:
+                    streets = await extract_streets_via_llm(notice.text)
+                    llm_calls += 1
+
+                if streets is None:
+                    # Ni el modelo ni la heurística reconocieron una vía. El
+                    # aviso entra igual, sin coordenadas: es un accidente que el
+                    # MTT informó y descartarlo por no saber dónde sería perder
+                    # el hecho por no tener el punto.
+                    resolved.append((notice, {}, None))
                     continue
 
                 point: GeocodeResult | None = None
-                if geocoded < self.max_geocodes and streets.get("street"):
+                if geocoded < self.max_geocodes and streets.get("street_1"):
                     try:
                         point = await geocode(geo_client, streets)
                         geocoded += 1
@@ -638,7 +695,11 @@ class TransporteInformaCollector(BaseCollector):
                 "collector": self.name,
                 "avisos": len(notices),
                 "accidentes": len(resolved),
+                "extracciones_llm": llm_calls,
                 "geocodificados": geocoded,
+                "modo": gemini.MODE_GEMINI
+                if gemini.is_configured()
+                else gemini.MODE_HEURISTIC,
             },
         )
         return resolved
@@ -674,7 +735,14 @@ class TransporteInformaCollector(BaseCollector):
                         # Los dos pasos quedan separados y auditables: qué leyó el
                         # extractor y qué resolvió el geocodificador. Si mañana un
                         # punto está mal, esto dice cuál de los dos falló.
-                        "_extraction": streets,
+                        "_extraction": {
+                            **streets,
+                            "mode": (
+                                gemini.MODE_GEMINI
+                                if gemini.is_configured()
+                                else gemini.MODE_HEURISTIC
+                            ),
+                        },
                         "_geocoding": point.as_dict() if point else None,
                     },
                 )
@@ -689,9 +757,14 @@ class TransporteInformaCollector(BaseCollector):
 
 
 __all__ = [
+    "TRAFFIC_KEYWORDS",
     "TRANSPORTE_INFORMA_CONFIDENCE",
     "TrafficNotice",
     "TransporteInformaCollector",
+    "extract_streets_heuristic",
     "extract_streets_via_llm",
+    "looks_like_accident",
+    "page_looks_broken",
     "parse_notice",
+    "parse_notices",
 ]
