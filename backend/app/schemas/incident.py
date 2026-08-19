@@ -15,6 +15,11 @@ diseñado para que sea **difícil dibujar algo falso**:
   que ordena todo el proyecto.
 * `confidence_breakdown` va incluido. Cualquiera puede auditar de dónde salió
   el número sin acceso a la base.
+* `family` y `level_label` se calculan acá y viajan en la respuesta. Antes el
+  cliente tenía que replicar la tabla de familias y descartar nuestra etiqueta
+  —que decía "Incendio confirmado" sobre un choque—. Toda decisión de
+  presentación que dependa del dominio se toma en el backend: si mañana entra
+  una familia nueva, el mapa la pinta sin desplegar el frontend.
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ from datetime import datetime
 from typing import Annotated, Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from app.models.enums import (
     ConfidenceLevel,
@@ -31,7 +36,9 @@ from app.models.enums import (
     IncidentStatus,
     IncidentType,
     LinkMethod,
+    family_of_incident,
     level_for,
+    style_for,
 )
 
 Confidence = Annotated[float, Field(ge=0.0, le=1.0)]
@@ -123,10 +130,75 @@ class IncidentRead(BaseModel):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
+    def family(self) -> str:
+        """Familia de fenómeno: `fire`, `traffic`, `hydro` u `other`.
+
+        Decide con qué paleta se pinta el incidente y qué casilla del panel lo
+        enciende. Se expone porque el corte ya existía en el backend —es el que
+        impide que una alerta por crecida se adose a un incendio— y tenerlo
+        duplicado en el cliente significaba que agregar un `IncidentType` exigía
+        desplegar las dos mitades del sistema, en orden, o el mapa dejaba de
+        pintar algo sin decir nada.
+        """
+        return family_of_incident(self.type)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def level_label(self) -> str:
+        """Etiqueta del tramo de confianza, con el sustantivo de su familia.
+
+        "Incendio confirmado" para un incendio, "Accidente confirmado" para un
+        choque. Es el par legible de `confidence_level`, que es el enum
+        operativo.
+
+        No confundir con `confidence_label`, que convive con éste a propósito:
+        aquél es el adverbio de certeza ("muy probable", "sin confirmar") y no
+        depende del fenómeno; éste nombra el fenómeno y su nivel.
+        """
+        return style_for(self.confidence_level, self.family).label
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
     def confidence_label(self) -> str:
         return confidence_label(
             self.confidence, confirmed=self.is_official_confirmed
         )
+
+    @model_validator(mode="after")
+    def _reconcile_breakdown_label(self) -> IncidentRead:
+        """Corrige la etiqueta guardada en el breakdown de incidentes viejos.
+
+        `confidence_breakdown` es una columna: los incidentes correlacionados
+        antes de este cambio llevan grabado `level_label: "Incendio confirmado"`
+        aunque sean accidentes. Sin esto, la misma respuesta se contradiría —un
+        `level_label` correcto arriba y el viejo dentro del breakdown—, que es
+        peor que el problema original: el cliente no sabría a cuál creerle.
+
+        Se reescribe **sólo la presentación**. Los pesos, los techos, los aportes
+        por fuente y la versión de la política quedan intactos: son la auditoría
+        de cómo se calculó el número y falsificarlos sería mentir sobre el
+        pasado. La etiqueta no se calculó, se eligió, y elegirla de nuevo al
+        leer es legítimo.
+
+        Se construye un dict nuevo en vez de mutar el existente porque el que
+        llega es el del objeto ORM, y mutarlo marcaría la fila como sucia:
+        serializar un incidente dispararía un UPDATE.
+        """
+        breakdown = self.confidence_breakdown
+        if not breakdown:
+            return self
+
+        family = self.family
+        esperado = style_for(self.confidence_level, family).label
+        if breakdown.get("level_label") == esperado and breakdown.get("family") == family:
+            return self
+
+        self.confidence_breakdown = {
+            **breakdown,
+            "family": family,
+            "level_label": esperado,
+        }
+        return self
 
     @computed_field  # type: ignore[prop-decorator]
     @property

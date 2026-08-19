@@ -14,8 +14,14 @@ un ciclo real (`schemas.incident` → `services.correlation` → `services.__ini
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
+
+#: Familia de fenómeno por defecto. Se declara acá arriba —lejos de
+#: `INCIDENT_FAMILY`, que es donde se la esperaría— porque `style_for` la usa
+#: como valor por defecto de un parámetro, y eso se evalúa al importar el
+#: módulo, no al llamar la función.
+DEFAULT_FAMILY = "other"
 
 
 class EventSource(str, Enum):
@@ -163,6 +169,18 @@ class LevelStyle:
     meaning: str
 
 
+#: Estilos **neutrales respecto del fenómeno**. Son la base y el fallback.
+#:
+#: La etiqueta de `CONFIRMED` decía "Incendio confirmado" desde que el sistema
+#: sólo veía incendios, y siguió diciéndolo cuando empezaron a entrar accidentes
+#: viales: la API rotulaba "Incendio confirmado" un choque en la Ruta 68 y el
+#: frontend no tenía más remedio que descartar la etiqueta y fabricar la suya.
+#:
+#: El default es genérico a propósito, y esa es la decisión de diseño de este
+#: bloque: si alguien llama a `style_for` sin familia, o llega una familia nueva
+#: que nadie mapeó, el resultado es "Emergencia confirmada" —vago pero cierto—
+#: en vez de una afirmación falsa sobre un fenómeno que no ocurrió. El modo de
+#: fallo apunta hacia lo impreciso, nunca hacia lo incorrecto.
 LEVEL_STYLES: dict[ConfidenceLevel, LevelStyle] = {
     ConfidenceLevel.UNSAFE: LevelStyle(
         label="Baja confianza",
@@ -172,14 +190,75 @@ LEVEL_STYLES: dict[ConfidenceLevel, LevelStyle] = {
     ConfidenceLevel.POSSIBLE: LevelStyle(
         label="Posible emergencia",
         color="#eab308",
-        meaning="Hay evidencia, no alcanza para afirmar que hay fuego.",
+        meaning="Hay evidencia, no alcanza para afirmar que haya una emergencia.",
     ),
     ConfidenceLevel.CONFIRMED: LevelStyle(
-        label="Incendio confirmado",
+        label="Emergencia confirmada",
         color="#ea580c",
         meaning="Evidencia acumulada por sobre el 60 %.",
     ),
 }
+
+#: Etiqueta de `CONFIRMED` por familia de fenómeno. Sólo este tramo cambia de
+#: sustantivo: `UNSAFE` ("Baja confianza") y `POSSIBLE` ("Posible emergencia")
+#: ya son neutros y sirven igual para un incendio que para un choque.
+CONFIRMED_LABEL_BY_FAMILY: dict[str, str] = {
+    "fire": "Incendio confirmado",
+    "traffic": "Accidente confirmado",
+    "hydro": "Emergencia confirmada",
+    "other": "Emergencia confirmada",
+}
+
+#: Lo que el tramo `POSSIBLE` significa en cada familia. La frase original
+#: —"no alcanza para afirmar que hay fuego"— es el mismo defecto que la etiqueta
+#: quemada, sólo que en el campo de al lado.
+POSSIBLE_MEANING_BY_FAMILY: dict[str, str] = {
+    "fire": "Hay evidencia, no alcanza para afirmar que hay fuego.",
+    "traffic": "Hay evidencia, no alcanza para afirmar que hubo un accidente.",
+    "hydro": "Hay evidencia, no alcanza para afirmar que hay una emergencia.",
+    "other": "Hay evidencia, no alcanza para afirmar que hay una emergencia.",
+}
+
+
+def style_for(level: ConfidenceLevel, family: str = DEFAULT_FAMILY) -> LevelStyle:
+    """Estilo de un tramo de confianza para una familia de fenómeno.
+
+    El color no depende de la familia: lo fija el nivel de certeza y sólo el
+    nivel. Que un accidente confirmado y un incendio confirmado compartan el
+    mismo naranja es intencional — el color comunica *cuánto sabemos*, y la
+    forma del ícono y la etiqueta comunican *de qué se trata*. Mezclar ambas
+    dimensiones en el color obligaría a leer una leyenda para saber si algo es
+    urgente.
+    """
+    base = LEVEL_STYLES[level]
+    if level is ConfidenceLevel.CONFIRMED:
+        return replace(base, label=confirmed_label_for(family))
+    if level is ConfidenceLevel.POSSIBLE:
+        return replace(
+            base,
+            meaning=POSSIBLE_MEANING_BY_FAMILY.get(
+                family, POSSIBLE_MEANING_BY_FAMILY[DEFAULT_FAMILY]
+            ),
+        )
+    return base
+
+
+def confirmed_label_for(family: str) -> str:
+    """Etiqueta del tramo `CONFIRMED`. Genérica ante una familia desconocida."""
+    return CONFIRMED_LABEL_BY_FAMILY.get(
+        family, CONFIRMED_LABEL_BY_FAMILY[DEFAULT_FAMILY]
+    )
+
+
+def label_for(
+    confidence: float, family: str = DEFAULT_FAMILY
+) -> str:
+    """Atajo: confianza + familia → etiqueta legible del tramo.
+
+    Es lo que consumen el schema de salida y el GeoJSON, para que la etiqueta se
+    derive siempre del mismo sitio y no haya dos formas de calcularla.
+    """
+    return style_for(level_for(confidence), family).label
 
 
 def level_for(confidence: float) -> ConfidenceLevel:
@@ -273,11 +352,11 @@ INCIDENT_FAMILY: dict[IncidentType, str] = {
     IncidentType.OTHER: "other",
 }
 
-#: Familia por defecto cuando el tipo no está mapeado. Se declara como constante
-#: porque el SQL de la partición y el filtro en memoria tienen que coincidir: si
-#: uno cae en "other" y el otro en NULL, el motor agruparía distinto de lo que
-#: dice esta tabla.
-DEFAULT_FAMILY = "other"
+#: `DEFAULT_FAMILY` es la familia de quien no esté mapeado acá. Vive al principio
+#: del módulo por una restricción de evaluación; ver el comentario allá arriba.
+#: Que sea una constante y no un literal suelto importa: el SQL de la partición y
+#: el filtro en memoria tienen que caer en el mismo valor o el motor agruparía
+#: distinto de lo que dice esta tabla.
 
 
 def family_of_incident(incident_type: IncidentType) -> str:

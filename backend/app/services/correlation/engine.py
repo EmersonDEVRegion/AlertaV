@@ -61,6 +61,7 @@ from app.models.enums import (
     IncidentStatus,
     IncidentType,
     LinkMethod,
+    family_of_incident,
 )
 from app.models.event import RawEvent
 from app.models.incident import Incident
@@ -500,8 +501,12 @@ class CorrelationEngine:
             return
 
         views = [SignalView.from_orm(event) for event in signals]
-        scored = score(views)
+        # El tipo se resuelve ANTES de puntuar, y el orden importa: `score`
+        # necesita la familia para rotular el tramo de confianza con el
+        # sustantivo correcto ("Accidente confirmado" y no "Incendio
+        # confirmado"). No influye en el número, sólo en cómo se lo nombra.
         incident_type = resolve_type(views)
+        scored = score(views, family=family_of_incident(incident_type))
         commune, province = self._resolve_territory(signals)
 
         # La ventana temporal la marcan las OBSERVACIONES del fenómeno, no las

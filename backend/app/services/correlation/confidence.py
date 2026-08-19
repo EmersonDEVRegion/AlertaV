@@ -74,6 +74,7 @@ from typing import Any
 from app.collectors.geoservices import normalise_text
 from app.models.enums import (
     CONFIRMED_THRESHOLD,
+    DEFAULT_FAMILY,
     EVENT_TO_INCIDENT_TYPE,
     LEVEL_STYLES,
     UNSAFE_THRESHOLD,
@@ -83,6 +84,7 @@ from app.models.enums import (
     IncidentStatus,
     IncidentType,
     level_for,
+    style_for,
 )
 
 #: Los tramos y sus cortes viven en `app.models.enums` —ver el docstring de ese
@@ -109,6 +111,7 @@ __all__ = [
     "rule_for",
     "score",
     "signal_weight",
+    "style_for",
 ]
 
 #: Se versiona porque queda escrito en `incidents.confidence_breakdown`. Cuando
@@ -350,8 +353,20 @@ def _source_contribution(rule: SourceRule, weights: Sequence[float]) -> float:
     return min(total, rule.ceiling)
 
 
-def score(signals: Iterable[SignalView]) -> ConfidenceResult:
-    """Confianza del incidente y su derivación completa."""
+def score(
+    signals: Iterable[SignalView], *, family: str = DEFAULT_FAMILY
+) -> ConfidenceResult:
+    """Confianza del incidente y su derivación completa.
+
+    `family` **no participa del cálculo**: la aritmética de la confianza es la
+    misma para un incendio que para un choque, y mezclar el tipo de fenómeno con
+    el peso de la evidencia sería empezar a decidir que ciertos siniestros
+    merecen más credulidad que otros. Entra sólo para rotular el resultado —el
+    `level_label` del breakdown— con el sustantivo correcto.
+
+    Por defecto la familia es genérica. Un llamador que la omita obtiene
+    "Emergencia confirmada": impreciso, pero nunca falso.
+    """
     grouped: dict[EventSource, list[float]] = defaultdict(list)
     alert_level: str | None = None
     alert_severity = -1
@@ -417,7 +432,8 @@ def score(signals: Iterable[SignalView]) -> ConfidenceResult:
             "ceiling_applied": applied,
             "combination": "additive_capped",
             "level": level.value,
-            "level_label": LEVEL_STYLES[level].label,
+            "family": family,
+            "level_label": style_for(level, family).label,
             "thresholds": {
                 "unsafe_below": UNSAFE_THRESHOLD,
                 "confirmed_above": CONFIRMED_THRESHOLD,

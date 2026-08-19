@@ -18,7 +18,13 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.enums import IncidentStatus, IncidentType, level_for
+from app.models.enums import (
+    IncidentStatus,
+    IncidentType,
+    family_of_incident,
+    label_for,
+    level_for,
+)
 from app.models.incident import Incident
 from app.repositories.incident_repository import IncidentRepository
 from app.schemas.event import GeoJSONFeature, GeoJSONFeatureCollection
@@ -126,6 +132,12 @@ class IncidentService:
                     "code": incident.code,
                     "public_id": str(incident.public_id),
                     "type": incident.type.value,
+                    # Misma razón que `confidence_level`: MapLibre resuelve el
+                    # color y la capa con un `match` sobre una clave ya
+                    # calculada. Sin `family`, la expresión tendría que enumerar
+                    # los `type` de cada familia y sería una segunda copia de
+                    # INCIDENT_FAMILY viviendo dentro de un estilo de mapa.
+                    "family": family_of_incident(incident.type),
                     "status": incident.status.value,
                     "title": incident.title,
                     "confidence": incident.confidence,
@@ -136,6 +148,11 @@ class IncidentService:
                     # expresión `match` de MapLibre lea una clave ya calculada y
                     # no sea una segunda copia de los umbrales.
                     "confidence_level": level_for(incident.confidence).value,
+                    # Etiqueta ya resuelta según la familia: la ficha del mapa la
+                    # pinta tal cual, sin traducir de `type` a sustantivo.
+                    "level_label": label_for(
+                        incident.confidence, family_of_incident(incident.type)
+                    ),
                     "is_confirmed_incident": incident.is_official_confirmed,
                     "alert_level": incident.alert_level,
                     "alert_confidence": incident.alert_confidence,
