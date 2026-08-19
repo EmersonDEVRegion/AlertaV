@@ -30,41 +30,50 @@ export const SEISMIC_HIT_LAYER_ID = 'seismic-hit'
  * `sizing_magnitude` ya viene acotada a [2, 7] desde el cliente, así que acá no
  * se repite esa regla: vive una sola vez, en `domain/seismicSymbology.ts`.
  */
-const SEISMIC_RADIUS: ExpressionSpecification = [
-  'interpolate',
-  ['linear'],
-  ['zoom'],
-  6,
-  [
-    'interpolate',
-    ['linear'],
-    ['get', 'sizing_magnitude'],
-    MIN_SIZED_MAGNITUDE,
-    3,
-    MAX_SIZED_MAGNITUDE,
-    13,
-  ],
-  10,
-  [
-    'interpolate',
-    ['linear'],
-    ['get', 'sizing_magnitude'],
-    MIN_SIZED_MAGNITUDE,
-    5,
-    MAX_SIZED_MAGNITUDE,
-    26,
-  ],
-  14,
-  [
-    'interpolate',
-    ['linear'],
-    ['get', 'sizing_magnitude'],
-    MIN_SIZED_MAGNITUDE,
-    8,
-    MAX_SIZED_MAGNITUDE,
-    40,
-  ],
-]
+const ZOOM_STOPS = [
+  // zoom, radio del sismo más chico, radio del más grande
+  [6, 3, 13],
+  [10, 5, 26],
+  [14, 8, 40],
+] as const
+
+type SeismicRadiusOptions = {
+  /** Píxeles fijos que se suman al radio por magnitud. */
+  pad?: number
+  /** Piso en píxeles, para el objetivo táctil. */
+  floor?: number
+}
+
+/**
+ * Construye un `circle-radius` con `["zoom"]` como expresión **raíz**.
+ *
+ * MapLibre sólo admite `["zoom"]` como entrada de un `step`/`interpolate` de
+ * nivel superior. `["+", SEISMIC_RADIUS, 4]` y `["max", ["+", ...], 14]` dejaban
+ * el zoom anidado y hacían caer el estilo entero, igual que en las capas de
+ * incidentes. Ahora el `pad` y el piso se aplican dentro de cada tope de zoom,
+ * donde sólo queda la interpolación por magnitud —una expresión de datos, que
+ * MapLibre evalúa por feature sin problema.
+ */
+function seismicRadius({ pad = 0, floor }: SeismicRadiusOptions = {}): ExpressionSpecification {
+  const stops = ZOOM_STOPS.flatMap(([zoom, minRadius, maxRadius]) => {
+    const byMagnitude: ExpressionSpecification = [
+      'interpolate',
+      ['linear'],
+      ['get', 'sizing_magnitude'],
+      MIN_SIZED_MAGNITUDE,
+      minRadius + pad,
+      MAX_SIZED_MAGNITUDE,
+      maxRadius + pad,
+    ]
+    const value: ExpressionSpecification =
+      floor === undefined ? byMagnitude : ['max', byMagnitude, floor]
+    return [zoom, value]
+  })
+
+  return ['interpolate', ['linear'], ['zoom'], ...stops] as unknown as ExpressionSpecification
+}
+
+const SEISMIC_RADIUS = seismicRadius()
 
 const BAND_COLOR = MAGNITUDE_COLOR_EXPRESSION as unknown as ExpressionSpecification
 
@@ -106,7 +115,7 @@ export function seismicSelectedLayer(usgsId: string | null): SeismicLayer {
     type: 'circle',
     filter: ['==', ['get', 'usgs_id'], usgsId ?? ' '],
     paint: {
-      'circle-radius': ['+', SEISMIC_RADIUS, 4],
+      'circle-radius': seismicRadius({ pad: 4 }),
       'circle-color': 'transparent',
       'circle-stroke-color': '#0f172a',
       'circle-stroke-width': 2.5,
@@ -118,7 +127,7 @@ export const seismicHitLayer: SeismicLayer = {
   id: SEISMIC_HIT_LAYER_ID,
   type: 'circle',
   paint: {
-    'circle-radius': ['max', ['+', SEISMIC_RADIUS, 6], 14],
+    'circle-radius': seismicRadius({ pad: 6, floor: 14 }),
     'circle-color': '#000000',
     'circle-opacity': 0,
   },
