@@ -24,7 +24,10 @@ from app.collectors.traffic.bomberos_10_4_worker import (
     Bomberos104Collector,
     Dispatch,
     build_external_id,
+    feed_is_broken,
+    find_codes,
     matches_key,
+    normalise_code,
     parse_dispatches,
 )
 from app.collectors.traffic.transporteinforma_worker import (
@@ -176,66 +179,186 @@ def test_waze_el_id_externo_es_estable():
     assert primera[0].external_id == segunda[0].external_id
 
 
-# --- Bomberos 10-4 -----------------------------------------------------------
+# --- Bomberos 10-4: reconocimiento de la clave -------------------------------
+#
+# Es el núcleo del worker y donde un error es más caro: confundir una clave
+# manda al mapa un accidente que no ocurrió, u oculta uno que sí.
 
-HTML_PORTAL = """
-<table>
-  <tr><th>Clave</th><th>Dirección</th><th>Fecha</th></tr>
-  <tr><td>10-4</td><td>Ruta 68 km 42</td><td>19-08-2026 14:30</td></tr>
-  <tr><td>10-1</td><td>Cerro Barón s/n</td><td>19-08-2026 14:35</td></tr>
-  <tr><td>10-40</td><td>Av. Brasil 1200</td><td>19-08-2026 14:40</td></tr>
-</table>
+
+@pytest.mark.parametrize(
+    ("token", "esperado"),
+    [
+        # Variantes legítimas de la misma clave.
+        ("10-4", (10, 4)),
+        ("10-0-4", (10, 4)),  # el 0 intermedio es separador de familia
+        ("10-4-1", (10, 4, 1)),  # sufijo de subtipo
+        ("10.4", (10, 4)),
+        ("10 – 4", (10, 4)),  # guion largo del autocorrector
+        ("10/4", (10, 4)),
+        # Claves distintas: tienen que normalizar distinto.
+        ("10-40", (10, 40)),
+        ("10-41", (10, 41)),
+        ("10-0-1", (10, 1)),
+        # No es una clave.
+        ("10-4-2026", None),  # una fecha
+    ],
+)
+def test_normalise_code(token, esperado):
+    assert normalise_code(token) == esperado
+
+
+@pytest.mark.parametrize(
+    ("aviso", "coincide"),
+    [
+        ("Clave 10-4 en Ruta 68 km 42", True),
+        ("Clave 10-0-4, Av. España con Uno Norte", True),
+        ("10-4-1 rescate con víctima atrapada, Quilpué", True),
+        ("Despacho 10.4 en Placilla", True),
+        ("Se despacha 10 – 4 a Ruta 60 CH", True),
+        # Las trampas.
+        ("Clave 10-40 emanación de gas, Av. Brasil", False),
+        ("Clave 10-41 en Playa Ancha", False),
+        ("Clave 10-0-1 incendio estructural", False),
+        ("Reporte del 10-4-2026 sin novedades", False),
+        ("Carro 104 en tránsito", False),
+        ("Unidad 110-4 disponible", False),
+        ("Sin claves en este aviso", False),
+    ],
+)
+def test_matches_key_distingue_la_clave_de_sus_impostoras(aviso, coincide):
+    """`10-40` contiene `10-4` como substring y NO es la misma clave.
+
+    Con comparación por texto, un despacho por emanación de gas entraría al
+    sistema como rescate vehicular. La normalización a tuplas lo hace imposible:
+    `(10, 40)` no tiene a `(10, 4)` por prefijo.
+    """
+    assert (matches_key(aviso, ["10-4"]) is not None) is coincide
+
+
+def test_el_sufijo_de_subtipo_sigue_siendo_la_misma_clave():
+    """`10-4-1` es un rescate con víctima atrapada: el caso más grave.
+
+    Exigir coincidencia exacta lo descartaría justo por ser más específico.
+    """
+    assert matches_key("10-4-1 en Ruta 68", ["10-4"]) == "10-4"
+    assert find_codes("10-4-1 en Ruta 68") == [(10, 4, 1)]
+
+
+def test_find_codes_ve_todas_las_claves_de_un_aviso():
+    codigos = find_codes("Despacho 10-4 y luego 10-0-1 en el mismo sector")
+    assert (10, 4) in codigos
+    assert (10, 1) in codigos
+
+
+# --- Bomberos 10-4: lectura del feed RSS -------------------------------------
+
+RSS_FEED = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Central CBV</title>
+    <item>
+      <title>Clave 10-4 en Ruta 68 km 42, se despachan unidades</title>
+      <description>Rescate vehicular. Personal en el lugar.</description>
+      <guid>https://ejemplo.cl/status/1</guid>
+      <pubDate>Wed, 19 Aug 2026 14:30:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Clave 10-0-4 Av. Espa&#241;a con Uno Norte</title>
+      <guid>https://ejemplo.cl/status/2</guid>
+      <pubDate>Wed, 19 Aug 2026 14:35:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Clave 10-40 emanaci&#243;n de gas en Av. Brasil</title>
+      <guid>https://ejemplo.cl/status/3</guid>
+      <pubDate>Wed, 19 Aug 2026 14:40:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Clave 10-1 incendio estructural, Cerro Bar&#243;n</title>
+      <guid>https://ejemplo.cl/status/4</guid>
+      <pubDate>Wed, 19 Aug 2026 14:45:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>
 """
 
 
-def test_bomberos_extrae_solo_la_clave_pedida():
-    despachos = parse_dispatches(HTML_PORTAL, ["10-4"])
+def test_bomberos_extrae_del_rss_solo_la_clave_pedida():
+    despachos = parse_dispatches(RSS_FEED, ["10-4"])
 
-    assert len(despachos) == 1
-    assert despachos[0].key == "10-4"
+    assert len(despachos) == 2, "deben entrar 10-4 y 10-0-4, y sólo esas"
+    assert {d.key for d in despachos} == {"10-4"}
     assert "Ruta 68" in (despachos[0].address or "")
+    assert "España" in (despachos[1].address or ""), "las entidades XML se decodifican"
 
 
-def test_bomberos_no_confunde_10_4_con_10_40():
-    """El bug que la comparación ingenua por substring produce.
-
-    "10-40" contiene "10-4"; sin la guarda de dígitos, un despacho por emanación
-    de gas entraría al sistema como rescate vehicular.
-    """
-    assert matches_key("clave 10-40 en Av. Brasil", ["10-4"]) is None
-    assert matches_key("clave 10-4 en Ruta 68", ["10-4"]) == "10-4"
+def test_bomberos_lee_la_fecha_del_pubdate():
+    despacho = parse_dispatches(RSS_FEED, ["10-4"])[0]
+    assert despacho.occurred_at is not None
+    assert (despacho.occurred_at.day, despacho.occurred_at.month) == (19, 8)
+    assert despacho.occurred_at.tzinfo is not None, "debe llegar con zona horaria"
 
 
-def test_bomberos_extrae_la_fecha_declarada():
-    despachos = parse_dispatches(HTML_PORTAL, ["10-4"])
-    assert despachos[0].occurred_at is not None
-    assert despachos[0].occurred_at.day == 19
-    assert despachos[0].occurred_at.month == 8
+def test_bomberos_mira_titulo_y_descripcion():
+    """El puente no es consistente sobre dónde deja el texto completo."""
+    feed = """<?xml version="1.0"?><rss version="2.0"><channel>
+      <item>
+        <title>Despacho en curso</title>
+        <description>Clave 10-4 en Av. Argentina</description>
+        <guid>x1</guid>
+      </item></channel></rss>"""
+    despachos = parse_dispatches(feed, ["10-4"])
+    assert len(despachos) == 1
+    assert "Av. Argentina" in despachos[0].address
 
 
 def test_bomberos_emite_accidente_confirmado_sin_coordenadas():
     """Una 10-4 aporta certeza, no ubicación. Ver el docstring del worker."""
     collector = Bomberos104Collector.__new__(Bomberos104Collector)
-    eventos = collector.normalize(parse_dispatches(HTML_PORTAL, ["10-4"]))
+    eventos = collector.normalize(parse_dispatches(RSS_FEED, ["10-4"]))
 
-    assert len(eventos) == 1
+    assert len(eventos) == 2
     evento = eventos[0]
     assert evento.type is EventType.ACCIDENT
     assert evento.source is EventSource.BOMBEROS
     assert evento.confidence == pytest.approx(1.0)
     assert evento.lat is None and evento.lon is None
-    assert evento.raw_data["_bomberos"]["direccion"] == "Ruta 68 km 42"
+    assert "Ruta 68" in evento.raw_data["_bomberos"]["direccion"]
 
 
-def test_bomberos_el_id_externo_es_determinista_y_discrimina():
-    a = Dispatch(key="10-4", address="Ruta 68 km 42", occurred_at=AHORA, commune=None, raw_text="x")
-    b = Dispatch(key="10-4", address="Ruta 68 km 42", occurred_at=AHORA, commune=None, raw_text="OTRO texto")
-    c = Dispatch(key="10-4", address="Ruta 68 km 90", occurred_at=AHORA, commune=None, raw_text="x")
+def test_bomberos_el_id_externo_sale_del_guid():
+    """Idempotencia: releer el feed cada 3 min no puede duplicar el despacho."""
+    primera = parse_dispatches(RSS_FEED, ["10-4"])
+    segunda = parse_dispatches(RSS_FEED, ["10-4"])
+    assert build_external_id(primera[0]) == build_external_id(segunda[0])
+    assert build_external_id(primera[0]) != build_external_id(primera[1])
 
-    # El texto de la fila cambia entre lecturas (contadores de unidades en
-    # camino); incluirlo convertiría cada refresco en un despacho nuevo.
+
+def test_bomberos_sin_guid_cae_a_un_hash_determinista():
+    a = Dispatch(key="10-4", address="Ruta 68", occurred_at=AHORA, commune=None,
+                 raw_text="Clave 10-4 en Ruta 68", guid=None)
+    b = Dispatch(key="10-4", address="Ruta 68", occurred_at=AHORA, commune=None,
+                 raw_text="Clave 10-4 en Ruta 68", guid=None)
+    c = Dispatch(key="10-4", address="Ruta 60", occurred_at=AHORA, commune=None,
+                 raw_text="Clave 10-4 en Ruta 60", guid=None)
+
     assert build_external_id(a) == build_external_id(b)
     assert build_external_id(a) != build_external_id(c)
+
+
+def test_bomberos_distingue_feed_vacio_de_feed_roto():
+    """Un `len(entries) == 0` confunde dos cosas muy distintas.
+
+    Un feed válido sin novedades es una noche tranquila. Un XML ilegible es
+    RSSHub sirviendo una página de error con HTTP 200, y eso necesita a alguien.
+    """
+    vacio = """<?xml version="1.0"?><rss version="2.0"><channel>
+      <title>Central</title></channel></rss>"""
+    roto, _ = feed_is_broken(vacio)
+    assert roto is False, "un feed válido sin ítems no es un feed roto"
+
+    roto, motivo = feed_is_broken("<html><body>429 Too Many Requests</body></html>")
+    assert roto is True
+    assert motivo
 
 
 def test_bomberos_html_sin_filas_no_produce_despachos():

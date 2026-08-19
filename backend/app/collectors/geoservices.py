@@ -361,7 +361,7 @@ def raise_if_service_error(payload: Mapping[str, Any], *, origin: str) -> None:
 # --- Transporte HTTP ---------------------------------------------------------
 
 
-async def request_json(
+async def request_response(
     client: httpx.AsyncClient,
     url: str,
     params: Mapping[str, Any],
@@ -369,12 +369,17 @@ async def request_json(
     origin: str,
     retries: int = 2,
     backoff: float = 1.5,
-) -> Any:
-    """GET que devuelve JSON o falla con un mensaje que sirve para diagnosticar.
+) -> httpx.Response:
+    """GET con reintentos, o `CollectorError` con un mensaje diagnosticable.
 
     Reintenta ante errores de red y 5xx, que en portales institucionales son
     frecuentes y transitorios. No reintenta ante 4xx: eso es un contrato roto y
     reintentarlo sólo retrasa el diagnóstico.
+
+    Toda excepción de httpx —timeout, DNS, TLS, conexión rechazada— sale de acá
+    convertida en `CollectorError`. Es lo que permite que los collectors declaren
+    un único tipo de fallo esperado y que `BaseCollector.run()` lo registre en
+    `collector_runs` sin dejar escapar nada al orquestador.
     """
     last_error: str = "sin intentos"
 
@@ -398,7 +403,7 @@ async def request_json(
         except httpx.HTTPError as exc:
             last_error = f"{type(exc).__name__}: {exc}"
         else:
-            return _decode_json(response, origin=origin)
+            return response
 
         if attempt < retries:
             await asyncio.sleep(backoff * (2**attempt))
@@ -407,6 +412,54 @@ async def request_json(
         f"{origin}: sin respuesta tras {retries + 1} intentos ({last_error})",
         detail={"url": url},
     )
+
+
+async def request_json(
+    client: httpx.AsyncClient,
+    url: str,
+    params: Mapping[str, Any],
+    *,
+    origin: str,
+    retries: int = 2,
+    backoff: float = 1.5,
+) -> Any:
+    """GET que devuelve JSON o falla con un mensaje que sirve para diagnosticar."""
+    response = await request_response(
+        client, url, params, origin=origin, retries=retries, backoff=backoff
+    )
+    return _decode_json(response, origin=origin)
+
+
+async def request_text(
+    client: httpx.AsyncClient,
+    url: str,
+    params: Mapping[str, Any] | None = None,
+    *,
+    origin: str,
+    retries: int = 2,
+    backoff: float = 1.5,
+) -> str:
+    """GET que devuelve el cuerpo como texto. Para RSS y para HTML.
+
+    Existe para que las fuentes sin JSON —el feed de Bomberos, el portal del
+    MTT— hereden exactamente los mismos reintentos y la misma conversión de
+    errores que ya tenían las capas institucionales, en vez de que cada scraper
+    invente su propio manejo de red y su propia idea de qué es un fallo.
+
+    Un cuerpo vacío se trata como error: un 200 sin contenido es un portal caído
+    que responde igual, y dejarlo pasar produciría cero eventos con estado
+    `success` — el modo de fallo que este proyecto persigue en todas partes.
+    """
+    response = await request_response(
+        client, url, params or {}, origin=origin, retries=retries, backoff=backoff
+    )
+    body = response.text
+    if not body.strip():
+        raise CollectorError(
+            f"{origin}: la respuesta llegó vacía (HTTP {response.status_code})",
+            detail={"url": url},
+        )
+    return body
 
 
 def _decode_json(response: httpx.Response, *, origin: str) -> Any:

@@ -225,20 +225,25 @@ class Settings(BaseSettings):
     WAZE_MAX_AGE_MINUTES: int = Field(default=120, ge=5, le=1440)
 
     # -- Accidentes viales: despachos de Bomberos ----------------------------
-    #: Portal de despachos a raspar. Sin valor por defecto por la misma razón que
-    #: Waze: cada Cuerpo de Bomberos publica en su propio sitio, y adivinar uno
-    #: sería recolectar de una fuente que nadie verificó. Vacío = apagado.
-    BOMBEROS_DISPATCH_URL: str = ""
-    #: Claves radiales que denotan rescate vehicular. La 10-4 es la del Sistema
-    #: Nacional de Claves; se dejan configurables porque varias regiones usan
-    #: variantes propias.
+    #: Feed RSS de la central. Se lee a través de un puente tipo RSSHub porque la
+    #: central publica en una red social y no expone API.
+    #:
+    #: `rsshub.app` es una instancia pública, compartida y sin SLA: devuelve 429
+    #: y 503 con frecuencia. Sirve para calibrar, pero para operar conviene
+    #: apuntar a una instancia propia (`docker run diygod/rsshub`) y cambiar sólo
+    #: esta variable. Vacío = collector apagado.
+    BOMBEROS_DISPATCH_URL: str = "https://rsshub.app/twitter/user/CentralCBV"
+    #: Claves radiales que denotan rescate vehicular. Se comparan por prefijo tras
+    #: normalizar, de modo que `10-4` también captura `10-0-4` y `10-4-1`. Ver
+    #: `bomberos_10_4_worker.matches_key`.
     BOMBEROS_ACCIDENT_KEYS: CsvList = Field(default_factory=lambda: ["10-4"])
     BOMBEROS_TIMEOUT_SECONDS: float = 30.0
     BOMBEROS_POLL_INTERVAL_SECONDS: int = 180  # 3 min
 
     # -- Accidentes viales: Transporte Informa -------------------------------
-    #: Fuente de avisos en texto libre del MTT. Vacío = apagado.
-    TRANSPORTE_INFORMA_URL: str = ""
+    #: Portal del MTT para la Región de Valparaíso. Es HTML (WordPress con
+    #: Elementor), no una API: se raspa. Vacío = apagado.
+    TRANSPORTE_INFORMA_URL: str = "https://www.transporteinforma.cl/valparaiso/"
     TRANSPORTE_INFORMA_TIMEOUT_SECONDS: float = 30.0
     TRANSPORTE_INFORMA_POLL_INTERVAL_SECONDS: int = 600  # 10 min
     #: Tope de geocodificaciones por corrida. A 1 s por llamada (ver

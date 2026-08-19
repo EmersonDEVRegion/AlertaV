@@ -56,15 +56,16 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+from bs4 import BeautifulSoup, Tag
 
 from app.collectors.base import BaseCollector
-from app.collectors.geoservices import normalise_text, parse_timestamp, request_json
+from app.collectors.geoservices import normalise_text, parse_timestamp, request_text
 from app.collectors.nominatim import GeocodeResult, build_client, geocode
 from app.core.config import settings
 from app.core.exceptions import CollectorError
@@ -298,7 +299,11 @@ def _split_trailing_city(value: str) -> tuple[str | None, str | None]:
 
 
 def parse_notice(payload: Any) -> TrafficNotice | None:
-    """Normaliza un elemento del feed. None si no trae texto aprovechable."""
+    """Normaliza un elemento estructurado. None si no trae texto aprovechable.
+
+    Se conserva aunque el portal se lea como HTML: si el MTT publica alguna vez
+    un JSON o un RSS, el mapeo ya está y sólo cambia de dónde salen los dicts.
+    """
     if not isinstance(payload, Mapping):
         return None
 
@@ -331,6 +336,176 @@ def parse_notice(payload: Any) -> TrafficNotice | None:
     return TrafficNotice(
         notice_id=notice_id, text=text, published_at=published_at, raw=dict(payload)
     )
+
+
+# --- Scraping del portal -----------------------------------------------------
+#
+# transporteinforma.cl es un WordPress con Elementor. No hay API, no hay RSS y
+# no hay clases semánticas: los avisos viven en `<article>` o, más
+# frecuentemente, en `<div class="elementor-widget-container">`, que es un
+# contenedor de maquetación usado para absolutamente todo — menús, pies de
+# página, banners.
+#
+# Por eso la selección tiene dos etapas y no una:
+#
+#   1. **Estructura**: se recogen los bloques candidatos por etiqueta y clase.
+#      Es una red amplia y trae mucha basura.
+#   2. **Contenido**: sobrevive el bloque cuyo texto contiene una palabra clave
+#      de tránsito. Es lo que separa un aviso de emergencia del menú de
+#      navegación, y es mucho más estable frente a rediseños que cualquier
+#      selector CSS: Elementor renumera sus clases en cada edición de la página,
+#      pero "Accidente" seguirá diciéndose "Accidente".
+#
+# La tercera etapa —decidir si el aviso es un *siniestro*— NO es de este bloque.
+# "Restricción vehicular" y "Tránsito suspendido" son palabras clave válidas
+# porque marcan un aviso de tránsito, pero no son accidentes; esa distinción la
+# hace `extract_streets_via_llm` con `is_accident`.
+
+#: Selectores donde el portal publica sus avisos, en orden de especificidad.
+_BLOCK_SELECTORS: tuple[str, ...] = (
+    "article",
+    "div.elementor-widget-container",
+    # Respaldo: si Elementor desaparece en un rediseño, los avisos casi siempre
+    # quedan en algún contenedor con estas clases genéricas de WordPress.
+    "div.entry-content",
+    "div.post-content",
+)
+
+#: Palabras que delatan un aviso de tránsito. Se comparan sin tildes y en
+#: minúsculas, así que "Precaución" y "PRECAUCION" entran igual.
+TRAFFIC_KEYWORDS: tuple[str, ...] = (
+    "precaucion",
+    "accidente",
+    "colision",
+    "restriccion",
+    "transito suspendido",
+    "volcamiento",
+    "atropello",
+)
+
+#: Un bloque más corto que esto es una etiqueta suelta ("Accidente") sin
+#: información; más largo, es la página entera capturada por un contenedor
+#: padre. Ninguno de los dos es un aviso.
+_MIN_BLOCK_CHARS = 25
+_MAX_BLOCK_CHARS = 1200
+
+
+def _block_text(node: Tag) -> str:
+    """Texto visible de un nodo, con los espacios normalizados."""
+    return " ".join(node.get_text(" ", strip=True).split())
+
+
+def matched_keywords(text: str) -> list[str]:
+    """Palabras clave de tránsito presentes en un texto."""
+    haystack = normalise_text(text)
+    return [word for word in TRAFFIC_KEYWORDS if word in haystack]
+
+
+def _candidate_blocks(soup: BeautifulSoup) -> Iterator[Tag]:
+    for selector in _BLOCK_SELECTORS:
+        yield from soup.select(selector)
+
+
+def _deduplicate(blocks: Sequence[str]) -> list[str]:
+    """Se queda con los bloques más específicos de cada anidamiento.
+
+    Elementor anida contenedores dentro de contenedores: el mismo aviso aparece
+    en el `<div>` que lo contiene, en su padre y en el padre de su padre. Sin
+    esto, un solo accidente entraría tres veces al sistema y el motor lo leería
+    como tres corroboraciones independientes del mismo hecho — inflando su
+    confianza con evidencia que es una sola.
+
+    Se ordena de más corto a más largo y se descarta todo bloque que contenga
+    íntegramente a otro ya aceptado: el hijo gana, el padre se va.
+    """
+    kept: list[str] = []
+    for text in sorted(set(blocks), key=len):
+        if any(inner in text for inner in kept):
+            continue
+        kept.append(text)
+    return kept
+
+
+def parse_notices(html: str) -> list[TrafficNotice]:
+    """Extrae los avisos de tránsito del HTML del portal. Función pura.
+
+    Devuelve lista vacía si la página no trae ningún bloque reconocible. Esa
+    ambigüedad —¿no hay avisos o cambió el DOM?— la resuelve `page_looks_broken`,
+    que se consulta aparte.
+    """
+    soup = BeautifulSoup(html, _html_parser())
+
+    texts = [
+        text
+        for block in _candidate_blocks(soup)
+        if _MIN_BLOCK_CHARS <= len(text := _block_text(block)) <= _MAX_BLOCK_CHARS
+        and matched_keywords(text)
+    ]
+
+    notices: list[TrafficNotice] = []
+    for text in _deduplicate(texts):
+        notices.append(
+            TrafficNotice(
+                notice_id=hashlib.sha256(text.encode("utf-8")).hexdigest()[:24],
+                text=text,
+                published_at=extract_datetime(text),
+                raw={"keywords": matched_keywords(text), "origen": "html"},
+            )
+        )
+    return notices
+
+
+def page_looks_broken(html: str) -> tuple[bool, str | None]:
+    """¿La página cambió de estructura? Devuelve `(rota, motivo)`.
+
+    Distingue lo que un `len(notices) == 0` confunde: una jornada sin incidentes
+    —normal y silenciosa— de un rediseño que dejó el scraper ciego. Se mira si
+    existen los contenedores; que estén vacíos de palabras clave es información
+    legítima, que no existan es una alarma.
+    """
+    soup = BeautifulSoup(html, _html_parser())
+    if not soup.find("body"):
+        return (True, "la respuesta no parece HTML")
+
+    bloques = sum(1 for _ in _candidate_blocks(soup))
+    if bloques == 0:
+        return (
+            True,
+            "no se encontró ningún bloque <article> ni .elementor-widget-container",
+        )
+    return (False, None)
+
+
+#: Fecha embebida en el texto del aviso, si la hay. El portal no expone un campo
+#: de fecha por aviso: publica la página entera y fecha algunos avisos en prosa.
+_NOTICE_DATE = re.compile(
+    r"(?P<date>\d{1,2}[-/]\d{1,2}[-/]\d{2,4})(?:[\sT]+(?P<time>\d{1,2}:\d{2}))?"
+)
+
+
+def extract_datetime(text: str) -> datetime | None:
+    match = _NOTICE_DATE.search(text)
+    if not match:
+        return None
+    raw = match.group("date")
+    if match.group("time"):
+        raw = f"{raw} {match.group('time')}"
+    return parse_timestamp(raw)
+
+
+def _html_parser() -> str:
+    """`lxml` si está disponible; si no, el parser de la stdlib.
+
+    lxml es notoriamente más indulgente con el HTML roto que produce un CMS con
+    plugins, y este portal es exactamente ese caso. Pero degradar a `html.parser`
+    es preferible a que el collector no arranque: un scraper que funciona un poco
+    peor sigue recolectando; uno que no importa, no.
+    """
+    try:
+        import lxml  # noqa: F401
+    except ImportError:  # pragma: no cover — lxml está en requirements-prod
+        return "html.parser"
+    return "lxml"
 
 
 class TransporteInformaCollector(BaseCollector):
@@ -372,28 +547,47 @@ class TransporteInformaCollector(BaseCollector):
         """Trae los avisos, extrae el lugar y geocodifica los que son accidentes.
 
         Devuelve tripletas `(aviso, extracción, geocodificación|None)`.
+
+        Todo fallo sale de acá como `CollectorError` y de ninguna otra forma:
+        `request_text` ya traduce timeouts, 5xx, DNS y TLS, y los `except
+        Exception` cubren lo que no anticipamos al cruzar la frontera con una
+        fuente ajena. `BaseCollector.run()` lo registra en `collector_runs` y el
+        orquestador no se entera.
         """
-        async with httpx.AsyncClient(
-            timeout=settings.TRANSPORTE_INFORMA_TIMEOUT_SECONDS, follow_redirects=True
-        ) as client:
-            payload = await request_json(
-                client, self.url, {}, origin="transporte_informa"
-            )
-
-        items = payload if isinstance(payload, list) else None
-        if items is None and isinstance(payload, Mapping):
-            for key in ("items", "avisos", "results", "data"):
-                if isinstance(payload.get(key), list):
-                    items = payload[key]
-                    break
-        if items is None:
-            claves = sorted(payload)[:10] if isinstance(payload, Mapping) else "—"
+        try:
+            async with httpx.AsyncClient(
+                timeout=settings.TRANSPORTE_INFORMA_TIMEOUT_SECONDS,
+                follow_redirects=True,
+                headers={"User-Agent": settings.NOMINATIM_USER_AGENT},
+            ) as client:
+                html = await request_text(
+                    client, self.url, origin="transporte_informa"
+                )
+        except CollectorError:
+            raise
+        except Exception as exc:
             raise CollectorError(
-                "transporte_informa: no se encontró una lista de avisos en la "
-                f"respuesta (claves: {claves})"
-            )
+                f"transporte_informa: fallo inesperado al leer el portal: "
+                f"{type(exc).__name__}: {exc}",
+                detail={"url": self.url},
+            ) from exc
 
-        notices = [notice for item in items if (notice := parse_notice(item))]
+        try:
+            broken, reason = page_looks_broken(html)
+            notices = parse_notices(html)
+        except Exception as exc:
+            raise CollectorError(
+                f"transporte_informa: el HTML no se pudo interpretar: "
+                f"{type(exc).__name__}: {exc}",
+                detail={"url": self.url, "muestra": html[:200]},
+            ) from exc
+
+        if broken:
+            # El DOM cambió. Se avisa —la corrida queda `partial` y el motivo
+            # viaja a `collector_runs`— y se sigue con lo que haya. Un rediseño
+            # necesita a una persona, no un reintento, y el aviso es la forma de
+            # convocarla antes de que pasen semanas.
+            self.warn(f"la estructura del portal cambió: {reason}")
 
         resolved: list[tuple[TrafficNotice, dict[str, Any], GeocodeResult | None]] = []
         geocoded = 0
@@ -415,12 +609,21 @@ class TransporteInformaCollector(BaseCollector):
                     try:
                         point = await geocode(geo_client, streets)
                         geocoded += 1
-                    except CollectorError as exc:
+                    except Exception as exc:
                         # Una geocodificación fallida NO pierde el aviso: la señal
                         # entra sin coordenadas. Perder un accidente confirmado por
                         # el MTT porque OpenStreetMap no conoce una esquina sería
-                        # el peor intercambio posible.
-                        self.warn(f"Nominatim falló para un aviso: {exc}")
+                        # el peor intercambio posible — y perder los otros
+                        # diecinueve avisos del lote por esa misma esquina sería
+                        # todavía peor, que es lo que ocurriría si esta captura
+                        # sólo contemplara `CollectorError`.
+                        self.warn(
+                            f"Nominatim falló para un aviso "
+                            f"({type(exc).__name__}): {exc}"
+                        )
+                        # El contador igual avanza: un servicio que falla consumió
+                        # su segundo de rate limit lo mismo que uno que responde.
+                        geocoded += 1
                 elif geocoded >= self.max_geocodes:
                     self.warn(
                         f"se alcanzó el tope de {self.max_geocodes} geocodificaciones "
