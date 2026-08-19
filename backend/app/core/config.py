@@ -327,6 +327,22 @@ class Settings(BaseSettings):
     #: Cadencia del worker de correlación.
     CORRELATION_POLL_INTERVAL_SECONDS: int = Field(default=120, ge=15, le=86_400)
 
+    # -- Reportes ciudadanos: anti-spam --------------------------------------
+    #: Segundos entre reportes de una misma IP. 0 desactiva el límite, que es
+    #: lo que quieren los tests y una demo local.
+    CITIZEN_REPORT_MIN_INTERVAL_SECONDS: int = Field(default=600, ge=0, le=86_400)
+    #: Minutos que sobrevive un incidente sostenido SÓLO por reportes ciudadanos
+    #: sin corroborar. Pasado ese plazo se descarta y desaparece del mapa.
+    #: Ver `IncidentRepository.expire_uncorroborated_citizen`.
+    CITIZEN_UNCORROBORATED_TTL_MINUTES: int = Field(default=5, ge=1, le=1440)
+    #: Confianza por debajo o igual a la cual un incidente se considera "sin
+    #: corroborar" para el descarte temprano. Coincide con
+    #: `CITIZEN_INITIAL_CONFIDENCE`: en cuanto otra fuente aporta, la suma lo
+    #: sube por encima y el incidente sale solo de esta regla.
+    CITIZEN_UNCORROBORATED_MAX_CONFIDENCE: float = Field(
+        default=0.40, ge=0.0, le=1.0
+    )
+
     # -- Ingesta -------------------------------------------------------------
     INGEST_MAX_BATCH_SIZE: int = 1000
     # Tolerancia para eventos con timestamp futuro (desfase de reloj de fuentes)

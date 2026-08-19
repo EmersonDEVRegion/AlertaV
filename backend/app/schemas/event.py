@@ -18,6 +18,7 @@ Decisiones:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from enum import Enum
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -212,8 +213,50 @@ class EventCreate(EventBase):
         }
 
 
+class ReportCategory(str, Enum):
+    """Las tres opciones que ve una persona en el formulario.
+
+    Es vocabulario de PRODUCTO, deliberadamente separado de `EventType`, que es
+    vocabulario de dominio. Un ciudadano no debería tener que distinguir entre
+    `smoke`, `wildfire` y `structural_fire` para pedir ayuda; el sistema sí
+    necesita esa distinción internamente. `CITIZEN_CATEGORY_TO_TYPE` traduce.
+    """
+
+    FIRE = "fire"
+    TRAFFIC_ACCIDENT = "traffic_accident"
+    OTHER = "other"
+
+
+#: Traducción categoría → señal de dominio.
+#:
+#: `FIRE` mapea a `smoke` y **no** a `wildfire`, y esa es la decisión importante
+#: de este bloque. `EVENT_TO_INCIDENT_TYPE` manda `wildfire` a `IncidentType.WILDFIRE`,
+#: que el mapa rotula "Incendio forestal": un incidente afirmando que hay un
+#: incendio forestal, sostenido por una sola persona que vio humo desde lejos.
+#: `smoke` degrada a `possible_fire` —"Posible incendio"— que es exactamente lo
+#: que el sistema sabe en ese momento.
+#:
+#: La familia es la misma en ambos casos (`fire`), así que el reporte se agrupa
+#: igual con las detecciones de FIRMS y los incendios de CONAF: no se pierde
+#: corroboración, sólo se evita una afirmación que nadie hizo.
+CITIZEN_CATEGORY_TO_TYPE: dict[ReportCategory, EventType] = {
+    ReportCategory.FIRE: EventType.SMOKE,
+    ReportCategory.TRAFFIC_ACCIDENT: EventType.ACCIDENT,
+    ReportCategory.OTHER: EventType.OTHER,
+}
+
+#: Confianza con la que entra un reporte ciudadano. Fija y baja a propósito:
+#: es una persona sin verificar diciendo lo que ve.
+#:
+#: Se declara acá y no se toma de `SOURCE_BASE_CONFIDENCE` porque el ciclo de
+#: vida del reporte depende de este número —ver `expire_uncorroborated_citizen`
+#: en el repositorio— y no puede cambiar por un ajuste incidental del catálogo
+#: de fuentes.
+CITIZEN_INITIAL_CONFIDENCE = 0.40
+
+
 class CitizenReportCreate(BaseModel):
-    """Ingesta desde la PWA. La fuente la fija el servidor, nunca el cliente.
+    """Ingesta desde la PWA. La fuente y la confianza las fija el servidor.
 
     Un cliente no puede declararse 'conaf' ni asignarse confianza propia: eso
     sería un vector trivial de falsificación de incidentes.
@@ -223,9 +266,12 @@ class CitizenReportCreate(BaseModel):
 
     lat: Latitude
     lon: Longitude
-    type: EventType = Field(
-        default=EventType.SMOKE,
-        description="Sólo tipos observables por un ciudadano.",
+    category: ReportCategory = Field(
+        ...,
+        description=(
+            "Qué está reportando la persona. Obligatorio: sin categoría el motor "
+            "no sabe con qué familia de fenómeno correlacionar la señal."
+        ),
     )
     text: str = Field(..., min_length=3, max_length=2_000)
     reported_at: datetime | None = Field(
@@ -236,37 +282,30 @@ class CitizenReportCreate(BaseModel):
     )
     media_url: str | None = Field(default=None, max_length=1_000)
 
-    @field_validator("type")
-    @classmethod
-    def _restrict_citizen_types(cls, value: EventType) -> EventType:
-        allowed = {
-            EventType.SMOKE,
-            EventType.WILDFIRE,
-            EventType.STRUCTURAL_FIRE,
-            EventType.ACCIDENT,
-            EventType.FLOOD,
-            EventType.LANDSLIDE,
-            EventType.OTHER,
-        }
-        if value not in allowed:
-            raise ValueError(
-                f"tipo '{value.value}' no reportable por un ciudadano; "
-                f"permitidos: {sorted(t.value for t in allowed)}"
-            )
-        return value
+    @property
+    def event_type(self) -> EventType:
+        """Señal de dominio que corresponde a la categoría elegida."""
+        return CITIZEN_CATEGORY_TO_TYPE[self.category]
 
     def to_event_create(self) -> EventCreate:
         return EventCreate(
             timestamp=self.reported_at or datetime.now(UTC),
             source=EventSource.CITIZEN,
-            type=self.type,
+            type=self.event_type,
             lat=self.lat,
             lon=self.lon,
             text=self.text,
             external_id=None,
-            confidence=None,  # línea base de la fuente
+            # Explícita, no la línea base de la fuente: de este número depende el
+            # ciclo de vida corto del reporte sin corroborar.
+            confidence=CITIZEN_INITIAL_CONFIDENCE,
             raw_data={
                 "channel": "pwa",
+                # La categoría cruda se conserva junto a la señal traducida. Sin
+                # ella no habría forma de saber, más adelante, si una persona
+                # eligió "Incendio" o si el `smoke` lo puso el mapeo — y eso es
+                # justo lo que hará falta para calibrar el formulario.
+                "category": self.category.value,
                 "accuracy_m": self.accuracy_m,
                 "media_url": self.media_url,
             },

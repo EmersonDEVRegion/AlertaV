@@ -119,6 +119,14 @@ function url(raw: string | undefined, fallback: string, name: string): string {
 const DEFAULT_MAP_STYLE =
   'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json'
 
+/**
+ * Contraparte oscura. Mismo proveedor y mismo esquema de teselas que Positron,
+ * así que el cambio entre ambos no vuelve a descargar la geometría: sólo cambia
+ * la hoja de estilo.
+ */
+const DEFAULT_MAP_STYLE_DARK =
+  'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+
 export const env = {
   apiBaseUrl: url(
     import.meta.env.VITE_API_BASE_URL,
@@ -141,5 +149,10 @@ export const env = {
     import.meta.env.VITE_MAP_STYLE,
     DEFAULT_MAP_STYLE,
     'VITE_MAP_STYLE',
+  ),
+  mapStyleDark: url(
+    import.meta.env.VITE_MAP_STYLE_DARK,
+    DEFAULT_MAP_STYLE_DARK,
+    'VITE_MAP_STYLE_DARK',
   ),
 } as const

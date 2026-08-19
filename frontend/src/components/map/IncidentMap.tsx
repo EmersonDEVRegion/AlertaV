@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { RefObject } from 'react'
 import {
   AttributionControl,
   GeolocateControl,
@@ -23,9 +24,11 @@ import type { Incident } from '@/api/types'
 import {
   INITIAL_VIEW_STATE,
   MAP_ATTRIBUTION,
-  MAP_STYLE_URL,
-  REGION_BOUNDS,
+  MAP_MAX_BOUNDS,
+  mapStyleFor,
 } from '@/config/map'
+import type { Theme } from '@/hooks/useTheme'
+import type { ConeCollection, ReachCollection } from '@/lib/overlayGeojson'
 import { toFeatureCollection } from '@/lib/geojson'
 import { toSeismicFeatureCollection } from '@/lib/seismicGeojson'
 import { attachMapDiagnostics } from '@/lib/mapDiagnostics'
@@ -48,8 +51,23 @@ import {
   seismicRingLayer,
   seismicSelectedLayer,
 } from './seismicLayers'
+import {
+  CONE_SOURCE_ID,
+  REACH_SOURCE_ID,
+  coneFillLayer,
+  coneLineLayer,
+  reachFillLayer,
+  reachLineLayer,
+} from './overlayLayers'
 
 interface IncidentMapProps {
+  /**
+   * La referencia se crea en `App` y se pasa hacia abajo, en vez de vivir acá
+   * dentro. Es lo que permite que el panel de capas —que es hermano del mapa,
+   * no descendiente— pueda ordenar un `flyTo` sin levantar todo el estado del
+   * mapa ni recurrir a un contexto.
+   */
+  mapRef: RefObject<MapRef | null>
   incidents: readonly Incident[]
   seismic: readonly SeismicEvent[]
   /** Capas encendidas desde el control de capas. */
@@ -59,9 +77,15 @@ interface IncidentMapProps {
   selectedUsgsId: string | null
   onSelect: (code: string | null) => void
   onSelectSeismic: (usgsId: string | null) => void
+  /** Tema activo: decide el estilo del mapa base. */
+  theme: Theme
+  /** Polígonos derivados. Fuentes propias, separadas de la señal observada. */
+  reach: ReachCollection
+  cone: ConeCollection
 }
 
 export function IncidentMap({
+  mapRef,
   incidents,
   seismic,
   showIncidents,
@@ -70,9 +94,12 @@ export function IncidentMap({
   selectedUsgsId,
   onSelect,
   onSelectSeismic,
+  theme,
+  reach,
+  cone,
 }: IncidentMapProps) {
-  const mapRef = useRef<MapRef>(null)
   const [hovering, setHovering] = useState(false)
+  const [dragging, setDragging] = useState(false)
 
   // Se recalcula solo cuando cambia el arreglo de incidentes, no en cada
   // repintado: el polling entrega un arreglo nuevo cada minuto, no cada frame.
@@ -151,8 +178,14 @@ export function IncidentMap({
     <Map
       ref={mapRef}
       initialViewState={INITIAL_VIEW_STATE}
-      mapStyle={MAP_STYLE_URL}
-      maxBounds={REGION_BOUNDS}
+      /*
+       * Cambiar `mapStyle` dispara `map.setStyle()`. Los `<Source>` se vuelven a
+       * crear solos al recibir `styledata`, así que las capas de incidentes y
+       * sismos sobreviven al cambio y la cámara no se mueve. Remontar el `<Map>`
+       * con una `key` también funcionaría, pero perdería el encuadre.
+       */
+      mapStyle={mapStyleFor(theme)}
+      maxBounds={MAP_MAX_BOUNDS}
       minZoom={7}
       maxZoom={17}
       style={{ position: 'absolute', inset: 0 }}
@@ -161,7 +194,23 @@ export function IncidentMap({
       onError={handleError}
       onMouseEnter={() => setHovering(true)}
       onMouseLeave={() => setHovering(false)}
-      cursor={hovering ? 'pointer' : 'grab'}
+      onDragStart={() => setDragging(true)}
+      onDragEnd={() => setDragging(false)}
+      /*
+       * Tres estados, en orden de prioridad:
+       *
+       *   grabbing  mientras se arrastra — gana sobre todo lo demás, porque
+       *             durante un arrastre el puntero pasa por encima de
+       *             incidentes y el cursor no debe parpadear a `pointer`.
+       *   pointer   sobre un incidente clicable.
+       *   grab      por defecto: el mapa se puede tomar y mover.
+       *
+       * MapLibre trae `default` en reposo, que no comunica que el mapa sea
+       * arrastrable. `grab`/`grabbing` es la convención de todo mapa web y
+       * además da un contraste mucho mayor que la flecha del sistema sobre una
+       * cartografía clara.
+       */
+      cursor={dragging ? 'grabbing' : hovering ? 'pointer' : 'grab'}
       attributionControl={false}
       // Un mapa de emergencias se consulta en la calle y con una mano: los
       // gestos que rotan o inclinan solo estorban.
@@ -177,6 +226,22 @@ export function IncidentMap({
         positionOptions={{ enableHighAccuracy: true }}
       />
       <ScaleControl position="bottom-left" unit="metric" />
+
+      {/*
+        Polígonos derivados primero: son estimaciones calculadas y van por
+        debajo de todo lo observado.
+      */}
+      {showSeismic && (
+        <Source id={REACH_SOURCE_ID} type="geojson" data={reach}>
+          <Layer {...reachFillLayer} />
+          <Layer {...reachLineLayer} />
+        </Source>
+      )}
+
+      <Source id={CONE_SOURCE_ID} type="geojson" data={cone}>
+        <Layer {...coneFillLayer} />
+        <Layer {...coneLineLayer} />
+      </Source>
 
       {/* Los sismos van debajo: son contexto, no el sujeto del mapa. */}
       {showSeismic && (

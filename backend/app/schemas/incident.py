@@ -265,5 +265,7 @@ class CorrelationRunResult(BaseModel):
     alert_links: int
     incidents_merged: int
     incidents_stale: int
+    #: Descartados por no conseguir corroboración dentro de su TTL corto.
+    incidents_dismissed: int = 0
     incidents_without_commune: int
     warnings: list[str] = Field(default_factory=list)

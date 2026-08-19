@@ -6,14 +6,17 @@ correlacionados llega en el siguiente hito.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from app.api.deps import IngestServiceDep, SeismicServiceDep
 from app.api.v1.params import parse_bbox
+from app.core.config import settings
+from app.core.ratelimit import RateLimiter, client_ip
 from app.models.enums import EventSource, EventType
 from app.schemas.event import (
     CitizenReportCreate,
@@ -26,7 +29,16 @@ from app.schemas.event import (
 )
 from app.schemas.seismic import SeismicEventRead, SeismicStats
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/events", tags=["events"])
+
+#: Limitador del endpoint ciudadano. Vive a nivel de módulo —una instancia por
+#: proceso— y sólo protege ese endpoint: los demás son de lectura, o requieren
+#: credenciales de operador.
+citizen_report_limiter = RateLimiter(
+    interval_seconds=settings.CITIZEN_REPORT_MIN_INTERVAL_SECONDS
+)
 
 
 @router.post(
@@ -63,14 +75,59 @@ async def create_events_batch(
     summary="Reporte ciudadano desde la PWA",
     description=(
         "La fuente y la confianza las fija el servidor. Un reporte se guarda como "
-        "señal, nunca como incidente confirmado."
+        "señal, nunca como incidente confirmado.\n\n"
+        "Limitado a un reporte por IP cada "
+        f"{settings.CITIZEN_REPORT_MIN_INTERVAL_SECONDS // 60} minutos."
     ),
+    responses={
+        429: {
+            "description": (
+                "Demasiados reportes desde la misma IP. La cabecera `Retry-After` "
+                "indica en cuántos segundos se puede reintentar."
+            )
+        }
+    },
 )
 async def create_citizen_report(
-    report: CitizenReportCreate, service: IngestServiceDep
+    report: CitizenReportCreate, request: Request, service: IngestServiceDep
 ) -> EventRead:
+    ip = client_ip(
+        forwarded_for=request.headers.get("x-forwarded-for"),
+        real_ip=request.headers.get("x-real-ip"),
+        peer=request.client.host if request.client else None,
+    )
+
+    decision = citizen_report_limiter.check(ip)
+    if not decision.allowed:
+        # Se registra la IP truncada, no entera: para operar basta saber que
+        # alguien insiste desde el mismo lugar, y guardar direcciones completas
+        # de personas que reportan emergencias no hace falta para eso.
+        logger.info(
+            "reporte ciudadano rechazado por frecuencia",
+            extra={"ip": _anonimizar(ip), "retry_after_s": decision.retry_after_seconds},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                "Ya recibimos un reporte tuyo hace poco. Espera unos minutos "
+                "antes de enviar otro."
+            ),
+            # Sin esta cabecera el 429 no dice cuánto esperar y el cliente sólo
+            # puede adivinar o reintentar en bucle.
+            headers={"Retry-After": str(decision.retry_after_seconds)},
+        )
+
     entity = await service.ingest_citizen_report(report)
     return EventRead.model_validate(entity)
+
+
+def _anonimizar(ip: str) -> str:
+    """Últimos octetos ocultos. IPv4 e IPv6 con el mismo criterio."""
+    if ":" in ip:
+        partes = ip.split(":")
+        return ":".join(partes[:3]) + ":···" if len(partes) > 3 else ip
+    partes = ip.split(".")
+    return ".".join(partes[:2]) + ".×.×" if len(partes) == 4 else ip
 
 
 @router.get("", response_model=list[EventRead], summary="Listado de eventos")

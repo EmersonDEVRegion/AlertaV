@@ -27,7 +27,7 @@ export function MapLegend() {
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
-        className="flex items-center gap-2 rounded-full bg-white/95 px-3 py-2 text-xs font-semibold text-slate-700 shadow-lg ring-1 ring-slate-900/10 backdrop-blur"
+        className="flex items-center gap-2 rounded-full bg-white/95 px-3 py-2 text-xs font-semibold text-slate-700 shadow-lg ring-1 ring-slate-900/10 backdrop-blur dark:bg-slate-900/95 dark:text-slate-300 dark:ring-white/10"
       >
         <span aria-hidden className="text-sm leading-none">
           {open ? '✕' : 'ⓘ'}
@@ -36,9 +36,9 @@ export function MapLegend() {
       </button>
 
       {open && (
-        <div className="mt-2 max-h-[70dvh] overflow-y-auto rounded-2xl bg-white/97 p-3 text-xs shadow-xl ring-1 ring-slate-900/10 backdrop-blur">
-          <p className="font-semibold text-slate-900">Color: tipo y confianza</p>
-          <p className="mb-2 text-[11px] leading-snug text-slate-500">
+        <div className="mt-2 max-h-[70dvh] overflow-y-auto rounded-2xl bg-white/97 p-3 text-xs shadow-xl ring-1 ring-slate-900/10 backdrop-blur dark:bg-slate-900/95 dark:ring-white/10">
+          <p className="font-semibold text-slate-900 dark:text-slate-100">Color: tipo y confianza</p>
+          <p className="mb-2 text-[11px] leading-snug text-slate-500 dark:text-slate-400">
             La familia decide la paleta; el tono dentro de ella, cuánta evidencia
             respalda el incidente. La confianza no mide gravedad.
           </p>
@@ -63,7 +63,7 @@ export function MapLegend() {
                 ] as const
               ).map(([key, palette]) => (
                 <tr key={key}>
-                  <td className="py-1 pr-2 font-medium text-slate-800">
+                  <td className="py-1 pr-2 font-medium text-slate-800 dark:text-slate-200">
                     {LAYER_LABEL[key as IncidentLayerKey]}
                   </td>
                   {LEVEL_ORDER.map((level) => (
@@ -81,24 +81,24 @@ export function MapLegend() {
             </tbody>
           </table>
 
-          <ul className="mt-2 space-y-1 text-[11px] text-slate-600">
+          <ul className="mt-2 space-y-1 text-[11px] text-slate-600 dark:text-slate-400">
             {LEVEL_ORDER.map((key) => (
               <li key={key}>
-                <span className="font-medium text-slate-900">{LEVEL[key].range}</span>
+                <span className="font-medium text-slate-900 dark:text-slate-100">{LEVEL[key].range}</span>
                 {' — '}
                 {LEVEL[key].meaning}
               </li>
             ))}
           </ul>
 
-          <p className="mt-2 rounded-lg bg-red-50 px-2.5 py-2 text-[11px] leading-snug text-red-900 ring-1 ring-red-200">
+          <p className="mt-2 rounded-lg bg-red-50 px-2.5 py-2 text-[11px] leading-snug text-red-900 ring-1 ring-red-200 dark:bg-red-950/40 dark:text-red-200 dark:ring-red-900/50">
             <strong>En incendios, el rojo advierte sobre el dato, no sobre el
             fuego.</strong> Marca una señal que todavía no se pudo corroborar; el
             naranja es el tramo con más evidencia. En las capas frías la
             intensidad sí crece con la evidencia.
           </p>
 
-          <p className="mt-4 font-semibold text-slate-900">Marcas sobre el color</p>
+          <p className="mt-4 font-semibold text-slate-900 dark:text-slate-100">Marcas sobre el color</p>
           <ul className="mt-2 space-y-2">
             <li className="flex gap-2">
               <span
@@ -106,10 +106,10 @@ export function MapLegend() {
                 className="relative mt-0.5 grid size-3.5 shrink-0 place-items-center rounded-full ring-2 ring-white"
                 style={{ backgroundColor: LEVEL.confirmed.color }}
               >
-                <span className="size-1.5 rounded-full bg-white" />
+                <span className="size-1.5 rounded-full bg-white dark:bg-slate-900" />
               </span>
               <span>
-                <span className="font-medium text-slate-900">Centro hueco</span>
+                <span className="font-medium text-slate-900 dark:text-slate-100">Centro hueco</span>
                 <span className="block text-slate-600">
                   Nivel confirmado por acumulación de evidencia, pero ninguna
                   fuente lo verificó en terreno.
@@ -123,7 +123,7 @@ export function MapLegend() {
                 style={{ backgroundColor: MUTED_LEVEL.confirmed }}
               />
               <span>
-                <span className="font-medium text-slate-900">Color apagado</span>
+                <span className="font-medium text-slate-900 dark:text-slate-100">Color apagado</span>
                 <span className="block text-slate-600">
                   Incidente cerrado: controlado, extinguido o sin señales nuevas.
                 </span>
@@ -131,7 +131,7 @@ export function MapLegend() {
             </li>
           </ul>
 
-          <p className="mt-4 font-semibold text-slate-900">Anillo: alerta de SENAPRED</p>
+          <p className="mt-4 font-semibold text-slate-900 dark:text-slate-100">Anillo: alerta de SENAPRED</p>
           <ul className="mt-2 space-y-1.5">
             {Object.entries(ALERT).map(([key, style]) => (
               <li key={key} className="flex items-center gap-2">
@@ -145,16 +145,16 @@ export function MapLegend() {
             ))}
           </ul>
 
-          <p className="mt-3 border-t border-slate-200 pt-2 text-[11px] leading-snug text-slate-500">
+          <p className="mt-3 border-t border-slate-200 pt-2 text-[11px] leading-snug text-slate-500 dark:border-slate-700 dark:text-slate-400">
             Son ejes distintos. Puede haber alerta roja vigente sobre un incidente
             de baja confianza, y al revés.
           </p>
 
           {/* --- Capa sísmica: escala propia, sin relación con la anterior --- */}
-          <p className="mt-4 border-t border-slate-200 pt-3 font-semibold text-slate-900">
+          <p className="mt-4 border-t border-slate-200 pt-3 font-semibold text-slate-900 dark:border-slate-700 dark:text-slate-100">
             Sismos: círculos huecos
           </p>
-          <p className="mb-2 text-[11px] leading-snug text-slate-500">
+          <p className="mb-2 text-[11px] leading-snug text-slate-500 dark:text-slate-400">
             Escala aparte. Acá el color y el tamaño miden magnitud, no confianza:
             un sismo es un hecho medido, no una hipótesis.
           </p>
@@ -178,15 +178,15 @@ export function MapLegend() {
                     />
                   </span>
                   <span>
-                    <span className="font-medium text-slate-900">{style.label}</span>
-                    <span className="ml-1 text-slate-400">({style.range})</span>
+                    <span className="font-medium text-slate-900 dark:text-slate-100">{style.label}</span>
+                    <span className="ml-1 text-slate-400 dark:text-slate-500">({style.range})</span>
                     <span className="block text-slate-600">{style.meaning}</span>
                   </span>
                 </li>
               )
             })}
           </ul>
-          <p className="mt-2 text-[11px] leading-snug text-slate-500">
+          <p className="mt-2 text-[11px] leading-snug text-slate-500 dark:text-slate-400">
             El tamaño crece con la magnitud de forma perceptual, no logarítmica:
             reproducir la energía real dejaría los sismos menores invisibles.
             El trazo tenue marca una solución preliminar del USGS.

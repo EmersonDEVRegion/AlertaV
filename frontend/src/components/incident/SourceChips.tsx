@@ -17,7 +17,7 @@ interface SourceChipsProps {
  */
 export function SourceChips({ sources }: SourceChipsProps) {
   if (sources.length === 0) {
-    return <p className="text-sm text-slate-500">Sin fuentes registradas.</p>
+    return <p className="text-sm text-slate-500 dark:text-slate-400">Sin fuentes registradas.</p>
   }
 
   return (
@@ -30,8 +30,8 @@ export function SourceChips({ sources }: SourceChipsProps) {
             className={
               'rounded-full px-2.5 py-1 text-xs font-medium ring-1 ' +
               (confirming
-                ? 'bg-red-50 text-red-800 ring-red-200'
-                : 'bg-slate-100 text-slate-700 ring-slate-200')
+                ? 'bg-red-50 text-red-800 ring-red-200 dark:bg-red-950/40 dark:ring-red-900/50'
+                : 'bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700')
             }
             title={
               confirming

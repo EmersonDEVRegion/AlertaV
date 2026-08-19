@@ -1,5 +1,7 @@
-import { useMemo, useState } from 'react'
-import type { ActiveIncidentsQuery } from '@/api/types'
+import { useCallback, useMemo, useRef, useState } from 'react'
+import type { MapRef } from 'react-map-gl/maplibre'
+import type { SeismicEvent } from '@/api/seismicTypes'
+import type { ActiveIncidentsQuery, Incident } from '@/api/types'
 import { IncidentMap } from '@/components/map/IncidentMap'
 import { MapLegend } from '@/components/map/MapLegend'
 import { IncidentSheet } from '@/components/incident/IncidentSheet'
@@ -7,6 +9,18 @@ import { SeismicCard } from '@/components/incident/SeismicCard'
 import { DEFAULT_LAYER_VISIBILITY, LayerToggles } from '@/components/ui/LayerToggles'
 import type { LayerVisibility } from '@/components/ui/LayerToggles'
 import { layerOf } from '@/domain/families'
+import type { IncidentLayerKey } from '@/domain/families'
+import {
+  DEFAULT_SEISMIC_FILTER,
+  filterSeismic,
+  type SeismicFilterKey,
+} from '@/domain/seismicFilter'
+import { windConeFor } from '@/domain/windCone'
+import { FOCUS_ZOOM, SEISMIC_FOCUS_ZOOM } from '@/config/map'
+import { toConeCollection, toReachCollection } from '@/lib/overlayGeojson'
+import { useCurrentWind } from '@/hooks/useCurrentWind'
+import { useTheme } from '@/hooks/useTheme'
+import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { CitizenReportControl } from '@/components/report/CitizenReportControl'
 import { AppHeader } from '@/components/ui/AppHeader'
 import { MapOverlayState } from '@/components/ui/MapOverlayState'
@@ -18,10 +32,18 @@ import { useFreshness } from '@/hooks/useFreshness'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
 
 export default function App() {
+  // La referencia del mapa vive acá y no dentro de `IncidentMap`: el panel de
+  // capas es hermano del mapa, no descendiente, y necesita ordenarle un vuelo.
+  const mapRef = useRef<MapRef>(null)
+
+  const { theme, toggle: toggleTheme } = useTheme()
+
   const [selectedCode, setSelectedCode] = useState<string | null>(null)
   const [selectedUsgsId, setSelectedUsgsId] = useState<string | null>(null)
   const [confirmedOnly, setConfirmedOnly] = useState(false)
   const [visibility, setVisibility] = useState<LayerVisibility>(DEFAULT_LAYER_VISIBILITY)
+  const [seismicFilter, setSeismicFilter] =
+    useState<SeismicFilterKey>(DEFAULT_SEISMIC_FILTER)
 
   const params = useMemo<ActiveIncidentsQuery>(
     () => ({ confirmed_only: confirmedOnly, limit: 500 }),
@@ -40,7 +62,14 @@ export default function App() {
   // La consulta se apaga con la capa: no tiene sentido traer sismos que nadie
   // está mirando.
   const { data: seismic } = useSeismicEvents({ hours: 72, limit: 500 }, visibility.seismic)
-  const seismicList = seismic ?? []
+
+  // El filtro de relevancia se aplica en el cliente y no como `min_magnitude` en
+  // la consulta: alternar entre microsismos y relevantes es instantáneo y no
+  // vuelve a golpear la API, que además ya trajo ambos conjuntos.
+  const seismicList = useMemo(
+    () => filterSeismic(seismic ?? [], seismicFilter),
+    [seismic, seismicFilter],
+  )
 
   const anyIncidentLayer = visibility.fire || visibility.traffic || visibility.otros
 
@@ -62,6 +91,21 @@ export default function App() {
     for (const incident of all) counts[layerOf(incident.type)] += 1
     return counts
   }, [all])
+
+  /** Índice del acordeón: los mismos incidentes, agrupados por capa. */
+  const incidentsByLayer = useMemo(() => {
+    const groups: Record<IncidentLayerKey, Incident[]> = {
+      fire: [],
+      traffic: [],
+      otros: [],
+    }
+    for (const incident of all) groups[layerOf(incident.type)].push(incident)
+    // Los más recientes arriba: es el orden en que alguien quiere revisarlos.
+    for (const key of Object.keys(groups) as IncidentLayerKey[]) {
+      groups[key].sort((a, b) => b.last_seen_at.localeCompare(a.last_seen_at))
+    }
+    return groups
+  }, [all])
   const selected = useMemo(
     () => list.find((incident) => incident.code === selectedCode) ?? null,
     [list, selectedCode],
@@ -72,6 +116,71 @@ export default function App() {
     [seismicList, selectedUsgsId],
   )
 
+  // --- Cono de viento -------------------------------------------------------
+  // Sólo se consulta el viento para un INCENDIO seleccionado: una cuña de
+  // propagación sobre un choque no significa nada, y pedirlo para cada
+  // incidente del mapa sería una llamada por marcador a un servicio externo.
+  const selectedFire =
+    selected && layerOf(selected.type) === 'fire' ? selected : null
+
+  const { data: wind, isLoading: windLoading, isError: windError } = useCurrentWind(
+    selectedFire?.lat ?? null,
+    selectedFire?.lon ?? null,
+    selectedFire !== null,
+  )
+
+  const cone = useMemo(
+    () => windConeFor(wind?.windSpeedKmh, wind?.windDirectionDeg),
+    [wind],
+  )
+
+  const coneCollection = useMemo(
+    () => toConeCollection(selectedFire, cone),
+    [selectedFire, cone],
+  )
+
+  // --- Radio de percepción sísmica -----------------------------------------
+  const reachCollection = useMemo(
+    () => toReachCollection(seismicList),
+    [seismicList],
+  )
+
+  // --- Navegación de cámara -------------------------------------------------
+  /**
+   * Vuela hasta un punto y lo selecciona.
+   *
+   * El desplazamiento vertical compensa la ficha, que en teléfono ocupa el
+   * tercio inferior: sin él la cámara centraría el incidente justo detrás de la
+   * tarjeta que se acaba de abrir.
+   */
+  const flyTo = useCallback((lon: number, lat: number, zoom: number) => {
+    mapRef.current?.flyTo({
+      center: [lon, lat],
+      zoom,
+      duration: 900,
+      essential: true,
+      offset: [0, -Math.min(window.innerHeight * 0.18, 160)],
+    })
+  }, [])
+
+  const focusIncident = useCallback(
+    (incident: Incident) => {
+      setSelectedUsgsId(null)
+      setSelectedCode(incident.code)
+      flyTo(incident.lon, incident.lat, FOCUS_ZOOM)
+    },
+    [flyTo],
+  )
+
+  const focusSeismic = useCallback(
+    (event: SeismicEvent) => {
+      setSelectedCode(null)
+      setSelectedUsgsId(event.usgs_id)
+      flyTo(event.lon, event.lat, SEISMIC_FOCUS_ZOOM)
+    },
+    [flyTo],
+  )
+
   const byLevel = useMemo(() => {
     const counts = { unsafe: 0, possible: 0, confirmed: 0 }
     for (const incident of list) counts[levelOf(incident)] += 1
@@ -80,13 +189,14 @@ export default function App() {
   const withAlert = list.filter((incident) => incident.alert_level !== null).length
 
   return (
-    <div className="flex h-[100dvh] flex-col overflow-hidden bg-slate-100">
+    <div className="flex h-[100dvh] flex-col overflow-hidden bg-slate-100 dark:bg-slate-950 dark:bg-slate-800">
       <AppHeader
         total={list.length}
         byLevel={byLevel}
         withAlert={withAlert}
         confirmedOnly={confirmedOnly}
         onToggleConfirmedOnly={setConfirmedOnly}
+        themeToggle={<ThemeToggle theme={theme} onToggle={toggleTheme} />}
       />
 
       <StalenessBanner
@@ -100,6 +210,10 @@ export default function App() {
 
       <main className="relative flex-1">
         <IncidentMap
+          mapRef={mapRef}
+          theme={theme}
+          reach={reachCollection}
+          cone={coneCollection}
           incidents={list}
           seismic={seismicList}
           showIncidents={
@@ -118,6 +232,14 @@ export default function App() {
           visibility={visibility}
           onChange={setVisibility}
           counts={{ ...countsByLayer, seismic: seismicList.length }}
+          incidentsByLayer={incidentsByLayer}
+          seismicEvents={seismicList}
+          selectedCode={selectedCode}
+          selectedUsgsId={selectedUsgsId}
+          onFocusIncident={focusIncident}
+          onFocusSeismic={focusSeismic}
+          seismicFilter={seismicFilter}
+          onSeismicFilterChange={setSeismicFilter}
         />
 
         {/*
@@ -159,6 +281,10 @@ export default function App() {
           <IncidentSheet
             incident={selected}
             onClose={() => setSelectedCode(null)}
+            wind={selectedFire ? (wind ?? null) : null}
+            windCone={cone}
+            windLoading={selectedFire !== null && windLoading}
+            windError={selectedFire !== null && windError}
           />
         )}
 

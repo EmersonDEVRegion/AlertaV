@@ -31,7 +31,7 @@ export function StalenessBanner({
 
   if (!showWarning) {
     return (
-      <p className="px-3 py-1 text-center text-[11px] text-slate-500">
+      <p className="px-3 py-1 text-center text-[11px] text-slate-500 dark:text-slate-400">
         Actualizando…
       </p>
     )

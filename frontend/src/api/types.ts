@@ -7,6 +7,8 @@
  * mapa en produccion.
  */
 
+import type { ReportCategory } from '@/domain/reportCategories'
+
 /** `EventSource` — origen de una señal. */
 export const EVENT_SOURCES = [
   'citizen',
@@ -21,6 +23,10 @@ export const EVENT_SOURCES = [
   'weather',
   'camera',
   'usgs',
+  // Capa de accidentes viales. Sin estas dos entradas, `SOURCE_LABEL` deja de
+  // ser exhaustivo y las fichas muestran `undefined` como nombre de fuente.
+  'waze',
+  'transporte_informa',
   'other',
 ] as const
 export type EventSource = (typeof EVENT_SOURCES)[number]
@@ -214,6 +220,12 @@ export interface IncidentStats {
 export interface CitizenReportPayload {
   lat: number
   lon: number
+  /**
+   * Qué está reportando la persona. Obligatorio: sin categoria el motor no sabe
+   * con que familia de fenomeno correlacionar la señal, y el backend responde
+   * 422. Ver `domain/reportCategories.ts`.
+   */
+  category: ReportCategory
   /** Entre 3 y 2000 caracteres. El backend rechaza fuera de ese rango. */
   text: string
 }

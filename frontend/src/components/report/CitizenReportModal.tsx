@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { REPORT_TEXT_MAX, REPORT_TEXT_MIN } from '@/api/citizenReports'
+import {
+  REPORT_CATEGORIES,
+  REPORT_CATEGORY_INFO,
+  emergencyCallHint,
+  successCallHint,
+  type ReportCategory,
+} from '@/domain/reportCategories'
 import { useCitizenReport } from '@/hooks/useCitizenReport'
 import { useGeolocation } from '@/hooks/useGeolocation'
 
@@ -31,11 +38,20 @@ function formatAccuracy(meters: number): string {
 export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
   const [text, setText] = useState('')
   const [touched, setTouched] = useState(false)
+  /**
+   * Sin preselección a propósito. Un valor por defecto —"Incendio", que era el
+   * supuesto implícito de toda la aplicación— haría que una persona apurada
+   * enviara un choque tipificado como incendio sin darse cuenta, y el motor lo
+   * correlacionaría con la familia equivocada. Que la categoría sea una
+   * decisión consciente cuesta un toque y ahorra un dato falso.
+   */
+  const [category, setCategory] = useState<ReportCategory | null>(null)
 
   const geo = useGeolocation()
   const { submit, isSubmitting, isSuccess, errorMessage, reset } = useCitizenReport()
 
   const titleId = useId()
+  const categoryGroupId = useId()
   const textareaId = useId()
   const dialogRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -122,17 +138,24 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
   const trimmed = text.trim()
   const textTooShort = trimmed.length < REPORT_TEXT_MIN
   const showTextError = touched && textTooShort
-  const canSubmit = geo.status === 'ready' && !!geo.coords && !textTooShort && !isSubmitting
+  const showCategoryError = touched && category === null
+  const canSubmit =
+    geo.status === 'ready' &&
+    !!geo.coords &&
+    !textTooShort &&
+    category !== null &&
+    !isSubmitting
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
     setTouched(true)
-    if (!geo.coords || textTooShort || isSubmitting) return
+    if (!geo.coords || textTooShort || category === null || isSubmitting) return
 
     try {
       await submit({
         lat: geo.coords.lat,
         lon: geo.coords.lon,
+        category,
         text: trimmed,
       })
     } catch {
@@ -161,7 +184,7 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
           sm:max-w-md sm:rounded-2xl
         "
       >
-        <header className="flex items-start gap-3 border-b border-slate-200 px-5 py-4">
+        <header className="flex items-start gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-700">
           <span
             aria-hidden
             className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-full bg-red-100 text-lg"
@@ -169,10 +192,10 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
             🚨
           </span>
           <div className="min-w-0 flex-1">
-            <h2 id={titleId} className="text-base font-bold text-slate-900">
+            <h2 id={titleId} className="text-base font-bold text-slate-900 dark:text-slate-100">
               Reportar emergencia
             </h2>
-            <p className="mt-0.5 text-xs leading-snug text-slate-500">
+            <p className="mt-0.5 text-xs leading-snug text-slate-500 dark:text-slate-400">
               Tu reporte entra como una señal más al motor de correlación.
             </p>
           </div>
@@ -181,7 +204,7 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
             onClick={close}
             disabled={isSubmitting}
             aria-label="Cerrar formulario de reporte"
-            className="-mr-1 grid size-9 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
+            className="-mr-1 grid size-9 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40 dark:text-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-300"
           >
             <span aria-hidden className="text-lg leading-none">✕</span>
           </button>
@@ -198,27 +221,27 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
             >
               ✓
             </span>
-            <p className="text-base font-bold text-slate-900">Reporte enviado</p>
-            <p className="max-w-xs text-xs leading-snug text-slate-600">
+            <p className="text-base font-bold text-slate-900 dark:text-slate-100">Reporte enviado</p>
+            <p className="max-w-xs text-xs leading-snug text-slate-600 dark:text-slate-400">
               Quedó registrado como señal ciudadana. Si otras fuentes lo
               corroboran, aparecerá en el mapa como incidente en los próximos
               minutos.
             </p>
             <p className="mt-2 text-xs font-semibold text-red-700">
-              Si hay riesgo para alguien, llama al 132.
+              {category ? successCallHint(category) : null}
             </p>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
             <div className="flex-1 overflow-y-auto px-5 py-4">
               {/* --- Ubicación ------------------------------------------------ */}
-              <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                   Tu ubicación
                 </p>
 
                 {geo.status === 'locating' && (
-                  <p className="mt-1.5 flex items-center gap-2 text-sm text-slate-700">
+                  <p className="mt-1.5 flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
                     <span
                       aria-hidden
                       className="size-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600"
@@ -229,10 +252,10 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
 
                 {geo.status === 'ready' && geo.coords && (
                   <>
-                    <p className="mt-1.5 font-mono text-sm text-slate-800">
+                    <p className="mt-1.5 font-mono text-sm text-slate-800 dark:text-slate-200">
                       {geo.coords.lat.toFixed(5)}, {geo.coords.lon.toFixed(5)}
                     </p>
-                    <p className="mt-0.5 text-xs text-slate-500">
+                    <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                       Precisión {formatAccuracy(geo.coords.accuracyM)}
                       {geo.coords.accuracyM > COARSE_ACCURACY_M &&
                         ' — poco precisa. Sé específico en la descripción (calle, cerro, referencia).'}
@@ -240,7 +263,7 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
                     <button
                       type="button"
                       onClick={geo.request}
-                      className="mt-1.5 text-xs font-semibold text-slate-600 underline underline-offset-2 hover:text-slate-900"
+                      className="mt-1.5 text-xs font-semibold text-slate-600 underline underline-offset-2 hover:text-slate-900 dark:text-slate-400"
                     >
                       Actualizar ubicación
                     </button>
@@ -261,7 +284,7 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
                         Reintentar
                       </button>
                     )}
-                    <p className="mt-2 text-xs leading-snug text-slate-500">
+                    <p className="mt-2 text-xs leading-snug text-slate-500 dark:text-slate-400">
                       Sin coordenadas no se puede enviar: un reporte sin lugar no
                       se puede correlacionar con ninguna otra señal.
                     </p>
@@ -269,10 +292,74 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
                 )}
               </div>
 
+              {/* --- Categoría ------------------------------------------------ */}
+              {/*
+                `fieldset`/`legend` y no un `div` con texto: es lo que hace que
+                un lector de pantalla anuncie "Qué tipo de emergencia, grupo de
+                3 opciones" en vez de leer tres radios sueltos sin contexto.
+              */}
+              <fieldset className="mt-4" aria-describedby={`${categoryGroupId}-error`}>
+                <legend className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  Qué tipo de emergencia
+                </legend>
+
+                <div className="mt-1.5 grid gap-2">
+                  {REPORT_CATEGORIES.map((value) => {
+                    const info = REPORT_CATEGORY_INFO[value]
+                    const selected = category === value
+                    return (
+                      <label
+                        key={value}
+                        className={`
+                          flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition
+                          focus-within:ring-2 focus-within:ring-red-300
+                          ${
+                            selected
+                              ? 'border-red-400 bg-red-50 ring-1 ring-red-300 dark:bg-red-950/30'
+                              : 'border-slate-300 hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800'
+                          }
+                        `}
+                      >
+                        <input
+                          type="radio"
+                          name="report-category"
+                          value={value}
+                          checked={selected}
+                          onChange={() => setCategory(value)}
+                          disabled={isSubmitting}
+                          className="mt-0.5 size-4 shrink-0 accent-red-600"
+                        />
+                        <span aria-hidden className="text-lg leading-none">
+                          {info.emoji}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            {info.label}
+                          </span>
+                          <span className="block text-xs leading-snug text-slate-500 dark:text-slate-400">
+                            {info.hint}
+                          </span>
+                        </span>
+                      </label>
+                    )
+                  })}
+                </div>
+
+                {showCategoryError && (
+                  <p
+                    id={`${categoryGroupId}-error`}
+                    className="mt-1.5 text-xs text-red-700"
+                  >
+                    Elige el tipo de emergencia. El sistema lo usa para
+                    correlacionar tu reporte con las fuentes correctas.
+                  </p>
+                )}
+              </fieldset>
+
               {/* --- Descripción ---------------------------------------------- */}
               <label
                 htmlFor={textareaId}
-                className="mt-4 block text-xs font-semibold uppercase tracking-wide text-slate-500"
+                className="mt-4 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
               >
                 Qué está pasando
               </label>
@@ -287,7 +374,11 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
                 disabled={isSubmitting}
                 aria-invalid={showTextError}
                 aria-describedby={`${textareaId}-help`}
-                placeholder="Ej: columna de humo negro en el cerro sobre la Ruta 68, altura del peaje Zapata. Se ve desde la carretera."
+                placeholder={
+                  category
+                    ? REPORT_CATEGORY_INFO[category].placeholder
+                    : 'Describe qué ves y una referencia del lugar.'
+                }
                 className={`
                   mt-1.5 w-full resize-y rounded-xl border px-3 py-2 text-sm text-slate-900
                   placeholder:text-slate-400 focus:outline-none focus:ring-2
@@ -308,7 +399,7 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
                     ? `Describe la emergencia (mínimo ${REPORT_TEXT_MIN} caracteres).`
                     : 'Indica qué ves y una referencia del lugar.'}
                 </span>
-                <span className="shrink-0 tabular-nums text-slate-400">
+                <span className="shrink-0 tabular-nums text-slate-400 dark:text-slate-500">
                   {text.length}/{REPORT_TEXT_MAX}
                 </span>
               </div>
@@ -316,26 +407,29 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
               {errorMessage && (
                 <p
                   role="alert"
-                  className="mt-3 rounded-lg bg-red-50 p-2.5 text-xs leading-snug text-red-800 ring-1 ring-red-200"
+                  className="mt-3 rounded-lg bg-red-50 p-2.5 text-xs leading-snug text-red-800 ring-1 ring-red-200 dark:bg-red-950/40 dark:ring-red-900/50"
                 >
                   {errorMessage}
                 </p>
               )}
 
-              <p className="mt-4 rounded-lg bg-slate-50 p-2.5 text-[11px] leading-snug text-slate-500 ring-1 ring-slate-200">
-                Esto no reemplaza a una llamada de emergencia. Si hay riesgo para
-                una persona, llama al{' '}
-                <strong className="text-slate-700">132</strong> (Bomberos) o al{' '}
-                <strong className="text-slate-700">133</strong> (Carabineros).
+              {/*
+                Texto dinámico. Antes decía siempre "llama al 132" porque la
+                aplicación nació siendo un mapa de incendios; mandar a llamar a
+                Bomberos por un choque sin fuego retrasa la respuesta correcta.
+                La tabla de números vive en `domain/reportCategories.ts`.
+              */}
+              <p className="mt-4 rounded-lg bg-slate-50 p-2.5 text-[11px] leading-snug text-slate-500 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700">
+                {emergencyCallHint(category)}
               </p>
             </div>
 
-            <footer className="flex gap-2 border-t border-slate-200 px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            <footer className="flex gap-2 border-t border-slate-200 px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] dark:border-slate-700">
               <button
                 type="button"
                 onClick={close}
                 disabled={isSubmitting}
-                className="flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 disabled:opacity-40"
+                className="flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800"
               >
                 Cancelar
               </button>
@@ -359,7 +453,9 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
                   ? 'Enviando…'
                   : geo.status === 'locating'
                     ? 'Esperando ubicación…'
-                    : 'Enviar reporte'}
+                    : category === null
+                      ? 'Elige el tipo'
+                      : 'Enviar reporte'}
               </button>
             </footer>
           </form>

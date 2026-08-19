@@ -1,4 +1,6 @@
 from app.schemas.event import (
+    CITIZEN_CATEGORY_TO_TYPE,
+    CITIZEN_INITIAL_CONFIDENCE,
     CitizenReportCreate,
     EventBatchCreate,
     EventCreate,
@@ -7,9 +9,12 @@ from app.schemas.event import (
     GeoJSONFeature,
     GeoJSONFeatureCollection,
     IngestResult,
+    ReportCategory,
 )
 
 __all__ = [
+    "CITIZEN_CATEGORY_TO_TYPE",
+    "CITIZEN_INITIAL_CONFIDENCE",
     "CitizenReportCreate",
     "EventBatchCreate",
     "EventCreate",
@@ -18,4 +23,5 @@ __all__ = [
     "GeoJSONFeature",
     "GeoJSONFeatureCollection",
     "IngestResult",
+    "ReportCategory",
 ]

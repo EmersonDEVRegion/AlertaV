@@ -178,6 +178,99 @@ def test_el_motor_agrupa_por_cluster_key_y_no_mezcla_familias():
         assert familias == {clave[0]}, "un racimo no puede contener dos familias"
 
 
+# --- El reporte ciudadano entra por la misma puerta --------------------------
+#
+# El requisito de la capa multi-riesgo era: un reporte ciudadano de "Incendio"
+# sólo se agrupa con la familia `fire`, y uno de "Accidente" con `traffic`.
+#
+# No hizo falta código nuevo en el motor: la partición por familia ya lo cubre,
+# porque la categoría del formulario se traduce a un `EventType` y de ahí a una
+# familia como cualquier otra señal. Estos tests fijan esa equivalencia, que es
+# lo que evita que alguien "arregle" el mapeo del formulario más adelante y
+# rompa el aislamiento sin darse cuenta.
+
+
+def test_un_reporte_ciudadano_de_incendio_cae_en_la_familia_fire():
+    from app.schemas.event import CitizenReportCreate, ReportCategory
+
+    reporte = CitizenReportCreate(
+        lat=CRUCE[0], lon=CRUCE[1], text="veo humo en el cerro",
+        category=ReportCategory.FIRE,
+    )
+    assert family_of_event(reporte.event_type) == "fire"
+
+
+def test_un_reporte_ciudadano_de_accidente_cae_en_la_familia_traffic():
+    from app.schemas.event import CitizenReportCreate, ReportCategory
+
+    reporte = CitizenReportCreate(
+        lat=CRUCE[0], lon=CRUCE[1], text="choque en la ruta",
+        category=ReportCategory.TRAFFIC_ACCIDENT,
+    )
+    assert family_of_event(reporte.event_type) == "traffic"
+
+
+def test_reportes_ciudadanos_de_distinto_tipo_no_se_agrupan_entre_si():
+    """Dos personas en la misma esquina reportando cosas distintas.
+
+    Es el caso literal del requisito: alguien ve humo y alguien ve un choque, en
+    el mismo punto y en el mismo minuto. Sin partición, DBSCAN los uniría en un
+    solo incidente que no describe ninguna de las dos cosas.
+    """
+    from collections import defaultdict
+
+    incendio = evento(EventSource.CITIZEN, EventType.SMOKE, event_id=1, cluster_id=0)
+    choque = evento(EventSource.CITIZEN, EventType.ACCIDENT, event_id=2, cluster_id=0)
+
+    racimos: dict[tuple[str, int | None], list[ClusteredEvent]] = defaultdict(list)
+    for señal in (incendio, choque):
+        racimos[señal.cluster_key].append(señal)
+
+    assert len(racimos) == 2
+    assert incendio.family == "fire"
+    assert choque.family == "traffic"
+
+
+def test_un_reporte_ciudadano_de_incendio_si_se_agrupa_con_firms_y_conaf():
+    """La otra mitad del requisito, y la que se olvida.
+
+    Aislar de más sería tan malo como no aislar: si el reporte ciudadano no
+    pudiera corroborarse con el satélite y con CONAF, la capa ciudadana no
+    aportaría nada al motor.
+    """
+    from collections import defaultdict
+
+    señales = [
+        evento(EventSource.CITIZEN, EventType.SMOKE, event_id=1, cluster_id=0),
+        evento(EventSource.NASA_FIRMS, EventType.THERMAL_ANOMALY, event_id=2, cluster_id=0),
+        evento(EventSource.CONAF, EventType.WILDFIRE, event_id=3, cluster_id=0),
+    ]
+
+    racimos: dict[tuple[str, int | None], list[ClusteredEvent]] = defaultdict(list)
+    for señal in señales:
+        racimos[señal.cluster_key].append(señal)
+
+    assert len(racimos) == 1, "el reporte ciudadano debe corroborarse con las oficiales"
+    assert racimos[("fire", 0)] == señales
+
+
+def test_un_reporte_ciudadano_de_accidente_se_agrupa_con_waze_y_bomberos():
+    from collections import defaultdict
+
+    señales = [
+        evento(EventSource.CITIZEN, EventType.ACCIDENT, event_id=1, cluster_id=0),
+        evento(EventSource.WAZE, EventType.ACCIDENT, event_id=2, cluster_id=0),
+        evento(EventSource.BOMBEROS, EventType.ACCIDENT, event_id=3, cluster_id=0),
+    ]
+
+    racimos: dict[tuple[str, int | None], list[ClusteredEvent]] = defaultdict(list)
+    for señal in señales:
+        racimos[señal.cluster_key].append(señal)
+
+    assert len(racimos) == 1
+    assert racimos[("traffic", 0)] == señales
+
+
 # --- Puerta 2: el tipo con el que nace el incidente --------------------------
 
 

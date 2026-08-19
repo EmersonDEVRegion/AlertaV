@@ -1,6 +1,16 @@
 @import 'tailwindcss';
 
 /**
+ * Modo oscuro por clase.
+ *
+ * En Tailwind v4 la variante `dark:` sigue a `prefers-color-scheme` por defecto
+ * y no existe la opción `darkMode: 'class'` del archivo de configuración de v3.
+ * Esta declaración la reengancha a la clase `.dark` del `<html>`, que es lo que
+ * alterna `hooks/useTheme.ts`. Sin esta línea el interruptor no hace nada.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/**
  * Tokens de la paleta.
  *
  * Los valores autoritativos viven en `src/domain/symbology.ts`, porque MapLibre
@@ -30,6 +40,7 @@ body,
 
 body {
   margin: 0;
+  background-color: #f1f5f9;
   font-family:
     system-ui,
     -apple-system,
@@ -41,10 +52,41 @@ body {
   overscroll-behavior: none;
 }
 
+html.dark body {
+  background-color: #020617;
+}
+
 /* Los controles de MapLibre son chicos para un dedo. */
 .maplibregl-ctrl-group button {
   width: 36px;
   height: 36px;
+}
+
+/**
+ * Controles y atribución de MapLibre en modo oscuro.
+ *
+ * MapLibre inyecta su propio CSS con colores fijos, fuera del alcance de las
+ * clases de Tailwind. Sobre un mapa oscuro quedan como parches blancos, así que
+ * se sobrescriben acá, que es el único lugar donde se puede.
+ */
+html.dark .maplibregl-ctrl-group {
+  background: #1e293b;
+}
+html.dark .maplibregl-ctrl-group button + button {
+  border-top-color: #334155;
+}
+html.dark .maplibregl-ctrl-icon {
+  filter: invert(1) hue-rotate(180deg);
+}
+html.dark .maplibregl-ctrl-attrib,
+html.dark .maplibregl-ctrl-attrib a {
+  background: rgba(15, 23, 42, 0.8);
+  color: #cbd5e1;
+}
+html.dark .maplibregl-ctrl-scale {
+  background: rgba(15, 23, 42, 0.7);
+  border-color: #64748b;
+  color: #cbd5e1;
 }
 
 @media (prefers-reduced-motion: reduce) {

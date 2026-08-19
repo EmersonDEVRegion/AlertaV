@@ -22,7 +22,39 @@ export const REGION_BOUNDS: [number, number, number, number] = [
   -72.6, -34.4, -69.2, -31.4,
 ]
 
+/**
+ * Límite de paneo del mapa.
+ *
+ * Es la UNIÓN de `region_bbox` (incendios) y `usgs_bbox` (sismos), con margen.
+ * Si se usara sólo el primero, volar a un sismo del borde sur —que el backend
+ * sí entrega, porque su recorte es más ancho a propósito— quedaría bloqueado
+ * por `maxBounds` y la cámara se detendría a mitad de camino sin explicación.
+ */
+export const MAP_MAX_BOUNDS: [number, number, number, number] = [
+  -73.4, -35.6, -68.6, -30.6,
+]
+
+/**
+ * Zoom de aterrizaje al elegir un incidente de la lista: se ven las calles del
+ * sector sin perder el entorno.
+ */
+export const FOCUS_ZOOM = 14.5
+
+/**
+ * Zoom para un sismo. Mucho menor a propósito: la información de un sismo es su
+ * alcance regional, y a 14,5 la cámara quedaría dentro del radio de percepción
+ * sin ver ni su borde.
+ */
+export const SEISMIC_FOCUS_ZOOM = 9.5
+
 export const MAP_STYLE_URL = env.mapStyle
+export const MAP_STYLE_URL_DARK = env.mapStyleDark
+
+/** Estilo según el tema activo. */
+export function mapStyleFor(theme: 'light' | 'dark'): string {
+  return theme === 'dark' ? MAP_STYLE_URL_DARK : MAP_STYLE_URL
+}
+
 
 /** Atribucion obligatoria del mapa base. */
 export const MAP_ATTRIBUTION =

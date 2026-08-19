@@ -29,13 +29,13 @@ export function ConfidenceBar({
   return (
     <div>
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
           {label}
         </span>
-        <span className="text-sm font-bold tabular-nums text-slate-900">
+        <span className="text-sm font-bold tabular-nums text-slate-900 dark:text-slate-100">
           {formatPercent(value)}
           {emphasis && (
-            <span className="ml-1.5 text-xs font-medium text-slate-500">
+            <span className="ml-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">
               {emphasis}
             </span>
           )}
@@ -48,7 +48,7 @@ export function ConfidenceBar({
         aria-valuenow={Math.round(pct)}
         aria-valuemin={0}
         aria-valuemax={100}
-        className="mt-1 h-2 w-full overflow-hidden rounded-full bg-slate-200"
+        className="mt-1 h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"
       >
         <div
           className="h-full rounded-full transition-[width] duration-500"
@@ -56,7 +56,7 @@ export function ConfidenceBar({
         />
       </div>
 
-      <p className="mt-1 text-[11px] leading-snug text-slate-500">{caption}</p>
+      <p className="mt-1 text-[11px] leading-snug text-slate-500 dark:text-slate-400">{caption}</p>
     </div>
   )
 }

@@ -8,8 +8,21 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from app.models.enums import ConfidenceLevel, EventSource, EventType
-from app.schemas.event import CitizenReportCreate, EventBatchCreate, EventCreate
+from app.models.enums import (
+    EVENT_TO_INCIDENT_TYPE,
+    ConfidenceLevel,
+    EventSource,
+    EventType,
+    IncidentType,
+    family_of_event,
+)
+from app.schemas.event import (
+    CITIZEN_INITIAL_CONFIDENCE,
+    CitizenReportCreate,
+    EventBatchCreate,
+    EventCreate,
+    ReportCategory,
+)
 from app.schemas.incident import IncidentRead
 
 
@@ -152,25 +165,90 @@ class TestEventCreate:
 
 
 class TestCitizenReport:
-    def test_fuerza_source_citizen(self) -> None:
+    def test_fuerza_source_y_confianza_del_servidor(self) -> None:
         report = CitizenReportCreate(
-            lat=-33.025, lon=-71.52, text="Humo denso en el cerro", type=EventType.SMOKE
+            lat=-33.025,
+            lon=-71.52,
+            text="Humo denso en el cerro",
+            category=ReportCategory.FIRE,
         )
         event = report.to_event_create()
+
         assert event.source is EventSource.CITIZEN
-        assert event.confidence == pytest.approx(0.5)
+        # Baja y fija: de este número depende el ciclo de vida corto del reporte
+        # sin corroborar. No sale de la línea base de la fuente.
+        assert event.confidence == pytest.approx(CITIZEN_INITIAL_CONFIDENCE)
         assert event.raw_data["channel"] == "pwa"
 
-    def test_prohibe_tipos_institucionales(self) -> None:
-        """Un cliente no puede declarar una alerta oficial."""
-        with pytest.raises(ValidationError, match="no reportable"):
+    def test_la_categoria_es_obligatoria(self) -> None:
+        """Sin categoría el motor no sabe con qué familia correlacionar."""
+        with pytest.raises(ValidationError):
+            CitizenReportCreate(lat=-33.0, lon=-71.5, text="algo pasa")
+
+    def test_un_cliente_no_puede_declarar_un_tipo_de_dominio(self) -> None:
+        """El cliente elige categoría de producto, no señal de dominio.
+
+        `extra="forbid"` cierra la puerta: mandar `type` es un 422. Es la misma
+        defensa de siempre —un cliente no puede declararse fuente oficial—
+        aplicada al campo nuevo.
+        """
+        with pytest.raises(ValidationError):
             CitizenReportCreate(
-                lat=-33.0, lon=-71.5, text="alerta roja", type=EventType.ALERT
+                lat=-33.0,
+                lon=-71.5,
+                text="alerta roja",
+                category=ReportCategory.OTHER,
+                type=EventType.ALERT,
             )
+
+    @pytest.mark.parametrize(
+        ("categoria", "esperado", "familia"),
+        [
+            (ReportCategory.FIRE, EventType.SMOKE, "fire"),
+            (ReportCategory.TRAFFIC_ACCIDENT, EventType.ACCIDENT, "traffic"),
+            (ReportCategory.OTHER, EventType.OTHER, "other"),
+        ],
+    )
+    def test_cada_categoria_cae_en_su_familia(
+        self, categoria, esperado, familia
+    ) -> None:
+        """Requisito de aislamiento: cada categoría en su familia y sin cruces."""
+        report = CitizenReportCreate(
+            lat=-33.0, lon=-71.5, text="lo que veo", category=categoria
+        )
+        assert report.event_type is esperado
+        assert family_of_event(report.to_event_create().type) == familia
+
+    def test_incendio_ciudadano_no_afirma_un_incendio(self) -> None:
+        """La decisión de diseño de `CITIZEN_CATEGORY_TO_TYPE`.
+
+        Una persona que ve humo desde lejos elige "Incendio", pero mapear eso a
+        `wildfire` haría que el mapa rotulara "Incendio forestal" un incidente
+        sostenido por un solo testigo sin verificar. `smoke` degrada a
+        `possible_fire` —"Posible incendio"—, que es lo que el sistema sabe.
+        """
+        report = CitizenReportCreate(
+            lat=-33.0, lon=-71.5, text="veo humo en el cerro",
+            category=ReportCategory.FIRE,
+        )
+        assert report.event_type is EventType.SMOKE
+        assert EVENT_TO_INCIDENT_TYPE[report.event_type] is IncidentType.POSSIBLE_FIRE
+        # Pero sigue correlacionando con FIRMS y CONAF: misma familia.
+        assert family_of_event(report.event_type) == "fire"
+
+    def test_la_categoria_cruda_queda_registrada(self) -> None:
+        """Sin ella no se podría calibrar el formulario más adelante."""
+        report = CitizenReportCreate(
+            lat=-33.0, lon=-71.5, text="choque en la ruta",
+            category=ReportCategory.TRAFFIC_ACCIDENT,
+        )
+        assert report.to_event_create().raw_data["category"] == "traffic_accident"
 
     def test_rechaza_texto_muy_corto(self) -> None:
         with pytest.raises(ValidationError):
-            CitizenReportCreate(lat=-33.0, lon=-71.5, text="a")
+            CitizenReportCreate(
+                lat=-33.0, lon=-71.5, text="a", category=ReportCategory.OTHER
+            )
 
 
 class TestBatch:

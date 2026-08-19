@@ -10,7 +10,10 @@ Una pasada hace cuatro cosas, en este orden y por esta razón:
    incidente que está a punto de desaparecer absorbido.
 3. **Paso B — texto.** Adosa las alertas vigentes de SENAPRED, que no tienen
    coordenadas, a los incidentes espaciales de su comuna.
-4. **Caducidad.** Los incidentes activos sin señales nuevas pasan a `stale`.
+4. **Caducidad.** Dos reglas distintas y con criterios distintos: los
+   incidentes sin señales nuevas pasan a `stale` tras horas, y los sostenidos
+   sólo por un reporte ciudadano sin corroborar se descartan tras minutos. Ver
+   `_expire`.
 
 El Paso B se **reconstruye entero** en cada pasada: sus enlaces se borran y se
 recalculan. Una alerta levantada tiene que dejar de teñir el mapa, y
@@ -115,6 +118,9 @@ class CorrelationPass:
     alert_links: int = 0
     incidents_merged: int = 0
     incidents_stale: int = 0
+    #: Descartados por no conseguir corroboración a tiempo. Es la métrica que
+    #: dirá si el TTL de 5 minutos está bien calibrado o mata reportes válidos.
+    incidents_dismissed: int = 0
     #: Incidentes que el Paso B no pudo alcanzar por no tener comuna. Es la
     #: métrica que dirá cuándo hace falta la capa de polígonos comunales.
     incidents_without_commune: int = 0
@@ -141,6 +147,7 @@ class CorrelationPass:
             "alert_links": self.alert_links,
             "incidents_merged": self.incidents_merged,
             "incidents_stale": self.incidents_stale,
+            "incidents_dismissed": self.incidents_dismissed,
             "incidents_without_commune": self.incidents_without_commune,
             "warnings": list(self.warnings),
         }
@@ -182,6 +189,8 @@ class CorrelationEngine:
         window_hours: int | None = None,
         match_window_hours: int | None = None,
         stale_hours: int | None = None,
+        citizen_ttl_minutes: int | None = None,
+        citizen_max_confidence: float | None = None,
         alert_validity_hours: int | None = None,
         min_signals: int | None = None,
         attach_regional_alerts: bool | None = None,
@@ -195,6 +204,14 @@ class CorrelationEngine:
             match_window_hours or settings.CORRELATION_MATCH_WINDOW_HOURS
         )
         self.stale_hours = stale_hours or settings.CORRELATION_STALE_HOURS
+        self.citizen_ttl_minutes = (
+            citizen_ttl_minutes or settings.CITIZEN_UNCORROBORATED_TTL_MINUTES
+        )
+        self.citizen_max_confidence = (
+            settings.CITIZEN_UNCORROBORATED_MAX_CONFIDENCE
+            if citizen_max_confidence is None
+            else citizen_max_confidence
+        )
         self.alert_validity_hours = (
             alert_validity_hours or settings.CORRELATION_ALERT_VALIDITY_HOURS
         )
@@ -484,6 +501,27 @@ class CorrelationEngine:
     # -- Caducidad ------------------------------------------------------------
 
     async def _expire(self, result: CorrelationPass, *, now: datetime) -> None:
+        """Dos caducidades distintas, con criterios distintos.
+
+        `mark_stale` mide **silencio**: un incidente real sobre el que dejaron de
+        llegar señales pasa a `stale` tras horas. No afirma que se haya apagado,
+        sólo que nadie lo está viendo.
+
+        `expire_uncorroborated_citizen` mide **falta de respaldo**: un reporte
+        ciudadano que a los pocos minutos no consiguió que ninguna otra fuente lo
+        acompañe se descarta. No es que haya dejado de llegar información — es
+        que nunca hubo suficiente.
+
+        El orden importa poco porque operan sobre conjuntos disjuntos (uno exige
+        horas de silencio, el otro minutos de soledad), pero el descarte va
+        primero: un incidente ya descartado no debería contarse además como
+        `stale` en la traza de la pasada.
+        """
+        result.incidents_dismissed = await self.repo.expire_uncorroborated_citizen(
+            older_than=now - timedelta(minutes=self.citizen_ttl_minutes),
+            max_confidence=self.citizen_max_confidence,
+        )
+
         threshold = now - timedelta(hours=self.stale_hours)
         result.incidents_stale = await self.repo.mark_stale(threshold=threshold)
 

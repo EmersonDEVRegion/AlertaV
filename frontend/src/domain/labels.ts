@@ -20,6 +20,8 @@ export const SOURCE_LABEL: Record<EventSource, string> = {
   weather: 'Meteorología',
   camera: 'Cámara',
   usgs: 'USGS (sismos)',
+  waze: 'Waze (conductores)',
+  transporte_informa: 'Transporte Informa (MTT)',
   other: 'Otra fuente',
 }
 

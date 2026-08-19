@@ -44,19 +44,19 @@ export function SeismicCard({
           style={{ border: `3px solid ${style.color}` }}
         />
         <div className="min-w-0 flex-1">
-          <h2 className="text-base font-bold text-slate-900">
+          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
             {event.magnitude !== null ? (
               <>Sismo magnitud {event.magnitude.toFixed(1)}</>
             ) : (
               <>Sismo sin magnitud calculada</>
             )}
             {event.mag_type && (
-              <span className="ml-1.5 text-xs font-normal text-slate-500">
+              <span className="ml-1.5 text-xs font-normal text-slate-500 dark:text-slate-400">
                 ({event.mag_type})
               </span>
             )}
           </h2>
-          <p className="mt-0.5 text-xs text-slate-500">
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
             {formatDateTime(event.timestamp)} · {formatRelative(event.timestamp)}
           </p>
         </div>
@@ -64,7 +64,7 @@ export function SeismicCard({
           type="button"
           onClick={onClose}
           aria-label="Cerrar ficha del sismo"
-          className="-mr-1 -mt-1 grid size-9 shrink-0 place-items-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          className="-mr-1 -mt-1 grid size-9 shrink-0 place-items-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-300"
         >
           <span aria-hidden className="text-lg leading-none">✕</span>
         </button>
@@ -75,12 +75,12 @@ export function SeismicCard({
           {style.label} · {style.range}
         </span>
         {preliminary && (
-          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200">
+          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700">
             Solución preliminar
           </span>
         )}
         {event.tsunami && (
-          <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-900 ring-1 ring-blue-200">
+          <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-900 ring-1 ring-blue-200 dark:bg-blue-950/50 dark:text-blue-200 dark:ring-blue-900/50">
             Evaluación de tsunami
           </span>
         )}
@@ -95,7 +95,7 @@ export function SeismicCard({
         </div>
         <div className="flex justify-between gap-3">
           <dt className="text-slate-500">Ubicación</dt>
-          <dd className="max-w-[60%] text-right text-slate-800">
+          <dd className="max-w-[60%] text-right text-slate-800 dark:text-slate-200">
             {event.commune ?? event.place ?? 'sin referencia'}
           </dd>
         </div>
@@ -108,13 +108,13 @@ export function SeismicCard({
       </dl>
 
       {preliminary && (
-        <p className="mt-3 rounded-lg bg-amber-50 px-2.5 py-2 text-[11px] leading-snug text-amber-900 ring-1 ring-amber-200">
+        <p className="mt-3 rounded-lg bg-amber-50 px-2.5 py-2 text-[11px] leading-snug text-amber-900 ring-1 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-800/50">
           Solución automática del USGS, sin revisar por un sismólogo. La magnitud
           y la profundidad pueden corregirse en las próximas horas.
         </p>
       )}
 
-      <p className="mt-3 rounded-lg bg-slate-50 px-2.5 py-2 text-[11px] leading-snug text-slate-500 ring-1 ring-slate-200">
+      <p className="mt-3 rounded-lg bg-slate-50 px-2.5 py-2 text-[11px] leading-snug text-slate-500 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700">
         Un sismo no es una emergencia declarada. Puede ser causa de incendios,
         derrumbes o tsunami, pero por sí solo no implica que haya un siniestro en
         el epicentro.
@@ -126,7 +126,7 @@ export function SeismicCard({
           href={event.usgs_url}
           target="_blank"
           rel="noreferrer"
-          className="mt-3 inline-block text-xs font-medium text-blue-700 underline"
+          className="mt-3 inline-block text-xs font-medium text-blue-700 underline dark:text-blue-300"
         >
           Ver en el catálogo del USGS
         </a>
