@@ -17,12 +17,19 @@
  * `unsafe` con alerta roja sería una mancha roja uniforme y los dos ejes se
  * volverían ilegibles justo cuando más importan.
  *
- * Ningún color se escribe acá: todos salen de `domain/symbology`, que también
- * alimenta la leyenda y la ficha.
+ * Ningún color se escribe acá: salen de `domain/palette`, que resuelve cuál de
+ * las tres paletas —incendios, tráfico u otras emergencias— aplica según la
+ * familia del incidente, y que también alimenta la leyenda y la ficha.
+ *
+ * Las tres familias comparten estas mismas capas en vez de tener una cada una:
+ * el radio, el aro blanco, el anillo de alerta y la marca de no verificado son
+ * idénticos: lo único que cambia es el color. Duplicar las capas por familia
+ * habría triplicado el costo de render para variar un `match`.
  */
 
 import type { CircleLayerSpecification, ExpressionSpecification } from 'maplibre-gl'
-import { ALERT_COLOR_EXPRESSION, LEVEL_COLOR_EXPRESSION } from '@/domain/symbology'
+import { LEVEL_COLOR_EXPRESSION } from '@/domain/palette'
+import { ALERT_COLOR_EXPRESSION } from '@/domain/symbology'
 
 export type IncidentLayer = Omit<CircleLayerSpecification, 'source'>
 

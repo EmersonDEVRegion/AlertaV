@@ -17,10 +17,17 @@
 
 import type { FeatureCollection, Point } from 'geojson'
 import type { ConfidenceLevel, Incident } from '@/api/types'
+import { type IncidentLayerKey, layerOf } from '@/domain/families'
 import { isClosed, levelOf, needsVerificationCaveat } from '@/domain/symbology'
 
 export interface IncidentFeatureProps {
   code: string
+  /**
+   * Capa a la que pertenece el incidente: decide con qué paleta se pinta y qué
+   * casilla lo enciende. Se precalcula acá porque la API no manda `family` y
+   * las expresiones de estilo no pueden derivarla.
+   */
+  layer: IncidentLayerKey
   /** Tramo de la política v2.0.0. Decide el color del relleno. */
   confidence_level: ConfidenceLevel
   /** Estado cerrado → mismo color atenuado y anillo punteado. */
@@ -48,6 +55,7 @@ export function toFeatureCollection(
       geometry: { type: 'Point', coordinates: [incident.lon, incident.lat] },
       properties: {
         code: incident.code,
+        layer: layerOf(incident.type),
         confidence_level: levelOf(incident),
         is_closed: isClosed(incident.status),
         unverified_confirmed: needsVerificationCaveat(incident),

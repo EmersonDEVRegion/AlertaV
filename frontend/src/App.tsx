@@ -4,8 +4,9 @@ import { IncidentMap } from '@/components/map/IncidentMap'
 import { MapLegend } from '@/components/map/MapLegend'
 import { IncidentSheet } from '@/components/incident/IncidentSheet'
 import { SeismicCard } from '@/components/incident/SeismicCard'
-import { LayerToggles } from '@/components/ui/LayerToggles'
+import { DEFAULT_LAYER_VISIBILITY, LayerToggles } from '@/components/ui/LayerToggles'
 import type { LayerVisibility } from '@/components/ui/LayerToggles'
+import { layerOf } from '@/domain/families'
 import { CitizenReportControl } from '@/components/report/CitizenReportControl'
 import { AppHeader } from '@/components/ui/AppHeader'
 import { MapOverlayState } from '@/components/ui/MapOverlayState'
@@ -20,10 +21,7 @@ export default function App() {
   const [selectedCode, setSelectedCode] = useState<string | null>(null)
   const [selectedUsgsId, setSelectedUsgsId] = useState<string | null>(null)
   const [confirmedOnly, setConfirmedOnly] = useState(false)
-  const [visibility, setVisibility] = useState<LayerVisibility>({
-    incidents: true,
-    seismic: true,
-  })
+  const [visibility, setVisibility] = useState<LayerVisibility>(DEFAULT_LAYER_VISIBILITY)
 
   const params = useMemo<ActiveIncidentsQuery>(
     () => ({ confirmed_only: confirmedOnly, limit: 500 }),
@@ -44,10 +42,26 @@ export default function App() {
   const { data: seismic } = useSeismicEvents({ hours: 72, limit: 500 }, visibility.seismic)
   const seismicList = seismic ?? []
 
+  const anyIncidentLayer = visibility.fire || visibility.traffic || visibility.otros
+
   const isOnline = useOnlineStatus()
   const freshness = useFreshness(dataUpdatedAt || undefined)
 
-  const list = incidents ?? []
+  const all = incidents ?? []
+
+  // Una sola consulta a `/incidents/active` alimenta las tres capas; el filtro
+  // es por familia y ocurre acá. Separarlo en tres consultas multiplicaría el
+  // tráfico sin ganar nada: el backend ya devuelve todo junto.
+  const list = useMemo(
+    () => all.filter((incident) => visibility[layerOf(incident.type)]),
+    [all, visibility],
+  )
+
+  const countsByLayer = useMemo(() => {
+    const counts = { fire: 0, traffic: 0, otros: 0 }
+    for (const incident of all) counts[layerOf(incident.type)] += 1
+    return counts
+  }, [all])
   const selected = useMemo(
     () => list.find((incident) => incident.code === selectedCode) ?? null,
     [list, selectedCode],
@@ -88,7 +102,9 @@ export default function App() {
         <IncidentMap
           incidents={list}
           seismic={seismicList}
-          showIncidents={visibility.incidents}
+          showIncidents={
+            visibility.fire || visibility.traffic || visibility.otros
+          }
           showSeismic={visibility.seismic}
           selectedCode={selectedCode}
           selectedUsgsId={selectedUsgsId}
@@ -101,7 +117,7 @@ export default function App() {
         <LayerToggles
           visibility={visibility}
           onChange={setVisibility}
-          counts={{ incidents: list.length, seismic: seismicList.length }}
+          counts={{ ...countsByLayer, seismic: seismicList.length }}
         />
 
         {/*
@@ -119,18 +135,20 @@ export default function App() {
           />
         )}
 
-        {!isPending && visibility.incidents && list.length === 0 && !isError && (
+        {!isPending && anyIncidentLayer && list.length === 0 && !isError && (
           <MapOverlayState
             title="Sin incidentes activos"
             detail={
               confirmedOnly
                 ? 'Ninguna fuente verificó un incidente en terreno dentro de la ventana activa. Desmarca el filtro para ver los que tienen evidencia sin verificar.'
-                : 'El motor de correlación no tiene incidentes vigentes en la Región de Valparaíso.'
+                : all.length > 0
+                  ? 'Hay incidentes vigentes, pero ninguno de las capas encendidas. Revisa el control de capas.'
+                  : 'El motor de correlación no tiene incidentes vigentes en la Región de Valparaíso.'
             }
           />
         )}
 
-        {!isPending && visibility.incidents && list.length === 0 && isError && (
+        {!isPending && anyIncidentLayer && list.length === 0 && isError && (
           <MapOverlayState
             title="Sin datos"
             detail="No se pudo contactar al servidor y no hay nada en cache. Revisa tu conexión o que el backend esté corriendo."

@@ -183,34 +183,13 @@ export function alertStyle(level: AlertLevel | null): AlertStyle | null {
 }
 
 // ---------------------------------------------------------------------------
-// Expresiones para MapLibre, derivadas de las tablas de arriba
+// Expresiones para MapLibre
 // ---------------------------------------------------------------------------
 
-/**
- * Color del relleno: tramo de confianza, atenuado si el incidente ya cerró.
- *
- * `['case', ['get','is_closed'], <atenuado>, <vivo>]` — un solo `match` por
- * rama, ambos generados desde `LEVEL`, así que no hay hex escritos dos veces.
- */
-function levelMatch(colors: Record<ConfidenceLevel, string>) {
-  return [
-    'match',
-    ['get', 'confidence_level'],
-    ...LEVEL_ORDER.flatMap((key) => [key, colors[key]]),
-    colors.possible, // desconocido → el tramo intermedio, nunca el más alarmante
-  ]
-}
-
-export const LEVEL_COLOR_EXPRESSION = [
-  'case',
-  ['get', 'is_closed'],
-  levelMatch(MUTED_LEVEL),
-  levelMatch({
-    unsafe: LEVEL.unsafe.color,
-    possible: LEVEL.possible.color,
-    confirmed: LEVEL.confirmed.color,
-  }),
-] as const
+// El color del relleno dejó de depender sólo del tramo: desde que hay capas de
+// tráfico y de otras emergencias, la paleta la decide primero la familia. Esa
+// expresión vive en `domain/palette.ts`, que es quien conoce las tres tablas.
+// Acá queda sólo el eje de SENAPRED, que es transversal a todas las familias.
 
 export const ALERT_COLOR_EXPRESSION = [
   'match',

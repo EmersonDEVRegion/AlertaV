@@ -61,8 +61,12 @@ frontend/
 │   │   ├── client.ts        # fetch + ApiError + armado de query strings
 │   │   └── incidents.ts     # una función por endpoint
 │   ├── domain/
-│   │   ├── symbology.ts         # incendios: tramos de confianza, atenuado y marcas
-│   │   ├── seismicSymbology.ts  # sismos: escala por magnitud, SIN relación con la anterior
+│   │   ├── families.ts          # familia de cada IncidentType + textos por familia
+│   │   ├── palette.ts           # ← resuelve cuál de las 3 paletas aplica
+│   │   ├── symbology.ts         # incendios: paleta cálida + helpers compartidos
+│   │   ├── trafficSymbology.ts  # accidentes viales: paleta fría
+│   │   ├── otherSymbology.ts    # inundación, derrumbe, rescate: paleta teal
+│   │   ├── seismicSymbology.ts  # sismos: escala por magnitud, capa aparte
 │   │   └── labels.ts            # enums del backend → castellano
 │   ├── hooks/
 │   │   ├── useActiveIncidents.ts   # polling de /incidents/active
@@ -147,6 +151,49 @@ decorativo: desde la v2.0.0 el relleno puede ser rojo (`#dc2626`) o amarillo
 (`#f59e0b`). Sin un aro neutro en medio, un incidente `unsafe` con alerta roja
 sería una mancha roja uniforme y los dos ejes se volverían ilegibles justo
 cuando más importan.
+
+### 1c-bis. Tres familias, tres paletas, las mismas capas
+
+Desde que existen los accidentes viales, el color lo decide primero la
+**familia** del incidente y después el tramo de confianza:
+
+| Capa | Familias | < 30 % | 30-60 % | > 60 % |
+|---|---|---|---|---|
+| Incendios | `fire` | `#dc2626` | `#eab308` | `#ea580c` |
+| Accidentes viales | `traffic` | `#22d3ee` | `#4338ca` | `#6b21a8` |
+| Otras emergencias | `hydro`, `other` | `#5eead4` | `#0d9488` | `#115e59` |
+
+Cálido para fuego, frío para tráfico, teal para el resto. No es estético: en una
+emergencia real conviven en pantalla, y un choque en la Ruta 68 no puede
+competir visualmente con un incendio forestal. Ninguna paleta comparte un solo
+hex con otra —ni con la de sismos—, y hay una comprobación que lo verifica.
+
+Las tres familias comparten las **mismas capas de MapLibre**. Sólo cambia un
+`match` sobre la propiedad `layer`; el radio, el aro blanco, el anillo de alerta
+de SENAPRED y la marca de no verificado son idénticos. Duplicar las capas por
+familia habría triplicado el costo de render para variar un color.
+
+**`family` no viaja en la API.** `IncidentRead` expone `type` pero no la familia,
+así que `domain/families.ts` replica la tabla `INCIDENT_FAMILY` del backend, con
+una comprobación que compara ambas y falla si divergen. Lo correcto sería que el
+backend la expusiera como `computed_field` —una línea en `IncidentRead`— y esta
+tabla desaparecería; vale la pena cuando se toque el schema.
+
+### 1c-ter. Los textos también dependen de la familia
+
+El backend declara `LEVEL_STYLES[confirmed].label = "Incendio confirmado"`, que
+es correcto para fuego y falso para un choque. Mientras no tenga etiquetas por
+familia, las de tráfico y otras emergencias se definen en el frontend.
+
+Lo mismo con dos cosas que estaban escritas a mano en la ficha:
+
+- **Quién verifica en terreno.** Decir «ni CONAF ni Bomberos» sobre un accidente
+  vial es incorrecto: CONAF no atiende choques. `VERIFYING_SOURCES` tiene la
+  frase afirmativa y la negativa completas por familia, en vez de derivar una de
+  la otra con un reemplazo de texto que produce castellano roto.
+- **El número de emergencia.** 132 Bomberos para incendios, 133 Carabineros para
+  accidentes (más 131 SAMU si hay lesionados). Mandar a llamar a Bomberos por un
+  choque sin fuego retrasa la respuesta correcta.
 
 ### 1d. La capa de sismos usa una escala completamente aparte
 
@@ -239,9 +286,14 @@ volver, así que la app no consume batería en el bolsillo.
   absoluta.
 - **`POST /incidents/correlate`** debe quedar detrás de autenticación de
   operador; la PWA no lo llama.
-- **Accidentes viales.** El control de capas ya lo muestra, deshabilitado y con
-  la etiqueta «Próximamente». No hay fuente de despachos viales en el backend
-  todavía; cuando la haya, se enciende ahí.
+- **Exponer `family` en la API.** Hoy `domain/families.ts` replica
+  `INCIDENT_FAMILY` del backend. Un `computed_field` en `IncidentRead` elimina la
+  tabla duplicada y su riesgo de deriva.
+- **Separar «Otras emergencias».** Agrupa `hydro` (inundación, derrumbe) y
+  `other` (rescate) porque ninguna tiene fuente propia todavía. Cuando SENAPRED
+  aporte alertas por crecida, `hydro` merece su capa y su paleta.
+- **Etiquetas por familia en el backend.** `LEVEL_STYLES` es hoy implícitamente
+  de incendios; las de tráfico viven en el frontend por eso.
 - **Web Push**, reportes ciudadanos, historial y filtros por comuna quedan para
   la siguiente iteración (ver `context.md`).
 - **Accesibilidad.** Los objetivos táctiles y `prefers-reduced-motion` están

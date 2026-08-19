@@ -2,12 +2,13 @@ import { useEffect } from 'react'
 import type { Incident } from '@/api/types'
 import { LINK_METHOD_LABEL, STATUS_LABEL, TYPE_LABEL, sourceLabel } from '@/domain/labels'
 import {
-  LEVEL,
-  MUTED_LEVEL,
-  isClosed,
-  levelOf,
-  needsVerificationCaveat,
-} from '@/domain/symbology'
+  EMERGENCY_CONTACT,
+  UNCONFIRMED_NOUN,
+  VERIFYING_SOURCES,
+  layerOf,
+} from '@/domain/families'
+import { styleFor } from '@/domain/palette'
+import { isClosed, needsVerificationCaveat } from '@/domain/symbology'
 import { useIncidentDetail } from '@/hooks/useIncidentDetail'
 import { formatDateTime, formatDistance, formatRelative } from '@/lib/format'
 import { AlertBadge } from './AlertBadge'
@@ -41,12 +42,14 @@ export function IncidentSheet({ incident, onClose }: IncidentSheetProps) {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const level = levelOf(incident)
-  const style = LEVEL[level]
+  const layer = layerOf(incident.type)
+  // La paleta la decide la familia: un accidente vial no se pinta ni se rotula
+  // como un incendio. `styleFor` ya resuelve el atenuado de los cerrados.
+  const style = styleFor(incident)
   const closed = isClosed(incident.status)
-  // El color de la ficha sigue exactamente al del pin, atenuado incluido.
-  const levelColor = closed ? MUTED_LEVEL[level] : style.color
+  const levelColor = style.color
   const unverified = needsVerificationCaveat(incident)
+  const contact = EMERGENCY_CONTACT[layer]
   const events = detail?.events ?? []
 
   return (
@@ -115,8 +118,7 @@ export function IncidentSheet({ incident, onClose }: IncidentSheetProps) {
         {unverified && (
           <p className="mt-3 rounded-lg bg-amber-50 px-2.5 py-2 text-[11px] leading-snug text-amber-900 ring-1 ring-amber-200">
             <strong>Nivel confirmado por acumulación de evidencia.</strong> Ninguna
-            fuente lo verificó en terreno: ni CONAF ni Bomberos han reportado
-            haber llegado al lugar.
+            fuente lo verificó en terreno: {VERIFYING_SOURCES[layer].negative}.
           </p>
         )}
 
@@ -135,7 +137,7 @@ export function IncidentSheet({ incident, onClose }: IncidentSheetProps) {
             emphasis={`${style.label} · ${style.range}`}
             caption={
               incident.is_official_confirmed
-                ? 'CONAF o Bomberos confirmaron el hecho en terreno.'
+                ? VERIFYING_SOURCES[layer].affirmative
                 : `${style.meaning} Ninguna fuente lo verificó en terreno.`
             }
           />
@@ -235,8 +237,10 @@ export function IncidentSheet({ incident, onClose }: IncidentSheetProps) {
 
         <p className="mt-5 rounded-lg bg-slate-50 p-2.5 text-[11px] leading-snug text-slate-500 ring-1 ring-slate-200">
           AlertaV correlaciona fuentes públicas. Una detección satelital o un
-          reporte ciudadano no equivalen a un incendio confirmado. Ante una
-          emergencia, llama al <strong className="text-slate-700">132</strong>.
+          reporte ciudadano no equivalen a {UNCONFIRMED_NOUN[layer]}. Ante una
+          emergencia, llama a {contact.service} al{' '}
+          <strong className="text-slate-700">{contact.number}</strong>
+          {layer === 'traffic' && ', o al 131 si hay personas lesionadas'}.
         </p>
       </div>
     </section>
