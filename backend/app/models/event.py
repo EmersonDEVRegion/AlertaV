@@ -102,7 +102,16 @@ class RawEvent(Base):
         doc="ID estable en el sistema de origen. Base de la idempotencia.",
     )
     confidence: Mapped[float] = mapped_column(
-        Float, nullable=False, server_default=sa_text("0.5")
+        Float,
+        nullable=False,
+        server_default=sa_text("0.5"),
+        doc=(
+            "Confianza de la señal en [0,1]. OJO: la columna física es REAL "
+            "(float4), no double precision como sugiere este `Float` — ver la "
+            "migración 0006. Comparar siempre con `confidence_at_least` / "
+            "`confidence_at_most`: un `>= 0.35` literal no matchea con el 0.35 "
+            "que la propia ingesta escribió."
+        ),
     )
     raw_data: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default=sa_text("'{}'::jsonb")

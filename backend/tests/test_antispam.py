@@ -15,6 +15,8 @@ Por eso la mayoría de estos tests verifican lo que **no** debe descartarse.
 
 from __future__ import annotations
 
+import re
+import struct
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -195,6 +197,60 @@ def test_la_caducidad_mide_la_edad_desde_el_nacimiento():
 def test_la_caducidad_respeta_el_umbral_de_confianza():
     sql = sql_de_caducidad(max_confidence=0.40)
     assert "confidence <= 0.4" in sql
+
+
+def real(valor: float) -> float:
+    """El valor tal como vuelve de una columna `REAL` de PostgreSQL.
+
+    float4 tiene 24 bits de mantisa; el ida y vuelta por `struct` reproduce
+    exactamente el redondeo que hace la base al guardar un float8.
+    """
+    return struct.unpack("f", struct.pack("f", valor))[0]
+
+
+def umbral_del_sql(sql: str) -> float:
+    coincidencia = re.search(r"confidence <= ([0-9.eE+-]+)", sql)
+    assert coincidencia is not None, f"no hay guarda de confianza en:\n{sql}"
+    return float(coincidencia.group(1))
+
+
+def test_la_caducidad_tolera_la_precision_de_la_columna():
+    """El bug de producción: los reportes no morían nunca.
+
+    `incidents.confidence` es `REAL`. El motor escribe 0.40 en float8 y la
+    columna devuelve 0.4000000059604645, **estrictamente mayor** que 0.40: el
+    `confidence <= 0.40` literal no matcheaba con el mismo número que el motor
+    acababa de escribir, el UPDATE afectaba 0 filas y no había error que mirar.
+
+    Este test fija el fallo como número, no como cadena: si alguien vuelve a
+    comparar contra el umbral pelado, falla acá y no en el mapa.
+    """
+    guardado = real(0.40)
+    assert guardado > 0.40, "premisa del test: float4 redondea 0.40 hacia arriba"
+
+    assert umbral_del_sql(sql_de_caducidad(max_confidence=0.40)) >= guardado
+
+
+def test_la_tolerancia_no_afloja_la_regla():
+    """La otra mitad: una tolerancia demasiado ancha descartaría reportes buenos.
+
+    Con umbral 0.40, un incidente de 0.41 —ciudadano con foto más una segunda
+    señal— tiene que sobrevivir. El margen vive muy por debajo de la resolución
+    de la política, que redondea la confianza a 4 decimales.
+    """
+    umbral = umbral_del_sql(sql_de_caducidad(max_confidence=0.40))
+    assert umbral < 0.4001
+    assert real(0.41) > umbral, "0.41 quedaría dentro del descarte"
+
+
+@pytest.mark.parametrize("valor", [0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60])
+def test_el_umbral_siempre_alcanza_al_valor_que_se_escribio(valor):
+    """Cualquier umbral tiene que incluir su propio valor, venga como venga.
+
+    float4 redondea unas veces hacia arriba (0.40, 0.30, 0.60) y otras hacia
+    abajo (0.35, 0.45). La guarda no puede depender de cuál le tocó.
+    """
+    assert umbral_del_sql(sql_de_caducidad(max_confidence=valor)) >= real(valor)
 
 
 def test_la_caducidad_marca_dismissed_y_no_stale():

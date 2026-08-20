@@ -165,6 +165,28 @@ class ConfidenceLevel(str, Enum):
 UNSAFE_THRESHOLD = 0.30
 CONFIRMED_THRESHOLD = 0.60
 
+#: Tolerancia con la que se comparan dos confianzas **en SQL**.
+#:
+#: `incidents.confidence` y `raw_events.confidence` son columnas `REAL` —float4,
+#: 24 bits de mantisa— mientras que el motor calcula y compara en float8. La
+#: conversión no es simétrica: 0.40 escrito desde Python vuelve de la base como
+#: 0.4000000059604645, que es **estrictamente mayor** que 0.40. Un
+#: `WHERE confidence <= 0.40` no matchea entonces con el mismo 0.40 que el motor
+#: acaba de escribir, y el `UPDATE` cuenta 0 filas sin error ninguno.
+#:
+#: No es teórico: es exactamente lo que dejó vivos indefinidamente a los reportes
+#: ciudadanos que la regla de muerte súbita tenía que descartar a los 5 minutos.
+#: El defecto es simétrico y muerde igual en la otra dirección — un filtro
+#: `confidence >= 0.35` esconde los incidentes que valen exactamente 0.35,
+#: porque float4 los guarda como 0.3499999940395355.
+#:
+#: 1e-6 está dos órdenes de magnitud por encima del error de float4 en [0,1]
+#: (≈6e-8) y tres por debajo de la resolución que la política de confianza tiene
+#: de verdad: `score()` redondea a 4 decimales y ninguna decisión del sistema
+#: distingue 0.400000 de 0.400001. Comparar con esta tolerancia no afloja la
+#: regla, sólo deja de exigirle a un float4 una exactitud que no tiene.
+CONFIDENCE_EPSILON = 1e-6
+
 
 @dataclass(frozen=True, slots=True)
 class LevelStyle:

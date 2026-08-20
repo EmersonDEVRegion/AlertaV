@@ -45,6 +45,7 @@ from app.models.enums import (
 )
 from app.models.event import RawEvent
 from app.models.incident import Incident, IncidentEvent
+from app.repositories.confidence_filters import confidence_at_least, confidence_at_most
 
 #: Distancias en metros reales sobre el elipsoide.
 _GEOGRAPHY = Geography(geometry_type="POINT", srid=4326)
@@ -549,6 +550,11 @@ class IncidentRepository:
            otra), y precisamente por eso vale la pena: son dos candados
            independientes sobre la misma puerta. Si mañana alguien cambia la
            política de confianza, la condición sobre `sources` sigue en pie.
+
+           Se compara con `confidence_at_most` y no con `<=` a secas. La columna
+           es `REAL` y devuelve el 0.40 que escribió el motor como
+           0.4000000059604645: comparado contra el 0.40 float8 del umbral, el
+           `<=` literal daba false y esta consulta no descartaba nunca nada.
         3. **Edad medida desde `first_seen_at`.** No desde `last_seen_at`, que es
            lo que usa `mark_stale`. La diferencia importa: un spammer que manda
            el mismo reporte cada cuatro minutos refrescaría `last_seen_at`
@@ -567,7 +573,7 @@ class IncidentRepository:
             update(Incident)
             .where(Incident.status.in_(_open_statuses()))
             .where(Incident.first_seen_at < older_than)
-            .where(Incident.confidence <= max_confidence)
+            .where(confidence_at_most(Incident.confidence, max_confidence))
             # Una fuente institucional que fue al lugar jamás se descarta por
             # tiempo, pase lo que pase con las otras condiciones.
             .where(Incident.is_official_confirmed.is_(False))
@@ -676,7 +682,10 @@ class IncidentRepository:
         if types:
             stmt = stmt.where(Incident.type.in_(list(types)))
         if min_confidence is not None:
-            stmt = stmt.where(Incident.confidence >= min_confidence)
+            # Mismo defecto que en `expire_uncorroborated_citizen`, en la otra
+            # dirección: `>= 0.35` esconde los incidentes que valen exactamente
+            # 0.35, porque float4 los guarda como 0.3499999940395355.
+            stmt = stmt.where(confidence_at_least(Incident.confidence, min_confidence))
         if commune:
             stmt = stmt.where(Incident.commune.ilike(f"%{commune}%"))
         if confirmed_only:

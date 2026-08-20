@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import EventSource, EventType
 from app.models.event import RawEvent
+from app.repositories.confidence_filters import confidence_at_least
 from app.schemas.event import EventCreate
 
 #: Geografía usada para distancias en metros reales.
@@ -205,7 +206,9 @@ class EventRepository:
         if types:
             stmt = stmt.where(RawEvent.type.in_(list(types)))
         if min_confidence is not None:
-            stmt = stmt.where(RawEvent.confidence >= min_confidence)
+            # `raw_events.confidence` es REAL: un `>= 0.35` literal esconde las
+            # señales que valen exactamente 0.35. Ver `confidence_filters`.
+            stmt = stmt.where(confidence_at_least(RawEvent.confidence, min_confidence))
         if only_unprocessed:
             stmt = stmt.where(RawEvent.processed_at.is_(None))
         if bbox is not None:
