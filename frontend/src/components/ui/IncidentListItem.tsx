@@ -36,7 +36,7 @@ export function IncidentListItem({
           style={{ backgroundColor: style.color }}
         />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[11px] font-semibold text-slate-800 dark:text-slate-100 dark:text-slate-200">
+          <span className="block truncate text-[11px] font-semibold text-slate-800 dark:text-slate-200">
             {incident.title ?? TYPE_LABEL[incident.type]}
           </span>
           <span className="block truncate text-[10px] text-slate-500 dark:text-slate-400">

@@ -189,7 +189,7 @@ export default function App() {
   const withAlert = list.filter((incident) => incident.alert_level !== null).length
 
   return (
-    <div className="flex h-[100dvh] flex-col overflow-hidden bg-slate-100 dark:bg-slate-950 dark:bg-slate-800">
+    <div className="flex h-[100dvh] flex-col overflow-hidden bg-slate-100 dark:bg-slate-950">
       <AppHeader
         total={list.length}
         byLevel={byLevel}

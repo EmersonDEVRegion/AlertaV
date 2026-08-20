@@ -30,7 +30,7 @@ export function SourceChips({ sources }: SourceChipsProps) {
             className={
               'rounded-full px-2.5 py-1 text-xs font-medium ring-1 ' +
               (confirming
-                ? 'bg-red-50 text-red-800 ring-red-200 dark:bg-red-950/40 dark:ring-red-900/50'
+                ? 'bg-red-50 text-red-800 ring-red-200 dark:bg-red-950/40 dark:text-red-200 dark:ring-red-900/50'
                 : 'bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700')
             }
             title={
@@ -41,7 +41,7 @@ export function SourceChips({ sources }: SourceChipsProps) {
           >
             {sourceLabel(source)}
             {confirming && (
-              <span aria-hidden className="ml-1 text-red-600">
+              <span aria-hidden className="ml-1 text-red-600 dark:text-red-400">
                 ✓
               </span>
             )}

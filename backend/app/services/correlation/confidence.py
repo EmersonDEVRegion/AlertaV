@@ -236,6 +236,9 @@ RULES: dict[EventSource, SourceRule] = {
     # está escrita para que, si alguien decide correlacionar sismos más adelante,
     # el peso por defecto (0.15–0.30) no le regale corroboración inventada.
     EventSource.USGS: SourceRule(0.0, 0.0, 0.0, 0.0),
+    # El CSN mide mejor que el USGS en Chile, y eso no cambia nada acá: la
+    # calidad de la medición no convierte un epicentro en un siniestro.
+    EventSource.CSN: SourceRule(0.0, 0.0, 0.0, 0.0),
 }
 
 DEFAULT_RULE = SourceRule(0.15, 0.30, 0.5, 0.45)

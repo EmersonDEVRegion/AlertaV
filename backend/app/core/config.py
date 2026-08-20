@@ -209,6 +209,31 @@ class Settings(BaseSettings):
     USGS_TIMEOUT_SECONDS: float = 30.0
     USGS_POLL_INTERVAL_SECONDS: int = 300  # 5 min
 
+    # -- Sismos: Centro Sismológico Nacional ---------------------------------
+    # El CSN es la razón de ser de este collector: su umbral de detección en
+    # Chile baja hasta M2.5, mientras el feed global del USGS filtra en M2.5
+    # mundial pero en la práctica ignora casi todo lo chileno bajo M4.5. Para un
+    # sistema regional esa diferencia es la mayor parte del catálogo.
+    CSN_BASE_URL: str = "https://www.sismologia.cl"
+    #: Días de catálogo a leer por corrida. Dos y no uno: a las 00:30 de Chile
+    #: el catálogo del día nuevo tiene una fila y todo lo reciente vive en el del
+    #: día anterior. Con uno solo, cada medianoche se perdería de vista una hora
+    #: larga de sismos.
+    CSN_CATALOG_DAYS: int = Field(default=2, ge=1, le=7)
+    #: Magnitud mínima a conservar. 0.0 = todo lo que publique el CSN, que es lo
+    #: que se quiere: un enjambre de microsismos es información sismológica real.
+    CSN_MIN_MAGNITUDE: float = Field(default=0.0, ge=0.0, le=10.0)
+    #: Recorte espacial. Más ancho que `region_bbox` por la misma razón que el
+    #: del USGS: un sismo a 200 km de Valparaíso se siente en Valparaíso, y
+    #: aplicarle a un fenómeno de escala regional el criterio pensado para
+    #: incendios puntuales dejaría fuera justo el contexto que da valor al dato.
+    CSN_WEST: float = -73.0
+    CSN_SOUTH: float = -35.0
+    CSN_EAST: float = -69.0
+    CSN_NORTH: float = -31.0
+    CSN_TIMEOUT_SECONDS: float = 30.0
+    CSN_POLL_INTERVAL_SECONDS: int = 300  # 5 min
+
     # -- Accidentes viales: Waze ---------------------------------------------
     # Feed del Waze for Cities / CCP. Es un endpoint privado que Waze entrega a
     # cada municipio o gobierno con convenio: NO hay una URL pública que sirva
@@ -385,6 +410,23 @@ class Settings(BaseSettings):
             south=self.USGS_SOUTH,
             east=self.USGS_EAST,
             north=self.USGS_NORTH,
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def csn_bbox(self) -> BoundingBox:
+        """Recorte del catálogo del CSN. Ver `CSN_WEST`.
+
+        Es una caja aparte de `usgs_bbox` aunque hoy tengan los mismos valores:
+        las dos redes tienen umbrales y coberturas distintos, y tarde o temprano
+        habrá razón para recortar una y no la otra. Compartir la caja obligaría
+        a mover ambas a la vez.
+        """
+        return BoundingBox(
+            west=self.CSN_WEST,
+            south=self.CSN_SOUTH,
+            east=self.CSN_EAST,
+            north=self.CSN_NORTH,
         )
 
     def _rewrite_dsn(self, scheme: str, *, keep_query: bool) -> str | None:

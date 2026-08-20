@@ -51,7 +51,7 @@ export function ConfidenceAudit({ breakdown }: { breakdown: ConfidenceBreakdown 
                   <td className="py-1.5 text-slate-800 dark:text-slate-200">
                     {sourceLabel(source)}
                     {detail?.confirming && (
-                      <span className="ml-1 text-red-600" title="Confirma en terreno">
+                      <span className="ml-1 text-red-600 dark:text-red-400" title="Confirma en terreno">
                         ✓
                       </span>
                     )}

@@ -71,7 +71,7 @@ export function MapLegend() {
                       <span
                         aria-hidden
                         title={palette[level].label}
-                        className="inline-block size-3.5 rounded-full ring-2 ring-white"
+                        className="inline-block size-3.5 rounded-full ring-2 ring-white dark:ring-slate-900"
                         style={{ backgroundColor: palette[level].color }}
                       />
                     </td>
@@ -103,14 +103,14 @@ export function MapLegend() {
             <li className="flex gap-2">
               <span
                 aria-hidden
-                className="relative mt-0.5 grid size-3.5 shrink-0 place-items-center rounded-full ring-2 ring-white"
+                className="relative mt-0.5 grid size-3.5 shrink-0 place-items-center rounded-full ring-2 ring-white dark:ring-slate-900"
                 style={{ backgroundColor: LEVEL.confirmed.color }}
               >
                 <span className="size-1.5 rounded-full bg-white dark:bg-slate-900" />
               </span>
               <span>
                 <span className="font-medium text-slate-900 dark:text-slate-100">Centro hueco</span>
-                <span className="block text-slate-600">
+                <span className="block text-slate-600 dark:text-slate-400">
                   Nivel confirmado por acumulación de evidencia, pero ninguna
                   fuente lo verificó en terreno.
                 </span>
@@ -124,7 +124,7 @@ export function MapLegend() {
               />
               <span>
                 <span className="font-medium text-slate-900 dark:text-slate-100">Color apagado</span>
-                <span className="block text-slate-600">
+                <span className="block text-slate-600 dark:text-slate-400">
                   Incidente cerrado: controlado, extinguido o sin señales nuevas.
                 </span>
               </span>
@@ -140,7 +140,7 @@ export function MapLegend() {
                   className="size-3.5 shrink-0 rounded-full border-2 bg-transparent"
                   style={{ borderColor: style.color }}
                 />
-                <span className="text-slate-700">{style.label}</span>
+                <span className="text-slate-700 dark:text-slate-300">{style.label}</span>
               </li>
             ))}
           </ul>
@@ -180,7 +180,7 @@ export function MapLegend() {
                   <span>
                     <span className="font-medium text-slate-900 dark:text-slate-100">{style.label}</span>
                     <span className="ml-1 text-slate-400 dark:text-slate-500">({style.range})</span>
-                    <span className="block text-slate-600">{style.meaning}</span>
+                    <span className="block text-slate-600 dark:text-slate-400">{style.meaning}</span>
                   </span>
                 </li>
               )

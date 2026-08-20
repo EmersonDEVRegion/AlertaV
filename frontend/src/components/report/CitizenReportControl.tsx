@@ -41,6 +41,9 @@ export function CitizenReportControl({ hiddenOnMobile = false }: CitizenReportCo
           hover:bg-red-700 hover:shadow-[0_8px_28px_rgba(220,38,38,0.55)]
           active:scale-[0.97]
           focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300 focus-visible:ring-offset-2
+          dark:shadow-[0_4px_18px_rgba(220,38,38,0.40)] dark:ring-red-400/25
+          dark:hover:ring-red-400/60 dark:hover:shadow-[0_6px_22px_rgba(239,68,68,0.50)]
+          dark:focus-visible:ring-offset-slate-950
           ${hiddenOnMobile ? 'hidden md:flex' : 'flex'}
         `}
       >

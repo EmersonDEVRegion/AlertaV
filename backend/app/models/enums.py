@@ -39,6 +39,10 @@ class EventSource(str, Enum):
     WEATHER = "weather"
     CAMERA = "camera"
     USGS = "usgs"
+    #: Centro Sismológico Nacional (U. de Chile). La red oficial chilena: su
+    #: umbral de detección baja muy por debajo del feed global del USGS, que en
+    #: Chile ignora prácticamente todo lo menor a M4.5.
+    CSN = "csn"
     #: Reportes de tránsito de la comunidad de Waze (feed CCP). Son avisos de
     #: conductores: masivos y rápidos, pero sin verificar por nadie.
     WAZE = "waze"
@@ -394,6 +398,9 @@ SOURCE_BASE_CONFIDENCE: dict[EventSource, float] = {
     # sismo ocurrió no está en duda. Su 1.0 dice eso y sólo eso; no dice que
     # haya un siniestro en ese punto.
     EventSource.USGS: 1.00,
+    # Misma lectura que USGS: certeza sobre el HECHO del sismo, no sobre que
+    # haya una emergencia en ese punto.
+    EventSource.CSN: 1.00,
     EventSource.MUNICIPALITY: 0.90,
     EventSource.MEDIA: 0.70,
     EventSource.BROADCASTIFY: 0.65,

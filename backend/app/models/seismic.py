@@ -65,12 +65,31 @@ class SeismicDetail(Base):
         primary_key=True,
         doc="La señal de la que esto es el detalle. 1:1, con borrado en cascada.",
     )
+    provider: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default=sa_text("'usgs'"),
+        doc=(
+            "Red sismológica que reportó el evento: 'usgs' o 'csn'. Existe desde "
+            "que hay más de una: sin esto, dos catálogos comparten el espacio de "
+            "identificadores de `usgs_id` y nadie puede saber de dónde salió una "
+            "fila. El mismo sismo puede aparecer dos veces —una por red— y eso "
+            "es correcto: son dos mediciones independientes del mismo hecho."
+        ),
+    )
     usgs_id: Mapped[str] = mapped_column(
         String(64),
         nullable=False,
         doc=(
-            "Identificador del evento en el catálogo del USGS (p. ej. "
-            "'us6000tlm3'). El mismo que sostiene `raw_events.external_id`."
+            "Identificador del evento en el catálogo de SU red: 'us6000tlm3' "
+            "para el USGS, '379889' para el CSN. El mismo que sostiene "
+            "`raw_events.external_id`.\n\n"
+            "El nombre de la columna quedó del hito en que el USGS era la única "
+            "red y hoy es engañoso; renombrarlo a `source_event_id` es deuda "
+            "pendiente y NO se hizo acá a propósito: `usgs_id` viaja en el JSON "
+            "que la PWA ya consume, así que cambiarlo es una rotura de contrato "
+            "que merece su propio despliegue coordinado, no un viaje de vuelta "
+            "dentro de un hito de recolección."
         ),
     )
 
@@ -178,7 +197,10 @@ class SeismicDetail(Base):
             "review_status IS NULL OR review_status IN ('automatic', 'reviewed')",
             name="review_status",
         ),
-        Index("uq_seismic_details_usgs_id", "usgs_id", unique=True),
+        # Unicidad por (red, id): el catálogo del CSN numera desde 1 y el del
+        # USGS usa cadenas alfanuméricas, así que hoy no colisionarían — pero
+        # depender de esa casualidad sería construir sobre una coincidencia.
+        Index("uq_seismic_details_provider_event", "provider", "usgs_id", unique=True),
         # El filtro real del operador: "los sismos fuertes, primero los recientes".
         Index(
             "ix_seismic_details_magnitude",

@@ -35,6 +35,7 @@ export function SeismicCard({
         p-4 pb-[max(1rem,env(safe-area-inset-bottom))]
         shadow-[0_-8px_40px_rgba(15,23,42,0.25)]
         md:inset-y-0 md:left-auto md:right-0 md:w-[26rem] md:rounded-none md:rounded-l-2xl
+        dark:bg-slate-900 dark:shadow-[0_-8px_40px_rgba(0,0,0,0.6)]
       "
     >
       <div className="flex items-start gap-3">
@@ -88,21 +89,21 @@ export function SeismicCard({
 
       <dl className="mt-4 space-y-1.5 text-sm">
         <div className="flex justify-between gap-3">
-          <dt className="text-slate-500">Profundidad</dt>
-          <dd className="text-slate-800">
+          <dt className="text-slate-500 dark:text-slate-400">Profundidad</dt>
+          <dd className="text-slate-800 dark:text-slate-200">
             {event.depth_km !== null ? `${event.depth_km.toFixed(1)} km` : 'sin dato'}
           </dd>
         </div>
         <div className="flex justify-between gap-3">
-          <dt className="text-slate-500">Ubicación</dt>
+          <dt className="text-slate-500 dark:text-slate-400">Ubicación</dt>
           <dd className="max-w-[60%] text-right text-slate-800 dark:text-slate-200">
             {event.commune ?? event.place ?? 'sin referencia'}
           </dd>
         </div>
         {event.felt_reports !== null && event.felt_reports > 0 && (
           <div className="flex justify-between gap-3">
-            <dt className="text-slate-500">Lo sintieron</dt>
-            <dd className="text-slate-800">{event.felt_reports} personas</dd>
+            <dt className="text-slate-500 dark:text-slate-400">Lo sintieron</dt>
+            <dd className="text-slate-800 dark:text-slate-200">{event.felt_reports} personas</dd>
           </div>
         )}
       </dl>

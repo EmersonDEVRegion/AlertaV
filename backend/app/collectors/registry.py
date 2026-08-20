@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.collectors.base import BaseCollector
 from app.collectors.conaf.collector import ConafCollector
 from app.collectors.firms.collector import FirmsCollector
+from app.collectors.seismic.sismologia_worker import SismologiaCollector
 from app.collectors.senapred.collector import SenapredCollector
 from app.collectors.traffic.bomberos_10_4_worker import Bomberos104Collector
 from app.collectors.traffic.transporteinforma_worker import TransporteInformaCollector
@@ -26,7 +27,12 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     FirmsCollector.name: FirmsCollector,
     ConafCollector.name: ConafCollector,
     SenapredCollector.name: SenapredCollector,
+    # -- Sismos ---------------------------------------------------------------
+    # Dos redes con umbrales distintos, no una redundante: el USGS ignora en la
+    # práctica casi todo lo chileno bajo M4.5 y el CSN publica desde M2.5.
+    # Ninguna entra al motor de correlación. Ver app/collectors/seismic/.
     UsgsCollector.name: UsgsCollector,
+    SismologiaCollector.name: SismologiaCollector,
     # -- Accidentes viales ----------------------------------------------------
     # Los tres emiten `type=accident` y quedan aislados de la familia `fire` por
     # la partición del motor. Ninguno arranca sin su URL configurada: si falta,

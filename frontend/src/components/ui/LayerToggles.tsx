@@ -101,7 +101,7 @@ export function LayerToggles({
 
             return (
               <li key={row.key}>
-                <div className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-xs text-slate-800 dark:text-slate-100 dark:text-slate-200">
+                <div className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-xs text-slate-800 dark:text-slate-200">
                   {/* Casilla: enciende y apaga la capa. */}
                   <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
                     <input
@@ -183,7 +183,7 @@ export function LayerToggles({
                               style={{ border: `2px solid ${style.color}` }}
                             />
                             <span className="min-w-0 flex-1">
-                              <span className="block text-[11px] font-semibold text-slate-800 dark:text-slate-100 dark:text-slate-200">
+                              <span className="block text-[11px] font-semibold text-slate-800 dark:text-slate-200">
                                 {event.magnitude !== null
                                   ? `M ${event.magnitude.toFixed(1)}`
                                   : 'Sin magnitud'}
@@ -220,7 +220,7 @@ export function LayerToggles({
                         className={
                           'flex-1 rounded-md px-1.5 py-1 text-[10px] font-medium transition ' +
                           (seismicFilter === option.key
-                            ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-600 dark:text-white dark:bg-slate-900 dark:text-slate-100'
+                            ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-600 dark:text-white'
                             : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200')
                         }
                       >

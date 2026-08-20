@@ -76,15 +76,17 @@ export function IncidentSheet({
         rounded-t-2xl bg-white shadow-[0_-8px_40px_rgba(15,23,42,0.25)]
         md:inset-y-0 md:left-auto md:right-0 md:max-h-none md:w-[26rem] md:rounded-none
         md:rounded-l-2xl md:shadow-[-8px_0_40px_rgba(15,23,42,0.18)]
+        dark:bg-slate-900 dark:shadow-[0_-8px_40px_rgba(0,0,0,0.6)]
+        dark:md:shadow-[-8px_0_40px_rgba(0,0,0,0.55)]
       "
     >
       {/* Asa de arrastre: señal visual de que la tarjeta es una hoja inferior. */}
-      <div aria-hidden className="mx-auto mt-2 h-1 w-10 rounded-full bg-slate-300 md:hidden" />
+      <div aria-hidden className="mx-auto mt-2 h-1 w-10 rounded-full bg-slate-300 md:hidden dark:bg-slate-600" />
 
       <header className="flex items-start gap-3 px-4 pb-3 pt-3">
         <span
           aria-hidden
-          className="mt-1 size-3.5 shrink-0 rounded-full ring-2 ring-white"
+          className="mt-1 size-3.5 shrink-0 rounded-full ring-2 ring-white dark:ring-slate-900"
           style={{ backgroundColor: levelColor }}
         />
         <div className="min-w-0 flex-1">
@@ -182,7 +184,7 @@ export function IncidentSheet({
         </h3>
         <dl className="mt-2 space-y-1.5 text-sm">
           <div className="flex justify-between gap-3">
-            <dt className="text-slate-500">Primera señal</dt>
+            <dt className="text-slate-500 dark:text-slate-400">Primera señal</dt>
             <dd className="text-right text-slate-800 dark:text-slate-200">
               {formatDateTime(incident.first_seen_at)}
               <span className="ml-1.5 text-xs text-slate-500 dark:text-slate-400">
@@ -191,7 +193,7 @@ export function IncidentSheet({
             </dd>
           </div>
           <div className="flex justify-between gap-3">
-            <dt className="text-slate-500">Última señal</dt>
+            <dt className="text-slate-500 dark:text-slate-400">Última señal</dt>
             <dd className="text-right text-slate-800 dark:text-slate-200">
               {formatDateTime(incident.last_seen_at)}
               <span className="ml-1.5 text-xs text-slate-500 dark:text-slate-400">
@@ -200,13 +202,13 @@ export function IncidentSheet({
             </dd>
           </div>
           <div className="flex justify-between gap-3">
-            <dt className="text-slate-500">Señales totales</dt>
-            <dd className="text-slate-800">{incident.event_count}</dd>
+            <dt className="text-slate-500 dark:text-slate-400">Señales totales</dt>
+            <dd className="text-slate-800 dark:text-slate-200">{incident.event_count}</dd>
           </div>
           {incident.resolved_at && (
             <div className="flex justify-between gap-3">
-              <dt className="text-slate-500">Resuelto</dt>
-              <dd className="text-slate-800">{formatDateTime(incident.resolved_at)}</dd>
+              <dt className="text-slate-500 dark:text-slate-400">Resuelto</dt>
+              <dd className="text-slate-800 dark:text-slate-200">{formatDateTime(incident.resolved_at)}</dd>
             </div>
           )}
         </dl>
@@ -272,15 +274,15 @@ export function IncidentSheet({
               <>
                 <dl className="mt-2 space-y-1.5 text-sm">
                   <div className="flex justify-between gap-3">
-                    <dt className="text-slate-500">Viento</dt>
-                    <dd className="text-slate-800">
+                    <dt className="text-slate-500 dark:text-slate-400">Viento</dt>
+                    <dd className="text-slate-800 dark:text-slate-200">
                       {Math.round(wind.windSpeedKmh)} km/h del{' '}
                       {compassLabel(wind.windDirectionDeg)}
                     </dd>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <dt className="text-slate-500">Avance estimado</dt>
-                    <dd className="text-slate-800">
+                    <dt className="text-slate-500 dark:text-slate-400">Avance estimado</dt>
+                    <dd className="text-slate-800 dark:text-slate-200">
                       {windCone.lengthKm.toFixed(1)} km hacia el{' '}
                       {compassLabel(windCone.bearingDeg)}
                     </dd>
@@ -308,7 +310,7 @@ export function IncidentSheet({
           AlertaV correlaciona fuentes públicas. Una detección satelital o un
           reporte ciudadano no equivalen a {UNCONFIRMED_NOUN[layer]}. Ante una
           emergencia, llama a {contact.service} al{' '}
-          <strong className="text-slate-700">{contact.number}</strong>
+          <strong className="text-slate-700 dark:text-slate-300">{contact.number}</strong>
           {layer === 'traffic' && ', o al 131 si hay personas lesionadas'}.
         </p>
       </div>
