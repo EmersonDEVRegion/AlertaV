@@ -107,6 +107,30 @@ alfanumérica desde el panel y evitar el problema.
 despliegue automático no debería poder alterar el esquema de producción sin que
 nadie lo mire.
 
+> **En Render no hay dónde correr esto.** El plan gratuito no da Shell ni
+> Pre-Deploy Jobs. En ese caso poné `RUN_MIGRATIONS=1` en las variables de
+> entorno del servicio: `start.sh` ejecuta `alembic upgrade head` antes de
+> levantar uvicorn y los workers, y si la migración falla el contenedor **no
+> arranca** —que es el comportamiento que se quiere: mejor un deploy fallido y
+> visible que una API sirviendo 500s contra un esquema viejo.
+>
+> Dos consecuencias de dejarlo prendido, para tenerlas presentes:
+>
+> - Se ejecuta en **cada arranque**, y en Render el free tier se apaga tras 15
+>   minutos sin tráfico. Cuando no hay nada que aplicar el costo es una conexión
+>   y una consulta a `alembic_version`; con una migración pesada pendiente, en
+>   cambio, se suma al tiempo de cold start.
+> - Cualquier `git push` a la rama desplegada puede alterar el esquema de
+>   producción. Si eso preocupa, la alternativa es prender la variable sólo para
+>   el deploy que trae migraciones y volverla a `0` después.
+>
+> Lo que **no** hay que hacer es mover las migraciones al `lifespan` de FastAPI:
+> `migrations/env.py` llama a `fileConfig()`, que desactiva los loggers ya
+> configurados por la app; los workers de `start.sh` arrancan en paralelo a
+> uvicorn y no esperarían al esquema; y `command.upgrade()` es síncrono, así que
+> bloquea el event loop y retrasa la apertura del puerto que Render usa para dar
+> el deploy por bueno.
+
 PowerShell:
 
 ```powershell
@@ -179,7 +203,7 @@ Marcá como **Secret** las tres primeras; el resto pueden ir como plain text.
 | `DB_POOL_SIZE` | `2` | El techo real es `(POOL_SIZE + MAX_OVERFLOW) × 2 procesos`. Con 2/3 son 10 conexiones. |
 | `DB_MAX_OVERFLOW` | `3` | |
 | `LOG_LEVEL` | `INFO` | |
-| `RUN_MIGRATIONS` | `0` | Las migraciones se aplican a mano (paso 1.4). Poné `1` sólo si querés que el contenedor las aplique al arrancar. |
+| `RUN_MIGRATIONS` | `0` | Las migraciones se aplican a mano (paso 1.4). **En Render el valor es `1`**: sin Shell ni Pre-Deploy Jobs, el contenedor es el único lugar donde pueden correr. Si falla, no arranca. |
 | `WORKER_MODE` | `combined` | Los dos motores de fondo en un proceso. `split` vuelve al esquema de tres, útil para depurar. |
 
 ### Sólo si usás el pooler de transacción (puerto 6543)
