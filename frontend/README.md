@@ -62,6 +62,7 @@ frontend/
 │   │   └── incidents.ts     # una función por endpoint
 │   ├── domain/
 │   │   ├── families.ts          # familia de cada IncidentType + textos por familia
+│   │   ├── powerSymbology.ts    # cortes: acento por distribuidora
 │   │   ├── palette.ts           # ← resuelve cuál de las 3 paletas aplica
 │   │   ├── symbology.ts         # incendios: paleta cálida + helpers compartidos
 │   │   ├── trafficSymbology.ts  # accidentes viales: paleta fría
@@ -195,6 +196,31 @@ Lo mismo con dos cosas que estaban escritas a mano en la ficha:
   accidentes (más 131 SAMU si hay lesionados). Mandar a llamar a Bomberos por un
   choque sin fuego retrasa la respuesta correcta.
 
+### 1c-quater. Cortes de suministro: el color lo decide la empresa
+
+La familia `power` rompe a propósito la regla de las otras tres. En ellas el
+color codifica `confidence_level` porque hay una duda real sobre si el fenómeno
+existe; en un corte no la hay — la señal viene de la propia distribuidora, que
+sabe qué circuitos tiene caídos, y el collector le asigna confianza 1,0. Un
+tramo que siempre vale lo mismo no informa nada, así que el canal del color se
+usa para lo que sí varía y sí le importa a un vecino: **qué empresa** repone.
+
+| Distribuidora | Acento |
+|---|---|
+| Chilquinta | rojo profundo `#b91c1c` |
+| CGE | azul oscuro `#1e3a8a` |
+
+Los cortes además **no pasan por la fuente GeoJSON**: se dibujan como `<Marker>`
+de react-map-gl, que es el equivalente en MapLibre del `divIcon` de Leaflet
+(MapLibre no tiene `divIcon`). La partición ocurre en `App`, que entrega a
+`IncidentMap` dos arreglos ya separados.
+
+`OutagePinLayer` impone un tope de 150 marcadores porque cada uno es un nodo del
+DOM que MapLibre reposiciona en cada frame del paneo: un temporal deja cientos
+de circuitos caídos y el mapa se pondría pesado justo cuando más se necesita
+fluido. Cuando recorta, prioriza los cortes con más clientes afectados y nunca
+descarta el que está seleccionado.
+
 ### 1d. La capa de sismos usa una escala completamente aparte
 
 `domain/seismicSymbology.ts` no comparte nada con `domain/symbology.ts`, y es a
@@ -286,6 +312,10 @@ volver, así que la app no consume batería en el bolsillo.
   absoluta.
 - **`POST /incidents/correlate`** debe quedar detrás de autenticación de
   operador; la PWA no lo llama.
+- **Logos de las distribuidoras.** Los pines usan un acento de color y un glifo
+  de rayo, no los logos de Chilquinta y CGE: son marcas registradas y usarlas
+  exige permiso. El acento está aislado en `powerSymbology.ts`, así que cambiar
+  a logos es sustituir el `<span>` del pin.
 - **Exponer `family` en la API.** Hoy `domain/families.ts` replica
   `INCIDENT_FAMILY` del backend. Un `computed_field` en `IncidentRead` elimina la
   tabla duplicada y su riesgo de deriva.

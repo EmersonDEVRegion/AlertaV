@@ -17,6 +17,7 @@ import { formatDateTime, formatDistance, formatRelative } from '@/lib/format'
 import { AlertBadge } from './AlertBadge'
 import { ConfidenceAudit } from './ConfidenceAudit'
 import { ConfidenceBar } from './ConfidenceBar'
+import { OutageDetails } from './OutageDetails'
 import { SourceChips } from './SourceChips'
 
 interface IncidentSheetProps {
@@ -170,6 +171,9 @@ export function IncidentSheet({
           />
         </div>
 
+        {/* --- Corte de suministro ------------------------------------------- */}
+        {incident.outage && <OutageDetails outage={incident.outage} />}
+
         {/* --- Fuentes ------------------------------------------------------- */}
         <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
           Fuentes ({incident.source_count})
@@ -308,10 +312,18 @@ export function IncidentSheet({
 
         <p className="mt-5 rounded-lg bg-slate-50 p-2.5 text-[11px] leading-snug text-slate-500 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700">
           AlertaV correlaciona fuentes públicas. Una detección satelital o un
-          reporte ciudadano no equivalen a {UNCONFIRMED_NOUN[layer]}. Ante una
-          emergencia, llama a {contact.service} al{' '}
-          <strong className="text-slate-700 dark:text-slate-300">{contact.number}</strong>
-          {layer === 'traffic' && ', o al 131 si hay personas lesionadas'}.
+          reporte ciudadano no equivalen a {UNCONFIRMED_NOUN[layer]}.{' '}
+          {contact ? (
+            <>
+              Ante una emergencia, llama a {contact.service} al{' '}
+              <strong className="text-slate-700 dark:text-slate-300">
+                {contact.number}
+              </strong>
+              {layer === 'traffic' && ', o al 131 si hay personas lesionadas'}.
+            </>
+          ) : (
+            <>Los cortes se reportan directamente a la empresa distribuidora.</>
+          )}
         </p>
       </div>
     </section>

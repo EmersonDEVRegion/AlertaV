@@ -27,6 +27,10 @@ export const EVENT_SOURCES = [
   // ser exhaustivo y las fichas muestran `undefined` como nombre de fuente.
   'waze',
   'transporte_informa',
+  // Sismología nacional y distribuidoras eléctricas.
+  'csn',
+  'chilquinta',
+  'cge',
   'other',
 ] as const
 export type EventSource = (typeof EVENT_SOURCES)[number]
@@ -46,6 +50,7 @@ export const INCIDENT_TYPES = [
   'landslide',
   'accident',
   'rescue',
+  'power_outage',
   'other',
 ] as const
 export type IncidentType = (typeof INCIDENT_TYPES)[number]
@@ -119,6 +124,28 @@ export interface ConfidenceBreakdown {
   [key: string]: unknown
 }
 
+/** Proveedores de suministro con cobertura en la Región de Valparaíso. */
+export const OUTAGE_PROVIDERS = ['chilquinta', 'cge'] as const
+export type OutageProvider = (typeof OUTAGE_PROVIDERS)[number]
+
+/**
+ * `OutageDetail` — metadatos de un corte de suministro.
+ *
+ * Sólo viene poblado en incidentes de tipo `power_outage`; `null` en cualquier
+ * otra familia. Los tres campos que importan pueden faltar por separado: los
+ * feeds publican el corte antes de contar clientes o de estimar la reposición,
+ * así que nada acá puede asumirse presente.
+ */
+export interface OutageDetail {
+  provider: OutageProvider | string
+  /** Suma de clientes de todas las señales. `null` si ninguna lo informó. */
+  affected_clients: number | null
+  /** Reposición estimada más tardía, en ISO 8601. */
+  estimated_restoration: string | null
+  sector: string | null
+  outage_count: number
+}
+
 /** `IncidentRead` — lo que devuelve `GET /api/v1/incidents/active`. */
 export interface Incident {
   code: string
@@ -155,6 +182,9 @@ export interface Incident {
   correlated_at: string
 
   confidence_breakdown: ConfidenceBreakdown
+
+  /** Sólo en `power_outage`. `null` en el resto de las familias. */
+  outage: OutageDetail | null
 
   // Campos calculados por el backend (`computed_field`).
   /**

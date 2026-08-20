@@ -785,6 +785,88 @@ class IncidentRepository:
         )
         return [(link, event) for link, event in (await self.session.execute(stmt)).all()]
 
+    async def outage_details(
+        self, incident_ids: Sequence[int]
+    ) -> dict[int, dict[str, Any]]:
+        """Metadatos de corte por incidente, en UNA consulta.
+
+        Un `IN (...)` sobre los incidentes ya cargados en vez de una consulta
+        por ficha: la lista de `/incidents/active` puede traer decenas de cortes
+        y el N+1 se notaría en la primera tormenta.
+
+        Los campos salen de `raw_events.raw_data`, donde los deja
+        `collectors/power/base_worker.py`. Se leen las claves planas
+        (`affected_clients`, `restoration_at`, `company`) y no el objeto anidado
+        `_outage`, porque el worker las escribe planas exactamente para esto.
+
+        Criterios de agregación, que no son obvios:
+
+        * **clientes: se suman.** Cada `raw_event` es un corte distinto —el
+          upsert por `external_id` impide que un mismo corte entre dos veces—,
+          así que sumar es contar clientes, no contarlos doble.
+        * **reposición: la más tardía.** Un incidente con varios frentes está
+          resuelto cuando vuelve el último, no el primero.
+        * **proveedor: el de la señal más reciente.** Si Chilquinta y CGE
+          reportan el mismo corte, gana quien lo actualizó al final.
+        """
+        if not incident_ids:
+            return {}
+
+        rows = (
+            await self.session.execute(
+                select(
+                    IncidentEvent.incident_id,
+                    RawEvent.source,
+                    RawEvent.timestamp,
+                    RawEvent.raw_data,
+                )
+                .join(RawEvent, RawEvent.id == IncidentEvent.raw_event_id)
+                .where(
+                    IncidentEvent.incident_id.in_(list(incident_ids)),
+                    RawEvent.type == EventType.POWER_OUTAGE,
+                )
+                .order_by(IncidentEvent.incident_id, RawEvent.timestamp.asc())
+            )
+        ).all()
+
+        details: dict[int, dict[str, Any]] = {}
+
+        for incident_id, source, _timestamp, raw_data in rows:
+            data = raw_data or {}
+            entry = details.setdefault(
+                incident_id,
+                {
+                    "provider": source.value if hasattr(source, "value") else str(source),
+                    "affected_clients": None,
+                    "estimated_restoration": None,
+                    "sector": None,
+                    "outage_count": 0,
+                },
+            )
+            # Las filas vienen ordenadas por timestamp ascendente, así que la
+            # última en sobrescribir es la más reciente.
+            entry["provider"] = (
+                data.get("company")
+                or (source.value if hasattr(source, "value") else str(source))
+            )
+            entry["outage_count"] += 1
+
+            clients = data.get("affected_clients")
+            if isinstance(clients, int):
+                entry["affected_clients"] = (entry["affected_clients"] or 0) + clients
+
+            restoration = data.get("restoration_at")
+            if isinstance(restoration, str) and restoration:
+                current = entry["estimated_restoration"]
+                if current is None or restoration > current:
+                    entry["estimated_restoration"] = restoration
+
+            outage = data.get("_outage")
+            if isinstance(outage, dict) and outage.get("sector"):
+                entry["sector"] = outage["sector"]
+
+        return details
+
     async def stats(self, *, since: datetime | None = None) -> dict[str, Any]:
         base = select(Incident)
         if since is not None:

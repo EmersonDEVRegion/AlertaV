@@ -20,8 +20,11 @@ export const SOURCE_LABEL: Record<EventSource, string> = {
   weather: 'Meteorología',
   camera: 'Cámara',
   usgs: 'USGS (sismos)',
+  csn: 'CSN (sismos)',
   waze: 'Waze (conductores)',
   transporte_informa: 'Transporte Informa (MTT)',
+  chilquinta: 'Chilquinta',
+  cge: 'CGE',
   other: 'Otra fuente',
 }
 
@@ -37,6 +40,7 @@ export const TYPE_LABEL: Record<IncidentType, string> = {
   flood: 'Inundación',
   landslide: 'Derrumbe',
   accident: 'Accidente',
+  power_outage: 'Corte de suministro',
   rescue: 'Rescate',
   other: 'Otro',
 }

@@ -19,7 +19,7 @@
 
 import type { IncidentType } from '@/api/types'
 
-export const FAMILIES = ['fire', 'traffic', 'hydro', 'other'] as const
+export const FAMILIES = ['fire', 'traffic', 'power', 'hydro', 'other'] as const
 export type IncidentFamily = (typeof FAMILIES)[number]
 
 /** Espejo de `INCIDENT_FAMILY`. Mantener sincronizado. */
@@ -30,6 +30,9 @@ export const INCIDENT_FAMILY: Record<IncidentType, IncidentFamily> = {
   // `traffic` es familia propia desde que existen los collectors de accidentes.
   // Antes compartía `other` con rescates y despachos genéricos.
   accident: 'traffic',
+  // Familia propia desde que existen los collectors de Chilquinta y CGE. Antes
+  // habría caído en `other` y un corte se habría podido fundir con un rescate.
+  power_outage: 'power',
   flood: 'hydro',
   landslide: 'hydro',
   rescue: 'other',
@@ -49,13 +52,14 @@ export function familyOf(type: IncidentType): IncidentFamily {
  * `other` comparten casilla porque ninguna tiene todavía una fuente propia y
  * separarlas daría un panel con cuatro casillas casi siempre vacías.
  */
-export const INCIDENT_LAYERS = ['fire', 'traffic', 'otros'] as const
+export const INCIDENT_LAYERS = ['fire', 'traffic', 'power', 'otros'] as const
 export type IncidentLayerKey = (typeof INCIDENT_LAYERS)[number]
 
 export function layerOf(type: IncidentType): IncidentLayerKey {
   const family = familyOf(type)
   if (family === 'fire') return 'fire'
   if (family === 'traffic') return 'traffic'
+  if (family === 'power') return 'power'
   return 'otros'
 }
 
@@ -63,6 +67,7 @@ export function layerOf(type: IncidentType): IncidentLayerKey {
 export const LAYER_LABEL: Record<IncidentLayerKey, string> = {
   fire: 'Incendios',
   traffic: 'Accidentes viales',
+  power: 'Cortes de suministro',
   otros: 'Otras emergencias',
 }
 
@@ -94,6 +99,12 @@ export const VERIFYING_SOURCES: Record<IncidentLayerKey, VerifyingSources> = {
     affirmative: 'Carabineros o Bomberos confirmaron el hecho en terreno.',
     negative: 'ni Carabineros ni Bomberos han reportado haber llegado al lugar',
   },
+  power: {
+    // Un corte lo reporta la propia distribuidora: la verificación en terreno
+    // no es la pregunta pertinente, la empresa ya sabe qué circuito tiene caído.
+    affirmative: 'Informado por la propia empresa distribuidora.',
+    negative: 'la distribuidora aún no confirma el corte',
+  },
   otros: {
     affirmative: 'Un organismo oficial confirmó el hecho en terreno.',
     negative: 'ningún organismo ha reportado haber llegado al lugar',
@@ -113,9 +124,18 @@ export interface EmergencyContact {
   service: string
 }
 
-export const EMERGENCY_CONTACT: Record<IncidentLayerKey, EmergencyContact> = {
+/**
+ * `null` cuando no corresponde un número de emergencia.
+ *
+ * Un corte de suministro no se reporta al 132 ni al 133: llamar a Bomberos por
+ * falta de luz ocupa una línea que otro necesita. Se deriva a la distribuidora,
+ * y deliberadamente NO se escribe acá un número de atención comercial que no se
+ * pudo verificar: un teléfono equivocado en una emergencia es peor que ninguno.
+ */
+export const EMERGENCY_CONTACT: Record<IncidentLayerKey, EmergencyContact | null> = {
   fire: { number: '132', service: 'Bomberos' },
   traffic: { number: '133', service: 'Carabineros' },
+  power: null,
   otros: { number: '133', service: 'Carabineros' },
 }
 
@@ -126,5 +146,6 @@ export const EMERGENCY_CONTACT: Record<IncidentLayerKey, EmergencyContact> = {
 export const UNCONFIRMED_NOUN: Record<IncidentLayerKey, string> = {
   fire: 'un incendio confirmado',
   traffic: 'un accidente confirmado',
+  power: 'un corte confirmado',
   otros: 'una emergencia confirmada',
 }

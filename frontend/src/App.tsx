@@ -6,8 +6,16 @@ import { IncidentMap } from '@/components/map/IncidentMap'
 import { MapLegend } from '@/components/map/MapLegend'
 import { IncidentSheet } from '@/components/incident/IncidentSheet'
 import { SeismicCard } from '@/components/incident/SeismicCard'
-import { DEFAULT_LAYER_VISIBILITY, LayerToggles } from '@/components/ui/LayerToggles'
-import type { LayerVisibility } from '@/components/ui/LayerToggles'
+import {
+  DEFAULT_LAYER_VISIBILITY,
+  DEFAULT_PROVIDER_VISIBILITY,
+  LayerToggles,
+} from '@/components/ui/LayerToggles'
+import type {
+  LayerVisibility,
+  ProviderVisibility,
+} from '@/components/ui/LayerToggles'
+import { providerOf } from '@/domain/powerSymbology'
 import { layerOf } from '@/domain/families'
 import type { IncidentLayerKey } from '@/domain/families'
 import {
@@ -44,6 +52,9 @@ export default function App() {
   const [visibility, setVisibility] = useState<LayerVisibility>(DEFAULT_LAYER_VISIBILITY)
   const [seismicFilter, setSeismicFilter] =
     useState<SeismicFilterKey>(DEFAULT_SEISMIC_FILTER)
+  const [providers, setProviders] = useState<ProviderVisibility>(
+    DEFAULT_PROVIDER_VISIBILITY,
+  )
 
   const params = useMemo<ActiveIncidentsQuery>(
     () => ({ confirmed_only: confirmedOnly, limit: 500 }),
@@ -71,7 +82,8 @@ export default function App() {
     [seismic, seismicFilter],
   )
 
-  const anyIncidentLayer = visibility.fire || visibility.traffic || visibility.otros
+  const anyIncidentLayer =
+    visibility.fire || visibility.traffic || visibility.power || visibility.otros
 
   const isOnline = useOnlineStatus()
   const freshness = useFreshness(dataUpdatedAt || undefined)
@@ -82,12 +94,40 @@ export default function App() {
   // es por familia y ocurre acá. Separarlo en tres consultas multiplicaría el
   // tráfico sin ganar nada: el backend ya devuelve todo junto.
   const list = useMemo(
-    () => all.filter((incident) => visibility[layerOf(incident.type)]),
-    [all, visibility],
+    () =>
+      all.filter((incident) => {
+        const layer = layerOf(incident.type)
+        if (!visibility[layer]) return false
+        // Dentro de la categoría de cortes manda además el subfiltro por
+        // empresa. Un corte sin distribuidora identificable se muestra
+        // siempre que la categoría esté encendida: esconderlo por no saber
+        // de quién es sería perder el dato por una duda administrativa.
+        if (layer === 'power') {
+          const provider = providerOf(incident)
+          return provider === null || providers[provider]
+        }
+        return true
+      }),
+    [all, visibility, providers],
   )
 
+  /**
+   * Los cortes se separan del resto: van a `<Marker>` y no a la fuente GeoJSON.
+   * La partición ocurre acá, una sola vez, y no dentro del mapa, para que
+   * `IncidentMap` reciba dos arreglos ya listos y no tenga que filtrar en cada
+   * repintado.
+   */
+  const { regular, outages } = useMemo(() => {
+    const regular: Incident[] = []
+    const outages: Incident[] = []
+    for (const incident of list) {
+      ;(layerOf(incident.type) === 'power' ? outages : regular).push(incident)
+    }
+    return { regular, outages }
+  }, [list])
+
   const countsByLayer = useMemo(() => {
-    const counts = { fire: 0, traffic: 0, otros: 0 }
+    const counts = { fire: 0, traffic: 0, power: 0, otros: 0 }
     for (const incident of all) counts[layerOf(incident.type)] += 1
     return counts
   }, [all])
@@ -97,6 +137,7 @@ export default function App() {
     const groups: Record<IncidentLayerKey, Incident[]> = {
       fire: [],
       traffic: [],
+      power: [],
       otros: [],
     }
     for (const incident of all) groups[layerOf(incident.type)].push(incident)
@@ -214,11 +255,10 @@ export default function App() {
           theme={theme}
           reach={reachCollection}
           cone={coneCollection}
-          incidents={list}
+          incidents={regular}
+          outages={outages}
           seismic={seismicList}
-          showIncidents={
-            visibility.fire || visibility.traffic || visibility.otros
-          }
+          showIncidents={visibility.fire || visibility.traffic || visibility.otros}
           showSeismic={visibility.seismic}
           selectedCode={selectedCode}
           selectedUsgsId={selectedUsgsId}
@@ -240,6 +280,8 @@ export default function App() {
           onFocusSeismic={focusSeismic}
           seismicFilter={seismicFilter}
           onSeismicFilterChange={setSeismicFilter}
+          providers={providers}
+          onProvidersChange={setProviders}
         />
 
         {/*

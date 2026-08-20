@@ -49,6 +49,10 @@ class EventSource(str, Enum):
     #: Cuenta oficial del Ministerio de Transportes. Publica en texto libre, sin
     #: coordenadas: la georreferenciación es reconstruida, no informada.
     TRANSPORTE_INFORMA = "transporte_informa"
+    #: Distribuidoras eléctricas de la V Región. Sobre SU red son la autoridad:
+    #: nadie sabe mejor que ellas dónde no hay luz.
+    CHILQUINTA = "chilquinta"
+    CGE = "cge"
     OTHER = "other"
 
 
@@ -75,6 +79,7 @@ class EventType(str, Enum):
     FLOOD = "flood"
     LANDSLIDE = "landslide"
     EARTHQUAKE = "earthquake"
+    POWER_OUTAGE = "power_outage"
     WEATHER_OBSERVATION = "weather_observation"
     OTHER = "other"
     UNKNOWN = "unknown"
@@ -108,6 +113,7 @@ class IncidentType(str, Enum):
     LANDSLIDE = "landslide"
     ACCIDENT = "accident"
     RESCUE = "rescue"
+    POWER_OUTAGE = "power_outage"
     OTHER = "other"
 
 
@@ -232,6 +238,7 @@ CONFIRMED_LABEL_BY_FAMILY: dict[str, str] = {
     "fire": "Incendio confirmado",
     "traffic": "Accidente confirmado",
     "hydro": "Emergencia confirmada",
+    "power": "Corte de suministro confirmado",
     "other": "Emergencia confirmada",
 }
 
@@ -242,6 +249,7 @@ POSSIBLE_MEANING_BY_FAMILY: dict[str, str] = {
     "fire": "Hay evidencia, no alcanza para afirmar que hay fuego.",
     "traffic": "Hay evidencia, no alcanza para afirmar que hubo un accidente.",
     "hydro": "Hay evidencia, no alcanza para afirmar que hay una emergencia.",
+    "power": "Hay evidencia, no alcanza para afirmar que haya un corte.",
     "other": "Hay evidencia, no alcanza para afirmar que hay una emergencia.",
 }
 
@@ -336,6 +344,7 @@ CORRELATABLE_EVENT_TYPES: frozenset[EventType] = frozenset(
         EventType.DISPATCH,
         EventType.RESCUE,
         EventType.ACCIDENT,
+        EventType.POWER_OUTAGE,
         EventType.FLOOD,
         EventType.LANDSLIDE,
         EventType.OTHER,
@@ -353,6 +362,7 @@ EVENT_TO_INCIDENT_TYPE: dict[EventType, IncidentType] = {
     EventType.FLOOD: IncidentType.FLOOD,
     EventType.LANDSLIDE: IncidentType.LANDSLIDE,
     EventType.ACCIDENT: IncidentType.ACCIDENT,
+    EventType.POWER_OUTAGE: IncidentType.POWER_OUTAGE,
     EventType.RESCUE: IncidentType.RESCUE,
     EventType.DISPATCH: IncidentType.OTHER,
     EventType.OTHER: IncidentType.OTHER,
@@ -374,6 +384,13 @@ INCIDENT_FAMILY: dict[IncidentType, str] = {
     # choque en la Ruta 68 termina fundido con un despacho de origen desconocido
     # ocurrido a 800 m. Ver `FAMILY_OF_EVENT` más abajo.
     IncidentType.ACCIDENT: "traffic",
+    # `power` es familia propia por la misma razón que `traffic`: un corte de
+    # luz y un incendio pueden coincidir en la misma manzana —de hecho suelen
+    # hacerlo, porque un incendio derriba la línea— y siguen siendo dos hechos
+    # distintos que el mapa debe poder mostrar por separado. Fundirlos convertiría
+    # "hay un incendio" y "800 casas sin luz" en un solo punto que no describe
+    # ninguna de las dos cosas.
+    IncidentType.POWER_OUTAGE: "power",
     IncidentType.RESCUE: "other",
     IncidentType.OTHER: "other",
 }
@@ -423,6 +440,10 @@ SOURCE_BASE_CONFIDENCE: dict[EventSource, float] = {
     # Misma lectura que USGS: certeza sobre el HECHO del sismo, no sobre que
     # haya una emergencia en ese punto.
     EventSource.CSN: 1.00,
+    # La distribuidora es la autoridad sobre su propia red. No "fue al lugar a
+    # constatar" como CONAF: es que el corte lo registra su propio sistema.
+    EventSource.CHILQUINTA: 1.00,
+    EventSource.CGE: 1.00,
     EventSource.MUNICIPALITY: 0.90,
     EventSource.MEDIA: 0.70,
     EventSource.BROADCASTIFY: 0.65,

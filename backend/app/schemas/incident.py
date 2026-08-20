@@ -67,6 +67,43 @@ def confidence_label(value: float, *, confirmed: bool = False) -> str:
     return "sin confirmar"
 
 
+class OutageDetail(BaseModel):
+    """Metadatos de un corte de suministro.
+
+    Viven en `raw_events.raw_data` porque sólo aplican a una familia, y dejar
+    tres columnas nulas en cada incendio de CONAF para siempre sería el
+    intercambio equivocado. Pero el mapa los necesita **al abrir la ficha**, y
+    obligar al cliente a pedir el detalle, sacar los `raw_event_id` y volver a
+    consultar `/events` sería hacerle reensamblar algo que acá está contiguo.
+
+    `provider` sale de la fuente de la señal (`chilquinta` | `cge`), no de un
+    campo de texto libre: es la misma enumeración que ya viaja en `sources`.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    provider: str = Field(..., description="chilquinta | cge")
+    affected_clients: int | None = Field(
+        default=None,
+        description=(
+            "Suma de clientes afectados de todas las señales del incidente. "
+            "`null` si ninguna lo informó: los feeds a veces publican el corte "
+            "antes de contar los clientes, y un 0 afirmaría que no hay ninguno."
+        ),
+    )
+    estimated_restoration: datetime | None = Field(
+        default=None,
+        description=(
+            "Reposición estimada más TARDÍA entre las señales del incidente. "
+            "Un corte con varios frentes queda resuelto cuando vuelve el último."
+        ),
+    )
+    sector: str | None = None
+    outage_count: int = Field(
+        default=1, description="Cuántos cortes distintos componen el incidente."
+    )
+
+
 class IncidentRead(BaseModel):
     """Un incidente consolidado, listo para el mapa."""
 
@@ -115,6 +152,15 @@ class IncidentRead(BaseModel):
     correlated_at: datetime
 
     confidence_breakdown: dict[str, Any] = Field(default_factory=dict)
+
+    outage: OutageDetail | None = Field(
+        default=None,
+        description=(
+            "Sólo en incidentes de tipo `power_outage`. `null` en cualquier "
+            "otra familia; un cliente no debería tener que preguntar el tipo "
+            "para saber si mirar acá."
+        ),
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property

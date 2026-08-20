@@ -170,6 +170,19 @@ RULES: dict[EventSource, SourceRule] = {
     EventSource.BOMBEROS: SourceRule(
         1.0, 1.0, 1.0, 1.0, confirming=True, official_dispatch=True
     ),
+    # -- Autoridad sobre su propia infraestructura ---------------------------
+    # Una distribuidora eléctrica reportando un corte en SU red es el caso más
+    # limpio de `confirming` que hay en todo el catálogo, y por un motivo
+    # distinto al de CONAF: CONAF confirma porque fue al lugar a mirar; la
+    # distribuidora confirma porque el corte lo registran sus propios equipos.
+    # No hay observación indirecta que pueda equivocarse.
+    #
+    # Ojo con el alcance: son autoridad sobre el CORTE, no sobre su causa. Que
+    # Chilquinta reporte 800 clientes sin luz no dice nada sobre si hubo un
+    # incendio — y como `power` es familia propia, el motor tampoco puede
+    # inferirlo.
+    EventSource.CHILQUINTA: SourceRule(1.0, 1.0, 1.0, 1.0, confirming=True),
+    EventSource.CGE: SourceRule(1.0, 1.0, 1.0, 1.0, confirming=True),
     # -- Declara la respuesta del Estado -------------------------------------
     # Techo 0.85 sobre el fenómeno; 1.0 sobre el estado de alerta, que va aparte.
     EventSource.SENAPRED: SourceRule(0.85, 0.85, 0.5, 0.85, declares_alert=True),
@@ -272,6 +285,7 @@ _TITLE_BY_TYPE: dict[IncidentType, str] = {
     IncidentType.FLOOD: "Inundación",
     IncidentType.LANDSLIDE: "Remoción en masa",
     IncidentType.ACCIDENT: "Accidente",
+    IncidentType.POWER_OUTAGE: "Corte de suministro",
     IncidentType.RESCUE: "Rescate",
     IncidentType.OTHER: "Emergencia",
 }

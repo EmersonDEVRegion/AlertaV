@@ -5,6 +5,12 @@ import { LAYER_LABEL } from '@/domain/families'
 import type { IncidentLayerKey } from '@/domain/families'
 import { OTHER_LEVEL } from '@/domain/otherSymbology'
 import {
+  PROVIDER,
+  PROVIDER_ORDER,
+  providerOf,
+} from '@/domain/powerSymbology'
+import type { OutageProvider } from '@/api/types'
+import {
   SEISMIC_FILTER_OPTIONS,
   type SeismicFilterKey,
 } from '@/domain/seismicFilter'
@@ -31,6 +37,7 @@ import { IncidentListItem } from './IncidentListItem'
 export interface LayerVisibility {
   fire: boolean
   traffic: boolean
+  power: boolean
   otros: boolean
   seismic: boolean
 }
@@ -38,8 +45,24 @@ export interface LayerVisibility {
 export const DEFAULT_LAYER_VISIBILITY: LayerVisibility = {
   fire: true,
   traffic: true,
+  power: true,
   otros: true,
   seismic: true,
+}
+
+/**
+ * Subfiltro de la categoría de cortes.
+ *
+ * Vive aparte de `LayerVisibility` porque no es una capa: es un filtro DENTRO
+ * de una capa. Mezclarlos obligaría a que apagar Chilquinta y CGE por separado
+ * significara lo mismo que apagar la categoría entera, y son dos gestos con
+ * intenciones distintas.
+ */
+export type ProviderVisibility = Record<OutageProvider, boolean>
+
+export const DEFAULT_PROVIDER_VISIBILITY: ProviderVisibility = {
+  chilquinta: true,
+  cge: true,
 }
 
 interface LayerTogglesProps {
@@ -55,6 +78,8 @@ interface LayerTogglesProps {
   onFocusSeismic: (event: SeismicEvent) => void
   seismicFilter: SeismicFilterKey
   onSeismicFilterChange: (filter: SeismicFilterKey) => void
+  providers: ProviderVisibility
+  onProvidersChange: (next: ProviderVisibility) => void
 }
 
 interface Row {
@@ -67,6 +92,7 @@ interface Row {
 const ROWS: readonly Row[] = [
   { key: 'fire', label: LAYER_LABEL.fire, swatch: LEVEL.confirmed.color },
   { key: 'traffic', label: LAYER_LABEL.traffic, swatch: TRAFFIC_LEVEL.confirmed.color },
+  { key: 'power', label: LAYER_LABEL.power, swatch: PROVIDER.chilquinta.color },
   { key: 'otros', label: LAYER_LABEL.otros, swatch: OTHER_LEVEL.confirmed.color },
   { key: 'seismic', label: 'Sismos', swatch: '#f97316', hollow: true },
 ]
@@ -83,6 +109,8 @@ export function LayerToggles({
   onFocusSeismic,
   seismicFilter,
   onSeismicFilterChange,
+  providers,
+  onProvidersChange,
 }: LayerTogglesProps) {
   const [expanded, setExpanded] = useState<keyof LayerVisibility | null>(null)
 
@@ -196,6 +224,51 @@ export function LayerToggles({
                               </span>
                             </span>
                           </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+
+                {/* ---- Sub-opciones por distribuidora ---- */}
+                {row.key === 'power' && visibility.power && (
+                  <ul
+                    className="mb-1 ml-6 space-y-0.5 border-l border-slate-200 pl-2 dark:border-slate-700"
+                    aria-label="Empresas distribuidoras"
+                  >
+                    {PROVIDER_ORDER.map((provider) => {
+                      const style = PROVIDER[provider]
+                      const count = incidentsByLayer.power.filter(
+                        (incident) => providerOf(incident) === provider,
+                      ).length
+
+                      return (
+                        <li key={provider}>
+                          <label className="flex cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1 text-[11px] text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
+                            <input
+                              type="checkbox"
+                              checked={providers[provider]}
+                              onChange={(event) =>
+                                onProvidersChange({
+                                  ...providers,
+                                  [provider]: event.target.checked,
+                                })
+                              }
+                              className="size-3 shrink-0"
+                              style={{ accentColor: style.color }}
+                            />
+                            <span
+                              aria-hidden
+                              className="size-2.5 shrink-0 rounded-sm"
+                              style={{ backgroundColor: style.color }}
+                            />
+                            <span className="flex-1 truncate font-medium">
+                              {style.label}
+                            </span>
+                            <span className="shrink-0 tabular-nums text-slate-400 dark:text-slate-500">
+                              {count}
+                            </span>
+                          </label>
                         </li>
                       )
                     })}

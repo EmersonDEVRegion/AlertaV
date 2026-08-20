@@ -30,6 +30,7 @@ import {
 import type { Theme } from '@/hooks/useTheme'
 import type { ConeCollection, ReachCollection } from '@/lib/overlayGeojson'
 import { toFeatureCollection } from '@/lib/geojson'
+import { OutagePinLayer } from './OutagePinLayer'
 import { toSeismicFeatureCollection } from '@/lib/seismicGeojson'
 import { attachMapDiagnostics } from '@/lib/mapDiagnostics'
 import {
@@ -68,7 +69,10 @@ interface IncidentMapProps {
    * mapa ni recurrir a un contexto.
    */
   mapRef: RefObject<MapRef | null>
+  /** Incidentes que van a las capas GeoJSON. Excluye los cortes. */
   incidents: readonly Incident[]
+  /** Cortes de suministro: se dibujan como pines DOM, no como círculos. */
+  outages: readonly Incident[]
   seismic: readonly SeismicEvent[]
   /** Capas encendidas desde el control de capas. */
   showIncidents: boolean
@@ -87,6 +91,7 @@ interface IncidentMapProps {
 export function IncidentMap({
   mapRef,
   incidents,
+  outages,
   seismic,
   showIncidents,
   showSeismic,
@@ -252,6 +257,20 @@ export function IncidentMap({
           <Layer {...seismicHitLayer} />
         </Source>
       )}
+
+      {/*
+        Los cortes se interceptan antes de llegar a la fuente GeoJSON: `App` ya
+        los separó del arreglo `incidents`. Acá se dibujan como marcadores DOM,
+        que es lo que permite darles forma de gota y acento por empresa.
+      */}
+      <OutagePinLayer
+        outages={outages}
+        selectedCode={selectedCode}
+        onSelect={(code) => {
+          onSelectSeismic(null)
+          onSelect(code)
+        }}
+      />
 
       {showIncidents && (
       <Source

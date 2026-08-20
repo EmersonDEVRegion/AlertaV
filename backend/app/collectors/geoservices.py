@@ -383,9 +383,27 @@ async def request_response(
     """
     last_error: str = "sin intentos"
 
+    # `params` vacío se omite en vez de pasarse como `{}`. httpx **reemplaza** el
+    # query string de la URL cuando recibe `params`, aunque venga vacío:
+    #
+    #     client.get("https://host/mapas?emp=006", params={})
+    #     → https://host/mapas          ← el `emp=006` desapareció
+    #
+    # Varios collectors llaman con `{}` porque su filtro ya viene dentro de la
+    # URL configurada. Sin esta guarda, ese filtro se perdía en silencio y la
+    # fuente devolvía el catálogo completo — un fallo que no rompe nada, sólo
+    # trae de más.
+    # Dos llamadas explícitas y no un `**kwargs`: mypy no puede tipar el
+    # desempaquetado contra la firma sobrecargada de `client.get`.
+    consulta = dict(params) if params else None
+
     for attempt in range(retries + 1):
         try:
-            response = await client.get(url, params=dict(params))
+            response = (
+                await client.get(url, params=consulta)
+                if consulta is not None
+                else await client.get(url)
+            )
             if response.status_code >= 500:
                 last_error = f"HTTP {response.status_code}"
                 raise httpx.HTTPStatusError(

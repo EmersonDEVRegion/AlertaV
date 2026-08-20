@@ -75,7 +75,7 @@ async def list_active_incidents(
         limit=limit,
         offset=offset,
     )
-    return service.to_read(incidents)
+    return await service.read_with_outages(incidents)
 
 
 @router.get(

@@ -209,6 +209,24 @@ class Settings(BaseSettings):
     USGS_TIMEOUT_SECONDS: float = 30.0
     USGS_POLL_INTERVAL_SECONDS: int = 300  # 5 min
 
+    # -- Cortes de suministro eléctrico --------------------------------------
+    #: Endpoint de cortes de Chilquinta. El `?emp=006` filtra en el origen, así
+    #: que el recorte territorial de este backend sólo tiene que descartar los
+    #: bordes en vez de media zona central del país.
+    #:
+    #: El query string se conserva: `request_response` omite `params` cuando
+    #: viene vacío, porque httpx reemplazaría la query de la URL con una vacía y
+    #: el `emp=006` se perdería en silencio.
+    CHILQUINTA_API_URL: str = "https://mapainterrupciones.chilquinta.cl/mapas?emp=006"
+    #: Endpoint de afectaciones de CGE.
+    CGE_API_URL: str = "https://mapa-afectaciones.grupocge.cl/afectaciones/"
+    POWER_TIMEOUT_SECONDS: float = 30.0
+    #: Cadencia de ambos collectors. Un corte cambia de estado —clientes
+    #: afectados, hora estimada de reposición— cada pocos minutos durante el
+    #: evento, así que 5 minutos es el compromiso entre frescura y cortesía con
+    #: un servidor que no nos pertenece.
+    POWER_POLL_INTERVAL_SECONDS: int = 300  # 5 min
+
     # -- Sismos: Centro Sismológico Nacional ---------------------------------
     # El CSN es la razón de ser de este collector: su umbral de detección en
     # Chile baja hasta M2.5, mientras el feed global del USGS filtra en M2.5

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.enums import (
+    EventSource,
     IncidentStatus,
     IncidentType,
     family_of_incident,
@@ -29,6 +30,7 @@ from app.models.incident import Incident
 from app.repositories.incident_repository import IncidentRepository
 from app.schemas.event import GeoJSONFeature, GeoJSONFeatureCollection
 from app.schemas.incident import (
+    OutageDetail,
     IncidentDetail,
     IncidentEventLink,
     IncidentRead,
@@ -88,6 +90,14 @@ class IncidentService:
 
         pairs = await self.repo.links_with_events(incident.id)
         detail = IncidentDetail.model_validate(incident)
+
+        # La ficha es justamente donde se leen los clientes afectados y la
+        # reposición; sin esto el detalle sabría menos que el listado.
+        if incident.type == IncidentType.POWER_OUTAGE:
+            payload = (await self.repo.outage_details([incident.id])).get(incident.id)
+            if payload is not None:
+                detail.outage = OutageDetail.model_validate(payload)
+
         detail.events = [
             IncidentEventLink(
                 raw_event_id=event.id,
@@ -148,6 +158,10 @@ class IncidentService:
                     # expresión `match` de MapLibre lea una clave ya calculada y
                     # no sea una segunda copia de los umbrales.
                     "confidence_level": level_for(incident.confidence).value,
+                    # Proveedor del corte, para que una capa de estilo pueda
+                    # distinguirlos sin volver a consultar. `null` fuera de la
+                    # familia `power`.
+                    "provider": _outage_provider(incident),
                     # Etiqueta ya resuelta según la familia: la ficha del mapa la
                     # pinta tal cual, sin traducir de `type` a sustantivo.
                     "level_label": label_for(
@@ -170,7 +184,42 @@ class IncidentService:
 
     @staticmethod
     def to_read(incidents: Sequence[Incident]) -> list[IncidentRead]:
+        """Lectura sin enriquecer. Los cortes salen con `outage = null`."""
         return [IncidentRead.model_validate(incident) for incident in incidents]
+
+    async def read_with_outages(
+        self, incidents: Sequence[Incident]
+    ) -> list[IncidentRead]:
+        """Lectura con los metadatos de corte ya adosados.
+
+        Es la que consume el mapa. Hace **una** consulta extra y sólo si en el
+        lote hay incidentes de tipo `power_outage`: en un día sin cortes no
+        cuesta nada.
+        """
+        models = self.to_read(incidents)
+
+        outage_ids = [
+            incident.id
+            for incident in incidents
+            if incident.type == IncidentType.POWER_OUTAGE
+        ]
+        if not outage_ids:
+            return models
+
+        details = await self.repo.outage_details(outage_ids)
+        by_code = {incident.id: incident.code for incident in incidents}
+        detail_by_code = {
+            by_code[incident_id]: payload
+            for incident_id, payload in details.items()
+            if incident_id in by_code
+        }
+
+        for model in models:
+            payload = detail_by_code.get(model.code)
+            if payload is not None:
+                model.outage = OutageDetail.model_validate(payload)
+
+        return models
 
     # -- Escritura (disparo manual) ------------------------------------------
 
@@ -182,3 +231,20 @@ class IncidentService:
         autenticación de operador en producción.
         """
         return await CorrelationEngine(self.session).run()
+
+
+def _outage_provider(incident: Incident) -> str | None:
+    """Proveedor de un corte, deducido de las fuentes ya agregadas.
+
+    `sources` viaja en el propio incidente, así que no hace falta consultar
+    `raw_data` para esto. Si por alguna razón coexisten las dos empresas, gana
+    Chilquinta por ser la concesionaria principal del Gran Valparaíso.
+    """
+    if incident.type != IncidentType.POWER_OUTAGE:
+        return None
+    sources = set(incident.sources or ())
+    if EventSource.CHILQUINTA.value in sources:
+        return EventSource.CHILQUINTA.value
+    if EventSource.CGE.value in sources:
+        return EventSource.CGE.value
+    return None

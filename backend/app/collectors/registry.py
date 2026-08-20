@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.collectors.base import BaseCollector
 from app.collectors.conaf.collector import ConafCollector
 from app.collectors.firms.collector import FirmsCollector
+from app.collectors.power.cge_worker import CgeCollector
+from app.collectors.power.chilquinta_worker import ChilquintaCollector
 from app.collectors.seismic.sismologia_worker import SismologiaCollector
 from app.collectors.senapred.collector import SenapredCollector
 from app.collectors.traffic.bomberos_10_4_worker import Bomberos104Collector
@@ -33,6 +35,16 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     # Ninguna entra al motor de correlación. Ver app/collectors/seismic/.
     UsgsCollector.name: UsgsCollector,
     SismologiaCollector.name: SismologiaCollector,
+    # -- Cortes de suministro eléctrico ---------------------------------------
+    # Familia `power`, aislada de incendios y accidentes. Un incendio derriba
+    # tendido y provoca un corte: la coincidencia entre ambos es lo esperable, y
+    # sin la partición el motor los leería como el mismo hecho.
+    #
+    # CGE queda registrada aunque su URL esté vacía. Fallará cada corrida con un
+    # mensaje que pide definir `CGE_API_URL`, y eso es lo que se quiere: trabajo
+    # pendiente que no se ve nunca se hace.
+    ChilquintaCollector.name: ChilquintaCollector,
+    CgeCollector.name: CgeCollector,
     # -- Accidentes viales ----------------------------------------------------
     # Los tres emiten `type=accident` y quedan aislados de la familia `fire` por
     # la partición del motor. Ninguno arranca sin su URL configurada: si falta,
