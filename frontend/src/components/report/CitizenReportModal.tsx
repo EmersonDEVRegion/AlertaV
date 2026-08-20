@@ -166,7 +166,7 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 p-0 backdrop-blur-sm sm:items-center sm:p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 p-0 backdrop-blur-sm sm:items-center sm:p-4 dark:bg-slate-950/75"
       onMouseDown={(event) => {
         // `mousedown` y no `click`: soltar el botón fuera del diálogo después de
         // seleccionar texto dentro no debería cerrar el formulario.
@@ -182,12 +182,13 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
           flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white
           shadow-2xl ring-1 ring-slate-900/10
           sm:max-w-md sm:rounded-2xl
+          dark:bg-slate-900 dark:ring-white/10
         "
       >
         <header className="flex items-start gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-700">
           <span
             aria-hidden
-            className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-full bg-red-100 text-lg"
+            className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-full bg-red-100 text-lg dark:bg-red-950/60"
           >
             🚨
           </span>
@@ -217,7 +218,7 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
           >
             <span
               aria-hidden
-              className="grid size-12 place-items-center rounded-full bg-emerald-100 text-2xl text-emerald-700"
+              className="grid size-12 place-items-center rounded-full bg-emerald-100 text-2xl text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
             >
               ✓
             </span>
@@ -227,7 +228,7 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
               corroboran, aparecerá en el mapa como incidente en los próximos
               minutos.
             </p>
-            <p className="mt-2 text-xs font-semibold text-red-700">
+            <p className="mt-2 text-xs font-semibold text-red-700 dark:text-red-300">
               {category ? successCallHint(category) : null}
             </p>
           </div>
@@ -244,7 +245,7 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
                   <p className="mt-1.5 flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
                     <span
                       aria-hidden
-                      className="size-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600"
+                      className="size-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600 dark:border-slate-600 dark:border-t-slate-300"
                     />
                     Obteniendo ubicación…
                   </p>
@@ -263,7 +264,7 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
                     <button
                       type="button"
                       onClick={geo.request}
-                      className="mt-1.5 text-xs font-semibold text-slate-600 underline underline-offset-2 hover:text-slate-900 dark:text-slate-400"
+                      className="mt-1.5 text-xs font-semibold text-slate-600 underline underline-offset-2 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
                     >
                       Actualizar ubicación
                     </button>
@@ -272,14 +273,14 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
 
                 {(geo.status === 'error' || geo.status === 'unsupported') && (
                   <>
-                    <p className="mt-1.5 text-sm leading-snug text-red-700">
+                    <p className="mt-1.5 text-sm leading-snug text-red-700 dark:text-red-400">
                       {geo.error}
                     </p>
                     {!geo.denied && geo.status !== 'unsupported' && (
                       <button
                         type="button"
                         onClick={geo.request}
-                        className="mt-2 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
+                        className="mt-2 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600"
                       >
                         Reintentar
                       </button>
@@ -313,10 +314,11 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
                         className={`
                           flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition
                           focus-within:ring-2 focus-within:ring-red-300
+                          dark:focus-within:ring-red-500/60
                           ${
                             selected
-                              ? 'border-red-400 bg-red-50 ring-1 ring-red-300 dark:bg-red-950/30'
-                              : 'border-slate-300 hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800'
+                              ? 'border-red-400 bg-red-50 ring-1 ring-red-300 dark:border-red-500/70 dark:bg-red-950/40 dark:ring-red-500/40'
+                              : 'border-slate-300 bg-white hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:border-slate-600 dark:hover:bg-slate-800'
                           }
                         `}
                       >
@@ -348,7 +350,7 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
                 {showCategoryError && (
                   <p
                     id={`${categoryGroupId}-error`}
-                    className="mt-1.5 text-xs text-red-700"
+                    className="mt-1.5 text-xs text-red-700 dark:text-red-400"
                   >
                     Elige el tipo de emergencia. El sistema lo usa para
                     correlacionar tu reporte con las fuentes correctas.
@@ -383,10 +385,12 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
                   mt-1.5 w-full resize-y rounded-xl border px-3 py-2 text-sm text-slate-900
                   placeholder:text-slate-400 focus:outline-none focus:ring-2
                   disabled:bg-slate-50 disabled:text-slate-500
+                  dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500
+                  dark:disabled:bg-slate-800/50 dark:disabled:text-slate-500
                   ${
                     showTextError
-                      ? 'border-red-300 focus:border-red-400 focus:ring-red-200'
-                      : 'border-slate-300 focus:border-slate-400 focus:ring-slate-300'
+                      ? 'border-red-300 focus:border-red-400 focus:ring-red-200 dark:border-red-800 dark:focus:border-red-600 dark:focus:ring-red-900/60'
+                      : 'border-slate-300 focus:border-slate-400 focus:ring-slate-300 dark:border-slate-600 dark:focus:border-slate-500 dark:focus:ring-slate-600'
                   }
                 `}
               />
@@ -394,7 +398,13 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
                 id={`${textareaId}-help`}
                 className="mt-1 flex items-start justify-between gap-3 text-xs"
               >
-                <span className={showTextError ? 'text-red-700' : 'text-slate-500'}>
+                <span
+                  className={
+                    showTextError
+                      ? 'text-red-700 dark:text-red-400'
+                      : 'text-slate-500 dark:text-slate-400'
+                  }
+                >
                   {showTextError
                     ? `Describe la emergencia (mínimo ${REPORT_TEXT_MIN} caracteres).`
                     : 'Indica qué ves y una referencia del lugar.'}
@@ -407,7 +417,7 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
               {errorMessage && (
                 <p
                   role="alert"
-                  className="mt-3 rounded-lg bg-red-50 p-2.5 text-xs leading-snug text-red-800 ring-1 ring-red-200 dark:bg-red-950/40 dark:ring-red-900/50"
+                  className="mt-3 rounded-lg bg-red-50 p-2.5 text-xs leading-snug text-red-800 ring-1 ring-red-200 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900/50"
                 >
                   {errorMessage}
                 </p>
@@ -429,7 +439,7 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
                 type="button"
                 onClick={close}
                 disabled={isSubmitting}
-                className="flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800"
+                className="flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100"
               >
                 Cancelar
               </button>
@@ -441,6 +451,8 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
                   text-sm font-bold text-white shadow-sm transition
                   hover:bg-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400
                   focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300
+                  dark:focus-visible:ring-offset-slate-900
+                  dark:disabled:bg-slate-700 dark:disabled:text-slate-400
                 "
               >
                 {isSubmitting && (
