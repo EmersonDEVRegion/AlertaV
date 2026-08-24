@@ -76,8 +76,8 @@ class ChilquintaCollector(BasePowerOutageCollector):
     company = "chilquinta"
     url_setting = "CHILQUINTA_API_URL"
     default_interval_seconds = 300
-    #: El visor consulta por POST con los filtros en el cuerpo.
-    http_method = "POST"
+    #: El visor consulta por GET con los filtros en el cuerpo.
+    http_method = "GET"
 
     def __init__(self, session: Any) -> None:
         super().__init__(session)
