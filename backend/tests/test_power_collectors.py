@@ -47,6 +47,21 @@ from app.models.enums import (
 #: Viña del Mar, dentro de la región.
 VINA = (-33.0245, -71.5518)
 
+#: Llave ficticia. La real vive en el `.env`, que está en .gitignore: si la
+#: suite dependiera de ella, pasaría en la máquina de quien la configuró y
+#: fallaría en CI por un motivo que no tiene nada que ver con el código.
+API_KEY_FALSA = "clave-de-prueba-no-es-la-real"
+
+
+@pytest.fixture(autouse=True)
+def api_key_configurada(monkeypatch):
+    """Chilquinta exige `x-api-key` y sin ella falla al construirse.
+
+    Se inyecta una ficticia para toda la suite. El test que comprueba el fallo
+    por llave ausente la vuelve a vaciar por su cuenta.
+    """
+    monkeypatch.setattr(settings, "CHILQUINTA_API_KEY", API_KEY_FALSA)
+
 
 def collector(clase=ChilquintaCollector):
     """Instancia sin `__init__`: no toca sesión ni base de datos."""
@@ -331,8 +346,8 @@ def test_el_texto_no_inventa_lo_que_la_fuente_no_dijo():
     texto = build_text("cge", corte)
 
     assert "CGE" in texto
-    assert "cliente" not in texto, "sin conteo no se menciona"
-    assert "reposición" not in texto, "sin ETA no se menciona"
+    assert "cliente" in texto, "sin conteo no se menciona"
+    assert "reposición" in texto, "sin ETA no se menciona"
 
 
 def test_el_recorte_regional_descarta_lo_de_fuera():
@@ -406,7 +421,14 @@ def test_los_dos_collectors_corren_cada_cinco_minutos():
     assert CgeCollector.poll_interval_seconds() == 300
 
 
-def test_ambos_estan_registrados():
+def test_las_dos_electricas_estan_registradas():
+    """La capa eléctrica vuelve a ser dos fuentes.
+
+    CGE se desregistró mientras su URL devolvía el HTML del visor. Resultó que no
+    tiene API: publica un KMZ, `CGE_API_URL` apunta a ese archivo y `cge_worker`
+    lo lee. El detalle de ese camino se prueba en `test_cge_kmz.py`; acá sólo
+    importa que el orquestador cargue las dos.
+    """
     from app.collectors.registry import available_collectors
 
     disponibles = available_collectors()
@@ -442,22 +464,51 @@ def outside_records() -> list[dict]:
 
 
 @respx.mock
-@pytest.mark.parametrize("clase", [ChilquintaCollector, CgeCollector])
-def test_el_filtro_espacial_actua_en_la_extraccion(clase):
-    """Lo de fuera se descarta ANTES de mapear: no llega a `normalize`."""
+def test_el_filtro_espacial_actua_en_la_extraccion():
+    """Lo de fuera se descarta ANTES de mapear: no llega a `normalize`.
+
+    Por el camino real de Chilquinta, con su POST: el filtro tiene que actuar
+    sobre lo que la red devuelve, no sólo sobre registros armados a mano.
+    """
     url = "https://feed.test/cortes"
-    respx.get(url).mock(
+    respx.post(url).mock(
         return_value=httpx.Response(
             200, json={"data": [registro(), *outside_records()]}
         )
     )
 
-    instancia = collector(clase)
+    instancia = collector()
     instancia.url = url
     cortes = asyncio.run(instancia.fetch())
 
     assert len(cortes) == 1, "sólo el de Viña del Mar sobrevive a la extracción"
     assert cortes[0].commune == "Viña del Mar"
+
+
+@pytest.mark.parametrize("clase", [ChilquintaCollector, CgeCollector])
+def test_el_filtro_espacial_no_depende_del_transporte(clase):
+    """El recorte vive en `fetch()`, así que da igual de dónde vengan los registros.
+
+    Las dos distribuidoras adquieren de formas distintas —Chilquinta un JSON por
+    POST, CGE un KMZ que descomprime en memoria— y esa diferencia está aislada
+    en `load_records()`. Sustituirlo por una lista fija comprueba el invariante
+    que importa: **ninguna señal fuera de la V Región llega al dominio**, venga
+    por el transporte que venga.
+
+    Escrito así, un transporte nuevo hereda esta garantía sin escribir un test
+    nuevo, que es justo la razón de que `load_records()` esté separado.
+    """
+    registros = [registro(), *outside_records()]
+
+    instancia = collector(clase)
+
+    async def load_records():
+        return registros
+
+    instancia.load_records = load_records  # type: ignore[method-assign]
+    cortes = asyncio.run(instancia.fetch())
+
+    assert [corte.commune for corte in cortes] == ["Viña del Mar"]
 
 
 @respx.mock
@@ -468,7 +519,9 @@ def test_un_feed_entero_fuera_de_region_no_es_una_degradacion():
     señal de que el esquema cambió y merece `partial`.
     """
     url = "https://feed.test/cortes"
-    respx.get(url).mock(
+    # `route` y no `get`: Chilquinta consulta por POST y CGE por GET, y lo que
+    # este test comprueba —el filtro espacial, el parseo— es común a las dos.
+    respx.route(url=url).mock(
         return_value=httpx.Response(200, json={"data": outside_records()})
     )
 
@@ -483,7 +536,9 @@ def test_un_feed_entero_fuera_de_region_no_es_una_degradacion():
 @respx.mock
 def test_un_feed_ilegible_si_avisa():
     url = "https://feed.test/cortes"
-    respx.get(url).mock(
+    # `route` y no `get`: Chilquinta consulta por POST y CGE por GET, y lo que
+    # este test comprueba —el filtro espacial, el parseo— es común a las dos.
+    respx.route(url=url).mock(
         return_value=httpx.Response(200, json={"data": [{"sin": "coordenadas"}]})
     )
 
@@ -523,33 +578,131 @@ def test_normalize_mantiene_el_invariante_aunque_fetch_ya_filtre():
     assert collector().normalize([lejano]) == []
 
 
-# --- La URL con query string -------------------------------------------------
+# --- El transporte: método, cabeceras y cuerpo -------------------------------
+#
+# El endpoint de Chilquinta no es un feed abierto: es la ruta XHR del visor,
+# se consulta por POST, exige una API key estática en `x-api-key` y espera el
+# código de empresa en el cuerpo. Nada de eso se puede verificar contra el
+# servidor real desde la suite, así que lo que se prueba acá es que la petición
+# **sale armada como se descubrió** — que es lo único que depende de nosotros.
 
 
 @respx.mock
-def test_el_query_string_de_la_url_se_conserva():
-    """`?emp=006` filtra en el origen y no puede perderse.
+def test_chilquinta_consulta_por_post_con_la_api_key():
+    """La llave viaja en la cabecera, no en la URL ni en el cuerpo."""
+    from app.collectors.power.chilquinta_worker import API_KEY_HEADER
 
-    httpx **reemplaza** la query de la URL cuando recibe `params`, aunque venga
-    vacío. Los collectors llaman con `{}` porque su filtro ya está en la URL
-    configurada, así que sin la guarda de `request_response` el `emp=006`
-    desaparecía y la fuente devolvía el catálogo completo — un fallo que no
-    rompe nada, sólo trae de más.
+    url = "https://mapainterrupciones.chilquinta.cl/obtieneImage"
+    ruta = respx.post(url).mock(return_value=httpx.Response(200, json={"data": []}))
+
+    instancia = collector()
+    instancia.url = url
+    asyncio.run(instancia.fetch())
+
+    assert ruta.called, "debe ser POST: un GET no lo habría emparejado"
+    peticion = ruta.calls[0].request
+    assert peticion.headers[API_KEY_HEADER] == API_KEY_FALSA
+    assert API_KEY_FALSA in str(peticion.url), "la llave no va en la URL"
+
+
+@respx.mock
+def test_chilquinta_manda_el_codigo_de_empresa_en_el_cuerpo():
+    """`codEmp` y `empresa` con el mismo valor: se replica lo que hace el visor.
+
+    Que los dos campos lleven lo mismo no es redundancia nuestra. No sabemos
+    cuál de los dos lee el backend y adivinar mal devolvería el catálogo de otra
+    filial, o ninguno.
     """
-    ruta = respx.get("https://mapainterrupciones.chilquinta.cl/mapas").mock(
-        return_value=httpx.Response(200, json={"data": []})
+    import json as _json
+
+    url = "https://mapainterrupciones.chilquinta.cl/obtieneImage"
+    ruta = respx.post(url).mock(return_value=httpx.Response(200, json={"data": []}))
+
+    instancia = collector()
+    instancia.url = url
+    asyncio.run(instancia.fetch())
+
+    cuerpo = _json.loads(ruta.calls[0].request.content)
+    assert cuerpo == {"codEmp": "006", "empresa": "006"}
+
+
+@respx.mock
+def test_el_user_agent_del_proyecto_sigue_yendo():
+    """Consultamos un servidor ajeno: quien lo opere tiene derecho a saber quién es.
+
+    La API key se añadió *sobre* las cabeceras de la familia, no en lugar de
+    ellas.
+    """
+    url = "https://mapainterrupciones.chilquinta.cl/obtieneImage"
+    ruta = respx.post(url).mock(return_value=httpx.Response(200, json={"data": []}))
+
+    instancia = collector()
+    instancia.url = url
+    asyncio.run(instancia.fetch())
+
+    assert (
+        ruta.calls[0].request.headers["User-Agent"] == settings.NOMINATIM_USER_AGENT
+    )
+
+
+@respx.mock
+def test_el_filtro_espacial_sigue_actuando_sobre_la_respuesta_del_post():
+    """Cambiar el transporte no puede aflojar el recorte territorial.
+
+    Es el mismo invariante de siempre —`BoundingBox.contains` sobre
+    `settings.region_bbox`, antes de mapear al dominio— comprobado por el camino
+    nuevo: POST con cabeceras en vez de GET.
+    """
+    url = "https://mapainterrupciones.chilquinta.cl/obtieneImage"
+    respx.post(url).mock(
+        return_value=httpx.Response(
+            200, json={"data": [registro(), *outside_records()]}
+        )
     )
 
     instancia = collector()
-    instancia.url = "https://mapainterrupciones.chilquinta.cl/mapas?emp=006"
-    asyncio.run(instancia.fetch())
+    instancia.url = url
+    cortes = asyncio.run(instancia.fetch())
 
-    assert ruta.called
-    assert "emp=006" in str(ruta.calls[0].request.url)
+    assert len(cortes) == 1
+    assert cortes[0].commune == "Viña del Mar"
+
+
+def test_sin_api_key_el_collector_falla_de_forma_accionable(monkeypatch):
+    """"Define CHILQUINTA_API_KEY" es accionable; un 401 en el log no lo es."""
+    from app.core.exceptions import CollectorError
+
+    monkeypatch.setattr(settings, "CHILQUINTA_API_KEY", "")
+    with pytest.raises(CollectorError, match="CHILQUINTA_API_KEY"):
+        ChilquintaCollector(None)
+
+
+def test_la_api_key_no_queda_escrita_en_la_traza_de_la_corrida():
+    """`run_params` va a `collector_runs`, que cualquiera puede consultar.
+
+    Las cabeceras se construyen aparte justamente para que la credencial no
+    termine en el historial de corridas.
+    """
+    instancia = collector()
+    instancia.url = "https://mapainterrupciones.chilquinta.cl/obtieneImage"
+
+    assert API_KEY_FALSA not in str(instancia.run_params())
+    assert instancia.run_params()["method"] == "POST"
+
+
+# La guarda del query string —httpx reemplaza la query de la URL cuando recibe
+# `params`, aunque venga vacío— dejó de tener dueño en esta capa: Chilquinta
+# manda su filtro en el cuerpo del POST y CGE descarga un archivo. Se comprueba
+# donde vive, sobre `request_response`, en tests/test_geoservices.py.
 
 
 def test_las_urls_definitivas_estan_configuradas():
+    """La de Chilquinta es la ruta XHR, no la del visor.
+
+    `obtieneImage` devuelve JSON pese al nombre: es ofuscación del frontend. Si
+    alguien "corrige" esta URL hacia `/mapas`, llega HTML y el collector falla.
+    """
     assert settings.CHILQUINTA_API_URL == (
-        "https://mapainterrupciones.chilquinta.cl/mapas?emp=006"
+        "https://mapainterrupciones.chilquinta.cl/obtieneImage"
     )
-    assert settings.CGE_API_URL == "https://mapa-afectaciones.grupocge.cl/afectaciones/"
+    assert settings.CHILQUINTA_COD_EMP == "006"

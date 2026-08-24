@@ -9,6 +9,7 @@ ausencia de emergencias.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import httpx
@@ -234,6 +235,139 @@ class TestRequestJson:
             with pytest.raises(CollectorError, match="400"):
                 await request_json(
                     client, "https://x.test/q", {}, origin="t", retries=3, backoff=0
+                )
+        assert route.call_count == 1
+
+    async def test_el_query_string_de_la_url_sobrevive_a_params_vacio(self) -> None:
+        """La trampa de httpx: `params={}` **borra** la query que trae la URL.
+
+            client.get("https://host/x?emp=006", params={})
+            → https://host/x          ← el emp=006 desapareció
+
+        Varios collectors llaman con `{}` porque su filtro ya viene dentro de la
+        URL configurada. Sin la guarda, ese filtro se perdía en silencio y la
+        fuente devolvía el catálogo completo: un fallo que no rompe nada y sólo
+        trae de más, que es de los que tardan meses en notarse.
+        """
+        route = respx.get("https://x.test/mapas").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
+        async with httpx.AsyncClient() as client:
+            await request_json(
+                client, "https://x.test/mapas?emp=006", {}, origin="t", retries=0
+            )
+        assert "emp=006" in str(route.calls[0].request.url)
+
+
+@respx.mock
+class TestMetodoCabecerasYCuerpo:
+    """El transporte admite POST y cabeceras propias sin perder lo demás.
+
+    Existe porque no todas las fuentes son capas abiertas: el visor de
+    Chilquinta consulta su backend por POST y exige una API key estática. Que
+    eso viva acá y no en el collector es lo que le deja heredar reintentos,
+    detección de HTML y conversión de errores a `CollectorError`.
+    """
+
+    async def test_por_defecto_sigue_siendo_un_get_sin_cuerpo(self) -> None:
+        """El refactor no puede cambiar cómo consultan las fuentes de siempre."""
+        route = respx.get("https://x.test/q").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
+        async with httpx.AsyncClient() as client:
+            await request_json(client, "https://x.test/q", {}, origin="t", retries=0)
+
+        peticion = route.calls[0].request
+        assert peticion.method == "GET"
+        assert peticion.content == b""
+
+    async def test_post_con_cabeceras_y_cuerpo_json(self) -> None:
+        route = respx.post("https://x.test/obtiene").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
+        async with httpx.AsyncClient() as client:
+            await request_json(
+                client,
+                "https://x.test/obtiene",
+                {},
+                origin="t",
+                retries=0,
+                method="POST",
+                headers={"x-api-key": "abc123"},
+                json_body={"codEmp": "006"},
+            )
+
+        peticion = route.calls[0].request
+        assert peticion.headers["x-api-key"] == "abc123"
+        assert json.loads(peticion.content) == {"codEmp": "006"}
+        assert peticion.headers["content-type"] == "application/json"
+
+    async def test_un_post_tambien_hereda_los_reintentos_ante_5xx(self) -> None:
+        """Cambiar de verbo no puede costar la resiliencia.
+
+        Estos endpoints son de lectura —una consulta disfrazada de POST—, así
+        que repetirlos es idempotente en la práctica.
+        """
+        route = respx.post("https://x.test/obtiene").mock(
+            side_effect=[
+                httpx.Response(502, text="bad gateway"),
+                httpx.Response(200, json={"ok": True}),
+            ]
+        )
+        async with httpx.AsyncClient() as client:
+            payload = await request_json(
+                client,
+                "https://x.test/obtiene",
+                {},
+                origin="t",
+                retries=1,
+                backoff=0,
+                method="POST",
+                json_body={"codEmp": "006"},
+            )
+
+        assert payload == {"ok": True}
+        assert route.call_count == 2
+        assert json.loads(route.calls[1].request.content) == {"codEmp": "006"}
+
+    async def test_un_post_que_devuelve_html_falla_diciendolo(self) -> None:
+        """La detección de HTML no depende del verbo.
+
+        Es el modo de fallo que más caro sale en este proyecto: un portal que
+        responde su propia página con HTTP 200 y un collector que lo lee como
+        'cero cortes'.
+        """
+        respx.post("https://x.test/obtiene").mock(
+            return_value=httpx.Response(200, text="<!DOCTYPE html><html>login</html>")
+        )
+        async with httpx.AsyncClient() as client:
+            with pytest.raises(CollectorError, match="HTML"):
+                await request_json(
+                    client,
+                    "https://x.test/obtiene",
+                    {},
+                    origin="t",
+                    retries=0,
+                    method="POST",
+                    json_body={"codEmp": "006"},
+                )
+
+    async def test_un_401_no_se_reintenta_y_lo_dice(self) -> None:
+        """Una API key mal configurada es un contrato roto, no un fallo pasajero."""
+        route = respx.post("https://x.test/obtiene").mock(
+            return_value=httpx.Response(401, text="unauthorized")
+        )
+        async with httpx.AsyncClient() as client:
+            with pytest.raises(CollectorError, match="401"):
+                await request_json(
+                    client,
+                    "https://x.test/obtiene",
+                    {},
+                    origin="t",
+                    retries=3,
+                    backoff=0,
+                    method="POST",
+                    headers={"x-api-key": "caducada"},
                 )
         assert route.call_count == 1
 

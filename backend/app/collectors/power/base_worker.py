@@ -1,8 +1,10 @@
 """Plantilla compartida por los collectors de cortes eléctricos.
 
-Chilquinta y CGE hacen exactamente lo mismo: leen un JSON de cortes, lo
-normalizan y lo emiten como señales `power_outage`. Lo único que cambia entre
-ellas es la URL, el nombre de la empresa y la fuente del enum.
+Chilquinta y CGE hacen exactamente lo mismo: leen los cortes que publica la
+empresa, los normalizan y los emiten como señales `power_outage`. Lo que cambia
+entre ellas es la URL, el nombre de la empresa, la fuente del enum y también el
+transporte: Chilquinta resultó estar tras un POST con API key, y CGE no publica
+una API sino un KMZ estático.
 
 Existe esta clase intermedia y no dos ficheros gemelos porque el día que haya
 que arreglar el parseo —y con un esquema sin verificar, ese día llega— arreglarlo
@@ -20,6 +22,29 @@ Y además, planos en `raw_data`, `affected_clients` y `restoration_at`
 duplicados: el mismo criterio que se usó con magnitud y profundidad en la capa
 sísmica. El cliente que dibuja el mapa no debería tener que bajar a una clave
 con guion bajo, que es estructura interna nuestra y no contrato.
+
+Cómo cada empresa consulta lo suyo
+-----------------------------------
+No todas las distribuidoras publican igual. Una expone un JSON abierto por GET;
+otra esconde el suyo tras un POST con API key; CGE ni siquiera expone una API,
+sino un archivo KMZ estático. Esas diferencias se declaran con cuatro ganchos y
+no duplicando el `fetch()`:
+
+    http_method        "GET" (por defecto) | "POST"
+    request_headers()  cabeceras propias — API keys van acá
+    request_payload()  filtros; query string en GET, cuerpo JSON en POST
+    load_records()     el transporte completo, para fuentes que no son JSON
+
+Los tres primeros bastan mientras la respuesta sea JSON. `load_records()` es la
+salida para cuando no lo es: devuelve la lista de registros crudos y hereda todo
+lo que viene después. Ver `cge_worker`, que lo sobrescribe para descomprimir un
+KMZ en memoria.
+
+Todo lo demás —reintentos, detección de HTML, filtro espacial, normalización—
+sigue siendo uno solo. Una fuente con otro formato no deja de necesitar el
+resto, y dejar que se abriera su propio camino para poder leer un ZIP habría
+significado perderlo: el filtro de bounding box existiría dos veces, y el día
+que cambie la caja regional se arreglaría una sola.
 """
 
 from __future__ import annotations
@@ -63,6 +88,11 @@ class BasePowerOutageCollector(BaseCollector):
     #: Variable de entorno que contiene la URL. Se nombra para poder decirlo en
     #: el mensaje de error: "define CGE_API_URL" es accionable, "falta la URL" no.
     url_setting: str
+    #: Verbo HTTP con el que se consulta el feed. GET por defecto, que es lo que
+    #: hace una fuente abierta; una subclase lo cambia a POST cuando su visor
+    #: manda los filtros en el cuerpo. Es atributo de clase y no de instancia
+    #: para que se pueda leer sin construir el collector.
+    http_method: str = "GET"
 
     def __init__(self, session: Any) -> None:
         super().__init__(session)
@@ -78,30 +108,94 @@ class BasePowerOutageCollector(BaseCollector):
         self.bbox = settings.region_bbox
 
     def run_params(self) -> dict[str, Any]:
-        return {"company": self.company, "url": self.url}
+        # El método queda en la traza de la corrida: cuando el feed empiece a
+        # fallar, saber si se consultó por GET o por POST ahorra media
+        # investigación. La API key NO se registra acá; ver `request_headers`.
+        return {"company": self.company, "url": self.url, "method": self.http_method}
 
-    async def fetch(self) -> Sequence[PowerOutage]:
-        """Lee el feed. Todo fallo sale como `CollectorError` y de ninguna otra forma.
+    def request_headers(self) -> dict[str, str]:
+        """Cabeceras de la petición. Las subclases añaden las suyas.
 
+        El `User-Agent` identificable es política del proyecto para todas las
+        fuentes: estamos consultando servidores ajenos y quien los opere tiene
+        derecho a saber quién golpea y a quién escribirle.
+
+        Lo que una subclase añada acá —una API key, un `Referer` que el visor
+        exija— nunca llega a `collector_runs`: `run_params()` no lo mira. Una
+        credencial en la traza es una credencial filtrada a cualquiera que
+        consulte el historial de corridas.
+        """
+        return {"User-Agent": settings.NOMINATIM_USER_AGENT}
+
+    def request_payload(self) -> dict[str, Any]:
+        """Filtros que la fuente espera recibir. Vacío = pedir el feed entero.
+
+        Van al cuerpo JSON si `http_method` es POST, y al query string si es GET.
+        Un mismo diccionario sirve para las dos formas porque son la misma
+        pregunta escrita de dos maneras, y así una subclase declara *qué* filtra
+        sin tener que saber *cómo* viaja.
+        """
+        return {}
+
+    def http_client(self) -> httpx.AsyncClient:
+        """Cliente HTTP compartido por las distribuidoras.
+
+        Mismo timeout y misma política de redirects para cualquier transporte:
+        que CGE descargue un binario y Chilquinta un JSON no cambia cómo nos
+        comportamos frente a un servidor que no nos pertenece.
+        """
+        return httpx.AsyncClient(
+            timeout=settings.POWER_TIMEOUT_SECONDS,
+            follow_redirects=True,
+        )
+
+    async def load_records(self) -> Sequence[Any]:
+        """Trae los registros crudos de la fuente. Este es el camino JSON.
+
+        Está separado de `fetch()` porque **el transporte es lo único que cambia
+        entre distribuidoras**. CGE no publica JSON sino un KMZ —un ZIP con un
+        KML dentro—, así que sobrescribe este método y hereda intacto todo lo
+        demás: el filtro espacial, el conteo de descartes y la contabilidad de la
+        corrida.
+
+        La alternativa era que CGE sobrescribiera `fetch()` entero, y entonces el
+        filtro de bounding box y su contabilidad existirían dos veces. Es justo
+        el escenario contra el que se escribió esta clase.
+
+        Todo fallo sale como `CollectorError` y de ninguna otra forma.
         `request_json` ya traduce timeouts, 5xx, DNS, TLS y respuestas que no son
         JSON; el `except Exception` final cubre lo que no anticipamos al cruzar
         la frontera con un sistema ajeno. `BaseCollector.run()` lo registra y el
         orquestador no se entera.
         """
+        cuerpo = self.request_payload()
+        es_post = self.http_method.upper() == "POST"
+        # En GET los filtros son query string; en POST, cuerpo JSON. Se decide
+        # acá y no en `request_json` porque es una característica de la fuente,
+        # no del transporte.
+        #
+        # Ojo con el `or {}`: si `cuerpo` viene vacío hay que pasar `{}` para que
+        # `request_response` aplique su guarda y **no** toque la query que ya
+        # traiga la URL configurada. Es la trampa de httpx documentada allí.
+        params = {} if es_post or not cuerpo else dict(cuerpo)
         try:
-            async with httpx.AsyncClient(
-                timeout=settings.POWER_TIMEOUT_SECONDS,
-                follow_redirects=True,
-                headers={"User-Agent": settings.NOMINATIM_USER_AGENT},
-            ) as client:
-                payload = await request_json(client, self.url, {}, origin=self.company)
+            async with self.http_client() as client:
+                payload = await request_json(
+                    client,
+                    self.url,
+                    params,
+                    origin=self.company,
+                    method=self.http_method,
+                    headers=self.request_headers(),
+                    json_body=cuerpo if es_post and cuerpo else None,
+                )
         except CollectorError:
             raise
         except Exception as exc:  # frontera con una fuente ajena
             raise CollectorError(
                 f"{self.company}: fallo inesperado al leer el feed: "
                 f"{type(exc).__name__}: {exc}",
-                detail={"url": self.url},
+                detail={"url": self.url, "method": self.http_method},
             ) from exc
 
         registros = extract_records(payload)
@@ -116,6 +210,16 @@ class BasePowerOutageCollector(BaseCollector):
                 f"outage_parser.py.",
                 detail={"url": self.url},
             )
+        return registros
+
+    async def fetch(self) -> Sequence[PowerOutage]:
+        """Registros crudos → cortes dentro de la región.
+
+        Idéntico para todas las distribuidoras, sea cual sea el transporte del
+        que vengan los registros: lo que `load_records()` entregue tiene que ser
+        una secuencia de mappings que `parse_outage` sepa leer.
+        """
+        registros = await self.load_records()
 
         # Filtro espacial en el MISMO bucle de extracción, antes de mapear nada
         # al dominio. Las dos distribuidoras publican su zona de concesión

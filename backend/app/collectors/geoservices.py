@@ -369,8 +369,11 @@ async def request_response(
     origin: str,
     retries: int = 2,
     backoff: float = 1.5,
+    method: str = "GET",
+    headers: Mapping[str, str] | None = None,
+    json_body: Any = None,
 ) -> httpx.Response:
-    """GET con reintentos, o `CollectorError` con un mensaje diagnosticable.
+    """Petición con reintentos, o `CollectorError` con un mensaje diagnosticable.
 
     Reintenta ante errores de red y 5xx, que en portales institucionales son
     frecuentes y transitorios. No reintenta ante 4xx: eso es un contrato roto y
@@ -380,6 +383,25 @@ async def request_response(
     convertida en `CollectorError`. Es lo que permite que los collectors declaren
     un único tipo de fallo esperado y que `BaseCollector.run()` lo registre en
     `collector_runs` sin dejar escapar nada al orquestador.
+
+    Método, cabeceras y cuerpo
+    --------------------------
+    `method`, `headers` y `json_body` son opcionales y con los valores por
+    defecto la función se comporta exactamente igual que antes: un GET sin
+    cabeceras propias. Existen porque no todas las fuentes son capas
+    geoespaciales abiertas — el visor de Chilquinta consulta su backend por POST
+    y exige una API key estática en `x-api-key`.
+
+    Se añadieron acá y no en cada collector a propósito. Una fuente que necesita
+    cabeceras no deja de necesitar reintentos, detección de HTML ni conversión de
+    errores a `CollectorError`; si cada collector abriera su propio camino de red
+    para poder mandar una cabecera, perdería todo lo demás y el proyecto acabaría
+    con tantos manejos de fallo como fuentes.
+
+    Sobre reintentar un POST: estos endpoints son de **lectura** (una consulta
+    disfrazada de POST, que es lo habitual cuando el visor manda filtros en el
+    cuerpo), así que repetirlos es idempotente en la práctica. Si alguna vez se
+    usa este transporte para escribir algo, hay que pasar `retries=0`.
     """
     last_error: str = "sin intentos"
 
@@ -393,16 +415,26 @@ async def request_response(
     # URL configurada. Sin esta guarda, ese filtro se perdía en silencio y la
     # fuente devolvía el catálogo completo — un fallo que no rompe nada, sólo
     # trae de más.
-    # Dos llamadas explícitas y no un `**kwargs`: mypy no puede tipar el
-    # desempaquetado contra la firma sobrecargada de `client.get`.
+    #
+    # `None` es el valor que httpx interpreta como «no toques la query», tanto en
+    # `params` como en `headers`, así que la guarda se expresa igual para ambos.
     consulta = dict(params) if params else None
+    cabeceras = dict(headers) if headers else None
+    verbo = method.upper()
 
     for attempt in range(retries + 1):
         try:
-            response = (
-                await client.get(url, params=consulta)
-                if consulta is not None
-                else await client.get(url)
+            # `client.request` y no `client.get`: la firma sobrecargada de `get`
+            # no acepta cuerpo y obligaba a bifurcar la llamada para que mypy
+            # siguiera el rastro. `request` tiene una sola firma, admite los tres
+            # argumentos nuevos y deja una única línea que ejercita todos los
+            # caminos.
+            response = await client.request(
+                verbo,
+                url,
+                params=consulta,
+                headers=cabeceras,
+                json=json_body,
             )
             if response.status_code >= 500:
                 last_error = f"HTTP {response.status_code}"
@@ -428,7 +460,7 @@ async def request_response(
 
     raise CollectorError(
         f"{origin}: sin respuesta tras {retries + 1} intentos ({last_error})",
-        detail={"url": url},
+        detail={"url": url, "method": verbo},
     )
 
 
@@ -440,10 +472,26 @@ async def request_json(
     origin: str,
     retries: int = 2,
     backoff: float = 1.5,
+    method: str = "GET",
+    headers: Mapping[str, str] | None = None,
+    json_body: Any = None,
 ) -> Any:
-    """GET que devuelve JSON o falla con un mensaje que sirve para diagnosticar."""
+    """Petición que devuelve JSON o falla con un mensaje diagnosticable.
+
+    `method`, `headers` y `json_body` se pasan tal cual a `request_response`;
+    ver allí por qué existen. Con los valores por defecto sigue siendo el GET
+    de siempre.
+    """
     response = await request_response(
-        client, url, params, origin=origin, retries=retries, backoff=backoff
+        client,
+        url,
+        params,
+        origin=origin,
+        retries=retries,
+        backoff=backoff,
+        method=method,
+        headers=headers,
+        json_body=json_body,
     )
     return _decode_json(response, origin=origin)
 
@@ -456,6 +504,9 @@ async def request_text(
     origin: str,
     retries: int = 2,
     backoff: float = 1.5,
+    method: str = "GET",
+    headers: Mapping[str, str] | None = None,
+    json_body: Any = None,
 ) -> str:
     """GET que devuelve el cuerpo como texto. Para RSS y para HTML.
 
@@ -469,7 +520,15 @@ async def request_text(
     `success` — el modo de fallo que este proyecto persigue en todas partes.
     """
     response = await request_response(
-        client, url, params or {}, origin=origin, retries=retries, backoff=backoff
+        client,
+        url,
+        params or {},
+        origin=origin,
+        retries=retries,
+        backoff=backoff,
+        method=method,
+        headers=headers,
+        json_body=json_body,
     )
     body = response.text
     if not body.strip():

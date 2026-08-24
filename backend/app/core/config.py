@@ -210,16 +210,39 @@ class Settings(BaseSettings):
     USGS_POLL_INTERVAL_SECONDS: int = 300  # 5 min
 
     # -- Cortes de suministro eléctrico --------------------------------------
-    #: Endpoint de cortes de Chilquinta. El `?emp=006` filtra en el origen, así
-    #: que el recorte territorial de este backend sólo tiene que descartar los
-    #: bordes en vez de media zona central del país.
+    #: Endpoint de datos de Chilquinta. **No es la URL del visor**: es la ruta
+    #: que el visor consulta por XHR. El nombre no describe lo que devuelve
+    #: —`obtieneImage` entrega JSON, no una imagen— y eso no es un error nuestro
+    #: al copiarlo: es ofuscación por oscuridad del propio frontend. Se deja
+    #: escrito acá para que nadie lo "corrija" al leerlo.
     #:
-    #: El query string se conserva: `request_response` omite `params` cuando
-    #: viene vacío, porque httpx reemplazaría la query de la URL con una vacía y
-    #: el `emp=006` se perdería en silencio.
-    CHILQUINTA_API_URL: str = "https://mapainterrupciones.chilquinta.cl/mapas?emp=006"
-    #: Endpoint de afectaciones de CGE.
-    CGE_API_URL: str = "https://mapa-afectaciones.grupocge.cl/afectaciones/"
+    #: Apuntar esta variable a `mapainterrupciones.chilquinta.cl/mapas` devuelve
+    #: el HTML de la aplicación; `request_json` lo detecta y falla con ese
+    #: mensaje, que es exactamente lo que pasaba antes de encontrar esta ruta.
+    CHILQUINTA_API_URL: str = "https://mapainterrupciones.chilquinta.cl/obtieneImage"
+    #: API key estática que el endpoint exige en la cabecera `x-api-key`. Sin
+    #: ella la ruta responde 401/403 y el collector falla al construirse.
+    #:
+    #: Vive en el `.env` y no en el código aunque venga incrustada en un bundle
+    #: público: es una credencial de un tercero, puede rotar sin avisar, y el día
+    #: que rote la corrección tiene que ser una variable de entorno y no un
+    #: despliegue. Es el mismo criterio que `FIRMS_MAP_KEY`.
+    CHILQUINTA_API_KEY: str = ""
+    #: Código de empresa que el visor manda en el cuerpo de la consulta. `006` es
+    #: Chilquinta; el mismo backend sirve a otras filiales del grupo bajo otros
+    #: códigos. Reemplaza al viejo `?emp=006` del query string.
+    CHILQUINTA_COD_EMP: str = "006"
+    #: Archivo de afectaciones de CGE. **No es un endpoint JSON**: es un KMZ
+    #: —un ZIP con un KML dentro— que la plataforma de CGE regenera cada pocos
+    #: minutos y sirve como estático. Es el archivo sobre el que se dibuja su
+    #: visor, y la razón de que la raíz `/afectaciones/` devolviera HTML: ahí no
+    #: hay API que encontrar, sólo la página que consume este archivo.
+    #:
+    #: El nombre de la variable conserva el sufijo `_API_URL` por consistencia
+    #: con las otras fuentes y para no romper los `.env` desplegados, pero lo que
+    #: apunta es un archivo. `CgeCollector` lo descarga crudo y lo descomprime en
+    #: memoria; ver `cge_worker.load_records` y `kmz_parser`.
+    CGE_API_URL: str = "https://mapa-afectaciones.grupocge.cl/afectaciones/mapa_cge.kmz"
     POWER_TIMEOUT_SECONDS: float = 30.0
     #: Cadencia de ambos collectors. Un corte cambia de estado —clientes
     #: afectados, hora estimada de reposición— cada pocos minutos durante el

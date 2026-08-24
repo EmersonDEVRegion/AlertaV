@@ -40,9 +40,34 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     # tendido y provoca un corte: la coincidencia entre ambos es lo esperable, y
     # sin la partición el motor los leería como el mismo hecho.
     #
-    # CGE queda registrada aunque su URL esté vacía. Fallará cada corrida con un
-    # mensaje que pide definir `CGE_API_URL`, y eso es lo que se quiere: trabajo
-    # pendiente que no se ve nunca se hace.
+    # CGE: DE VUELTA EN ROTACIÓN.
+    #
+    # Se desregistró cuando su URL devolvía el HTML del visor: fallaba
+    # correctamente, pero fallar correctamente cada cinco minutos llena
+    # `collector_runs` y el log con un error ya conocido, y un log donde todo el
+    # mundo aprende a ignorar lo rojo deja de servir para el error nuevo.
+    #
+    # Ese motivo concreto ya no aplica. La razón del HTML resultó ser que CGE
+    # **no tiene API**: publica un KMZ estático (`mapa_cge.kmz`) que regenera
+    # cada pocos minutos. `CGE_API_URL` apunta a ese archivo, `cge_worker` lo
+    # descomprime en memoria y el camino tiene tests propios en
+    # `tests/test_cge_kmz.py` —orden lon/lat del KML, namespaces, HTML doblemente
+    # escapado, miles chilenos y el recorte por bounding box—.
+    #
+    # Lo que NO está verificado es que el archivo que CGE sirve hoy tenga la
+    # forma que esos tests suponen: están construidos a mano contra la
+    # especificación de KML porque el archivo real no se pudo descargar desde el
+    # entorno de verificación. El primer despliegue es donde esto se puede
+    # equivocar, y está preparado para ese caso — si el formato no encaja, la
+    # corrida queda `failed` con el diagnóstico de lo que llegó (`describe_kmz`)
+    # en vez de reportar cero cortes con estado `success`. Una fuente registrada
+    # que falla a la vista se arregla; una apagada se olvida.
+    #
+    # Vigilar en la primera corrida: `collector_runs` de `cge_cortes`. El mensaje
+    # dice si llegó HTML, si el ZIP no traía `.kml` o si el XML no se pudo
+    # parsear. Si sale mal, desregistrar vuelve a ser una línea; mientras tanto
+    # la periferia de la V Región —valle del Aconcagua, litoral y sectores
+    # rurales— recupera la capa de cortes que sin CGE no tenía.
     ChilquintaCollector.name: ChilquintaCollector,
     CgeCollector.name: CgeCollector,
     # -- Accidentes viales ----------------------------------------------------

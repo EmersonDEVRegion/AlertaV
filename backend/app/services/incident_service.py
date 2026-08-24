@@ -30,10 +30,10 @@ from app.models.incident import Incident
 from app.repositories.incident_repository import IncidentRepository
 from app.schemas.event import GeoJSONFeature, GeoJSONFeatureCollection
 from app.schemas.incident import (
-    OutageDetail,
     IncidentDetail,
     IncidentEventLink,
     IncidentRead,
+    OutageDetail,
     confidence_label,
 )
 from app.services.correlation.engine import CorrelationEngine, CorrelationPass
