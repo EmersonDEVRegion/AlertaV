@@ -170,7 +170,36 @@ JSON_ACCEPT = "application/json"
 #: y no `application/json` a propósito: se está pidiendo la página, y una
 #: aplicación Laravel a la que se le pide JSON en una ruta HTML puede responder
 #: otra cosa —y con ella, otro `Set-Cookie`, o ninguno—.
-HTML_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+HTML_ACCEPT = (
+    "text/html,application/xhtml+xml,application/xml;q=0.9,"
+    "image/avif,image/webp,*/*;q=0.8"
+)
+
+#: Cabeceras que completan el disfraz de navegador en el priming.
+LANGUAGE_HEADER = "Accept-Language"
+UPGRADE_HEADER = "Upgrade-Insecure-Requests"
+USER_AGENT_HEADER = "User-Agent"
+
+#: Idioma que declararía un navegador en Chile.
+BROWSER_LANGUAGE = "es-ES,es;q=0.9"
+
+#: `User-Agent` de navegador para **el priming solamente**.
+#:
+#: Esto es una excepción consciente a la política del proyecto —ver
+#: `BasePowerOutageCollector.request_headers`, donde está escrito que
+#: identificarse es lo correcto cuando se consulta un servidor ajeno— y conviene
+#: que se lea como excepción y no como costumbre. La petición de **datos** sigue
+#: yendo con el `User-Agent` de AlertaV y su dirección de contacto: quien opere
+#: el servidor sigue teniendo a quién escribirle, que era el punto de la política.
+#:
+#: Sobre lo que este disfraz puede y no puede hacer, ver `prime_session`: no
+#: evita un fallo de handshake, porque en un handshake fallido ninguna cabecera
+#: llega a salir. Sólo influye en lo que el servidor decida *después* de leer la
+#: petición.
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
 
 #: Cookie de sesión que emite el visor al cargarse. No se lee ni se copia a mano
 #: —de eso se encarga el cookie jar de httpx—; se nombra para poder comprobar
@@ -276,6 +305,29 @@ def pagina_del_visor(url: str, *, emp: str = "") -> str:
         return ""
     consulta = urlencode({VISOR_EMP_PARAM: emp}) if emp else ""
     return urlunsplit((partes.scheme, partes.netloc, VISOR_PATH, consulta, ""))
+
+
+def _es_fallo_de_handshake(exc: BaseException) -> bool:
+    """¿El fallo ocurrió negociando TLS, antes de mandar una sola cabecera?
+
+    Sirve para una única cosa, y es la que ahorra la próxima tarde perdida:
+    decidir si tiene sentido tocar las cabeceras del priming. **En un handshake
+    fallido el servidor no vio ninguna.** Lo que sale al cable primero es el
+    ClientHello; si el otro extremo contesta texto plano, la conexión muere ahí y
+    el `User-Agent`, el `Accept` y el `Referer` nunca existieron para él. Un
+    disfraz de navegador no puede arreglar eso, por convincente que sea.
+
+    Cuando esto devuelve `True`, lo que hay que mirar está por debajo de HTTP:
+    el puerto al que se está apuntando, un `HTTPS_PROXY` en el entorno, el SNI,
+    o la huella del propio ClientHello. Cuando devuelve `False`, el servidor sí
+    leyó la petición y ahí las cabeceras sí pueden cambiar su respuesta.
+
+    Se detecta por el texto porque httpx envuelve los errores de `ssl` en
+    `ConnectError` sin conservar el tipo original: no hay una excepción
+    específica que capturar.
+    """
+    texto = f"{type(exc).__name__}: {exc}".lower()
+    return "ssl" in texto or "wrong_version_number" in texto or "handshake" in texto
 
 
 def leer_xsrf(cookies: httpx.Cookies) -> str | None:
@@ -442,6 +494,13 @@ class ChilquintaCollector(BasePowerOutageCollector):
     def priming_headers(self) -> dict[str, str]:
         """Cabeceras del GET al visor: las de un navegador abriendo la página.
 
+        **No hereda de `super().request_headers()`**, y ese es el cambio que
+        merece atención: la familia pone el `User-Agent` de AlertaV, y acá se
+        manda uno de Chrome. Es una excepción a la política del proyecto de
+        identificarse ante servidores ajenos, acotada a esta petición: la de
+        datos sigue llevando el `User-Agent` con la dirección de contacto, así
+        que quien opere el servidor sigue teniendo a quién escribirle.
+
         **Sin la API key**, y es deliberado. La llave autoriza la ruta de datos;
         la página del visor es pública y no la pide. Mandarla igualmente sería
         exponerla en una petición que no la necesita —a otra ruta, a otros logs
@@ -450,10 +509,17 @@ class ChilquintaCollector(BasePowerOutageCollector):
         Tampoco van `X-Company-Code` ni `X-Orden-Buscada`: no significan nada
         para una página HTML, y el objetivo del priming es parecerse a la carga
         del visor, no a un XHR con la URL equivocada.
+
+        Lo que este disfraz **no** puede hacer está en `prime_session`: si la
+        conexión muere en el handshake TLS, ninguna de estas cabeceras llegó a
+        salir. Sólo sirven para lo que el servidor decida después de leerlas.
         """
-        headers = super().request_headers()
-        headers[ACCEPT_HEADER] = HTML_ACCEPT
-        return headers
+        return {
+            USER_AGENT_HEADER: BROWSER_USER_AGENT,
+            ACCEPT_HEADER: HTML_ACCEPT,
+            LANGUAGE_HEADER: BROWSER_LANGUAGE,
+            UPGRADE_HEADER: "1",
+        }
 
     async def prime_session(self, client: httpx.AsyncClient) -> None:
         """GET silencioso al visor para que el cookie jar absorba la sesión.
@@ -470,6 +536,30 @@ class ChilquintaCollector(BasePowerOutageCollector):
         por el 443 y el priming contra ella moría en el handshake con
         `SSLError: WRONG_VERSION_NUMBER`, sin respuesta HTTP que absorber. Ver
         `VISOR_PATH`.
+
+        Sobre el `WRONG_VERSION_NUMBER` y qué puede arreglarlo
+        ------------------------------------------------------
+        Conviene tener el orden de los hechos a mano, porque invita a un arreglo
+        que no puede funcionar. Es un fallo de **handshake**: lo primero que sale
+        al cable es el ClientHello de TLS y, si el otro extremo contesta texto
+        plano, la conexión muere ahí. En ese momento el servidor **no ha visto
+        una sola cabecera nuestra** —ni `User-Agent`, ni `Accept`, ni `Referer`—,
+        así que ningún disfraz de navegador puede evitarlo. Tampoco puede
+        depender de la ruta: el path viaja cifrado, o sea *después*, de modo que
+        "TLS funciona en `/obtieneImage` pero no en `/mapas`" no puede ser
+        literal para el mismo host y el mismo puerto.
+
+        Lo que sí encaja con los dos hechos —la API negocia bien, el visor no— es
+        una **redirección**: el primer handshake funciona, el servidor lee la
+        petición y contesta un 3xx hacia otro esquema o puerto; seguirlo abre una
+        conexión nueva, y es esa segunda la que muere. Por eso acá se pide
+        `follow_redirects=False` y se registra el `Location`: si el 3xx aparece,
+        la causa queda escrita en el log sin necesidad de capturar tráfico.
+
+        Las cabeceras de navegador de `priming_headers()` entran en la misma
+        historia un escalón más arriba: no evitan el fallo de TLS, pero sí pueden
+        cambiar si el servidor decide emitir ese 3xx. Van las dos cosas, y el log
+        distingue un caso del otro con `cabeceras_llegaron_al_servidor`.
 
         La segunda cosa que se trae de acá es el **token CSRF**. Está en la
         cookie `XSRF-TOKEN`, que el jar ya reenvía sola, pero eso no basta: la
@@ -523,7 +613,17 @@ class ChilquintaCollector(BasePowerOutageCollector):
             return
 
         try:
-            respuesta = await client.get(pagina, headers=self.priming_headers())
+            # `follow_redirects=False` **sólo acá**, contra el `True` del cliente
+            # de la familia. Es la mitad de este blindaje que puede realmente
+            # arreglar un `WRONG_VERSION_NUMBER`: si el visor contesta un 3xx
+            # hacia un destino con esquema o puerto equivocado —`http://…`, o un
+            # `https://host:80`—, seguirlo abre una conexión **nueva** que negocia
+            # TLS contra un puerto que habla texto plano, y ahí muere. Sin
+            # seguirlo, la respuesta 3xx llega entera y sus `Set-Cookie` entran
+            # igual al jar, que es lo único que se venía a buscar.
+            respuesta = await client.get(
+                pagina, headers=self.priming_headers(), follow_redirects=False
+            )
         except Exception as exc:  # frontera con una fuente ajena
             logger.warning(
                 "no se pudo preparar la sesión de Chilquinta; la petición de "
@@ -532,9 +632,31 @@ class ChilquintaCollector(BasePowerOutageCollector):
                     "collector": self.name,
                     "url": pagina,
                     "error": f"{type(exc).__name__}: {exc}",
+                    # La pista que decide dónde mirar la próxima vez. Un fallo de
+                    # handshake ocurre ANTES de que salga un solo byte de HTTP:
+                    # el servidor no vio el `User-Agent`, ni el `Accept`, ni
+                    # nada. Si el error es de TLS, cambiar cabeceras no puede
+                    # arreglarlo y hay que mirar más abajo —SNI, huella del
+                    # ClientHello, un proxy en el entorno, el puerto—.
+                    "cabeceras_llegaron_al_servidor": not _es_fallo_de_handshake(exc),
                 },
             )
             return
+
+        if respuesta.is_redirect:
+            # Se registra el destino porque es exactamente el dato que faltaba:
+            # un `Location` con `http://` o con `:80` explica el
+            # `WRONG_VERSION_NUMBER` sin necesidad de capturar tráfico.
+            logger.warning(
+                "el visor de Chilquinta redirige en vez de servir la página; no "
+                "se sigue la redirección a propósito",
+                extra={
+                    "collector": self.name,
+                    "url": pagina,
+                    "status": respuesta.status_code,
+                    "location": respuesta.headers.get("location", ""),
+                },
+            )
 
         # Del jar y no del cuerpo: el token que este despliegue acepta es el
         # cifrado que viaja en la cookie, no el que la plantilla imprime en el
@@ -692,13 +814,18 @@ __all__ = [
     "ACCEPT_HEADER",
     "ALL_ORDERS",
     "API_KEY_HEADER",
+    "BROWSER_LANGUAGE",
+    "BROWSER_USER_AGENT",
     "COMPANY_HEADER",
     "HTML_ACCEPT",
     "JSON_ACCEPT",
+    "LANGUAGE_HEADER",
     "ORDER_HEADER",
     "ORDER_PARAM",
     "REFERER_HEADER",
     "SESSION_COOKIE",
+    "UPGRADE_HEADER",
+    "USER_AGENT_HEADER",
     "VISOR_EMP_PARAM",
     "VISOR_PATH",
     "XSRF_COOKIE",

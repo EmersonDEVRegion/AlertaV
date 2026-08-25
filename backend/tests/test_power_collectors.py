@@ -30,9 +30,14 @@ from app.collectors.power.chilquinta_worker import (
     ACCEPT_HEADER,
     ALL_ORDERS,
     API_KEY_HEADER,
+    BROWSER_LANGUAGE,
+    BROWSER_USER_AGENT,
     JSON_ACCEPT,
+    LANGUAGE_HEADER,
     REFERER_HEADER,
     SESSION_COOKIE,
+    UPGRADE_HEADER,
+    USER_AGENT_HEADER,
     VISOR_PATH,
     XSRF_COOKIE,
     XSRF_HEADER,
@@ -1046,6 +1051,146 @@ def test_el_priming_pide_la_pagina_y_no_el_json():
 
     assert respx.calls[0].request.headers[ACCEPT_HEADER].startswith("text/html")
     assert respx.calls[1].request.headers[ACCEPT_HEADER] == JSON_ACCEPT
+
+
+@respx.mock
+def test_el_priming_se_disfraza_de_navegador():
+    """El juego completo de cabeceras que manda un navegador abriendo una página.
+
+    No es cosmética: si delante hay un filtro que decide por la petición —emitir
+    un 3xx, servir un interstitial, cortar—, esto es lo único que ve. Se fija el
+    juego entero porque las cabeceras de un navegador se evalúan juntas: una sola
+    de ellas ausente entre las demás delata más que no mandar ninguna.
+
+    Lo que este disfraz **no** puede hacer está en el test de más abajo sobre el
+    handshake.
+    """
+    responde_vacio()
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    priming = respx.calls[0].request.headers
+    assert priming[USER_AGENT_HEADER] == BROWSER_USER_AGENT
+    assert "Chrome/" in priming[USER_AGENT_HEADER]
+    assert "image/avif" in priming[ACCEPT_HEADER]
+    assert priming[LANGUAGE_HEADER] == BROWSER_LANGUAGE == "es-ES,es;q=0.9"
+    assert priming[UPGRADE_HEADER] == "1"
+    assert "python-httpx" not in priming[USER_AGENT_HEADER].lower()
+
+
+@respx.mock
+def test_los_dos_user_agent_son_distintos_a_proposito():
+    """El disfraz es del priming; la petición de datos sigue identificándose.
+
+    La política del proyecto —decir quién golpea y a quién escribirle— se sostiene
+    donde importa: la petición que trae los datos lleva el `User-Agent` de AlertaV
+    con su dirección de contacto. El disfraz está acotado a la carga de la página.
+
+    Queda anotado que la asimetría tiene un costo: un navegador real usa el mismo
+    `User-Agent` para la página y para su XHR, así que dos distintos dentro de una
+    misma sesión son, para un filtro que mire eso, una señal en sí misma. Si el
+    bloqueo persistiera y se sospechara de esto, el arreglo es una línea: que
+    `request_headers()` use también `BROWSER_USER_AGENT`. No se hace ahora porque
+    renunciar a identificarse en **todas** las peticiones es un precio mayor, y
+    todavía no hay evidencia de que haga falta.
+    """
+    ruta_datos = responde_vacio()
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    assert respx.calls[0].request.headers[USER_AGENT_HEADER] == BROWSER_USER_AGENT
+    assert (
+        ruta_datos.calls[0].request.headers[USER_AGENT_HEADER]
+        == settings.NOMINATIM_USER_AGENT
+    )
+
+
+@respx.mock
+def test_el_priming_no_sigue_las_redirecciones():
+    """La mitad del blindaje que sí puede arreglar un `WRONG_VERSION_NUMBER`.
+
+    Un 3xx hacia otro esquema o puerto —`http://…`, o un `https://host:80`— abre,
+    al seguirlo, una conexión **nueva** que negocia TLS contra un puerto que habla
+    texto plano. Ese es el escenario que encaja con los dos hechos observados: la
+    API negocia bien y el visor no, sobre el mismo host. Sin seguir el 3xx, la
+    respuesta llega entera y sus `Set-Cookie` entran igual al jar, que es lo único
+    que se venía a buscar.
+
+    El cliente de la familia va con `follow_redirects=True`; esto lo invierte sólo
+    para esta petición.
+    """
+    trampa = respx.get("http://mapainterrupciones.chilquinta.cl/mapas").mock(
+        return_value=httpx.Response(200, text=portada())
+    )
+    respx.get(CHILQUINTA_VISOR).mock(
+        return_value=httpx.Response(
+            302,
+            headers=[
+                *galletas(),
+                ("location", "http://mapainterrupciones.chilquinta.cl/mapas"),
+            ],
+        )
+    )
+    ruta_datos = respx.get(CHILQUINTA_URL).mock(
+        return_value=httpx.Response(200, json={"data": []})
+    )
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    assert not trampa.called, "seguir el 3xx es lo que abre la conexión que muere"
+    assert ruta_datos.called, "y la corrida continúa igual"
+
+
+@respx.mock
+def test_las_cookies_de_un_3xx_sirven_igual():
+    """Un 3xx trae `Set-Cookie` y el jar lo absorbe: la sesión se abre lo mismo.
+
+    Es lo que hace que no seguir la redirección salga gratis. Si las cookies sólo
+    llegaran con un 200, `follow_redirects=False` cambiaría un fallo de TLS por
+    una sesión vacía, que es el mismo 401 con otro disfraz.
+    """
+    respx.get(CHILQUINTA_VISOR).mock(
+        return_value=httpx.Response(
+            302, headers=[*galletas(), ("location", "https://otro.host/login")]
+        )
+    )
+    ruta_datos = respx.get(CHILQUINTA_URL).mock(
+        return_value=httpx.Response(200, json={"data": []})
+    )
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    peticion = ruta_datos.calls[0].request
+    assert instancia.xsrf_token == XSRF_FALSO
+    assert peticion.headers[XSRF_HEADER] == XSRF_FALSO
+    assert f"{SESSION_COOKIE}={SESION_FALSA}" in peticion.headers["Cookie"]
+
+
+def test_un_fallo_de_handshake_se_distingue_de_uno_de_aplicacion():
+    """La pregunta que decide si tocar cabeceras puede servir de algo.
+
+    En un `WRONG_VERSION_NUMBER` lo único que salió al cable fue el ClientHello:
+    el servidor no vio el `User-Agent`, ni el `Accept`, ni el `Referer`. Un
+    disfraz de navegador no puede arreglar eso, y saberlo antes de intentarlo vale
+    una tarde. El log del priming publica esta distinción para que la próxima
+    persona no la tenga que deducir.
+    """
+    from app.collectors.power.chilquinta_worker import _es_fallo_de_handshake
+
+    tls = httpx.ConnectError("[SSL: WRONG_VERSION_NUMBER] wrong version number")
+    assert _es_fallo_de_handshake(tls) is True
+
+    # Estos otros sí ocurren después de que el servidor leyera la petición.
+    assert _es_fallo_de_handshake(httpx.ReadTimeout("tardó demasiado")) is False
+    assert _es_fallo_de_handshake(httpx.ConnectError("[Errno 111] Connection refused")) is False
 
 
 @respx.mock
