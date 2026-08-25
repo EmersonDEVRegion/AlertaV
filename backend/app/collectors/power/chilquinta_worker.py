@@ -126,6 +126,19 @@ SEGMENTS_KEY = "segmentos"
 #: de la fuente.
 DERIVED_POINT_KEY = "_punto_derivado"
 
+#: Ruta muerta contra la que este collector se estrelló durante seis
+#: iteraciones. No es la que usa el visor y devuelve 400 o 401 según qué le
+#: falte; ver el encabezado del módulo.
+#:
+#: Se nombra para poder **rechazarla al construir el collector**. El motivo es
+#: un incidente real: el código nuevo se desplegó con la variable de entorno
+#: vieja todavía puesta, y el síntoma fue un
+#: `400 Missing required request parameters: [companyCode, orderId]` — un error
+#: que habla de parámetros que este collector ya no manda y que manda a buscar
+#: el problema al sitio equivocado. "Actualiza CHILQUINTA_API_URL" es
+#: accionable; ese 400, no.
+RUTA_MUERTA = "obtieneImage"
+
 #: Parámetro rompe-cachés que añade el visor. Se replica porque el archivo es
 #: estático y servido con las cabeceras de caché de un estático: sin él, una CDN
 #: o un proxy corporativo pueden devolver el volcado de hace horas. En un mapa de
@@ -279,6 +292,22 @@ class ChilquintaCollector(BasePowerOutageCollector):
     #: lo que este collector necesita está en la URL.
     http_method = "GET"
 
+    def __init__(self, session: Any) -> None:
+        super().__init__(session)
+        # Falla al construirse, igual que una URL ausente, y por el mismo
+        # motivo: deja una fila `failed` en `collector_runs` con la variable que
+        # hay que corregir en el mensaje, en vez de un 400 cada cinco minutos
+        # que hay que ir a interpretar al log. Ver `RUTA_MUERTA`.
+        if RUTA_MUERTA in self.url:
+            raise CollectorError(
+                f"{self.url_setting} apunta a `{RUTA_MUERTA}`, que no es la "
+                f"fuente de Chilquinta: es una ruta que devuelve 400/401 y que "
+                f"su visor nunca consulta. Los datos están en el archivo "
+                f"estático `dt/results_006.js`. Actualiza la variable de entorno "
+                f"del despliegue —no basta con el `.env` del repositorio— al "
+                f"valor por defecto de `config.py`."
+            )
+
     def request_url(self) -> str:
         """La URL configurada más el rompe-cachés. Ver `con_rompe_caches`."""
         return con_rompe_caches(super().request_url())
@@ -408,6 +437,7 @@ __all__ = [
     "DERIVED_POINT_KEY",
     "ENVELOPE_KEY",
     "JSONP_CALLBACK",
+    "RUTA_MUERTA",
     "SEGMENTS_KEY",
     "SEGMENT_LAT",
     "SEGMENT_LON",

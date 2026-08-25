@@ -1196,3 +1196,42 @@ def test_una_orden_con_punto_propio_no_se_toca():
     assert intacta == propia
     assert DERIVED_POINT_KEY not in intacta
     assert intacta["latitud"] == str(VINA[0]), "sigue siendo el texto original"
+
+
+def test_la_ruta_muerta_se_rechaza_al_construir(monkeypatch):
+    """Desplegar el código nuevo con la variable vieja tiene que doler rápido.
+
+    Pasó de verdad: el pivote se desplegó mientras el contenedor conservaba
+    `CHILQUINTA_API_URL=…/obtieneImage`, y el síntoma fue un
+    `400 Missing required request parameters: [companyCode, orderId]` — un error
+    que habla de parámetros que este collector ya no manda, y que por tanto manda
+    a buscar el problema al sitio equivocado.
+
+    Fallar al construir deja una fila `failed` en `collector_runs` nombrando la
+    variable, que es lo único accionable de toda esa cadena.
+    """
+    from app.collectors.power.chilquinta_worker import RUTA_MUERTA
+    from app.core.exceptions import CollectorError
+
+    monkeypatch.setattr(
+        settings,
+        "CHILQUINTA_API_URL",
+        f"https://mapainterrupciones.chilquinta.cl/{RUTA_MUERTA}",
+    )
+
+    with pytest.raises(CollectorError, match="CHILQUINTA_API_URL"):
+        ChilquintaCollector(None)
+
+
+def test_la_url_buena_construye_sin_quejarse():
+    """La guarda es estrecha a propósito: rechaza esa ruta, no valida el resto.
+
+    Un patrón que exigiera que la URL se pareciera a `results_XXX.js` rompería el
+    día que Chilquinta renombre el archivo — que es un cambio legítimo y
+    esperable. Lo que se rechaza es una ruta que sabemos muerta, no todo lo que
+    no reconozcamos.
+    """
+    instancia = ChilquintaCollector(None)
+
+    assert instancia.url == settings.CHILQUINTA_API_URL
+    assert "results_006.js" in instancia.url
