@@ -578,12 +578,17 @@ def test_normalize_mantiene_el_invariante_aunque_fetch_ya_filtre():
     assert collector().normalize([lejano]) == []
 
 
-# --- El transporte: un GET cuyos parámetros son cabeceras --------------------
+# --- El transporte: un GET con cabeceras y un parámetro obligatorio ----------
 #
-# El endpoint de Chilquinta no es un feed abierto: es la ruta XHR del visor, se
-# consulta por GET a una URL desnuda —sin query string ni cuerpo— y **toda la
-# consulta viaja en cabeceras**: la API key, el código de filial y la orden
-# buscada.
+# El endpoint de Chilquinta no es un feed abierto: es la ruta XHR del visor. Se
+# consulta por GET, sin cuerpo, y la consulta se reparte entre tres cabeceras
+# —API key, código de filial y orden buscada— y un único parámetro de query,
+# `?orderId=`.
+#
+# Ese parámetro es obligatorio aunque vaya vacío: sin él el servidor responde
+# `400 {"error":"Missing required request parameters: [orderId]"}`, incluso con
+# la cabecera `X-Orden-Buscada` presente. Que el mismo dato tenga que ir dos
+# veces es redundancia del backend de Chilquinta, y se replica tal cual.
 #
 # Nada de esto se puede verificar contra el servidor real desde la suite, así
 # que lo que se prueba acá es que la petición **sale armada como se descubrió**,
@@ -658,12 +663,16 @@ def test_la_orden_vacia_se_manda_y_no_se_omite():
 
 
 @respx.mock
-def test_la_peticion_no_lleva_query_string_ni_cuerpo():
-    """Los filtros van en cabeceras: la URL queda desnuda y el cuerpo vacío.
+def test_el_orderid_vacio_viaja_en_la_url():
+    """`?orderId=` es obligatorio aunque vaya vacío.
 
-    Mandar además un `?emp=006` o un cuerpo JSON no rompería nada visible, pero
-    sería ruido sobre un servidor ajeno y una pista falsa para quien depure esto
-    dentro de seis meses.
+    Sin él, el endpoint responde
+    `400 {"error":"Missing required request parameters: [orderId]"}` — y lo hace
+    aunque `X-Orden-Buscada` esté presente, así que la cabecera no lo sustituye.
+
+    Se comprueba sobre la URL cruda y no sobre `params`, porque el riesgo real
+    está en el camino: httpx podría descartar un parámetro de valor vacío al
+    serializar y el fallo sería un 400 en producción, no acá.
     """
     ruta = responde_vacio()
 
@@ -671,9 +680,43 @@ def test_la_peticion_no_lleva_query_string_ni_cuerpo():
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    peticion = ruta.calls[0].request
-    assert peticion.url.query == b""
-    assert peticion.content == b""
+    assert ruta.calls[0].request.url.query == b"orderId="
+
+
+@respx.mock
+def test_la_peticion_no_lleva_cuerpo():
+    """Es un GET: los filtros van en cabeceras y query string, nunca en el cuerpo.
+
+    Un GET con cuerpo no rompería nada visible —httpx lo manda igual— pero varios
+    proxies y CDN lo descartan sin avisar, y sería una pista falsa para quien
+    depure esto dentro de seis meses.
+    """
+    ruta = responde_vacio()
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    assert ruta.calls[0].request.content == b""
+
+
+def test_el_payload_no_puede_quedar_vacio():
+    """La trampa de `{}`: un diccionario vacío es falsy y borra el `?orderId=`.
+
+    `load_records()` trata un payload sin claves como «sin filtros» y no añade
+    query string. Si alguien "simplifica" `request_payload()` a `{}` —que es como
+    estaba antes de descubrir el 400— la petición vuelve a salir sin el
+    parámetro obligatorio y el endpoint la rechaza.
+
+    Este test guarda esa decisión desde el otro lado: no mira la URL, mira que el
+    payload declare algo.
+    """
+    from app.collectors.power.chilquinta_worker import ALL_ORDERS, ORDER_PARAM
+
+    payload = collector().request_payload()
+
+    assert payload == {ORDER_PARAM: ALL_ORDERS}
+    assert payload, "un payload falsy hace que load_records() omita la query"
 
 
 @respx.mock

@@ -72,9 +72,18 @@ COMPANY_HEADER = "X-Company-Code"
 #: Cabecera que acota la consulta a una orden de trabajo. Vacía = todas.
 ORDER_HEADER = "X-Orden-Buscada"
 
-#: Valor de `X-Orden-Buscada` cuando se quiere el mapa completo, que es siempre
-#: en este collector. Se nombra en vez de escribir `""` suelto porque una cadena
-#: vacía en medio de un diccionario parece un olvido y no una decisión.
+#: Parámetro de query con el mismo significado que `ORDER_HEADER`. El endpoint
+#: exige los dos: sin el de la URL responde
+#: `400 {"error":"Missing required request parameters: [orderId]"}`, aunque la
+#: cabecera vaya presente y vacía. Es redundancia del backend de Chilquinta, no
+#: nuestra — se replica al pie de la letra porque adivinar cuál de los dos manda
+#: cuesta un 400 por corrida.
+ORDER_PARAM = "orderId"
+
+#: Valor de `X-Orden-Buscada` y de `?orderId=` cuando se quiere el mapa
+#: completo, que es siempre en este collector. Se nombra en vez de escribir `""`
+#: suelto porque una cadena vacía en medio de un diccionario parece un olvido y
+#: no una decisión.
 ALL_ORDERS = ""
 
 
@@ -144,14 +153,24 @@ class ChilquintaCollector(BasePowerOutageCollector):
         return headers
 
     def request_payload(self) -> dict[str, Any]:
-        """Vacío: este endpoint no recibe nada por URL ni por cuerpo.
+        """`?orderId=` — obligatorio aunque vaya vacío, y aunque la cabecera esté.
 
-        No es que no haya filtros — es que viajan en cabeceras. Devolver `{}`
-        hace que `load_records()` no añada query string (y que respete el que
-        traiga la URL configurada, por la guarda de `request_response`) y que no
-        arme cuerpo JSON.
+        Como `http_method` es GET, `load_records()` manda esto como query string
+        y no como cuerpo. La URL resultante es `…/obtieneImage?orderId=`.
+
+        La cadena vacía es el valor con el que el visor pide todas las órdenes.
+        Y es **obligatoria**: sin el parámetro, el endpoint responde
+        `400 {"error":"Missing required request parameters: [orderId]"}` incluso
+        con `X-Orden-Buscada` presente. Que el mismo dato tenga que ir en la
+        cabecera *y* en la URL es redundancia del backend de Chilquinta; no hay
+        forma de saber cuál de las dos lee sin provocar el 400, así que van las
+        dos.
+
+        Cuidado con "simplificar" esto a `{}`: el diccionario vacío es falsy y
+        `load_records()` lo trata como «sin filtros», con lo que el `?orderId=`
+        desaparece y vuelve el 400.
         """
-        return {}
+        return {ORDER_PARAM: ALL_ORDERS}
 
     @classmethod
     def poll_interval_seconds(cls) -> int:
