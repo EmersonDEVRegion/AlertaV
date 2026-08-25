@@ -79,7 +79,7 @@ se rodea. Las rutas internas del mismo host sirven TLS correctamente, y
 El 401 resultó tener **tres** causas sumadas, y se descubrieron de a una porque
 cada arreglo destapaba la siguiente: la petición no pertenecía a ninguna sesión,
 el `orderId` se tomaba por una orden ajena, y faltaba el token CSRF. Las cuatro
-piezas de este módulo (priming, `Referer`, `ALL_ORDERS`, `X-CSRF-TOKEN`) atacan
+piezas de este módulo (priming, `Referer`, `ALL_ORDERS`, `X-XSRF-TOKEN`) atacan
 una cada una y son independientes: si el 401 vuelve, se pueden descartar por
 separado.
 
@@ -92,13 +92,18 @@ Toda la consulta cabe en seis cabeceras y ninguna es opcional:
     X-Orden-Buscada   orden de trabajo concreta, o `ALL_ORDERS` para todas
     Referer           la página del visor de la que "sale" el XHR
     Accept            application/json — se pide el JSON, no el HTML del visor
-    X-CSRF-TOKEN      el token del `<meta>` de la página, leído en el priming
+    X-XSRF-TOKEN      el token de la cookie `XSRF-TOKEN`, url-decodificado
 
 La última contradice el comportamiento estándar de Laravel, que sólo verifica
 CSRF en métodos que escriben. Se manda igual porque **la evidencia mandó sobre
 la doctrina**: el 401 sobrevivió a la sesión y al `Referer`, y lo que hay delante
 es un firewall que valida por su cuenta. Si algún día deja de hacer falta, sobra
 una cabecera; no mandarla cuando hace falta cuesta la capa eléctrica entera.
+
+Y es `X-XSRF-TOKEN`, con la cookie cifrada, y **no** `X-CSRF-TOKEN` con el token
+en claro del `<meta name="csrf-token">`. Se intentó en ese orden y el primero no
+sirvió: son dos tokens distintos con dos cabeceras distintas, y cruzarlos falla
+igual que no mandar nada. Está explicado en `leer_xsrf`.
 
 `X-Orden-Buscada` va siempre, nunca se omite: omitir la cabecera y mandarla con
 el centinela no son lo mismo para este endpoint. Su valor es el mismo
@@ -125,9 +130,8 @@ no es motivo para consultar más seguido.
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -173,29 +177,15 @@ HTML_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 #: que llegó y decirlo en el log cuando no llega.
 SESSION_COOKIE = "mapa_interrupciones_session"
 
-#: Cabecera con el token CSRF. Esta **sí** se escribe a mano: el token no viaja
-#: en una cookie que httpx pueda reenviar solo, sino incrustado en el HTML de la
-#: página, y hay que ir a buscarlo. Ver `extraer_csrf` y `prime_session`.
-CSRF_HEADER = "X-CSRF-TOKEN"
+#: Cabecera con el token CSRF **cifrado**, el que sale de la cookie. Ojo con la
+#: X de más: `X-XSRF-TOKEN` y `X-CSRF-TOKEN` son cabeceras distintas para tokens
+#: distintos, y confundirlas es el fallo silencioso de todo esto. Ver `leer_xsrf`.
+XSRF_HEADER = "X-XSRF-TOKEN"
 
-#: `name` del `<meta>` donde Laravel publica el token para su propio JavaScript.
-#: Es el mecanismo estándar del framework (`csrf_token()` en la plantilla), no
-#: algo particular de Chilquinta.
-CSRF_META_NAME = "csrf-token"
-
-#: El `<meta>` del token, tolerando lo que varía entre plantillas: comillas
-#: simples o dobles, espacios de más, `/>` o `>`, mayúsculas.
-#:
-#: Deliberadamente **no** se parsea el HTML. Traer un parser entero para leer un
-#: atributo sería peor negocio que este par de expresiones: si la plantilla
-#: cambia lo suficiente como para que esto falle, el token también habrá dejado
-#: de estar donde creemos, y lo que hace falta entonces es mirar la página, no un
-#: árbol DOM. Se parte en dos patrones para no depender del orden de los
-#: atributos: el primero encuentra la etiqueta, el segundo le saca el `content`.
-_META_CSRF = re.compile(
-    rf"<meta[^>]+name=[\"']{CSRF_META_NAME}[\"'][^>]*>", re.IGNORECASE
-)
-_META_CONTENT = re.compile(r"content=[\"']([^\"']*)[\"']", re.IGNORECASE)
+#: Cookie de la que sale ese token. La emite Laravel junto con la de sesión y,
+#: a diferencia de aquella, no basta con que httpx la reenvíe: la aplicación la
+#: quiere **también** como cabecera. Que la cookie viaje sola no alcanza.
+XSRF_COOKIE = "XSRF-TOKEN"
 
 #: Ruta de la página del visor: la que se carga para abrir sesión y la que se
 #: declara como `Referer`.
@@ -288,39 +278,54 @@ def pagina_del_visor(url: str, *, emp: str = "") -> str:
     return urlunsplit((partes.scheme, partes.netloc, VISOR_PATH, consulta, ""))
 
 
-def extraer_csrf(html: str) -> str | None:
-    """Token CSRF del `<meta name="csrf-token">` de la página, o `None`.
+def leer_xsrf(cookies: httpx.Cookies) -> str | None:
+    """Token de la cookie `XSRF-TOKEN`, url-decodificado, o `None`.
 
-    Laravel publica el token en dos sitios y **no son intercambiables**, que es
-    la trampa de todo esto:
+    Laravel publica el token CSRF en dos sitios y **no son intercambiables**:
 
-    * el `<meta>` lleva el token **en claro**, y es el que la aplicación espera
-      de vuelta en `X-CSRF-TOKEN`. Es el que lee esta función;
-    * la cookie `XSRF-TOKEN` lleva el mismo token **cifrado** por Laravel y
-      además url-encodeado, y corresponde a la cabecera `X-XSRF-TOKEN`, que la
-      aplicación descifra antes de comparar.
+    * el `<meta name="csrf-token">` lo lleva **en claro** y corresponde a la
+      cabecera `X-CSRF-TOKEN`;
+    * la cookie `XSRF-TOKEN` lo lleva **cifrado** por la aplicación —y encima
+      url-encodeado— y corresponde a `X-XSRF-TOKEN`, que la aplicación descifra
+      antes de comparar.
 
-    Cruzarlos —mandar el valor del meta como `X-XSRF-TOKEN`, o el de la cookie
-    como `X-CSRF-TOKEN`— produce un 419/401 idéntico al de no mandar nada, y sin
-    ninguna pista de que el problema es el emparejamiento. Se usa el meta porque
-    es el único de los dos que se puede leer sin la clave de la aplicación.
+    Se probaron los dos, en ese orden, y el que este despliegue acepta es el
+    segundo. Cruzarlos —mandar el valor del meta como `X-XSRF-TOKEN`, o el de la
+    cookie como `X-CSRF-TOKEN`— produce un rechazo idéntico al de no mandar nada
+    y sin ninguna pista de que el problema es el emparejamiento; de ahí que la
+    cabecera y la fuente se lean juntas, en esta función, y no en dos sitios.
 
-    Devuelve `None` —y no lanza— cuando la página no trae el token: puede ser un
-    cambio de plantilla, una página de error con forma de página, o simplemente
-    que el priming no llegó. Ninguno de esos casos justifica perder la corrida,
-    y todos se ven en el log de `prime_session`.
+    `unquote` y **nunca `unquote_plus`**. La diferencia parece cosmética y no lo
+    es: el token es base64, el alfabeto base64 incluye `+`, y `unquote_plus`
+    convierte cada `+` en un espacio. Eso corrompe el token de forma
+    intermitente —sólo cuando al cifrado le toca un `+`, o sea a veces— y
+    produce un 401 que aparece y desaparece sin patrón. En una cookie el `+` es
+    un `+` literal; el `%2B` es lo que se decodifica.
 
-    Un token vacío (`content=""`) se trata como ausente: mandar la cabecera con
-    una cadena de longitud cero es la misma clase de error que ya costó dos
-    despliegues con `?orderId=`.
+    Devuelve `None` —y no lanza— cuando la cookie no está o viene vacía. Un
+    token de longitud cero se trata como ausente por el mismo motivo que
+    `?orderId=`: mandar la cabecera vacía afirma tener un token y presenta uno
+    inválido, que es peor que no afirmar nada.
     """
-    etiqueta = _META_CSRF.search(html)
-    if etiqueta is None:
+    try:
+        crudo = cookies.get(XSRF_COOKIE)
+    except httpx.CookieConflict:
+        # Varias cookies con el mismo nombre para rutas o dominios distintos.
+        # Pasa cuando el priming atraviesa una redirección que la re-emite con
+        # otro `path`. Se toma la última que entró al jar, que es la que el
+        # servidor acaba de emitir: es una heurística, pero la alternativa es
+        # dejar que un `CookieConflict` tumbe una corrida por un preámbulo.
+        crudo = next(
+            (
+                galleta.value
+                for galleta in reversed(list(cookies.jar))
+                if galleta.name == XSRF_COOKIE
+            ),
+            None,
+        )
+    if not crudo:
         return None
-    contenido = _META_CONTENT.search(etiqueta.group(0))
-    if contenido is None:
-        return None
-    return contenido.group(1).strip() or None
+    return unquote(crudo).strip() or None
 
 
 def con_order_id(url: str) -> str:
@@ -400,8 +405,8 @@ class ChilquintaCollector(BasePowerOutageCollector):
     # -- Sesión ---------------------------------------------------------------
 
     @property
-    def csrf_token(self) -> str | None:
-        """Token leído del visor en el priming de **esta** corrida, o `None`.
+    def xsrf_token(self) -> str | None:
+        """Token de la cookie leído en el priming de **esta** corrida, o `None`.
 
         Se inicializa perezosamente y no en `__init__` por la convención del
         proyecto: los tests construyen collectors con `__new__` para probar
@@ -409,12 +414,13 @@ class ChilquintaCollector(BasePowerOutageCollector):
         instancia normal rompería esos tests. Es el mismo patrón que
         `BaseCollector.warnings`.
 
-        Que sea estado mutable en la instancia es incómodo y es el precio de que
-        el token no viaje en una cookie: httpx no puede reenviarlo solo, hay que
-        leerlo de un HTML y acordarse de él hasta la petición siguiente. Vive lo
+        Que sea estado mutable en la instancia es incómodo, y es el precio de que
+        la aplicación quiera el mismo dato por dos canales: la cookie la reenvía
+        el jar de httpx solo, pero la **cabecera** hay que armarla, y para eso
+        hay que acordarse del valor entre una petición y la siguiente. Vive lo
         que vive la corrida — ver el reseteo al principio de `prime_session`.
         """
-        return getattr(self, "_csrf_token", None)
+        return getattr(self, "_xsrf_token", None)
 
     def visor_url(self) -> str:
         """La página del visor: la que se prima y la que se declara en `Referer`.
@@ -465,11 +471,18 @@ class ChilquintaCollector(BasePowerOutageCollector):
         `SSLError: WRONG_VERSION_NUMBER`, sin respuesta HTTP que absorber. Ver
         `VISOR_PATH`.
 
-        La segunda cosa que se trae de acá es el **token CSRF**, y esa sí hay que
-        ir a buscarla: no viaja en una cookie que httpx reenvíe solo, sino
-        incrustado en el HTML (`<meta name="csrf-token">`). Por eso este método
-        lee el cuerpo de la respuesta y guarda el token en la instancia, y por
-        eso `request_headers()` depende de que esto haya corrido antes.
+        La segunda cosa que se trae de acá es el **token CSRF**. Está en la
+        cookie `XSRF-TOKEN`, que el jar ya reenvía sola, pero eso no basta: la
+        aplicación quiere el mismo valor **también** como cabecera, y esa hay que
+        armarla. Por eso este método lee el jar después del GET y guarda el token
+        en la instancia, y por eso `request_headers()` depende de que esto haya
+        corrido antes.
+
+        Antes se leía del `<meta name="csrf-token">` y se mandaba en
+        `X-CSRF-TOKEN`. Ese camino se probó primero y **no fue el que este
+        despliegue acepta**; se abandonó al confirmarse. Los dos tokens no son
+        intercambiables y las dos cabeceras tampoco — ver `leer_xsrf`, donde está
+        la diferencia escrita, porque es exactamente el error que se cometió.
 
         Que la aplicación exija CSRF en un **GET** contradice el comportamiento
         estándar de Laravel, que sólo lo verifica en métodos que escriben. Se
@@ -483,11 +496,11 @@ class ChilquintaCollector(BasePowerOutageCollector):
         lo que corresponda, y ese error describe el problema mejor que "no pude
         cargar la página". Lo que no puede pasar es que falle en silencio, así
         que queda en el log —incluidos los dos casos traicioneros: que responda
-        200 sin emitir la cookie, y que la emita pero sin el token—. Es `logger`
-        y no `self.warn` deliberadamente: un priming fallido no degrada una
-        corrida que después devuelve los cortes completos, y marcarla `partial`
-        haría ruido justo en la señal que sirve para detectar degradaciones
-        reales.
+        200 sin emitir la cookie de sesión, y que la emita pero no la del token—.
+        Es `logger` y no `self.warn` deliberadamente: un priming fallido no
+        degrada una corrida que después devuelve los cortes completos, y marcarla
+        `partial` haría ruido justo en la señal que sirve para detectar
+        degradaciones reales.
 
         Que el fallo no sea fatal es lo que hizo *barato* descubrir lo del TLS:
         el `WRONG_VERSION_NUMBER` salió por el log como una línea, no como una
@@ -499,7 +512,7 @@ class ChilquintaCollector(BasePowerOutageCollector):
         # está en el cookie jar, que es nuevo en cada corrida— y mandarlo
         # emparejaría un token viejo con una sesión ausente. Un 401 por no mandar
         # nada se depura; uno por mandar un token que no corresponde, no.
-        self._csrf_token: str | None = None
+        self._xsrf_token: str | None = None
 
         pagina = self.visor_url()
         if not pagina:
@@ -523,20 +536,21 @@ class ChilquintaCollector(BasePowerOutageCollector):
             )
             return
 
-        # `respuesta.text` y no `.content`: httpx resuelve la codificación
-        # declarada por el servidor, y un token es ASCII pero la página que lo
-        # rodea está en español y no siempre en UTF-8.
-        self._csrf_token = extraer_csrf(respuesta.text)
-        if self._csrf_token is None:
+        # Del jar y no del cuerpo: el token que este despliegue acepta es el
+        # cifrado que viaja en la cookie, no el que la plantilla imprime en el
+        # HTML. Se lee **después** del GET porque es esa respuesta la que lo
+        # emite.
+        self._xsrf_token = leer_xsrf(client.cookies)
+        if self._xsrf_token is None:
             logger.warning(
-                "el visor de Chilquinta no trae el meta del token CSRF; la "
-                "petición de datos va sin él",
+                "el visor de Chilquinta no emitió la cookie del token CSRF; la "
+                "petición de datos va sin la cabecera",
                 extra={
                     "collector": self.name,
                     "url": pagina,
                     "status": respuesta.status_code,
-                    "meta_esperado": CSRF_META_NAME,
-                    "bytes_recibidos": len(respuesta.content),
+                    "cookie_esperada": XSRF_COOKIE,
+                    "cookies_recibidas": sorted(client.cookies.keys()),
                 },
             )
 
@@ -565,8 +579,8 @@ class ChilquintaCollector(BasePowerOutageCollector):
         petición entera.
 
         **Este método depende de que `prime_session()` haya corrido**, y es la
-        única dependencia temporal del módulo. `X-CSRF-TOKEN` sale de un HTML que
-        sólo existe si el priming lo trajo; la garantía es el orden dentro de
+        única dependencia temporal del módulo. `X-XSRF-TOKEN` sale de una cookie
+        que sólo existe si el priming la trajo; la garantía es el orden dentro de
         `load_records()`, donde el gancho se llama antes de que estas cabeceras
         se construyan. Llamado suelto —los tests lo hacen— simplemente omite la
         cabecera en vez de reventar: es una degradación honesta, no un error de
@@ -589,12 +603,13 @@ class ChilquintaCollector(BasePowerOutageCollector):
           a partir del priming, y añadirla a mano requeriría leerla, guardarla y
           mantenerla: tres oportunidades de que se quede vieja. Si en la petición
           saliente no hay `Cookie`, el que no corrió es `prime_session()`.
-        * `X-CSRF-TOKEN` es la excepción a lo anterior y sólo porque no queda
-          otra: el token no viaja en una cookie, sino en un `<meta>` del HTML, y
-          nadie lo reenvía por nosotros. Va **sólo si existe**. Mandar la
-          cabecera vacía sería peor que no mandarla —afirma tener un token y
-          presenta uno inválido—, y este proyecto ya sabe lo que cuesta un valor
-          de longitud cero: ver `ALL_ORDERS`.
+        * `X-XSRF-TOKEN` es la excepción a lo anterior, y no porque la cookie no
+          viaje —viaja— sino porque la aplicación quiere el mismo valor **por
+          los dos canales**: la cookie y la cabecera. Que el jar reenvíe la
+          primera no arma la segunda. Va **sólo si existe**: mandar la cabecera
+          vacía sería peor que no mandarla —afirma tener un token y presenta uno
+          inválido—, y este proyecto ya sabe lo que cuesta un valor de longitud
+          cero: ver `ALL_ORDERS`.
 
         Nada de esto llega a `run_params()`, y por tanto nada llega a
         `collector_runs`. Una credencial en la traza es una credencial visible
@@ -612,8 +627,8 @@ class ChilquintaCollector(BasePowerOutageCollector):
         referer = self.visor_url()
         if referer:
             headers[REFERER_HEADER] = referer
-        if self.csrf_token:
-            headers[CSRF_HEADER] = self.csrf_token
+        if self.xsrf_token:
+            headers[XSRF_HEADER] = self.xsrf_token
         return headers
 
     def request_url(self) -> str:
@@ -678,8 +693,6 @@ __all__ = [
     "ALL_ORDERS",
     "API_KEY_HEADER",
     "COMPANY_HEADER",
-    "CSRF_HEADER",
-    "CSRF_META_NAME",
     "HTML_ACCEPT",
     "JSON_ACCEPT",
     "ORDER_HEADER",
@@ -688,8 +701,10 @@ __all__ = [
     "SESSION_COOKIE",
     "VISOR_EMP_PARAM",
     "VISOR_PATH",
+    "XSRF_COOKIE",
+    "XSRF_HEADER",
     "ChilquintaCollector",
     "con_order_id",
-    "extraer_csrf",
+    "leer_xsrf",
     "pagina_del_visor",
 ]

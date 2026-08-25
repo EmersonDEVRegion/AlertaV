@@ -30,13 +30,14 @@ from app.collectors.power.chilquinta_worker import (
     ACCEPT_HEADER,
     ALL_ORDERS,
     API_KEY_HEADER,
-    CSRF_HEADER,
     JSON_ACCEPT,
     REFERER_HEADER,
     SESSION_COOKIE,
     VISOR_PATH,
+    XSRF_COOKIE,
+    XSRF_HEADER,
     ChilquintaCollector,
-    extraer_csrf,
+    leer_xsrf,
     pagina_del_visor,
 )
 from app.collectors.power.outage_parser import (
@@ -101,20 +102,44 @@ def registro(**overrides) -> dict:
 #: Valor ficticio de la cookie de sesión que emite el visor al cargarse.
 SESION_FALSA = "s3s10n-f4ls4"
 
-#: Token ficticio. Laravel emite 40 caracteres alfanuméricos; se respeta la forma
-#: para que un test que la asuma falle acá y no en producción.
-CSRF_FALSO = "TkN0k3nD3Pru3b4Qu3N0EsElR3alXXXXXXXXXXXX"
+#: Token ficticio **ya decodificado**: lo que la cabecera tiene que llevar.
+#:
+#: Se le meten a propósito los dos caracteres que rompen esto si se decodifica
+#: mal: un `+`, que `unquote_plus` convertiría en espacio, y el `==` de relleno
+#: de base64, que llega como `%3D%3D`. Un token "limpio" pasaría los tests sin
+#: ejercitar ninguna de las dos trampas.
+XSRF_FALSO = "eyJpdiI6IlB0K3NlczEyMyIsInZhbHVlIjoiYWJjK2RlZiJ9=="
+
+#: El mismo token tal como viaja en la cookie: url-encodeado por Laravel.
+XSRF_FALSO_ENCODED = XSRF_FALSO.replace("=", "%3D")
 
 
-def portada(token: str | None = CSRF_FALSO) -> str:
-    """HTML mínimo del visor, con el `<meta>` del token donde Laravel lo pone.
+def portada() -> str:
+    """HTML mínimo del visor.
 
-    No es la página real —que trae el bundle entero— sino lo que de ella importa:
-    la etiqueta de la que se extrae el token. Se deja parametrizable para poder
-    montar la portada *sin* token, que es un caso que hay que probar.
+    Ya no se le extrae nada —el token sale de la cookie, no del cuerpo— pero se
+    conserva para que la respuesta del priming se parezca a lo que devuelve el
+    servidor: HTML, no un JSON ni un cuerpo vacío.
     """
-    meta = f'<meta name="csrf-token" content="{token}">' if token is not None else ""
-    return f"<!doctype html><html><head>{meta}</head><body>visor</body></html>"
+    return "<!doctype html><html><head></head><body>visor</body></html>"
+
+
+def galletas(sesion: bool = True, xsrf: str | None = XSRF_FALSO_ENCODED) -> list:
+    """Cabeceras `set-cookie` del visor, como lista de pares.
+
+    Lista y no diccionario porque son **dos** `Set-Cookie` y un diccionario sólo
+    admite una: httpx las parsea por separado, y unirlas con una coma —que es lo
+    que uno intenta primero— hace que el jar se quede con una sola.
+
+    Ambas se pueden apagar por separado: la sesión y el token son cosas
+    distintas y el servidor puede mandar una sin la otra.
+    """
+    cabeceras = []
+    if sesion:
+        cabeceras.append(("set-cookie", f"{SESSION_COOKIE}={SESION_FALSA}; path=/"))
+    if xsrf is not None:
+        cabeceras.append(("set-cookie", f"{XSRF_COOKIE}={xsrf}; path=/"))
+    return cabeceras
 
 
 def prepara_sesion(url: str = ""):
@@ -135,11 +160,7 @@ def prepara_sesion(url: str = ""):
     return respx.get(
         pagina_del_visor(url or CHILQUINTA_URL, emp=settings.CHILQUINTA_COD_EMP)
     ).mock(
-        return_value=httpx.Response(
-            200,
-            headers={"set-cookie": f"{SESSION_COOKIE}={SESION_FALSA}; path=/"},
-            text=portada(),
-        )
+        return_value=httpx.Response(200, headers=galletas(), text=portada())
     )
 
 
@@ -731,7 +752,7 @@ def test_las_seis_cabeceras_de_la_consulta_van_completas():
     assert cabeceras[ORDER_HEADER] == ALL_ORDERS
     assert cabeceras[REFERER_HEADER] == CHILQUINTA_VISOR
     assert cabeceras[ACCEPT_HEADER] == JSON_ACCEPT == "application/json"
-    assert cabeceras[CSRF_HEADER] == CSRF_FALSO
+    assert cabeceras[XSRF_HEADER] == XSRF_FALSO
 
 
 @respx.mock
@@ -1187,82 +1208,152 @@ def test_un_visor_que_responde_sin_cookie_tampoco_detiene_la_corrida():
 # comportamiento estándar del framework. Se manda igual porque la evidencia mandó
 # sobre la doctrina.
 #
-# El token no viaja en una cookie que httpx reenvíe solo: está incrustado en el
-# HTML de la portada, en `<meta name="csrf-token">`, y hay que ir a leerlo. Eso
-# introduce la única dependencia temporal del módulo —`request_headers()` sólo
-# tiene token si `prime_session()` corrió antes— y un estado mutable en la
-# instancia que hay que mantener limpio entre corridas. Los tests de acá abajo
-# cubren las dos cosas.
+# Laravel publica el token en dos sitios que **no son intercambiables**, y este
+# proyecto se equivocó de sitio primero:
+#
+#   <meta name="csrf-token">   token en claro     → cabecera X-CSRF-TOKEN
+#   cookie XSRF-TOKEN          token cifrado      → cabecera X-XSRF-TOKEN
+#
+# Se intentó el primero y el 401 sobrevivió; el que este despliegue acepta es el
+# segundo. Cruzarlos falla igual que no mandar nada y sin ninguna pista de que el
+# problema es el emparejamiento, así que los tests fijan la pareja completa —de
+# dónde sale el valor y en qué cabecera va— y no cada mitad por su lado.
+#
+# La cookie ya viaja sola: el jar de httpx la reenvía. Lo que no se arma solo es
+# la **cabecera**, y de ahí el estado en la instancia, la única dependencia
+# temporal del módulo (`request_headers()` sólo tiene token si `prime_session()`
+# corrió antes) y la necesidad de limpiarlo entre corridas.
 
 
 @respx.mock
-def test_el_token_del_meta_llega_a_la_peticion_de_datos():
-    """El camino completo: `<meta>` de la portada → cabecera del XHR."""
+def test_el_token_de_la_cookie_llega_a_la_peticion_de_datos():
+    """El camino completo: `Set-Cookie` del visor → cabecera del XHR."""
     ruta_datos = responde_vacio()
 
     instancia = collector()
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    assert ruta_datos.calls[0].request.headers[CSRF_HEADER] == CSRF_FALSO
-
-
-@pytest.mark.parametrize(
-    "etiqueta",
-    [
-        '<meta name="csrf-token" content="TOKEN">',
-        "<meta name='csrf-token' content='TOKEN'>",
-        '<meta content="TOKEN" name="csrf-token">',  # atributos al revés
-        '<meta   name="csrf-token"   content="TOKEN"   />',  # espacios y cierre
-        '<meta name="CSRF-TOKEN" content="TOKEN">',  # mayúsculas
-        '<meta charset="utf-8"><meta name="csrf-token" content="TOKEN">',
-    ],
-)
-def test_el_token_se_encuentra_en_las_formas_plausibles_del_meta(etiqueta):
-    """La plantilla puede escribir la etiqueta de varias formas legítimas.
-
-    Es el mismo criterio que con el sobre del JSON: no se sabe exactamente cómo
-    la escribe *esta* plantilla, así que se aceptan las variantes que produce
-    Blade y las que produce quien la edite a mano.
-    """
-    assert extraer_csrf(f"<html><head>{etiqueta}</head></html>") == "TOKEN"
-
-
-@pytest.mark.parametrize(
-    "html",
-    [
-        "<html><head></head><body>sin meta</body></html>",
-        '<meta name="otro-token" content="no-es-el-nuestro">',
-        '<meta name="csrf-token">',  # la etiqueta sin content
-        '<meta name="csrf-token" content="">',  # content vacío
-        '<meta name="csrf-token" content="   ">',  # sólo espacios
-        "",
-    ],
-)
-def test_una_portada_sin_token_devuelve_none_sin_lanzar(html):
-    """`None` y no una excepción: no encontrarlo no justifica perder la corrida.
-
-    Los dos últimos casos son los que importan: un `content` vacío se trata como
-    ausente, porque mandar la cabecera con una cadena de longitud cero es afirmar
-    que se tiene un token y presentar uno inválido. Este proyecto ya sabe lo que
-    cuesta un valor de longitud cero — ver `ALL_ORDERS`.
-    """
-    assert extraer_csrf(html) is None
+    assert ruta_datos.calls[0].request.headers[XSRF_HEADER] == XSRF_FALSO
 
 
 @respx.mock
-def test_una_portada_sin_token_no_manda_la_cabecera_vacia():
+def test_la_cookie_viaja_ademas_por_su_canal_de_siempre():
+    """Cabecera **y** cookie: la aplicación quiere el mismo dato por los dos.
+
+    Que el jar reenvíe la cookie no arma la cabecera, y armar la cabecera no
+    sustituye a la cookie. Si alguien "simplificara" esto pensando que es
+    redundante, se caería por el canal que no mire.
+    """
+    ruta_datos = responde_vacio()
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    peticion = ruta_datos.calls[0].request
+    assert peticion.headers[XSRF_HEADER] == XSRF_FALSO, "decodificado en la cabecera"
+    assert XSRF_FALSO_ENCODED in peticion.headers["Cookie"], "crudo en la cookie"
+
+
+@respx.mock
+def test_no_se_manda_la_cabecera_del_token_en_claro():
+    """El camino abandonado no puede volver por la puerta de atrás.
+
+    `X-CSRF-TOKEN` fue el primer intento y no sirvió. Mandar las dos "por si
+    acaso" no es gratis: son tokens distintos, y presentar uno inválido junto a
+    uno válido es exactamente el escenario en que un firewall rechaza la
+    petición entera.
+    """
+    ruta_datos = responde_vacio()
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    assert "X-CSRF-TOKEN" not in ruta_datos.calls[0].request.headers
+
+
+def test_el_token_se_url_decodifica():
+    """Laravel manda la cookie url-encodeada; la cabecera la quiere en claro.
+
+    El `%3D%3D` del final es el relleno `==` de base64 y es lo que se ve en
+    cualquier cookie real de Laravel.
+    """
+    jar = httpx.Cookies()
+    jar.set(XSRF_COOKIE, XSRF_FALSO_ENCODED, domain="mapainterrupciones.chilquinta.cl")
+
+    assert leer_xsrf(jar) == XSRF_FALSO
+    assert leer_xsrf(jar).endswith("=="), "el relleno de base64 vuelve a ser ="
+
+
+def test_el_mas_de_base64_no_se_convierte_en_espacio():
+    """`unquote` y no `unquote_plus`, y la diferencia no es cosmética.
+
+    El alfabeto de base64 incluye `+`, y en una cookie un `+` es un `+` literal
+    —lo que se decodifica a `+` es `%2B`—. `unquote_plus` lo convertiría en un
+    espacio y corrompería el token **sólo cuando al cifrado le toque un `+`**:
+    un 401 intermitente, sin patrón, del tipo que se depura durante días.
+
+    Por eso el token de prueba lleva `+` a propósito. Con un token "limpio" este
+    test pasaría con las dos funciones y no probaría nada.
+    """
+    jar = httpx.Cookies()
+    jar.set(XSRF_COOKIE, "abc+def%3D", domain="chilquinta.cl")
+
+    assert leer_xsrf(jar) == "abc+def="
+    assert " " not in leer_xsrf(jar)
+
+
+@pytest.mark.parametrize("valor", ["", "   ", "%20%20"])
+def test_una_cookie_vacia_cuenta_como_ausente(valor):
+    """Un token de longitud cero es peor que ninguno: afirma y no cumple.
+
+    Es la misma lección que `?orderId=`, y los tres casos son formas de lo mismo:
+    vacía, con espacios, y con espacios url-encodeados que sólo se ven después
+    de decodificar.
+    """
+    jar = httpx.Cookies()
+    jar.set(XSRF_COOKIE, valor, domain="chilquinta.cl")
+
+    assert leer_xsrf(jar) is None
+
+
+def test_sin_la_cookie_no_hay_token():
+    jar = httpx.Cookies()
+    assert leer_xsrf(jar) is None
+
+    jar.set("otra-cookie", "algo", domain="chilquinta.cl")
+    assert leer_xsrf(jar) is None
+
+
+def test_dos_cookies_con_el_mismo_nombre_no_tumban_la_corrida():
+    """`httpx.Cookies.get` lanza `CookieConflict` con dos rutas distintas.
+
+    Pasa cuando el priming atraviesa una redirección que re-emite la cookie con
+    otro `path`. Es un caso raro y perfectamente posible, y dejar que una
+    excepción de un **preámbulo** se lleve la corrida contradice todo lo demás
+    que hace este gancho. Se toma una y se sigue.
+    """
+    jar = httpx.Cookies()
+    jar.set(XSRF_COOKIE, "token-de-la-raiz", domain="chilquinta.cl", path="/")
+    jar.set(XSRF_COOKIE, "token-de-mapas", domain="chilquinta.cl", path="/mapas")
+
+    with pytest.raises(httpx.CookieConflict):
+        jar.get(XSRF_COOKIE)  # así se comporta httpx sin la guarda
+
+    assert leer_xsrf(jar) in {"token-de-la-raiz", "token-de-mapas"}
+
+
+@respx.mock
+def test_un_visor_sin_la_cookie_del_token_no_manda_la_cabecera_vacia():
     """Sin token, la cabecera no va. No va vacía: no va.
 
-    Una cabecera vacía es peor que su ausencia — afirma tener un token y presenta
-    uno que no vale— y produciría un rechazo idéntico pero más difícil de leer.
+    Y la corrida sigue: el endpoint dirá si el token hacía falta, y ese error es
+    más informativo que uno que inventemos acá.
     """
     respx.get(CHILQUINTA_VISOR).mock(
-        return_value=httpx.Response(
-            200,
-            headers={"set-cookie": f"{SESSION_COOKIE}={SESION_FALSA}; path=/"},
-            text=portada(token=None),
-        )
+        return_value=httpx.Response(200, headers=galletas(xsrf=None), text=portada())
     )
     ruta_datos = respx.get(CHILQUINTA_URL).mock(
         return_value=httpx.Response(200, json={"data": []})
@@ -1272,8 +1363,8 @@ def test_una_portada_sin_token_no_manda_la_cabecera_vacia():
     instancia.url = CHILQUINTA_URL
     cortes = asyncio.run(instancia.fetch())
 
-    assert CSRF_HEADER not in ruta_datos.calls[0].request.headers
-    assert cortes == [], "y la corrida sigue: el endpoint dirá si el token hacía falta"
+    assert XSRF_HEADER not in ruta_datos.calls[0].request.headers
+    assert cortes == []
     assert instancia.warnings == []
 
 
@@ -1301,7 +1392,7 @@ def test_un_priming_fallido_no_deja_el_token_de_la_corrida_anterior():
         responde_vacio()
         asyncio.run(instancia.fetch())
 
-    assert instancia.csrf_token == CSRF_FALSO
+    assert instancia.xsrf_token == XSRF_FALSO
 
     # Segunda corrida: el visor no responde.
     with respx.mock:
@@ -1311,8 +1402,8 @@ def test_un_priming_fallido_no_deja_el_token_de_la_corrida_anterior():
         )
         asyncio.run(instancia.fetch())
 
-    assert instancia.csrf_token is None, "el token viejo no sobrevive a un priming fallido"
-    assert CSRF_HEADER not in ruta_datos.calls[0].request.headers
+    assert instancia.xsrf_token is None, "el token viejo no sobrevive a un priming fallido"
+    assert XSRF_HEADER not in ruta_datos.calls[0].request.headers
 
 
 def test_sin_priming_las_cabeceras_se_arman_igual_sin_token():
@@ -1328,8 +1419,8 @@ def test_sin_priming_las_cabeceras_se_arman_igual_sin_token():
 
     cabeceras = instancia.request_headers()
 
-    assert instancia.csrf_token is None
-    assert CSRF_HEADER not in cabeceras
+    assert instancia.xsrf_token is None
+    assert XSRF_HEADER not in cabeceras
     assert cabeceras[REFERER_HEADER] == CHILQUINTA_VISOR, "el resto sí se arma"
 
 
@@ -1346,8 +1437,8 @@ def test_el_token_no_queda_escrito_en_la_traza_de_la_corrida():
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    assert instancia.csrf_token == CSRF_FALSO, "lo tiene…"
-    assert CSRF_FALSO not in str(instancia.run_params()), "…pero no lo publica"
+    assert instancia.xsrf_token == XSRF_FALSO, "lo tiene…"
+    assert XSRF_FALSO not in str(instancia.run_params()), "…pero no lo publica"
 
 
 def test_el_gancho_de_sesion_no_hace_nada_por_defecto():
