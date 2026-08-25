@@ -70,15 +70,14 @@ pide `/obtieneImage` a sabiendas de que va a ser rechazado, porque Laravel abre
 sesión al atender la petición aunque después no la autorice, y ese rechazo trae
 las dos cookies. Es un caballo de Troya y conviene llamarlo por su nombre.
 
-Se llegó ahí rodeando, no entendiendo. Cargar la página HTML —primero `/`, luego
-`/mapas?emp=006`— moría con `SSLError: WRONG_VERSION_NUMBER`, un fallo de
-handshake TLS. La ruta de datos negocia bien, así que el preámbulo se mudó a
-ella y el visor dejó de ser un punto de fallo. Lo que **no** hay es una
-explicación cerrada: un drop por huella TLS no puede depender de la ruta, porque
-el path viaja cifrado y el servidor decide antes de conocerlo. La hipótesis viva
-es una redirección hacia otro esquema o puerto; ver `prime_session`, que
-conserva el `follow_redirects=False` y registra el `Location` por si hay que
-volver a tirar de ese hilo.
+Y se reintenta. El WAF hace **greylisting**: dropea el primer ClientHello de un
+cliente que no conoce y acepta las reconexiones inmediatas. Eso explica el
+`SSLError: WRONG_VERSION_NUMBER` que persiguió a este módulo por tres rutas
+distintas —`/`, `/mapas?emp=006` y `/obtieneImage`— sin que ninguna fuera la
+culpable: el fallo no dependía de la ruta sino de ir **primero**. La petición de
+datos parecía inmune sólo porque llegaba segunda, con la conexión ya aceptada.
+Un navegador reconecta y ni se entera; nosotros nos rendíamos al primer fallo.
+Ver `PRIMING_ATTEMPTS` y `prime_session`.
 
 El 401 resultó tener **tres** causas sumadas, y se descubrieron de a una porque
 cada arreglo destapaba la siguiente: la petición no pertenecía a ninguna sesión,
@@ -133,6 +132,7 @@ no es motivo para consultar más seguido.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
@@ -174,6 +174,25 @@ JSON_ACCEPT = "application/json"
 #: test que el de AlertaV va en **las dos** peticiones: hubo una versión en la
 #: que el priming se disfrazaba de Chrome, y se quitó al dejar de cargar HTML.
 USER_AGENT_HEADER = "User-Agent"
+
+#: Intentos de conexión del priming antes de rendirse.
+#:
+#: Existe por el **greylisting** del WAF de Chilquinta: la primera conexión de un
+#: cliente desconocido se dropea a propósito —de ahí el `WRONG_VERSION_NUMBER`—
+#: y las reconexiones inmediatas se aceptan. Un navegador reintenta solo y ni se
+#: entera; nosotros nos rendíamos al primer fallo. Ver `prime_session`.
+#:
+#: Tres y no más por el presupuesto de tiempo: con `POWER_TIMEOUT_SECONDS` en 30 s,
+#: el peor caso —tres conexiones que agotan el timeout, más las dos esperas— son
+#: unos 92 s. Cabe con holgura en los 300 s de cadencia, pero un cuarto intento ya
+#: empezaría a comerse la corrida siguiente.
+PRIMING_ATTEMPTS = 3
+
+#: Espera entre intentos. Un segundo es lo que tarda un navegador en reintentar y
+#: alcanza para que el greylisting dé por buena la reconexión; más sería castigar
+#: la corrida sin motivo. Es módulo y no literal para que los tests lo pongan a
+#: cero: una suite no debería dormir dos segundos por test.
+PRIMING_RETRY_DELAY_SECONDS = 1.0
 
 #: Cookie de sesión que emite el visor al cargarse. No se lee ni se copia a mano
 #: —de eso se encarga el cookie jar de httpx—; se nombra para poder comprobar
@@ -525,29 +544,39 @@ class ChilquintaCollector(BasePowerOutageCollector):
         modo que un 401 llega como una respuesta normal y sus cookies entran al
         jar por el camino de siempre. Está comprobado en los tests.
 
-        Por qué se dejó de cargar `/mapas?emp=006`
-        -------------------------------------------
-        Porque el priming contra la página HTML moría con
-        `SSLError: WRONG_VERSION_NUMBER` y la ruta de datos no. La ruta de datos
-        es, además, la única que este collector necesita que funcione: si ella
-        negocia TLS, el preámbulo puede vivir ahí y el visor deja de ser un punto
-        de fallo. Es un rodeo, no una explicación.
+        El greylisting, o por qué se reintenta
+        --------------------------------------
+        Esta es la pieza que cierra una paradoja que costó tres iteraciones. El
+        `WRONG_VERSION_NUMBER` **no dependía de la ruta**, aunque lo pareciera:
+        dependía de ser la **primera conexión**. El WAF de Chilquinta hace
+        greylisting —dropea el primer ClientHello de un cliente que no conoce y
+        acepta las reconexiones inmediatas—, y el priming siempre iba primero, así
+        que el priming siempre se comía el drop. Cambiar de `/` a `/mapas` y de
+        ahí a `/obtieneImage` movía el síntoma sin tocar la causa; lo que hacía
+        que la petición de **datos** funcionara no era su ruta sino que llegaba
+        segunda, con la conexión ya aceptada.
 
-        La explicación sigue sin cerrar, y conviene decirlo en vez de dejar que
-        el próximo la reconstruya mal. **Un drop por huella TLS —JA3— no puede
-        depender de la ruta**: la huella está en el ClientHello y el path viaja
-        cifrado, o sea después, así que en el momento de decidir el servidor no
-        sabe qué ruta se le va a pedir. Sobre el mismo host y puerto, "TLS falla
-        en `/mapas` pero no en `/obtieneImage`" no es literalmente posible; httpx
-        además reutiliza la misma conexión para las dos, así que un handshake que
-        sirve para una sirve para la otra.
+        Eso resuelve además la objeción que quedaba escrita: una huella TLS se
+        lee del ClientHello, antes de que el servidor sepa qué ruta se le va a
+        pedir, así que un filtro por JA3 no puede distinguir `/mapas` de
+        `/obtieneImage`. No hacía falta que las distinguiera. Sólo contaba
+        conexiones.
 
-        Lo que sí encaja con los hechos observados es que el fallo ocurriera en
-        una **segunda** conexión: el visor contesta un 3xx hacia otro esquema o
-        puerto y seguirlo abre una conexión nueva contra algo que habla texto
-        plano. De ahí el `follow_redirects=False` que se conserva más abajo. Si
-        alguna vez hay que volver a `/mapas`, ese es el hilo del que tirar, y el
-        log del `Location` lo dirá en una línea.
+        La mitigación es la que aplica un navegador sin darse cuenta:
+        **reconectar**. Se reintenta `PRIMING_ATTEMPTS` veces con
+        `PRIMING_RETRY_DELAY_SECONDS` de espera, y sólo ante `httpx.ConnectError`
+        —que es lo que envuelve el fallo de TLS—. Un timeout o un error de
+        protocolo no mejoran reconectando y se dejan pasar al primer intento.
+
+        Nota para el futuro: si el greylisting es la única causa, el priming
+        podría hacerse contra cualquier ruta del host, y volver a `/mapas` es
+        legítimo. Se queda en la de datos porque es la única que este collector
+        necesita que funcione, y porque `priming_headers()` == `request_headers()`
+        garantiza que las dos peticiones no diverjan.
+
+        El `follow_redirects=False` de más abajo se conserva por separado: cubre
+        un riesgo distinto —un 3xx hacia otro esquema o puerto— que no tiene que
+        ver con el greylisting.
 
         La segunda cosa que se trae de acá es el **token CSRF**. Está en la
         cookie `XSRF-TOKEN`, que el jar ya reenvía sola, pero eso no basta: la
@@ -605,33 +634,72 @@ class ChilquintaCollector(BasePowerOutageCollector):
             )
             return
 
-        try:
-            # `follow_redirects=False` **sólo acá**, contra el `True` del cliente
-            # de la familia. Se conserva aunque el priming ya no toque la ruta
-            # HTML: si un 3xx apunta a un destino con esquema o puerto equivocado
-            # —`http://…`, o un `https://host:80`—, seguirlo abre una conexión
-            # **nueva** que negocia TLS contra un puerto que habla texto plano, y
-            # ahí muere. Sin seguirlo, la respuesta llega entera y sus
-            # `Set-Cookie` entran igual al jar, que es lo único que se venía a
-            # buscar.
-            respuesta = await client.get(
-                pagina, headers=self.priming_headers(), follow_redirects=False
-            )
-        except Exception as exc:  # frontera con una fuente ajena
+        respuesta: httpx.Response | None = None
+        ultimo_error: Exception | None = None
+
+        for intento in range(1, PRIMING_ATTEMPTS + 1):
+            try:
+                # `follow_redirects=False` **sólo acá**, contra el `True` del
+                # cliente de la familia. Se conserva aunque el priming ya no
+                # toque la ruta HTML: si un 3xx apunta a un destino con esquema o
+                # puerto equivocado —`http://…`, o un `https://host:80`—,
+                # seguirlo abre una conexión **nueva** que negocia TLS contra un
+                # puerto que habla texto plano, y ahí muere. Sin seguirlo, la
+                # respuesta llega entera y sus `Set-Cookie` entran igual al jar,
+                # que es lo único que se venía a buscar.
+                respuesta = await client.get(
+                    pagina, headers=self.priming_headers(), follow_redirects=False
+                )
+                # Cualquier respuesta sirve para salir: un 401 es el resultado
+                # *esperado* del preámbulo y trae las cookies. `client.get` no
+                # lanza ante un 4xx, así que llegar acá ya significa que hubo
+                # conversación con el servidor, que es lo único que se reintenta.
+                break
+            except httpx.ConnectError as exc:
+                # El único fallo que se reintenta, y con motivo: es el que
+                # envuelve el error de TLS del greylisting. Se distingue de un
+                # timeout o de un error de protocolo porque esos no mejoran
+                # reconectando; reintentarlos sería gastar el presupuesto de la
+                # corrida esperando lo mismo.
+                ultimo_error = exc
+                if intento < PRIMING_ATTEMPTS:
+                    logger.info(
+                        "el priming de Chilquinta no pudo conectar; reintentando",
+                        extra={
+                            "collector": self.name,
+                            "url": pagina,
+                            "intento": intento,
+                            "de": PRIMING_ATTEMPTS,
+                            "error": f"{type(exc).__name__}: {exc}",
+                        },
+                    )
+                    # La espera va **entre** intentos y no después del último:
+                    # dormir un segundo justo antes de rendirse no compra nada.
+                    await asyncio.sleep(PRIMING_RETRY_DELAY_SECONDS)
+            except Exception as exc:  # frontera con una fuente ajena
+                ultimo_error = exc
+                break
+
+        if respuesta is None:
             logger.warning(
                 "no se pudo preparar la sesión de Chilquinta; la petición de "
                 "datos va sin cookie ni token y probablemente reciba 401",
                 extra={
                     "collector": self.name,
                     "url": pagina,
-                    "error": f"{type(exc).__name__}: {exc}",
+                    "error": f"{type(ultimo_error).__name__}: {ultimo_error}",
+                    "intentos": PRIMING_ATTEMPTS,
                     # La pista que decide dónde mirar la próxima vez. Un fallo de
                     # handshake ocurre ANTES de que salga un solo byte de HTTP:
                     # el servidor no vio el `User-Agent`, ni el `Accept`, ni
-                    # nada. Si el error es de TLS, cambiar cabeceras no puede
-                    # arreglarlo y hay que mirar más abajo —SNI, huella del
-                    # ClientHello, un proxy en el entorno, el puerto—.
-                    "cabeceras_llegaron_al_servidor": not _es_fallo_de_handshake(exc),
+                    # nada. Si el error es de TLS y **sobrevivió a los
+                    # reintentos**, ya no es el greylisting: hay que mirar más
+                    # abajo —SNI, huella del ClientHello, un proxy en el entorno,
+                    # el puerto—.
+                    "cabeceras_llegaron_al_servidor": (
+                        ultimo_error is not None
+                        and not _es_fallo_de_handshake(ultimo_error)
+                    ),
                 },
             )
             return
@@ -826,6 +894,8 @@ __all__ = [
     "JSON_ACCEPT",
     "ORDER_HEADER",
     "ORDER_PARAM",
+    "PRIMING_ATTEMPTS",
+    "PRIMING_RETRY_DELAY_SECONDS",
     "REFERER_HEADER",
     "SESSION_COOKIE",
     "USER_AGENT_HEADER",

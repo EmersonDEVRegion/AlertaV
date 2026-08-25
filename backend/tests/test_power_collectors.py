@@ -31,6 +31,8 @@ from app.collectors.power.chilquinta_worker import (
     ALL_ORDERS,
     API_KEY_HEADER,
     JSON_ACCEPT,
+    PRIMING_ATTEMPTS,
+    PRIMING_RETRY_DELAY_SECONDS,
     REFERER_HEADER,
     SESSION_COOKIE,
     USER_AGENT_HEADER,
@@ -65,6 +67,21 @@ VINA = (-33.0245, -71.5518)
 #: suite dependiera de ella, pasaría en la máquina de quien la configuró y
 #: fallaría en CI por un motivo que no tiene nada que ver con el código.
 API_KEY_FALSA = "clave-de-prueba-no-es-la-real"
+
+
+@pytest.fixture(autouse=True)
+def sin_esperas_entre_reintentos(monkeypatch):
+    """El priming duerme entre reintentos; en la suite, cero.
+
+    Sin esto cada test que ejercita el greylisting costaría dos segundos reales.
+    Se parchea el módulo y no `asyncio.sleep` global para no alterar nada más.
+
+    `test_la_espera_entre_reintentos_es_de_un_segundo` comprueba aparte que el
+    valor de producción no se quedó en cero por este parche.
+    """
+    monkeypatch.setattr(
+        "app.collectors.power.chilquinta_worker.PRIMING_RETRY_DELAY_SECONDS", 0
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -1362,9 +1379,12 @@ def test_un_priming_caido_no_se_lleva_la_corrida():
     señal de que una corrida trajo datos degradados, y un preámbulo fallido que no
     degradó nada no tiene por qué gastarla.
     """
+    # Falla **todos** los intentos: el reintento del greylisting está probado
+    # aparte, y lo que este test comprueba es qué pasa cuando ni así se conecta.
     respx.get(CHILQUINTA_URL).mock(
         side_effect=[
-            httpx.ConnectError("[SSL] record layer failure (WRONG_VERSION_NUMBER)"),
+            *[httpx.ConnectError("[SSL] record layer failure (WRONG_VERSION_NUMBER)")]
+            * PRIMING_ATTEMPTS,
             httpx.Response(200, json={"data": [registro()]}),
         ]
     )
@@ -1598,14 +1618,14 @@ def test_un_priming_fallido_no_deja_el_token_de_la_corrida_anterior():
     with respx.mock:
         ruta = respx.get(CHILQUINTA_URL).mock(
             side_effect=[
-                httpx.ConnectError("sin red"),
+                *[httpx.ConnectError("sin red")] * PRIMING_ATTEMPTS,
                 httpx.Response(200, json={"data": []}),
             ]
         )
         asyncio.run(instancia.fetch())
 
     assert instancia.xsrf_token is None, "el token viejo no sobrevive a un priming fallido"
-    assert XSRF_HEADER not in ruta.calls[0].request.headers
+    assert XSRF_HEADER not in ruta.calls[-1].request.headers
 
 
 def test_sin_priming_las_cabeceras_se_arman_igual_sin_token():
@@ -1641,6 +1661,188 @@ def test_el_token_no_queda_escrito_en_la_traza_de_la_corrida():
 
     assert instancia.xsrf_token == XSRF_FALSO, "lo tiene…"
     assert XSRF_FALSO not in str(instancia.run_params()), "…pero no lo publica"
+
+
+# --- El greylisting del WAF --------------------------------------------------
+#
+# La pieza que cerró una paradoja de tres iteraciones. El `WRONG_VERSION_NUMBER`
+# no dependía de la ruta —`/`, `/mapas?emp=006` y `/obtieneImage` fallaron por
+# turnos— sino de ser la **primera conexión**: el WAF dropea el primer
+# ClientHello de un cliente que no conoce y acepta las reconexiones inmediatas.
+# El priming siempre iba primero, así que siempre se comía el drop; la petición
+# de datos parecía inmune sólo porque llegaba segunda.
+#
+# Un navegador reconecta y ni se entera. Estos tests fijan que nosotros también.
+
+
+@respx.mock
+def test_el_priming_reintenta_cuando_el_waf_dropea_la_conexion():
+    """El caso de producción: primer ClientHello al vacío, segundo aceptado.
+
+    Tres llamadas a la ruta: el intento que el WAF dropea, el reintento que sí
+    conecta y trae las cookies, y la petición de datos. Si el reintento no
+    existiera, la corrida saldría sin sesión y con un 401 — que es exactamente lo
+    que venía pasando.
+    """
+    ruta = respx.get(CHILQUINTA_URL).mock(
+        side_effect=[
+            httpx.ConnectError("[SSL: WRONG_VERSION_NUMBER] wrong version number"),
+            httpx.Response(401, headers=galletas(), json={"error": "no autorizada"}),
+            httpx.Response(200, json={"data": [registro()]}),
+        ]
+    )
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    cortes = asyncio.run(instancia.fetch())
+
+    assert len(ruta.calls) == 3, "drop, reconexión y consulta"
+    assert instancia.xsrf_token == XSRF_FALSO, "el reintento sí trajo la sesión"
+    assert ruta.calls[2].request.headers[XSRF_HEADER] == XSRF_FALSO
+    assert [corte.commune for corte in cortes] == ["Viña del Mar"]
+    assert instancia.warnings == [], "un drop absorbido no degrada la corrida"
+
+
+@respx.mock
+def test_el_priming_no_reintenta_de_mas():
+    """Sin fallos, un solo intento. El bucle no puede costar peticiones extra.
+
+    Un reintento que se dispara siempre sería duplicar la carga sobre un servidor
+    ajeno cada cinco minutos, y por un problema que la mayoría de las veces no
+    existe.
+    """
+    ruta = responde_vacio()
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    assert len(ruta.calls) == 2, "priming y datos; el bucle no añade nada"
+
+
+@respx.mock
+def test_el_priming_se_rinde_despues_de_los_intentos_previstos():
+    """Si el drop no es greylisting, el bucle tiene que tener fondo.
+
+    Tres intentos y se acabó: la corrida sigue sin sesión, la petición de datos
+    dirá lo que corresponda, y el log queda con `intentos` para que se vea que no
+    fue un fallo aislado. Sin fondo, un endpoint caído dejaría al collector
+    reintentando dentro de su propia ventana de cinco minutos.
+    """
+    ruta = respx.get(CHILQUINTA_URL).mock(
+        side_effect=[
+            *[httpx.ConnectError("[SSL: WRONG_VERSION_NUMBER]")] * PRIMING_ATTEMPTS,
+            httpx.Response(200, json={"data": []}),
+        ]
+    )
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    cortes = asyncio.run(instancia.fetch())
+
+    assert len(ruta.calls) == PRIMING_ATTEMPTS + 1, "los intentos, más la consulta"
+    assert instancia.xsrf_token is None
+    assert cortes == []
+    assert instancia.warnings == []
+
+
+@respx.mock
+def test_solo_se_reintenta_lo_que_mejora_reconectando():
+    """`ConnectError` sí; un timeout, no.
+
+    La distinción no es purismo: un `ReadTimeout` significa que la conexión se
+    estableció y el servidor no contestó a tiempo. Reconectar no lo arregla, y
+    reintentarlo gastaría el presupuesto de la corrida esperando tres veces lo
+    mismo — con `POWER_TIMEOUT_SECONDS` en 30 s, eso es un minuto y medio tirado.
+    """
+    ruta = respx.get(CHILQUINTA_URL).mock(
+        side_effect=[
+            httpx.ReadTimeout("el servidor no contestó"),
+            httpx.Response(200, json={"data": []}),
+        ]
+    )
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    assert len(ruta.calls) == 2, "un solo intento de priming, y la consulta"
+
+
+@respx.mock
+def test_el_reintento_no_se_queda_con_una_respuesta_de_error_anterior():
+    """Un 401 corta el bucle: es el resultado esperado, no un fallo.
+
+    `client.get` no lanza ante un 4xx, así que llegar a tener respuesta significa
+    que hubo conversación con el servidor — y eso es lo único que el bucle
+    reintenta. Si un 401 disparara reintentos, el priming haría tres peticiones
+    idénticas cada corrida para acabar en el mismo sitio.
+    """
+    ruta = respx.get(CHILQUINTA_URL).mock(
+        side_effect=[
+            httpx.Response(401, headers=galletas(), json={"error": "no autorizada"}),
+            httpx.Response(200, json={"data": []}),
+        ]
+    )
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    assert len(ruta.calls) == 2
+    assert instancia.xsrf_token == XSRF_FALSO
+
+
+def test_la_espera_entre_reintentos_es_de_un_segundo():
+    """El valor de producción, comprobado aparte porque la suite lo pone a cero.
+
+    Sin este test, un `PRIMING_RETRY_DELAY_SECONDS = 0` colado en el código
+    pasaría desapercibido: la fixture que acelera la suite lo pone a cero de todas
+    formas. Reintentar sin esperar es martillear al servidor en microsegundos,
+    que es justo el comportamiento que un greylisting está para castigar.
+    """
+    assert PRIMING_RETRY_DELAY_SECONDS == 1.0
+    assert PRIMING_ATTEMPTS == 3
+
+    # El peor caso tiene que caber en la cadencia del collector.
+    peor_caso = (
+        PRIMING_ATTEMPTS * settings.POWER_TIMEOUT_SECONDS
+        + (PRIMING_ATTEMPTS - 1) * PRIMING_RETRY_DELAY_SECONDS
+    )
+    assert peor_caso < settings.POWER_POLL_INTERVAL_SECONDS, (
+        "un priming que se atasca no puede comerse la corrida siguiente"
+    )
+
+
+def test_los_reintentos_esperan_de_verdad_entre_intentos(monkeypatch):
+    """La espera existe y va **entre** intentos, no después del último.
+
+    Dormir justo antes de rendirse no compra nada y retrasa la petición de datos,
+    que es la que todavía puede salvar la corrida. Con tres intentos fallidos,
+    dos esperas.
+    """
+    from app.collectors.power import chilquinta_worker
+
+    dormidas: list[float] = []
+
+    async def registrar(segundos):
+        dormidas.append(segundos)
+
+    monkeypatch.setattr(chilquinta_worker.asyncio, "sleep", registrar)
+    monkeypatch.setattr(chilquinta_worker, "PRIMING_RETRY_DELAY_SECONDS", 0.5)
+
+    with respx.mock:
+        respx.get(CHILQUINTA_URL).mock(
+            side_effect=[
+                *[httpx.ConnectError("drop")] * PRIMING_ATTEMPTS,
+                httpx.Response(200, json={"data": []}),
+            ]
+        )
+        instancia = collector()
+        instancia.url = CHILQUINTA_URL
+        asyncio.run(instancia.fetch())
+
+    assert dormidas == [0.5, 0.5], "dos esperas para tres intentos"
 
 
 def test_el_gancho_de_sesion_no_hace_nada_por_defecto():
