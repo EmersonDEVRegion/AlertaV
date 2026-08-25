@@ -39,6 +39,7 @@ Otros comandos:
 
 ```bash
 npm run typecheck   # tsc --noEmit
+npm test            # vitest run — tests de componentes y de geometría
 npm run build       # typecheck + build de producción (genera el service worker)
 npm run preview     # sirve dist/ — es la única forma de probar el service worker
 ```
@@ -221,6 +222,38 @@ de circuitos caídos y el mapa se pondría pesado justo cuando más se necesita
 fluido. Cuando recorta, prioriza los cortes con más clientes afectados y nunca
 descarta el que está seleccionado.
 
+### 1c-quinquies. Amenaza sísmica: capa de referencia, no de emergencia
+
+`/static/geo/amenaza_sismica_valpo.json` es el modelo probabilístico del CSN
+(MASCSN26): una grilla de celdas con `pga_475`, `pga_2475` y aceleraciones
+espectrales. Describe cuánto **puede** moverse el suelo, no lo que está pasando,
+así que todo su diseño busca que no se lea como un evento:
+
+- **Violeta**, fuera de la familia cálida que usan incendios y sismos reales.
+- **Rampa continua** sobre `pga_475` en vez de bandas: un degradado se lee como
+  campo de fondo, unos escalones duros como zonas declaradas por alguien.
+- **Dos rampas, una por tema.** Sobre fondo oscuro más amenaza es más brillante;
+  sobre fondo claro, más oscuro. Una sola rampa dejaría el extremo alto
+  invisible en uno de los dos.
+- Va en su propia sección del panel, bajo el título «Capas de referencia», y con
+  un interruptor en vez de una casilla.
+
+**Carga diferida sin re-descarga.** `useSeismicHazard` lleva dos banderas:
+`enabled` (lo que el usuario pide ahora) y `hasMounted` (si la fuente llegó a
+existir). `hasMounted` es monótona, y de ahí salen las dos propiedades: mientras
+nadie encienda la capa el `<Source>` no se monta y el archivo no se pide; una vez
+montado no se desmonta nunca, y apagar la capa sólo cambia `layout.visibility`.
+Atar el montaje directamente a `enabled` se ve idéntico y vuelve a descargar el
+archivo en cada encendido.
+
+**Jerarquía por `beforeId`, no por z-index.** MapLibre no tiene z-index: dibuja
+en el orden del arreglo de capas del estilo. Las dos capas de amenaza se anclan
+con `beforeId` a `seismic-reach-fill`, la primera capa de emergencia. Si esa
+constante deja de coincidir con una capa real, MapLibre ignora el anclaje **en
+silencio** y la amenaza pasa a taparlo todo; hay un test que ata ambos
+identificadores. Los pines de cortes son otro caso: al ser elementos del DOM
+(`<Marker>`) y no capas del lienzo, el navegador los pinta siempre por encima.
+
 ### 1d. La capa de sismos usa una escala completamente aparte
 
 `domain/seismicSymbology.ts` no comparte nada con `domain/symbology.ts`, y es a
@@ -326,6 +359,11 @@ volver, así que la app no consume batería en el bolsillo.
   de incendios; las de tráfico viven en el frontend por eso.
 - **Web Push**, reportes ciudadanos, historial y filtros por comuna quedan para
   la siguiente iteración (ver `context.md`).
+- **Tests visuales.** `npm test` cubre comportamiento y geometría bajo jsdom, que
+  no calcula layout ni renderiza píxeles. Una regresión puramente visual —un
+  color mal contrastado, un solape— no la atrapa. Falta Playwright con capturas
+  de referencia; no se pudo instalar acá porque su CDN de navegadores no es
+  alcanzable desde este entorno.
 - **Accesibilidad.** Los objetivos táctiles y `prefers-reduced-motion` están
   cubiertos; falta una pasada de contraste sobre el amarillo `single_signal`
   cuando se usa como fondo de chip.

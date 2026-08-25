@@ -143,6 +143,13 @@ export const env = {
    * un sismo no cambia de estado una vez ocurrido.
    */
   seismicPollIntervalMs: num(import.meta.env.VITE_SEISMIC_POLL_INTERVAL_MS, 180_000),
+  /**
+   * Cadencia de la capa de lluvia. La más lenta de las tres, y con margen: el
+   * collector de Open-Meteo corre cada 30 min porque los modelos globales se
+   * recalculan cada 3 a 6 horas. Pedirlo cada 5 minutos devolvería la misma
+   * foto seis veces.
+   */
+  rainPollIntervalMs: num(import.meta.env.VITE_RAIN_POLL_INTERVAL_MS, 600_000),
   /** A partir de aquí la UI avisa que el dato puede no describir el presente. */
   staleAfterMs: num(import.meta.env.VITE_STALE_AFTER_MS, 180_000),
   mapStyle: url(

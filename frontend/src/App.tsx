@@ -28,6 +28,8 @@ import { FOCUS_ZOOM, SEISMIC_FOCUS_ZOOM } from '@/config/map'
 import { toConeCollection, toReachCollection } from '@/lib/overlayGeojson'
 import { useCurrentWind } from '@/hooks/useCurrentWind'
 import { useTheme } from '@/hooks/useTheme'
+import { useRainLayer } from '@/hooks/useRainLayer'
+import { useSeismicHazard } from '@/hooks/useSeismicHazard'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { CitizenReportControl } from '@/components/report/CitizenReportControl'
 import { AppHeader } from '@/components/ui/AppHeader'
@@ -45,6 +47,15 @@ export default function App() {
   const mapRef = useRef<MapRef>(null)
 
   const { theme, toggle: toggleTheme } = useTheme()
+  const hazard = useSeismicHazard()
+  /*
+   * Lluvia pronosticada. El hook no dispara ninguna llamada hasta que alguien
+   * enciende el interruptor: `enabled` de react-query arranca en `false`, así
+   * que la capa no cuesta nada mientras nadie la mire. No confundir con
+   * `useCurrentWind`, que consulta Open-Meteo directo para el cono de un
+   * incendio seleccionado — otro dato, otro origen y otra cadencia.
+   */
+  const rain = useRainLayer()
 
   const [selectedCode, setSelectedCode] = useState<string | null>(null)
   const [selectedUsgsId, setSelectedUsgsId] = useState<string | null>(null)
@@ -255,6 +266,8 @@ export default function App() {
           theme={theme}
           reach={reachCollection}
           cone={coneCollection}
+          hazard={hazard}
+          rain={rain}
           incidents={regular}
           outages={outages}
           seismic={seismicList}
@@ -282,6 +295,17 @@ export default function App() {
           onSeismicFilterChange={setSeismicFilter}
           providers={providers}
           onProvidersChange={setProviders}
+          hazardEnabled={hazard.enabled}
+          hazardStatus={hazard.status}
+          onHazardToggle={hazard.toggle}
+          onHazardRetry={hazard.retry}
+          rainEnabled={rain.enabled}
+          rainStatus={rain.status}
+          rainCount={rain.count}
+          rainRiskCount={rain.riskCount}
+          onRainToggle={rain.toggle}
+          onRainRetry={rain.retry}
+          theme={theme}
         />
 
         {/*

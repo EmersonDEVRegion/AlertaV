@@ -1,0 +1,7 @@
+Artefactos geoespaciales estáticos, generados por scripts/ y servidos en /static.
+
+No los toca el pipeline de recolección: son capas de referencia que cambian cada
+años, no cada cinco minutos. Ver scripts/fetch_seismic_hazard.py.
+
+Este archivo existe para que el directorio viaje en git y el COPY del Dockerfile
+no falle cuando todavía no se ha generado ningún artefacto.

@@ -47,6 +47,14 @@ export default defineConfig(({ mode }) => {
       // la misma URL relativa (/api/v1). Un problema menos que depurar.
       proxy: {
         '/api': { target: apiProxyTarget, changeOrigin: true },
+        /*
+         * Las capas de referencia las sirve el backend con `StaticFiles` en
+         * `/static`. Sin esta entrada, en desarrollo la petición se queda en el
+         * servidor de Vite —que no conoce esa ruta— y devuelve el index.html
+         * con 200: el peor 404 posible, porque MapLibre recibe HTML donde
+         * esperaba GeoJSON y falla con un error de parseo desconcertante.
+         */
+        '/static': { target: apiProxyTarget, changeOrigin: true },
       },
     },
 
@@ -127,6 +135,22 @@ export default defineConfig(({ mode }) => {
                 expiration: { maxEntries: 32, maxAgeSeconds: 60 * 10 },
                 cacheableResponse: { statuses: [0, 200] },
                 matchOptions: { ignoreVary: true },
+              },
+            },
+            {
+              /*
+               * Capas de referencia: un modelo probabilístico que cambia cada
+               * varios años. `CacheFirst` con vencimiento largo porque volver a
+               * pedirlo es tráfico garantizado a cambio de nada. El artefacto
+               * lleva su versión dentro (`metadata.model`), así que una
+               * actualización llega con nombre de archivo nuevo.
+               */
+              urlPattern: /\/static\/geo\/.*\.json$/,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'alertav-geo-reference',
+                expiration: { maxEntries: 8, maxAgeSeconds: 60 * 60 * 24 * 90 },
+                cacheableResponse: { statuses: [0, 200] },
               },
             },
             {

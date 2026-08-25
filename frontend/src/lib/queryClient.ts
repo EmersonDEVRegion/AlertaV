@@ -36,4 +36,12 @@ export const queryKeys = {
     list: (params: unknown) => ['seismic', 'list', params] as const,
     stats: (hours?: number) => ['seismic', 'stats', hours ?? null] as const,
   },
+  /**
+   * Capa meteorológica del backend. Nada que ver con `api/weather.ts`, que llama
+   * a Open-Meteo directo para el viento del cono y no pasa por react-query.
+   */
+  rain: {
+    all: ['rain'] as const,
+    geojson: (params: unknown) => ['rain', 'geojson', params] as const,
+  },
 } as const

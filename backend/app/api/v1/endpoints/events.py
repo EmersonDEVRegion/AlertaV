@@ -13,7 +13,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
-from app.api.deps import IngestServiceDep, SeismicServiceDep
+from app.api.deps import IngestServiceDep, SeismicServiceDep, WeatherServiceDep
 from app.api.v1.params import parse_bbox
 from app.core.config import settings
 from app.core.ratelimit import RateLimiter, client_ip
@@ -28,6 +28,7 @@ from app.schemas.event import (
     IngestResult,
 )
 from app.schemas.seismic import SeismicEventRead, SeismicStats
+from app.schemas.weather import WeatherForecastRead, WeatherStats
 
 logger = logging.getLogger(__name__)
 
@@ -322,6 +323,110 @@ async def seismic_stats(
     hours: Annotated[int, Query(ge=1, le=720)] = 72,
 ) -> SeismicStats:
     return service.stats(await service.list_recent(hours=hours, limit=2000))
+
+
+# -- Meteorología (Open-Meteo) -----------------------------------------------
+#
+# La capa de lluvia pronosticada. Existe aparte de `/events` genérico por el
+# mismo motivo que la sísmica y por uno más:
+#
+#   * `/events/geojson` no expone `raw_data`, y todo lo que esta capa necesita
+#     —milímetros, umbral cruzado, el flag— vive ahí dentro. Sin esta ruta el
+#     frontend recibiría un punto sin ninguna de sus propiedades;
+#   * es una FOTO, no un histórico: una fila por comuna, la ventana más reciente
+#     de cada una. Eso es lo que una capa de mapa consume, y es lo que hace
+#     exacto el filtro `solo_riesgo` (ver `WeatherService.list_current`).
+#
+# La advertencia que esta capa arrastra en todos sus textos: habla del futuro.
+# `riesgo_inundacion` es un riesgo pronosticado, no una inundación en curso, y
+# las alertas las declara SENAPRED.
+#
+# IMPORTANTE: van declaradas antes de `/{public_id}`, por lo mismo que las
+# sísmicas — FastAPI resuelve por orden de registro y "weather" entraría por la
+# ruta del detalle, fallando al parsearlo como UUID.
+
+
+@router.get(
+    "/weather",
+    response_model=list[WeatherForecastRead],
+    summary="Lluvia pronosticada por comuna, con riesgo de inundación",
+    description=(
+        "Pronóstico de precipitación de las próximas horas para cada comuna de "
+        "la Región de Valparaíso, con el flag `riesgo_inundacion` ya calculado "
+        "por el backend.\n\n"
+        "**Es un pronóstico, no una emergencia.** `riesgo_inundacion: true` "
+        "significa que el modelo anuncia lluvia suficiente para que la comuna "
+        "tenga un problema; no significa que haya una inundación, y no es una "
+        "alerta oficial: esas las declara SENAPRED.\n\n"
+        "Devuelve **una fila por comuna** —la ventana más reciente de cada una— "
+        "y sólo las comunas con lluvia: una comuna ausente es una comuna seca."
+    ),
+)
+async def list_weather_forecast(
+    service: WeatherServiceDep,
+    hours: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=48,
+            description=(
+                "Holgura hacia atrás, no histórico. El pronóstico se reescribe "
+                "cada hora; 3 h cubren una corrida que llegó tarde sin arrastrar "
+                "la lluvia de anteayer al mapa de hoy."
+            ),
+        ),
+    ] = 3,
+    solo_riesgo: Annotated[
+        bool, Query(description="Sólo las comunas con `riesgo_inundacion`.")
+    ] = False,
+    limit: Annotated[int, Query(ge=1, le=2000)] = 500,
+) -> list[WeatherForecastRead]:
+    return await service.list_current(
+        hours=hours, solo_riesgo=solo_riesgo, limit=limit
+    )
+
+
+@router.get(
+    "/weather/geojson",
+    response_model=GeoJSONFeatureCollection,
+    summary="Lluvia pronosticada como GeoJSON",
+    description=(
+        "Mismo conjunto que `/events/weather`, en el formato que MapLibre GL JS "
+        "consume directamente.\n\n"
+        "`riesgo_inundacion` viaja como booleano real, así que la capa puede "
+        "filtrar con `[\"==\", [\"get\", \"riesgo_inundacion\"], true]`. "
+        "`motivos` viaja como una sola cadena: MapLibre serializa a texto "
+        "cualquier arreglo anidado en las propiedades de un feature.\n\n"
+        "Pensada para superponerse a `/incidents/geojson`: una tarde de 8 mm/h "
+        "cambia la lectura de los avisos de vía cortada que llegan esa misma "
+        "tarde."
+    ),
+)
+async def weather_geojson(
+    service: WeatherServiceDep,
+    hours: Annotated[int, Query(ge=1, le=48)] = 3,
+    solo_riesgo: Annotated[bool, Query()] = False,
+    limit: Annotated[int, Query(ge=1, le=2000)] = 500,
+) -> GeoJSONFeatureCollection:
+    return service.to_geojson(
+        await service.list_current(hours=hours, solo_riesgo=solo_riesgo, limit=limit)
+    )
+
+
+@router.get(
+    "/weather/stats",
+    response_model=WeatherStats,
+    summary="Resumen de la capa meteorológica vigente",
+    description=(
+        "Cuántas comunas tienen lluvia y cuántas cruzan un umbral, para una "
+        "tarjeta de estado. Nunca filtra por riesgo: cuenta las dos cosas."
+    ),
+)
+async def weather_stats(
+    service: WeatherServiceDep,
+    hours: Annotated[int, Query(ge=1, le=48)] = 3,
+) -> WeatherStats:
+    return service.stats(await service.list_current(hours=hours, limit=2000))
 
 
 @router.get("/{public_id}", response_model=EventRead, summary="Detalle de un evento")

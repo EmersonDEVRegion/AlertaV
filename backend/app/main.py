@@ -8,9 +8,11 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
 from app.core.config import settings
@@ -68,6 +70,31 @@ app.add_middleware(
 
 register_exception_handlers(app)
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+
+# --- Artefactos geoespaciales estáticos --------------------------------------
+#
+# Capas de referencia que no cambian cada cinco minutos: hoy el mapa de amenaza
+# sísmica del CSN, mañana los polígonos comunales. Se generan a mano con los
+# scripts de `scripts/`, se versionan en el repositorio y se sirven como
+# archivos.
+#
+# Por qué no un endpoint que lea la base: porque no hay nada que consultar. Son
+# bytes idénticos en cada petición, así que un `StaticFiles` con su `ETag` y su
+# `Last-Modified` hace que el navegador los pida una vez y después responda 304
+# — algo que un endpoint tendría que reimplementar para igualar.
+#
+# El montaje es condicional: si el directorio no existe —un checkout parcial, un
+# contenedor mal armado— la aplicación arranca igual y sólo pierde esta capa. Un
+# `RuntimeError` en el import por una capa de referencia dejaría sin API a quien
+# consulta incendios activos, que es un intercambio malo.
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+if _STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+else:  # pragma: no cover — sólo en despliegues incompletos
+    logger.warning(
+        "no se montó /static: el directorio no existe",
+        extra={"esperado": str(_STATIC_DIR)},
+    )
 
 
 @app.get("/", include_in_schema=False)

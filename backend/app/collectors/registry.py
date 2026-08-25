@@ -21,6 +21,7 @@ from app.collectors.traffic.bomberos_10_4_worker import Bomberos104Collector
 from app.collectors.traffic.transporteinforma_worker import TransporteInformaCollector
 from app.collectors.traffic.waze_worker import WazeCollector
 from app.collectors.usgs.collector import UsgsCollector
+from app.collectors.weather.openmeteo_worker import OpenMeteoCollector
 
 CollectorFactory = Callable[[AsyncSession], BaseCollector]
 
@@ -78,6 +79,18 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     WazeCollector.name: WazeCollector,
     Bomberos104Collector.name: Bomberos104Collector,
     TransporteInformaCollector.name: TransporteInformaCollector,
+    # -- Meteorología ---------------------------------------------------------
+    # La única capa que habla del futuro: emite `weather_observation`, que está
+    # FUERA de `CORRELATABLE_EVENT_TYPES` y pesa 0 en `confidence.py`. No crea
+    # incidentes ni mueve la confianza de ninguno; existe para superponerse a los
+    # cortes de ruta y a los cortes eléctricos, que es donde una tarde de 8 mm/h
+    # cambia la lectura de los avisos que llegan.
+    #
+    # Deliberadamente NO emite `flood`: ese tipo sí correlaciona y mapea a
+    # `IncidentType.FLOOD`, así que un pronóstico produciría incidentes de
+    # inundación en comunas donde no se ha inundado nada. Mismo criterio que
+    # `thermal_anomaly` con los incendios. El flag de riesgo va en el payload.
+    OpenMeteoCollector.name: OpenMeteoCollector,
     # Próximos hitos:
     #   BroadcastifyCollector.name: BroadcastifyCollector,  # STT → evento
 }

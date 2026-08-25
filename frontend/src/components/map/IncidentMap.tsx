@@ -31,6 +31,10 @@ import type { Theme } from '@/hooks/useTheme'
 import type { ConeCollection, ReachCollection } from '@/lib/overlayGeojson'
 import { toFeatureCollection } from '@/lib/geojson'
 import { OutagePinLayer } from './OutagePinLayer'
+import { RainLayer } from './RainLayer'
+import { SeismicHazardLayer } from './SeismicHazardLayer'
+import type { RainLayerState } from '@/hooks/useRainLayer'
+import type { SeismicHazardState } from '@/hooks/useSeismicHazard'
 import { toSeismicFeatureCollection } from '@/lib/seismicGeojson'
 import { attachMapDiagnostics } from '@/lib/mapDiagnostics'
 import {
@@ -86,6 +90,10 @@ interface IncidentMapProps {
   /** Polígonos derivados. Fuentes propias, separadas de la señal observada. */
   reach: ReachCollection
   cone: ConeCollection
+  /** Capa de referencia de amenaza sísmica, con su propia carga diferida. */
+  hazard: SeismicHazardState
+  /** Lluvia pronosticada. También diferida: no se pide hasta el primer encendido. */
+  rain: RainLayerState
 }
 
 export function IncidentMap({
@@ -102,6 +110,8 @@ export function IncidentMap({
   theme,
   reach,
   cone,
+  hazard,
+  rain,
 }: IncidentMapProps) {
   const [hovering, setHovering] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -233,6 +243,22 @@ export function IncidentMap({
       <ScaleControl position="bottom-left" unit="metric" />
 
       {/*
+        Amenaza sísmica: capa de referencia, la más baja de todas. El `<Source>`
+        sólo entra al árbol cuando el usuario la enciende por primera vez —de
+        ahí `hasMounted`— y a partir de entonces se queda montado para siempre:
+        apagarla vuelve a ser un cambio de `visibility`, no una descarga.
+      */}
+      {hazard.hasMounted && (
+        <SeismicHazardLayer
+          visible={hazard.enabled}
+          theme={theme}
+          attempt={hazard.attempt}
+          onLoaded={hazard.onLoaded}
+          onError={hazard.onError}
+        />
+      )}
+
+      {/*
         Polígonos derivados primero: son estimaciones calculadas y van por
         debajo de todo lo observado.
       */}
@@ -247,6 +273,26 @@ export function IncidentMap({
         <Layer {...coneFillLayer} />
         <Layer {...coneLineLayer} />
       </Source>
+
+      {/*
+        Lluvia pronosticada. Va DESPUÉS del cono en el árbol a propósito, no por
+        estética: se ancla con `beforeId` a `wind-cone-fill` —la única capa
+        propia que está montada siempre— y cuando un cambio de tema fuerza a
+        MapLibre a reconstruir el estilo, react-map-gl vuelve a añadir las capas
+        en orden de montaje. Si este bloque fuera antes, su ancla todavía no
+        existiría y MapLibre descartaría la capa en silencio.
+
+        Como la amenaza sísmica: el `<Source>` sólo entra al árbol cuando el
+        usuario la enciende por primera vez, y a partir de ahí se queda.
+      */}
+      {rain.hasMounted && (
+        <RainLayer
+          data={rain.data}
+          visible={rain.enabled}
+          theme={theme}
+          hasRisk={rain.hasRisk}
+        />
+      )}
 
       {/* Los sismos van debajo: son contexto, no el sujeto del mapa. */}
       {showSeismic && (

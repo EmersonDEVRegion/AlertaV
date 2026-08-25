@@ -11,6 +11,7 @@ from app.core.database import get_session
 from app.services.incident_service import IncidentService
 from app.services.ingest_service import IngestService
 from app.services.seismic_service import SeismicService
+from app.services.weather_service import WeatherService
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
@@ -27,6 +28,11 @@ async def get_seismic_service(session: SessionDep) -> SeismicService:
     return SeismicService(session)
 
 
+async def get_weather_service(session: SessionDep) -> WeatherService:
+    return WeatherService(session)
+
+
 IngestServiceDep = Annotated[IngestService, Depends(get_ingest_service)]
 IncidentServiceDep = Annotated[IncidentService, Depends(get_incident_service)]
 SeismicServiceDep = Annotated[SeismicService, Depends(get_seismic_service)]
+WeatherServiceDep = Annotated[WeatherService, Depends(get_weather_service)]

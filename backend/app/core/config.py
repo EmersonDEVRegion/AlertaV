@@ -328,6 +328,63 @@ class Settings(BaseSettings):
     #: minutos colgado del rate limit ajeno.
     TRANSPORTE_INFORMA_MAX_GEOCODES: int = Field(default=20, ge=1, le=200)
 
+    # -- Meteorología: lluvia y riesgo de inundación -------------------------
+    #: API de pronóstico de Open-Meteo. Sin credencial y sin registro en su nivel
+    #: abierto (10.000 llamadas/día, uso no comercial, atribución CC BY 4.0).
+    #:
+    #: Las 36 comunas viajan en UNA sola petición —`latitude` y `longitude`
+    #: aceptan listas separadas por coma— así que una corrida cuesta una llamada.
+    #: Ver `app/collectors/weather/openmeteo_client.py` para el emparejamiento
+    #: por posición, que es la parte delicada de ese ahorro.
+    OPENMETEO_URL: str = "https://api.open-meteo.com/v1/forecast"
+    #: Modelo. `best_match` deja que Open-Meteo elija por coordenada el de mayor
+    #: resolución disponible, que para Chile central son los globales de 9-11 km.
+    #: Fijar uno concreto (`ecmwf_ifs025`, `gfs_seamless`) sólo tiene sentido para
+    #: comparar pronósticos, no para operar.
+    OPENMETEO_MODEL: str = "best_match"
+    OPENMETEO_TIMEOUT_SECONDS: float = 30.0
+    #: Cadencia. 30 minutos, y no los 300 s de las fuentes de siniestros, porque
+    #: la naturaleza del dato es otra: los modelos globales se recalculan cada 3 a
+    #: 6 horas, así que preguntar cada cinco minutos devolvería treinta y cinco
+    #: veces el mismo número. Media hora acota el retraso frente a un ciclo nuevo
+    #: a 30 minutos y gasta 48 llamadas al día de las 10.000 disponibles.
+    #:
+    #: El piso de 300 s no es capricho: por debajo de eso no hay ganancia posible
+    #: —el modelo no ha cambiado— y sí un servicio ajeno consultado de más.
+    #: Bajarlo durante un temporal no sirve; lo que sirve es que la ventana de
+    #: 24 h se recalcula en cada corrida.
+    OPENMETEO_POLL_INTERVAL_SECONDS: int = Field(default=1800, ge=300, le=86_400)
+    #: Días de pronóstico a pedir. Dos, no uno: la ventana de 24 h que se evalúa
+    #: es móvil, así que a las 22:00 hacen falta las horas de mañana. Pedir siete
+    #: días sería traer seis de payload que nadie mira.
+    OPENMETEO_FORECAST_DAYS: int = Field(default=2, ge=1, le=7)
+    #: Horas hacia adelante que se evalúan.
+    OPENMETEO_WINDOW_HOURS: int = Field(default=24, ge=1, le=48)
+    #: Comunas a consultar. Vacío = las 36 continentales de
+    #: `app/collectors/weather/comunas.py`. Formato `nombre|lat|lon`, separando
+    #: varias con `;` — el mismo que `FIRMS_SOURCES` y compañía.
+    OPENMETEO_COMUNAS: str = ""
+    #: Umbrales de `riesgo_inundacion`. Cualquiera de los tres levanta el flag.
+    #: NO son umbrales oficiales de la DMC ni de SENAPRED: son una hipótesis
+    #: calibrable, elegida por la geografía del caso (cerros con pendiente fuerte,
+    #: quebradas canalizadas, drenaje urbano antiguo). La forma de fijarlos es
+    #: cruzar esta capa con los avisos de vía cortada de Transporte Informa a lo
+    #: largo de un invierno. Ver el encabezado de `weather/umbrales.py`.
+    OPENMETEO_INTENSITY_MM_H: float = Field(default=5.0, gt=0.0, le=200.0)
+    OPENMETEO_ACCUM_3H_MM: float = Field(default=15.0, gt=0.0, le=500.0)
+    OPENMETEO_ACCUM_24H_MM: float = Field(default=40.0, gt=0.0, le=1000.0)
+    #: Milímetros en la ventana por debajo de los cuales la comuna no genera
+    #: evento. Sin este piso, 36 comunas × 48 corridas al día llenarían
+    #: `raw_events` de filas que dicen "no llovió".
+    OPENMETEO_MIN_INGEST_MM: float = Field(default=0.2, ge=0.0, le=100.0)
+    #: Desvío máximo, en grados, entre el punto pedido y el centro de la celda de
+    #: grilla que devuelve la API. Por encima de eso se avisa: es la guarda contra
+    #: que la respuesta llegue en otro orden que el pedido, que es lo único que
+    #: empareja cada pronóstico con su comuna. 0.5° ≈ 50 km, holgado a propósito
+    #: —una celda de 11 km en la costa puede caer lejos— para que el aviso
+    #: signifique "el orden se movió" y no "la grilla es gruesa".
+    OPENMETEO_MAX_DRIFT_DEGREES: float = Field(default=0.5, gt=0.0, le=10.0)
+
     # -- Gemini: extracción de entidades desde texto libre -------------------
     #: Clave de la API de Google AI Studio. Vacía = el extractor cae a la
     #: heurística de reglas y lo deja anotado en cada señal. No se apaga el

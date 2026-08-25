@@ -47,6 +47,15 @@ export const FOCUS_ZOOM = 14.5
  */
 export const SEISMIC_FOCUS_ZOOM = 9.5
 
+/**
+ * Capa de referencia de amenaza sísmica, servida por el backend en `/static`.
+ *
+ * Ruta relativa a propósito: en producción la sirve el mismo origen que la API
+ * y en desarrollo la reenvía el proxy de Vite. Una URL absoluta obligaría a
+ * configurar CORS para un archivo estático.
+ */
+export const HAZARD_SOURCE_URL = '/static/geo/amenaza_sismica_valpo.json'
+
 export const MAP_STYLE_URL = env.mapStyle
 export const MAP_STYLE_URL_DARK = env.mapStyleDark
 

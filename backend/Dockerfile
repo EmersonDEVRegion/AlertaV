@@ -79,6 +79,11 @@ RUN useradd --create-home --uid 10001 alertav
 
 # Código y todo lo que necesitan las migraciones.
 COPY --chown=alertav:alertav app/ ./app/
+# Artefactos geoespaciales estáticos (mapa de amenaza sísmica, etc.). Van fuera
+# de `app/` porque son datos, no código, y se sirven en `/static`. El directorio
+# viaja siempre en git gracias a su `.gitkeep`: sin él, este COPY fallaría el
+# build en un checkout donde todavía no se ha generado ningún artefacto.
+COPY --chown=alertav:alertav static/ ./static/
 COPY --chown=alertav:alertav migrations/ ./migrations/
 COPY --chown=alertav:alertav alembic.ini pyproject.toml ./
 COPY --chown=alertav:alertav start.sh ./
