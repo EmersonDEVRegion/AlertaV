@@ -583,12 +583,15 @@ def test_normalize_mantiene_el_invariante_aunque_fetch_ya_filtre():
 # El endpoint de Chilquinta no es un feed abierto: es la ruta XHR del visor. Se
 # consulta por GET, sin cuerpo, y la consulta se reparte entre tres cabeceras
 # —API key, código de filial y orden buscada— y un único parámetro de query,
-# `?orderId=`.
+# `?orderId=0`.
 #
-# Ese parámetro es obligatorio aunque vaya vacío: sin él el servidor responde
+# Ese parámetro es obligatorio y **con valor**: sin él el servidor responde
 # `400 {"error":"Missing required request parameters: [orderId]"}`, incluso con
-# la cabecera `X-Orden-Buscada` presente. Que el mismo dato tenga que ir dos
-# veces es redundancia del backend de Chilquinta, y se replica tal cual.
+# la cabecera `X-Orden-Buscada` presente. Y `?orderId=` vacío recibe ese mismo
+# 400, porque el API Gateway que valida los obligatorios cuenta un valor de
+# longitud cero como una ausencia. De ahí que el centinela de "todas las
+# órdenes" sea `"0"`. Que el mismo dato tenga que ir dos veces —cabecera y
+# query— es redundancia del backend de Chilquinta, y se replica tal cual.
 #
 # Nada de esto se puede verificar contra el servidor real desde la suite, así
 # que lo que se prueba acá es que la petición **sale armada como se descubrió**,
@@ -625,6 +628,7 @@ def test_chilquinta_consulta_por_get():
 def test_las_tres_cabeceras_de_la_consulta_van_completas():
     """Acá las cabeceras son los parámetros: si falta una, la consulta es otra."""
     from app.collectors.power.chilquinta_worker import (
+        ALL_ORDERS,
         API_KEY_HEADER,
         COMPANY_HEADER,
         ORDER_HEADER,
@@ -639,19 +643,22 @@ def test_las_tres_cabeceras_de_la_consulta_van_completas():
     cabeceras = ruta.calls[0].request.headers
     assert cabeceras[API_KEY_HEADER] == API_KEY_FALSA
     assert cabeceras[COMPANY_HEADER] == "006"
-    assert cabeceras[ORDER_HEADER] == ""
+    assert cabeceras[ORDER_HEADER] == ALL_ORDERS
 
 
 @respx.mock
-def test_la_orden_vacia_se_manda_y_no_se_omite():
-    """`X-Orden-Buscada: ""` es un valor, no una ausencia.
+def test_la_cabecera_de_orden_dice_lo_mismo_que_la_url():
+    """`X-Orden-Buscada` y `?orderId=` tienen que coincidir.
 
-    Es lo que envía el visor para pedir el mapa completo. Omitir la cabecera y
-    mandarla vacía no son lo mismo para este endpoint, y como una cadena vacía
-    parece basura, este test existe para que nadie la "limpie" sin enterarse de
-    que cambia la consulta.
+    No sabemos cuál de las dos lee el backend —el 400 sólo delató la de la URL—,
+    así que la única postura defendible es que digan lo mismo. Si divergieran, la
+    consulta significaría una cosa para el gateway y otra para la aplicación, y
+    el día que eso importe el síntoma sería una lista vacía, no un error.
+
+    Se comprueba contra la URL saliente y no contra la constante para que el test
+    siga sirviendo si mañana el centinela vuelve a cambiar de valor.
     """
-    from app.collectors.power.chilquinta_worker import ORDER_HEADER
+    from app.collectors.power.chilquinta_worker import ORDER_HEADER, ORDER_PARAM
 
     ruta = responde_vacio()
 
@@ -659,26 +666,44 @@ def test_la_orden_vacia_se_manda_y_no_se_omite():
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    assert ORDER_HEADER in ruta.calls[0].request.headers
+    peticion = ruta.calls[0].request
+    assert ORDER_HEADER in peticion.headers, "omitir la cabecera no es mandarla"
+    assert peticion.headers[ORDER_HEADER] == peticion.url.params[ORDER_PARAM]
+
+
+def test_el_centinela_de_todas_las_ordenes_no_puede_ser_vacio():
+    """`ALL_ORDERS = ""` es exactamente el bug que produjo el 400 del gateway.
+
+    El validador del API Gateway comprueba los parámetros obligatorios antes de
+    enrutar y trata un valor de longitud cero como un parámetro inexistente:
+    `?orderId=` recibe el mismo `Missing required request parameters: [orderId]`
+    que no mandarlo. Como `""` es lo que uno escribiría intuitivamente para "sin
+    filtro", este test fija la decisión donde se toma.
+    """
+    from app.collectors.power.chilquinta_worker import ALL_ORDERS
+
+    assert ALL_ORDERS == "0"
+    assert len(ALL_ORDERS) > 0, "un valor vacío es, para el gateway, un parámetro ausente"
 
 
 @respx.mock
-def test_el_orderid_vacio_viaja_en_la_url():
-    """`?orderId=` es obligatorio aunque vaya vacío.
+def test_el_orderid_viaja_en_la_url_y_con_valor():
+    """`?orderId=0` es obligatorio, y el `0` es tan obligatorio como la clave.
 
-    Sin él, el endpoint responde
+    Sin el parámetro, el endpoint responde
     `400 {"error":"Missing required request parameters: [orderId]"}` — y lo hace
     aunque `X-Orden-Buscada` esté presente, así que la cabecera no lo sustituye.
+    Con el parámetro pero vacío responde exactamente lo mismo: el validador del
+    API Gateway cuenta un valor de longitud cero como una ausencia.
 
-    Se comprueba sobre la URL cruda y no sobre `params`, porque el riesgo real
-    está en el camino: httpx podría descartar un parámetro de valor vacío al
-    serializar y el fallo sería un 400 en producción, no acá — que es justo lo
-    que pasó cuando el parámetro dependía de `request_payload()`.
+    Se comprueba sobre la URL cruda y no sobre `params` porque el riesgo real
+    está en el camino: entre `request_url()` y el socket hay tres capas que
+    pueden comerse una query, y el fallo aparecería como un 400 en producción y
+    no acá — que es justo lo que pasó dos veces.
 
     La aserción es sobre la URL saliente **entera** y no sólo sobre la query: lo
-    que falló en producción fue la dirección completa, y es la forma de que este
-    test se entere si mañana el `?orderId=` sobrevive pero el host o la ruta
-    cambian.
+    que falló en producción fue la dirección completa, y así este test se entera
+    también si mañana el `?orderId=0` sobrevive pero cambian el host o la ruta.
     """
     ruta = responde_vacio()
 
@@ -687,9 +712,9 @@ def test_el_orderid_vacio_viaja_en_la_url():
     asyncio.run(instancia.fetch())
 
     assert str(ruta.calls[0].request.url) == (
-        "https://mapainterrupciones.chilquinta.cl/obtieneImage?orderId="
+        "https://mapainterrupciones.chilquinta.cl/obtieneImage?orderId=0"
     )
-    assert ruta.calls[0].request.url.query == b"orderId="
+    assert ruta.calls[0].request.url.query == b"orderId=0"
 
 
 @respx.mock
@@ -727,14 +752,15 @@ def test_el_orderid_lo_garantiza_la_url_y_no_el_payload():
     assert instancia.request_payload() == {}, (
         "un payload con claves hace que httpx reemplace la query de la URL"
     )
-    assert instancia.request_url() == f"{CHILQUINTA_URL}?orderId="
+    assert instancia.request_url() == f"{CHILQUINTA_URL}?orderId=0"
 
 
 def test_la_url_efectiva_es_exactamente_la_del_endpoint():
     """La dirección literal que espera Chilquinta, carácter por carácter.
 
-    Se fija así de duro a propósito: el 400 de producción era exactamente la
-    diferencia entre esta cadena y la misma sin `?orderId=`.
+    Se fija así de duro a propósito: los dos 400 de producción fueron exactamente
+    la diferencia entre esta cadena y dos variantes suyas —sin `?orderId=` la
+    primera vez, con el parámetro vacío la segunda—.
     """
     instancia = collector()
     # La URL configurada, no la constante del test: así lo que se comprueba es la
@@ -742,27 +768,45 @@ def test_la_url_efectiva_es_exactamente_la_del_endpoint():
     instancia.url = settings.CHILQUINTA_API_URL
 
     assert instancia.request_url() == (
-        "https://mapainterrupciones.chilquinta.cl/obtieneImage?orderId="
+        "https://mapainterrupciones.chilquinta.cl/obtieneImage?orderId=0"
     )
 
 
-def test_un_orderid_ya_presente_en_la_url_no_se_duplica():
+def test_un_orderid_ya_presente_y_con_valor_se_respeta():
     """Idempotencia: el `.env` puede traerlo y el worker lo añade igual.
 
-    Si las dos capas escribieran, saldría `?orderId=&orderId=` — no es lo que
-    manda el visor y no hay motivo para averiguar cómo lo interpreta el backend.
+    Si las dos capas escribieran, saldría `?orderId=0&orderId=0` y no hay motivo
+    para averiguar cómo interpreta el backend un parámetro repetido.
+
+    Un valor distinto del centinela también se respeta: es alguien consultando
+    una orden concreta a propósito, y este helper no está para opinar sobre eso.
     """
     from app.collectors.power.chilquinta_worker import con_order_id
 
-    ya_lo_trae = f"{CHILQUINTA_URL}?orderId="
+    assert con_order_id(f"{CHILQUINTA_URL}?orderId=0") == f"{CHILQUINTA_URL}?orderId=0"
+    assert (
+        con_order_id(f"{CHILQUINTA_URL}?orderId=88231")
+        == f"{CHILQUINTA_URL}?orderId=88231"
+    )
 
-    assert con_order_id(ya_lo_trae) == ya_lo_trae
+
+def test_un_orderid_vacio_en_la_url_se_corrige_en_vez_de_conservarse():
+    """El caso que importa: la clave está, pero con el valor que el gateway rechaza.
+
+    Puede llegar de un `.env` "ya arreglado" a mano durante el incidente anterior.
+    Conservarlo por parecer intencional reproduce el mismo
+    `Missing required request parameters: [orderId]` y el parche parecería no
+    haber servido: para el validador, un valor de longitud cero es una ausencia.
+    """
+    from app.collectors.power.chilquinta_worker import con_order_id
+
+    assert con_order_id(f"{CHILQUINTA_URL}?orderId=") == f"{CHILQUINTA_URL}?orderId=0"
 
 
 def test_el_orderid_se_suma_a_una_query_existente():
-    """Concatenar `"?orderId="` a ciegas rompería una URL que ya tenga query.
+    """Concatenar `"?orderId=0"` a ciegas rompería una URL que ya tenga query.
 
-    `…/obtieneImage?v=2` + `"?orderId="` da `…?v=2?orderId=`, que no es una URL
+    `…/obtieneImage?v=2` + `"?orderId=0"` da `…?v=2?orderId=0`, que no es una URL
     válida y que provocaría el mismo 400 que se está evitando. Por eso la URL se
     arma con `urlsplit`/`urlencode` y no pegando cadenas.
     """
@@ -770,7 +814,7 @@ def test_el_orderid_se_suma_a_una_query_existente():
 
     resultado = con_order_id(f"{CHILQUINTA_URL}?v=2")
 
-    assert resultado == f"{CHILQUINTA_URL}?v=2&orderId="
+    assert resultado == f"{CHILQUINTA_URL}?v=2&orderId=0"
 
 
 @respx.mock

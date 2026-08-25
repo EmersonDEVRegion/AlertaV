@@ -15,14 +15,18 @@ porque ninguna se deduce leyendo el código:
    imagen: devuelve el JSON de los cortes. No es una errata al transcribirla.
    Es ofuscación por oscuridad, y alguien que "corrija" el nombre romperá el
    collector.
-2. **Es un GET cuyos filtros van en cabeceras, más un `?orderId=` obligatorio.**
+2. **Es un GET cuyos filtros van en cabeceras, más un `?orderId=0` obligatorio.**
    Casi toda la consulta viaja como **cabeceras propias** —segunda capa de la
    misma ofuscación: un GET a una URL casi desnuda no delata qué se pide, y
    quien mire el tráfico por encima no ve un `?emp=006` que copiar—. La
    excepción es `?orderId=`: sin ese parámetro en la URL el servidor responde
    `400 {"error":"Missing required request parameters: [orderId]"}` aunque la
-   cabecera `X-Orden-Buscada` vaya presente y vacía. Por eso el parámetro se
-   añade a la **URL** (`request_url`) y no al payload: ver allí.
+   cabecera `X-Orden-Buscada` vaya presente. Por eso el parámetro se añade a la
+   **URL** (`request_url`) y no al payload: ver allí.
+   Y no basta con que el parámetro exista: tiene que traer un valor de longitud
+   mayor que cero. El API Gateway que hay delante valida los obligatorios antes
+   de enrutar y cuenta `?orderId=` como ausente, con el mismo 400. De ahí que el
+   centinela de "todas las órdenes" sea `"0"` y no `""` — ver `ALL_ORDERS`.
 3. **Exige una API key estática** en la cabecera `x-api-key`. Estática quiere
    decir que viene incrustada en el bundle del visor: es un identificador de
    cliente, no un secreto de usuario, y no autoriza a nada que el visor público
@@ -35,13 +39,18 @@ Toda la consulta cabe en tres cabeceras y ninguna es opcional:
 
     x-api-key         credencial; sin ella, 401
     X-Company-Code    filial a consultar. 006 = Chilquinta
-    X-Orden-Buscada   orden de trabajo concreta, o "" para pedirlas todas
+    X-Orden-Buscada   orden de trabajo concreta, o "0" para pedirlas todas
 
-`X-Orden-Buscada` vacía **no es un descuido**: es el valor que manda el visor al
-cargar el mapa completo, y es el que nos interesa. Omitir la cabecera y mandarla
-vacía no son lo mismo para este endpoint, así que se envía siempre — ver
-`request_headers`, donde está la nota para quien sienta la tentación de
-"limpiarla".
+`X-Orden-Buscada` va siempre, nunca se omite: omitir la cabecera y mandarla con
+el centinela no son lo mismo para este endpoint. Su valor es el mismo
+`ALL_ORDERS` que viaja en la URL, para que la cabecera y el query digan lo mismo
+— el backend lee uno de los dos y no sabemos cuál.
+
+Esa cabecera llevó `""` mientras se creyó que era lo que manda el visor. Se
+cambió a `"0"` junto con el parámetro de query, por coherencia entre ambos. Es
+la parte **menos** verificada de todo esto: el 400 del gateway hablaba del query
+string, no de la cabecera. Si algún día llegan respuestas vacías en vez de
+errores, sospechar acá primero — ver la nota en `request_headers`.
 
 Qué sigue sin verificarse
 -------------------------
@@ -74,45 +83,65 @@ API_KEY_HEADER = "x-api-key"
 #: Cabecera con la filial a consultar. Reemplaza al viejo `?emp=006`.
 COMPANY_HEADER = "X-Company-Code"
 
-#: Cabecera que acota la consulta a una orden de trabajo. Vacía = todas.
+#: Cabecera que acota la consulta a una orden de trabajo. `ALL_ORDERS` = todas.
 ORDER_HEADER = "X-Orden-Buscada"
 
 #: Parámetro de query con el mismo significado que `ORDER_HEADER`. El endpoint
 #: exige los dos: sin el de la URL responde
 #: `400 {"error":"Missing required request parameters: [orderId]"}`, aunque la
-#: cabecera vaya presente y vacía. Es redundancia del backend de Chilquinta, no
-#: nuestra — se replica al pie de la letra porque adivinar cuál de los dos manda
-#: cuesta un 400 por corrida.
+#: cabecera vaya presente. Es redundancia del backend de Chilquinta, no nuestra
+#: — se replica al pie de la letra porque adivinar cuál de los dos manda cuesta
+#: un 400 por corrida.
 ORDER_PARAM = "orderId"
 
 #: Valor de `X-Orden-Buscada` y de `?orderId=` cuando se quiere el mapa
-#: completo, que es siempre en este collector. Se nombra en vez de escribir `""`
-#: suelto porque una cadena vacía en medio de un diccionario parece un olvido y
-#: no una decisión.
-ALL_ORDERS = ""
+#: completo, que es siempre en este collector.
+#:
+#: **Es `"0"` y no `""`, y la diferencia costó dos despliegues.** El API Gateway
+#: que hay delante del backend valida los parámetros obligatorios *antes* de
+#: enrutar, y para él un parámetro de longitud cero no existe: `?orderId=` recibe
+#: el mismo `400 {"error":"Missing required request parameters: [orderId]"}` que
+#: no mandar nada. `"0"` tiene longitud y pasa el validador.
+#:
+#: Se nombra en vez de escribir `"0"` suelto porque un cero literal en medio de
+#: una URL parece un número de orden real, y no un centinela.
+ALL_ORDERS = "0"
 
 
 def con_order_id(url: str) -> str:
-    """`url` con `?orderId=` garantizado, sin tocar lo que ya traiga.
+    """`url` con un `orderId` **no vacío** garantizado.
 
-    Es idempotente a propósito: si la URL configurada ya declara `orderId` —en
-    el `.env` de producción, por ejemplo— se devuelve tal cual, así que añadir
-    el parámetro en los dos sitios no produce `?orderId=&orderId=`.
+    Tres casos y una regla para cada uno:
 
-    Se manipula la URL con `urlsplit`/`urlencode` y no concatenando `"?orderId="`
+    * no hay `orderId` → se añade `ALL_ORDERS`;
+    * hay `orderId` pero vacío → se **reemplaza** por `ALL_ORDERS`;
+    * hay `orderId` con valor → se respeta, porque es alguien consultando una
+      orden concreta a propósito.
+
+    El caso del medio es el que importa y el que no es obvio. Una versión
+    anterior devolvía la URL intacta en cuanto veía la clave, sin mirar el valor:
+    conservaba el `?orderId=` vacío que hoy sabemos que el API Gateway rechaza,
+    así que un `.env` con la URL "ya arreglada" seguiría produciendo el 400 y el
+    parche parecería no haber servido. Preservar la clave no basta; lo que el
+    validador cuenta es la longitud del valor.
+
+    Se manipula la URL con `urlsplit`/`urlencode` y no concatenando `"?orderId=0"`
     porque la concatenación asume que la URL no tiene query, y el día que alguien
-    configure `…/obtieneImage?v=2` produciría `…?v=2?orderId=`, que no es una
+    configure `…/obtieneImage?v=2` produciría `…?v=2?orderId=0`, que no es una
     URL válida y que el servidor rechazaría con el mismo 400 que se está
     intentando evitar.
     """
     partes = urlsplit(url)
-    # `keep_blank_values` porque el valor que nos importa es precisamente vacío:
-    # sin esto, un `?orderId=` ya presente se leería como ausente y se duplicaría.
+    # `keep_blank_values` para *ver* un `orderId=` vacío en vez de que `parse_qsl`
+    # lo descarte: hay que distinguirlo de la ausencia para poder corregirlo.
     consulta = parse_qsl(partes.query, keep_blank_values=True)
-    if any(clave == ORDER_PARAM for clave, _ in consulta):
-        return url
-    consulta.append((ORDER_PARAM, ALL_ORDERS))
-    return urlunsplit(partes._replace(query=urlencode(consulta)))
+    corregida = [
+        (clave, ALL_ORDERS if clave == ORDER_PARAM and not valor else valor)
+        for clave, valor in consulta
+    ]
+    if not any(clave == ORDER_PARAM for clave, _ in corregida):
+        corregida.append((ORDER_PARAM, ALL_ORDERS))
+    return urlunsplit(partes._replace(query=urlencode(corregida)))
 
 
 def _require_api_key() -> str:
@@ -139,8 +168,9 @@ class ChilquintaCollector(BasePowerOutageCollector):
     company = "chilquinta"
     url_setting = "CHILQUINTA_API_URL"
     default_interval_seconds = 300
-    #: GET a una URL desnuda: los filtros van en cabeceras, no en el query
-    #: string ni en el cuerpo. Ver `request_headers` y `request_payload`.
+    #: GET sin cuerpo: los filtros van en cabeceras y en el `?orderId=`
+    #: obligatorio de la URL. Ver `request_headers`, `request_url` y
+    #: `request_payload`.
     http_method = "GET"
 
     def __init__(self, session: Any) -> None:
@@ -155,18 +185,28 @@ class ChilquintaCollector(BasePowerOutageCollector):
     def request_headers(self) -> dict[str, str]:
         """Las de la familia más las tres que definen la consulta.
 
-        En este endpoint las cabeceras **son** los parámetros: no hay query
-        string ni cuerpo, así que lo que se arma acá es la petición entera.
+        Junto con el `?orderId=` de `request_url()`, estas cabeceras **son** los
+        parámetros: no hay cuerpo, así que entre las dos piezas se arma la
+        petición entera.
 
         Tres decisiones que no se ven en el resultado:
 
         * La llave se lee de `settings` en cada petición en vez de guardarse en
           la instancia. Si rota, basta reiniciar el proceso con el `.env` nuevo y
           no queda una copia vieja escondida en un atributo.
-        * `X-Orden-Buscada` va vacía y **eso es deliberado**. Es lo que manda el
-          visor para pedir el mapa completo; omitir la cabecera no es equivalente
-          a mandarla vacía. Si alguien la borra por parecer basura, la consulta
-          cambia de significado.
+        * `X-Orden-Buscada` lleva `ALL_ORDERS` —el mismo valor que el query
+          string— y **se envía siempre**: omitir la cabecera no es equivalente a
+          mandarla con el centinela, así que si alguien la borra por parecer
+          basura, la consulta cambia de significado.
+
+          Ese valor pasó de `""` a `"0"` cuando el API Gateway rechazó el
+          parámetro vacío. **La cabecera se cambió por coherencia, no por
+          evidencia**: el 400 nombraba el query string. El riesgo, si Chilquinta
+          la lee de verdad, no es un error sino un silencio — una lista vacía
+          interpretada como "no hay cortes". Si esto empieza a devolver cero
+          cortes de forma sostenida en una región donde siempre hay alguno,
+          probar `""` acá manteniendo `"0"` en la URL antes de buscar en
+          cualquier otro sitio.
         * Nada de esto llega a `run_params()`, y por tanto nada llega a
           `collector_runs`. Una credencial en la traza es una credencial visible
           para cualquiera que consulte el historial de corridas.
@@ -181,20 +221,22 @@ class ChilquintaCollector(BasePowerOutageCollector):
         return headers
 
     def request_url(self) -> str:
-        """La URL configurada **más** `?orderId=`, siempre.
+        """La URL configurada **más** `?orderId=0`, siempre.
 
-        Este parámetro es obligatorio aunque vaya vacío: sin él el endpoint
-        responde `400 {"error":"Missing required request parameters: [orderId]"}`
-        incluso con `X-Orden-Buscada` presente y vacía. Que el mismo dato tenga
-        que ir en la cabecera *y* en la URL es redundancia del backend de
-        Chilquinta; no hay forma de saber cuál de las dos lee sin provocar el
+        Este parámetro es obligatorio y además tiene que traer valor: sin él —o
+        con él vacío— el endpoint responde
+        `400 {"error":"Missing required request parameters: [orderId]"}` incluso
+        con `X-Orden-Buscada` presente, porque el API Gateway valida antes de
+        enrutar y para él un valor de longitud cero es una ausencia. Que el mismo
+        dato tenga que ir en la cabecera *y* en la URL es redundancia del backend
+        de Chilquinta; no hay forma de saber cuál de las dos lee sin provocar el
         400, así que van las dos.
 
         Va acá y no en `request_payload()`, que es donde estuvo primero y donde
         no sobrevivió a producción. El camino del payload tiene dos puntos donde
         una query se evapora en silencio:
 
-        * `load_records()` descarta el payload cuando es falsy, y `{"orderId": ""}`
+        * `load_records()` descarta el payload cuando es falsy, y `{"orderId": …}`
           es fácil de "simplificar" a `{}` en una limpieza bienintencionada;
         * `request_response` sólo pasa `params` a httpx cuando el diccionario
           tiene claves, porque httpx **reemplaza** la query de la URL con lo que
@@ -216,12 +258,12 @@ class ChilquintaCollector(BasePowerOutageCollector):
         **No devolver `{ORDER_PARAM: ALL_ORDERS}` acá.** Un payload con claves
         hace que `load_records()` se lo pase a httpx como `params`, y httpx
         *reemplaza* la query de la URL con lo que reciba — es decir, el
-        `?orderId=` que `request_url()` acaba de garantizar pasaría a depender
+        `?orderId=0` que `request_url()` acaba de garantizar pasaría a depender
         otra vez de este diccionario. Vacío, la guarda de `request_response`
         manda `params=None` y la query de la URL llega intacta.
 
-        El resultado por el cable es el mismo `…/obtieneImage?orderId=` de
-        siempre; lo que cambia es quién lo garantiza.
+        Lo que sale por el cable es `…/obtieneImage?orderId=0`; quien lo
+        garantiza es `request_url()`, no este método.
         """
         return {}
 
