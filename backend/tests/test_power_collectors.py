@@ -26,7 +26,16 @@ from app.collectors.power.base_worker import (
     build_text,
 )
 from app.collectors.power.cge_worker import CgeCollector
-from app.collectors.power.chilquinta_worker import ChilquintaCollector
+from app.collectors.power.chilquinta_worker import (
+    ACCEPT_HEADER,
+    ALL_ORDERS,
+    API_KEY_HEADER,
+    JSON_ACCEPT,
+    REFERER_HEADER,
+    SESSION_COOKIE,
+    ChilquintaCollector,
+    origen_de,
+)
 from app.collectors.power.outage_parser import (
     PowerOutage,
     build_external_id,
@@ -84,6 +93,34 @@ def registro(**overrides) -> dict:
     }
     base.update(overrides)
     return base
+
+
+#: Valor ficticio de la cookie de sesión que emite el visor al cargarse.
+SESION_FALSA = "s3s10n-f4ls4"
+
+
+def prepara_sesion(url: str = ""):
+    """Mock de la raíz del visor: responde el HTML y emite la cookie de sesión.
+
+    Hace falta en **todo** test que llegue a la red por el camino de Chilquinta,
+    porque el collector visita la raíz antes de pedir los datos. Que respx exija
+    mockearla es exactamente la propiedad que se quiere: si alguien borra el
+    priming, estas rutas dejan de llamarse y los tests que lo comprueban fallan;
+    si alguien lo añade a otra fuente sin querer, aparece una petición
+    inesperada.
+
+    La raíz se deriva de la URL de datos con la misma función que usa el
+    collector: si el derivado cambiara, el mock y el código cambiarían juntos y
+    el test no se enteraría — de eso se encarga `test_la_raiz_se_deriva_del_endpoint`,
+    que fija la cadena literal.
+    """
+    return respx.get(origen_de(url or CHILQUINTA_URL)).mock(
+        return_value=httpx.Response(
+            200,
+            headers={"set-cookie": f"{SESSION_COOKIE}={SESION_FALSA}; path=/"},
+            text="<!doctype html><html><body>visor</body></html>",
+        )
+    )
 
 
 # --- Formas del sobre --------------------------------------------------------
@@ -471,6 +508,7 @@ def test_el_filtro_espacial_actua_en_la_extraccion():
     actuar sobre lo que la red devuelve, no sólo sobre registros armados a mano.
     """
     url = "https://feed.test/cortes"
+    prepara_sesion(url)
     respx.get(url).mock(
         return_value=httpx.Response(
             200, json={"data": [registro(), *outside_records()]}
@@ -519,6 +557,7 @@ def test_un_feed_entero_fuera_de_region_no_es_una_degradacion():
     señal de que el esquema cambió y merece `partial`.
     """
     url = "https://feed.test/cortes"
+    prepara_sesion(url)
     # `route` y no `get`: lo que este test comprueba —el filtro espacial, el
     # parseo— es común a las dos distribuidoras, sea cual sea su transporte.
     respx.route(url=url).mock(
@@ -536,6 +575,7 @@ def test_un_feed_entero_fuera_de_region_no_es_una_degradacion():
 @respx.mock
 def test_un_feed_ilegible_si_avisa():
     url = "https://feed.test/cortes"
+    prepara_sesion(url)
     # `route` y no `get`: lo que este test comprueba —el filtro espacial, el
     # parseo— es común a las dos distribuidoras, sea cual sea su transporte.
     respx.route(url=url).mock(
@@ -578,20 +618,25 @@ def test_normalize_mantiene_el_invariante_aunque_fetch_ya_filtre():
     assert collector().normalize([lejano]) == []
 
 
-# --- El transporte: un GET con cabeceras y un parámetro obligatorio ----------
+# --- El transporte: una sesión, cabeceras de navegador y un centinela --------
 #
-# El endpoint de Chilquinta no es un feed abierto: es la ruta XHR del visor. Se
-# consulta por GET, sin cuerpo, y la consulta se reparte entre tres cabeceras
-# —API key, código de filial y orden buscada— y un único parámetro de query,
-# `?orderId=0`.
+# El endpoint de Chilquinta no es un feed abierto: es la ruta XHR del visor, y
+# por tanto no espera una petición sino la *segunda* petición de una sesión. La
+# consulta se reparte entre cinco cabeceras —API key, código de filial, orden
+# buscada, `Referer` y `Accept`—, un único parámetro de query, `?orderId=null`,
+# y una cookie que nadie escribe a mano.
 #
-# Ese parámetro es obligatorio y **con valor**: sin él el servidor responde
-# `400 {"error":"Missing required request parameters: [orderId]"}`, incluso con
-# la cabecera `X-Orden-Buscada` presente. Y `?orderId=` vacío recibe ese mismo
-# 400, porque el API Gateway que valida los obligatorios cuenta un valor de
-# longitud cero como una ausencia. De ahí que el centinela de "todas las
-# órdenes" sea `"0"`. Que el mismo dato tenga que ir dos veces —cabecera y
-# query— es redundancia del backend de Chilquinta, y se replica tal cual.
+# Hay dos servidores rechazando cosas distintas y los tests de acá abajo fijan
+# lo que aprendió cada uno:
+#
+#   API Gateway (400, en inglés)   `?orderId=` vacío = parámetro ausente.
+#   Laravel     (401, en español)  sin sesión ni `Referer`, "Esta petición no
+#                                  esta autorizada"; y `orderId=0` lo trata como
+#                                  una orden ajena y la Policy la deniega.
+#
+# De ahí las tres piezas que se prueban por separado, porque son independientes
+# y el día que vuelva el 401 hay que poder descartarlas de a una: el priming de
+# la raíz, las cabeceras de navegador y el centinela `"null"`.
 #
 # Nada de esto se puede verificar contra el servidor real desde la suite, así
 # que lo que se prueba acá es que la petición **sale armada como se descubrió**,
@@ -601,9 +646,21 @@ def test_normalize_mantiene_el_invariante_aunque_fetch_ya_filtre():
 
 CHILQUINTA_URL = "https://mapainterrupciones.chilquinta.cl/obtieneImage"
 
+#: La página del visor. El collector la deriva de la URL de datos; acá se
+#: escribe entera para que el test note un derivado equivocado.
+CHILQUINTA_RAIZ = "https://mapainterrupciones.chilquinta.cl/"
+
 
 def responde_vacio(url: str = CHILQUINTA_URL):
-    """Mock del endpoint. `respx.get` porque el método también está bajo prueba."""
+    """Mocks del camino completo: raíz que da sesión + endpoint que da datos.
+
+    Devuelve **la ruta del endpoint**, que es sobre la que asertan casi todos los
+    tests. La de la raíz se monta igual siempre porque sin ella el collector se
+    queda sin ruta mockeada en el priming y respx aborta la petición.
+
+    `respx.get` porque el método también está bajo prueba.
+    """
+    prepara_sesion(url)
     return respx.get(url).mock(return_value=httpx.Response(200, json={"data": []}))
 
 
@@ -625,11 +682,14 @@ def test_chilquinta_consulta_por_get():
 
 
 @respx.mock
-def test_las_tres_cabeceras_de_la_consulta_van_completas():
-    """Acá las cabeceras son los parámetros: si falta una, la consulta es otra."""
+def test_las_cinco_cabeceras_de_la_consulta_van_completas():
+    """Acá las cabeceras son los parámetros: si falta una, la consulta es otra.
+
+    Las tres primeras dicen *qué* se pide. Las dos últimas dicen *quién* lo pide
+    y en qué formato lo quiere, y son las que Laravel mira para decidir si esto
+    salió de su visor o de un cliente cualquiera.
+    """
     from app.collectors.power.chilquinta_worker import (
-        ALL_ORDERS,
-        API_KEY_HEADER,
         COMPANY_HEADER,
         ORDER_HEADER,
     )
@@ -644,6 +704,8 @@ def test_las_tres_cabeceras_de_la_consulta_van_completas():
     assert cabeceras[API_KEY_HEADER] == API_KEY_FALSA
     assert cabeceras[COMPANY_HEADER] == "006"
     assert cabeceras[ORDER_HEADER] == ALL_ORDERS
+    assert cabeceras[REFERER_HEADER] == CHILQUINTA_RAIZ
+    assert cabeceras[ACCEPT_HEADER] == JSON_ACCEPT == "application/json"
 
 
 @respx.mock
@@ -671,24 +733,35 @@ def test_la_cabecera_de_orden_dice_lo_mismo_que_la_url():
     assert peticion.headers[ORDER_HEADER] == peticion.url.params[ORDER_PARAM]
 
 
-def test_el_centinela_de_todas_las_ordenes_no_puede_ser_vacio():
-    """`ALL_ORDERS = ""` es exactamente el bug que produjo el 400 del gateway.
+def test_el_centinela_de_todas_las_ordenes_pasa_las_dos_validaciones():
+    """El centinela tiene que sobrevivir a dos servidores, y no a uno.
 
-    El validador del API Gateway comprueba los parámetros obligatorios antes de
-    enrutar y trata un valor de longitud cero como un parámetro inexistente:
-    `?orderId=` recibe el mismo `Missing required request parameters: [orderId]`
-    que no mandarlo. Como `""` es lo que uno escribiría intuitivamente para "sin
-    filtro", este test fija la decisión donde se toma.
+    Los dos valores intuitivos fallan, cada uno en una capa distinta:
+
+    * `""` — el API Gateway comprueba los parámetros obligatorios antes de
+      enrutar y trata un valor de longitud cero como un parámetro inexistente:
+      `?orderId=` recibe el mismo `Missing required request parameters:
+      [orderId]` que no mandarlo. HTTP 400.
+    * `"0"` — pasa el gateway, y por eso pareció la solución. Pero Laravel lo
+      lee como el identificador de una orden de trabajo y le aplica la Policy de
+      pertenencia: la orden 0 no es del solicitante y la respuesta es
+      `401 {"error":"Esta petición no esta autorizada"}`.
+
+    `"null"` tiene longitud —pasa el gateway— y no es un identificador que la
+    Policy pueda resolver a una orden ajena. Este test fija la decisión donde se
+    toma, porque las dos alternativas son exactamente lo que uno escribiría.
     """
-    from app.collectors.power.chilquinta_worker import ALL_ORDERS
-
-    assert ALL_ORDERS == "0"
+    assert ALL_ORDERS == "null"
     assert len(ALL_ORDERS) > 0, "un valor vacío es, para el gateway, un parámetro ausente"
+    assert ALL_ORDERS != "0", "un id de orden dispara la Policy de pertenencia de Laravel"
+    assert isinstance(ALL_ORDERS, str), (
+        "es la cadena 'null', no el None de Python: urlencode escribiría 'None'"
+    )
 
 
 @respx.mock
 def test_el_orderid_viaja_en_la_url_y_con_valor():
-    """`?orderId=0` es obligatorio, y el `0` es tan obligatorio como la clave.
+    """`?orderId=null` es obligatorio, y el valor es tan obligatorio como la clave.
 
     Sin el parámetro, el endpoint responde
     `400 {"error":"Missing required request parameters: [orderId]"}` — y lo hace
@@ -703,7 +776,7 @@ def test_el_orderid_viaja_en_la_url_y_con_valor():
 
     La aserción es sobre la URL saliente **entera** y no sólo sobre la query: lo
     que falló en producción fue la dirección completa, y así este test se entera
-    también si mañana el `?orderId=0` sobrevive pero cambian el host o la ruta.
+    también si mañana el `?orderId=null` sobrevive pero cambian el host o la ruta.
     """
     ruta = responde_vacio()
 
@@ -712,9 +785,9 @@ def test_el_orderid_viaja_en_la_url_y_con_valor():
     asyncio.run(instancia.fetch())
 
     assert str(ruta.calls[0].request.url) == (
-        "https://mapainterrupciones.chilquinta.cl/obtieneImage?orderId=0"
+        "https://mapainterrupciones.chilquinta.cl/obtieneImage?orderId=null"
     )
-    assert ruta.calls[0].request.url.query == b"orderId=0"
+    assert ruta.calls[0].request.url.query == b"orderId=null"
 
 
 @respx.mock
@@ -752,15 +825,15 @@ def test_el_orderid_lo_garantiza_la_url_y_no_el_payload():
     assert instancia.request_payload() == {}, (
         "un payload con claves hace que httpx reemplace la query de la URL"
     )
-    assert instancia.request_url() == f"{CHILQUINTA_URL}?orderId=0"
+    assert instancia.request_url() == f"{CHILQUINTA_URL}?orderId={ALL_ORDERS}"
 
 
 def test_la_url_efectiva_es_exactamente_la_del_endpoint():
     """La dirección literal que espera Chilquinta, carácter por carácter.
 
-    Se fija así de duro a propósito: los dos 400 de producción fueron exactamente
-    la diferencia entre esta cadena y dos variantes suyas —sin `?orderId=` la
-    primera vez, con el parámetro vacío la segunda—.
+    Se fija así de duro a propósito: los tres rechazos de producción fueron
+    exactamente la diferencia entre esta cadena y tres variantes suyas —sin
+    `?orderId=`, con el parámetro vacío, y con `?orderId=0`—.
     """
     instancia = collector()
     # La URL configurada, no la constante del test: así lo que se comprueba es la
@@ -768,22 +841,25 @@ def test_la_url_efectiva_es_exactamente_la_del_endpoint():
     instancia.url = settings.CHILQUINTA_API_URL
 
     assert instancia.request_url() == (
-        "https://mapainterrupciones.chilquinta.cl/obtieneImage?orderId=0"
+        "https://mapainterrupciones.chilquinta.cl/obtieneImage?orderId=null"
     )
 
 
 def test_un_orderid_ya_presente_y_con_valor_se_respeta():
     """Idempotencia: el `.env` puede traerlo y el worker lo añade igual.
 
-    Si las dos capas escribieran, saldría `?orderId=0&orderId=0` y no hay motivo
-    para averiguar cómo interpreta el backend un parámetro repetido.
+    Si las dos capas escribieran, saldría `?orderId=null&orderId=null` y no hay
+    motivo para averiguar cómo interpreta el backend un parámetro repetido.
 
     Un valor distinto del centinela también se respeta: es alguien consultando
-    una orden concreta a propósito, y este helper no está para opinar sobre eso.
+    una orden concreta a propósito, y este helper no está para opinar sobre eso
+    — ni siquiera sobre `0`, que como centinela ya sabemos que no sirve pero como
+    consulta explícita no es asunto de esta función.
     """
     from app.collectors.power.chilquinta_worker import con_order_id
 
-    assert con_order_id(f"{CHILQUINTA_URL}?orderId=0") == f"{CHILQUINTA_URL}?orderId=0"
+    ya_puesta = f"{CHILQUINTA_URL}?orderId={ALL_ORDERS}"
+    assert con_order_id(ya_puesta) == ya_puesta
     assert (
         con_order_id(f"{CHILQUINTA_URL}?orderId=88231")
         == f"{CHILQUINTA_URL}?orderId=88231"
@@ -800,21 +876,24 @@ def test_un_orderid_vacio_en_la_url_se_corrige_en_vez_de_conservarse():
     """
     from app.collectors.power.chilquinta_worker import con_order_id
 
-    assert con_order_id(f"{CHILQUINTA_URL}?orderId=") == f"{CHILQUINTA_URL}?orderId=0"
+    assert (
+        con_order_id(f"{CHILQUINTA_URL}?orderId=")
+        == f"{CHILQUINTA_URL}?orderId={ALL_ORDERS}"
+    )
 
 
 def test_el_orderid_se_suma_a_una_query_existente():
-    """Concatenar `"?orderId=0"` a ciegas rompería una URL que ya tenga query.
+    """Concatenar `"?orderId=null"` a ciegas rompería una URL que ya tenga query.
 
-    `…/obtieneImage?v=2` + `"?orderId=0"` da `…?v=2?orderId=0`, que no es una URL
-    válida y que provocaría el mismo 400 que se está evitando. Por eso la URL se
-    arma con `urlsplit`/`urlencode` y no pegando cadenas.
+    `…/obtieneImage?v=2` + `"?orderId=null"` da `…?v=2?orderId=null`, que no es
+    una URL válida y que provocaría el mismo 400 que se está evitando. Por eso la
+    URL se arma con `urlsplit`/`urlencode` y no pegando cadenas.
     """
     from app.collectors.power.chilquinta_worker import con_order_id
 
     resultado = con_order_id(f"{CHILQUINTA_URL}?v=2")
 
-    assert resultado == f"{CHILQUINTA_URL}?v=2&orderId=0"
+    assert resultado == f"{CHILQUINTA_URL}?v=2&orderId={ALL_ORDERS}"
 
 
 @respx.mock
@@ -827,6 +906,199 @@ def test_la_llave_no_viaja_en_la_url():
     asyncio.run(instancia.fetch())
 
     assert API_KEY_FALSA not in str(ruta.calls[0].request.url)
+
+
+# --- La sesión: el 401 de Laravel -------------------------------------------
+#
+# Pasar el API Gateway no era pasar el backend. Detrás hay una aplicación
+# Laravel que respondía `401 {"error":"Esta petición no esta autorizada"}` a una
+# petición que traía la API key correcta y el parámetro obligatorio: le faltaba
+# ser la *segunda* petición de una sesión.
+#
+# El visor real carga la página, recibe `mapa_interrupciones_session` y recién
+# entonces hace el XHR, devolviendo la cookie y un `Referer` que dice de dónde
+# salió. `prime_session()` reproduce eso con el mismo `httpx.AsyncClient`, y lo
+# que estos tests fijan es justamente lo que no se ve en el código: que las dos
+# peticiones comparten cliente, orden y origen.
+
+
+@respx.mock
+def test_la_raiz_se_visita_antes_de_pedir_los_datos():
+    """El orden es el mecanismo entero: al revés no hay cookie que enviar.
+
+    Dos peticiones por corrida, la raíz primero. Si alguien invirtiera las
+    llamadas —o moviera el priming a después del XHR "para no retrasarlo"— el
+    cookie jar estaría vacío en el único momento en que importa, y el síntoma
+    sería otra vez un 401 sin nada raro en el código.
+    """
+    ruta_datos = responde_vacio()
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    assert len(respx.calls) == 2, "una carga del visor y un XHR, como el navegador"
+    assert respx.calls[0].request.url.path == "/", "la raíz va primero"
+    assert respx.calls[1].request.url.path == "/obtieneImage"
+    assert ruta_datos.called
+
+
+@respx.mock
+def test_la_cookie_de_sesion_llega_a_la_peticion_de_datos():
+    """La aserción que prueba que el priming sirvió de algo.
+
+    Nadie escribe esta cabecera: la pone el cookie jar de `httpx.AsyncClient` a
+    partir del `Set-Cookie` de la raíz. Por eso el gancho recibe el **cliente** y
+    no la URL — con un cliente distinto para cada petición, todo lo demás
+    seguiría igual y la cookie no viajaría.
+    """
+    ruta_datos = responde_vacio()
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    enviadas = ruta_datos.calls[0].request.headers.get("Cookie", "")
+    assert f"{SESSION_COOKIE}={SESION_FALSA}" in enviadas
+
+
+@respx.mock
+def test_el_priming_no_lleva_la_credencial():
+    """La página del visor es pública: no hay motivo para mostrarle la llave.
+
+    La API key autoriza la ruta de datos. Mandarla también en la carga de la
+    portada la expondría en una petición que no la necesita —otra ruta, otros
+    logs intermedios, quizá un CDN— a cambio de nada.
+    """
+    responde_vacio()
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    priming = respx.calls[0].request
+    assert API_KEY_HEADER not in priming.headers
+    assert API_KEY_FALSA not in str(priming.headers)
+    assert API_KEY_FALSA not in str(priming.url)
+
+
+@respx.mock
+def test_el_priming_pide_la_pagina_y_no_el_json():
+    """`Accept: text/html` en la raíz, `application/json` en los datos.
+
+    No es un detalle cosmético: a una aplicación Laravel se le puede pedir JSON
+    en una ruta que sirve HTML, y lo que devuelva entonces será otra cosa —y con
+    ella, otro `Set-Cookie`, o ninguno—. Se está pidiendo la página, así que se
+    pide como la pide un navegador.
+    """
+    responde_vacio()
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    assert respx.calls[0].request.headers[ACCEPT_HEADER].startswith("text/html")
+    assert respx.calls[1].request.headers[ACCEPT_HEADER] == JSON_ACCEPT
+
+
+@respx.mock
+def test_el_referer_es_la_pagina_que_se_primo():
+    """El `Referer` afirma "vengo de esta página" y el priming lo hace cierto.
+
+    Se comprueba contra la URL que se visitó de verdad y no contra una constante:
+    lo que tiene que sostenerse es la coincidencia entre las dos peticiones. Si
+    un día se calcularan por separado, la cabecera seguiría estando bien escrita
+    y sería mentira.
+    """
+    ruta_datos = responde_vacio()
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    visitada = str(respx.calls[0].request.url)
+    assert ruta_datos.calls[0].request.headers[REFERER_HEADER] == visitada
+    assert visitada == CHILQUINTA_RAIZ
+
+
+def test_la_raiz_se_deriva_del_endpoint_y_no_se_escribe_a_mano():
+    """Una cookie está atada a su host: primar otro origen no sirve de nada.
+
+    Derivarla es lo que garantiza que las dos peticiones compartan host por
+    construcción. Con una constante escrita a mano, apuntar
+    `CHILQUINTA_API_URL` a otro entorno dejaría el cookie jar lleno de cookies
+    que httpx —correctamente— no enviaría, y el 401 volvería sin ninguna pista.
+    """
+    assert origen_de(CHILQUINTA_URL) == CHILQUINTA_RAIZ
+    assert origen_de(f"{CHILQUINTA_URL}?orderId={ALL_ORDERS}") == CHILQUINTA_RAIZ
+    assert origen_de("https://staging.chilquinta.cl/a/b/c") == "https://staging.chilquinta.cl/"
+    # Sin esquema y host no hay nada que primar, y quien tiene que quejarse de
+    # una URL inservible es la petición de datos, no el preámbulo.
+    assert origen_de("obtieneImage") == ""
+    assert origen_de("") == ""
+
+
+@respx.mock
+def test_una_raiz_caida_no_se_lleva_la_corrida():
+    """El priming es un preámbulo: su fallo no puede ser más ruidoso que el real.
+
+    Si la raíz no responde, la petición de datos dirá lo que corresponda —un 401,
+    probablemente— y ese error describe el problema mejor que "no pude cargar la
+    portada". Y si el endpoint contesta igual, mejor: la corrida sale entera.
+
+    `warnings` vacío es parte de la aserción y es deliberado: `partial` es la
+    señal de que una corrida trajo datos degradados, y un preámbulo fallido que
+    no degradó nada no tiene por qué gastarla.
+    """
+    respx.get(CHILQUINTA_RAIZ).mock(side_effect=httpx.ConnectError("sin red"))
+    respx.get(CHILQUINTA_URL).mock(
+        return_value=httpx.Response(200, json={"data": [registro()]})
+    )
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    cortes = asyncio.run(instancia.fetch())
+
+    assert [corte.commune for corte in cortes] == ["Viña del Mar"]
+    assert instancia.warnings == [], "un preámbulo fallido no degrada la corrida"
+
+
+@respx.mock
+def test_una_raiz_que_responde_sin_cookie_tampoco_detiene_la_corrida():
+    """El caso que más se parece a que funcionó: 200 y ningún `Set-Cookie`.
+
+    Es lo que pasaría si el visor renombrara su cookie de sesión. No hay nada que
+    hacer desde acá —la petición de datos dirá si importaba—, pero queda en el
+    log nombrando lo que sí llegó, que es la única pista antes del 401.
+    """
+    respx.get(CHILQUINTA_RAIZ).mock(
+        return_value=httpx.Response(200, text="<html>sin cookie</html>")
+    )
+    ruta_datos = respx.get(CHILQUINTA_URL).mock(
+        return_value=httpx.Response(200, json={"data": []})
+    )
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    assert ruta_datos.called
+    assert "Cookie" not in ruta_datos.calls[0].request.headers
+
+
+def test_el_gancho_de_sesion_no_hace_nada_por_defecto():
+    """Las demás fuentes no pagan una petición extra por esto.
+
+    El gancho vive en la clase base para que Chilquinta no tenga que duplicar el
+    camino JSON entero, pero su implementación por defecto no toca el cliente:
+    una fuente que no necesita sesión sigue haciendo exactamente una petición
+    por corrida.
+    """
+    # CGE no lo sobrescribe, así que hereda el de la base tal cual.
+    instancia = collector(CgeCollector)
+
+    # `None` como cliente es la aserción: si el gancho lo tocara, reventaría.
+    assert asyncio.run(instancia.prime_session(None)) is None
 
 
 @respx.mock
@@ -853,8 +1125,9 @@ def test_el_filtro_espacial_sigue_actuando_por_el_camino_real():
 
     Es el mismo invariante de siempre —`BoundingBox.contains` sobre
     `settings.region_bbox`, antes de mapear al dominio— comprobado por el camino
-    que se usa en producción: GET con cabeceras.
+    que se usa en producción: sesión, cabeceras y GET.
     """
+    prepara_sesion()
     respx.get(CHILQUINTA_URL).mock(
         return_value=httpx.Response(
             200, json={"data": [registro(), *outside_records()]}

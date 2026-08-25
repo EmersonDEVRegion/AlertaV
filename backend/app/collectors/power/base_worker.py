@@ -33,12 +33,18 @@ no duplicando el `fetch()`:
     http_method        "GET" (por defecto) | "POST"
     request_headers()  cabeceras propias — API keys van acá
     request_payload()  filtros; query string en GET, cuerpo JSON en POST
+    prime_session()    preparar la conexión antes de pedir los datos
     load_records()     el transporte completo, para fuentes que no son JSON
 
-Los tres primeros bastan mientras la respuesta sea JSON. `load_records()` es la
+Los cuatro primeros bastan mientras la respuesta sea JSON. `load_records()` es la
 salida para cuando no lo es: devuelve la lista de registros crudos y hereda todo
 lo que viene después. Ver `cge_worker`, que lo sobrescribe para descomprimir un
 KMZ en memoria.
+
+`prime_session()` es el más nuevo y el menos evidente: hay fuentes cuyo backend
+no responde a una petición aislada, sino sólo dentro de una sesión que la propia
+web abre al cargarse. Ver `ChilquintaCollector.prime_session`, que es el caso que
+lo obligó.
 
 Todo lo demás —reintentos, detección de HTML, filtro espacial, normalización—
 sigue siendo uno solo. Una fuente con otro formato no deja de necesitar el
@@ -174,6 +180,30 @@ class BasePowerOutageCollector(BaseCollector):
             follow_redirects=True,
         )
 
+    async def prime_session(self, client: httpx.AsyncClient) -> None:
+        """Prepara la conexión antes de pedir los datos. Por defecto, nada.
+
+        Existe porque no todo backend responde a una petición aislada. Algunos
+        —los que están detrás de un framework con sesión de servidor— sólo
+        atienden a un cliente que ya cargó la página del visor: la primera
+        respuesta trae un `Set-Cookie` y la ruta de datos exige esa cookie de
+        vuelta. Una petición suelta, con las cabeceras correctas y la credencial
+        correcta, igual recibe un 401.
+
+        El gancho recibe el **cliente**, no la URL, y eso es todo el punto: el
+        estado que se está construyendo vive en el cookie jar de esa instancia
+        de `httpx.AsyncClient`, así que quien lo implemente tiene que hacer sus
+        peticiones con el mismo objeto o no habrá servido de nada. Por eso se
+        llama acá dentro, ya abierto el `async with`, y no en `__init__` ni en
+        un cliente propio.
+
+        Quien lo implemente decide también si sus fallos son fatales. Lo normal
+        es que no lo sean: si el priming no consigue la sesión, la petición de
+        datos dirá que no está autorizada, y ese error es más informativo que el
+        del preámbulo. Ver `ChilquintaCollector.prime_session`.
+        """
+        return None
+
     async def load_records(self) -> Sequence[Any]:
         """Trae los registros crudos de la fuente. Este es el camino JSON.
 
@@ -208,6 +238,12 @@ class BasePowerOutageCollector(BaseCollector):
         params = {} if es_post or not cuerpo else dict(cuerpo)
         try:
             async with self.http_client() as client:
+                # Antes de pedir nada: darle a la fuente la oportunidad de abrir
+                # sesión. Va **dentro** del `async with` y con este `client`
+                # porque lo que el priming construye —cookies— vive en el cookie
+                # jar de esta instancia y muere con ella. Por defecto no hace
+                # nada y esta línea no cuesta una petición.
+                await self.prime_session(client)
                 payload = await request_json(
                     client,
                     destino,
