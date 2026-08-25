@@ -586,3 +586,82 @@ def test_rate_limiter_no_espera_la_primera_vez():
         return await RateLimiter(min_interval=5.0).acquire()
 
     assert asyncio.run(escenario()) == 0.0
+
+
+# --- El rediseño del portal (2026) -------------------------------------------
+#
+# Transporte Informa se reconstruyó: la región pasó de ruta a subdominio y la
+# maqueta de Elementor desapareció. El collector quedó devolviendo cero avisos
+# durante días, diciéndolo correctamente —"la estructura del portal cambió"—
+# pero sin que nadie lo mirara.
+#
+# Este HTML está copiado de la captura real del 2026-08-25, iconos incluidos.
+
+
+PORTAL_NUEVO = """
+<div class="card card--state">
+  <div class="card--state__header">
+    <p><i class="material-symbols-rounded">location_on</i> Av. España</p>
+    <p><i class="material-symbols-rounded">explore</i> Zona</p>
+  </div>
+  <div class="card--state__text">
+    <div class="d-lg-flex">
+      <p><strong>Categoría:</strong> Incidentes</p>
+      <p><strong>07 de agosto de 2026</strong></p>
+    </div>
+    <p><strong>Descripción</strong> Restricción de pistas en Avenida España
+       desde Escuela Industrial hasta Club de Yates en dirección a Viña del Mar</p>
+    <a class="btn" href="/estado-de-la-movilidad/restriccion-avenida-espana/">Ver más</a>
+  </div>
+</div>
+"""
+
+
+def test_los_avisos_del_portal_nuevo_se_encuentran():
+    """`div.card--state` es donde vive hoy cada aviso.
+
+    Antes eran `<article>` y `.elementor-widget-container`; el rediseño los hizo
+    desaparecer y el collector dejó de encontrar nada.
+    """
+    from app.collectors.traffic.transporteinforma_worker import parse_notices
+
+    avisos = parse_notices(PORTAL_NUEVO)
+
+    assert len(avisos) == 1
+    assert "Avenida España" in avisos[0].text
+
+
+def test_los_iconos_no_se_cuelan_en_el_texto():
+    """La trampa que sólo se ve mirando el DOM, no la página.
+
+    El portal usa Material Symbols, que funcionan por **ligadura**: el nombre del
+    icono va como texto dentro de la etiqueta y la fuente lo dibuja. En pantalla
+    se ve un pin; en el HTML dice `location_on`, y un `get_text()` normal produce
+    «location_on Av. España».
+
+    No es cosmético: ese texto es el que se manda al LLM para extraer calles y el
+    que queda archivado en `raw_data`. Un nombre de icono en medio de una
+    dirección empeora la geocodificación y se guarda como si lo hubiera escrito
+    la fuente.
+    """
+    from app.collectors.traffic.transporteinforma_worker import parse_notices
+
+    texto = parse_notices(PORTAL_NUEVO)[0].text
+
+    assert "location_on" not in texto
+    assert "explore" not in texto
+    assert "Av. España" in texto
+
+
+def test_la_categoria_del_portal_cuenta_como_palabra_clave():
+    """El portal nuevo **etiqueta** cada tarjeta, y eso vale más que adivinar.
+
+    `Categoría: Incidentes` es la fuente diciendo de qué habla. No convierte el
+    aviso en un siniestro —eso lo decide `is_accident` más adelante— pero sí lo
+    distingue del menú de navegación, que es lo que hace esta etapa.
+    """
+    from app.collectors.traffic.transporteinforma_worker import matched_keywords
+
+    assert "incidente" in matched_keywords("Categoría: Incidentes")
+    assert "incidente" in matched_keywords("categoria: incidente")
+    assert matched_keywords("Inicio Contacto Preguntas frecuentes") == []

@@ -401,3 +401,60 @@ def test_mtt_las_palabras_clave_son_la_red_gruesa_no_el_filtro_final():
 
     assert looks_like_accident(restriccion.text) is False
     assert looks_like_accident(accidente.text) is True
+
+
+@respx.mock
+def test_bomberos_un_feed_valido_y_vacio_no_es_una_noche_tranquila():
+    """El modo de fallo que costó días de silencio, y el más traicionero de todos.
+
+    Un feed **válido** y **vacío** pasa las dos comprobaciones anteriores —es RSS
+    de verdad, el XML está bien— y produce cero despachos, exactamente igual que
+    una madrugada sin rescates. Durante días la fuente estuvo caída y
+    `collector_runs` la declaró `success`, que es la peor mentira que puede
+    contar un tablero: la de que todo está bien.
+
+    Una central de despacho de una región de dos millones de habitantes no pasa
+    días sin publicar nada. Cero entradas **totales** es una fuente caída, no un
+    turno sin novedad.
+    """
+    respx.get(FEED_URL).mock(
+        return_value=httpx.Response(
+            200,
+            text="""<?xml version="1.0"?><rss version="2.0"><channel>
+              <title>Central CBV</title></channel></rss>""",
+        )
+    )
+
+    resultado = correr(bomberos())
+
+    assert resultado.status is CollectorStatus.PARTIAL
+    assert "no trae ninguna entrada" in (resultado.error or "")
+
+
+@respx.mock
+def test_bomberos_un_feed_con_avisos_pero_sin_rescates_si_es_una_noche_tranquila():
+    """La otra mitad, y la que evita que el aviso se vuelva ruido.
+
+    Si el feed publica y ninguna publicación es una 10-4, eso **sí** es un turno
+    sin rescates: la fuente está viva y no hay nada que reportar. Avisar acá
+    entrenaría a todo el mundo a ignorar el aviso, que es exactamente como se
+    pierde la señal que importa.
+    """
+    respx.get(FEED_URL).mock(
+        return_value=httpx.Response(
+            200,
+            text="""<?xml version="1.0"?><rss version="2.0"><channel>
+              <title>Central CBV</title>
+              <item><title>Compañías en instrucción mensual</title>
+                <pubDate>Tue, 25 Aug 2026 03:00:00 GMT</pubDate></item>
+              <item><title>Aviso de corte de agua sector Recreo</title>
+                <pubDate>Tue, 25 Aug 2026 02:00:00 GMT</pubDate></item>
+            </channel></rss>""",
+        )
+    )
+
+    resultado = correr(bomberos())
+
+    assert resultado.status is CollectorStatus.SUCCESS
+    assert resultado.inserted == 0
+    assert not resultado.error

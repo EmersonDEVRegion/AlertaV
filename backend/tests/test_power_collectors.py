@@ -1235,3 +1235,53 @@ def test_la_url_buena_construye_sin_quejarse():
 
     assert instancia.url == settings.CHILQUINTA_API_URL
     assert "results_006.js" in instancia.url
+
+
+@respx.mock
+def test_la_descarga_insiste_mas_que_la_familia():
+    """El host dropea conexiones de forma intermitente; 4,5 s no alcanzan.
+
+    Con el collector ya funcionando y trayendo 29 órdenes, 3 de cada 7 corridas
+    morían con `ConnectError: [SSL: WRONG_VERSION_NUMBER]` alternando con
+    corridas perfectas contra la misma URL. Los valores por defecto de
+    `request_response` reparten sus 3 intentos en t=0, t≈1.5 s y t≈4.5 s —el
+    backoff es `backoff * 2**intento`— y la ventana del bloqueo dura más.
+
+    Este test fija que una corrida sobrevive a dos drops seguidos, que es lo que
+    no ocurría en producción.
+    """
+    ruta = respx.get(CHILQUINTA_URL).mock(
+        side_effect=[
+            httpx.ConnectError("[SSL: WRONG_VERSION_NUMBER] wrong version number"),
+            httpx.ConnectError("[SSL: WRONG_VERSION_NUMBER] wrong version number"),
+            httpx.Response(200, text=volcado(orden())),
+        ]
+    )
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    cortes = asyncio.run(instancia.fetch())
+
+    assert len(ruta.calls) == 3, "insiste en vez de rendirse al tercer intento"
+    assert [corte.commune for corte in cortes] == ["VIÑA DEL MAR"]
+    assert instancia.warnings == [], "un drop absorbido no degrada la corrida"
+
+
+def test_el_presupuesto_de_reintentos_cabe_en_la_cadencia():
+    """Insistir no puede comerse la corrida siguiente.
+
+    Cinco intentos repartidos en 2+4+8+16 = 30 s de espera. Aunque cada intento
+    agotara el timeout completo, el total sigue por debajo de los 300 s de
+    cadencia. Si alguien sube los reintentos sin mirar esto, salta acá.
+    """
+    from app.collectors.power.chilquinta_worker import (
+        PRIMING_BACKOFF_SECONDS,
+        PRIMING_RETRIES,
+    )
+
+    intentos = PRIMING_RETRIES + 1
+    espera = sum(PRIMING_BACKOFF_SECONDS * (2**i) for i in range(PRIMING_RETRIES))
+    peor_caso = intentos * settings.POWER_TIMEOUT_SECONDS + espera
+
+    assert espera == 30.0
+    assert peor_caso < settings.POWER_POLL_INTERVAL_SECONDS

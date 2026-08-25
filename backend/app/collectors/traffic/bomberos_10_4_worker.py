@@ -18,10 +18,16 @@ bombero escribe para que lo lean personas, servido en XML. Las consecuencias
 están asumidas de frente:
 
 * **Es un intermediario, y se cae.** `rsshub.app` es una instancia pública,
-  compartida y sin SLA; devuelve 429 y 503 con frecuencia. El collector trata
-  esos fallos como transitorios: reintenta, y si no lo consigue deja la corrida
-  en `failed` con el motivo. Lo que **no** hace es devolver cero eventos con
-  estado `success`, porque eso sería indistinguible de una noche sin rescates.
+  compartida y sin SLA; devuelve 429 y 503 con frecuencia. Peor: la ruta de
+  Twitter de RSSHub **dejó de existir** cuando X cerró su API, y hoy el default
+  de `BOMBEROS_DISPATCH_URL` redirige a un 404 de Google. Cualquier despliegue
+  que dependa de ese puente necesita otro camino.
+* **Tres respuestas, no dos.** Este módulo empezó distinguiendo "feed válido sin
+  novedades" de "esto no es un feed", y esa distinción dejaba pasar la peor de
+  las tres: un feed **válido y vacío**. Es RSS de verdad, el XML está bien, y
+  produce cero despachos igual que una madrugada tranquila — así que la corrida
+  salía `success` mientras la fuente llevaba días muerta. Un tablero que declara
+  sana una fuente caída miente peor que uno que se rompe. Ver `EstadoFeed`.
 * **El texto es prosa, no campos.** No hay `<address>` ni `<code>`: hay una
   frase. Lo que se guarda como dirección es el texto del aviso completo, en
   `raw_data`, sin fingir una precisión que no tiene.
@@ -338,36 +344,68 @@ def parse_dispatches(feed_body: str, keys: Sequence[str]) -> list[Dispatch]:
     return dispatches
 
 
-def feed_is_broken(feed_body: str) -> tuple[bool, str | None]:
-    """¿El feed llegó ilegible? Devuelve `(roto, motivo)`.
+@dataclass(frozen=True, slots=True)
+class EstadoFeed:
+    """Qué llegó del puente, en las tres categorías que importan.
 
-    Distingue dos cosas que un `len(entries) == 0` confunde: un feed válido sin
-    novedades (normal, silencioso) y algo que no es un feed (la página de error
-    de RSSHub, un captcha, un 429 servido como HTML con estado 200). Sólo lo
-    segundo merece alarma.
+    Las dos primeras ya se distinguían; la tercera se añadió después de que una
+    fuente muerta pasara días reportando corridas `success`.
 
-    El discriminador es `parsed.version`, y esa elección tiene una historia
-    corta: `bozo` no sirve para esto. feedparser es tan indulgente que digiere
-    HTML sin quejarse —devuelve `bozo=False` y hasta rellena `feed.summary` con
-    el texto de la página de error—, así que confiar en `bozo` dejaba pasar
-    justo el caso que este chequeo existe para atrapar. `version` sólo trae
-    valor (`rss20`, `atom10`…) cuando reconoció un formato de sindicación de
-    verdad; ante HTML queda en cadena vacía.
+    * `roto` — no es un feed: HTML de error, captcha, un 429 servido con estado
+      200. Necesita a una persona.
+    * `entradas == 0` con `roto=False` — el feed es válido y **no trae nada**.
+      Sospechoso: la central de una región de dos millones de habitantes no pasa
+      días sin publicar. Ver `Bomberos104Collector.fetch`.
+    * `entradas > 0` — sano. Que ninguna sea una 10-4 es lo normal y no se avisa.
+    """
+
+    roto: bool
+    motivo: str | None
+    entradas: int
+
+
+def revisar_feed(feed_body: str) -> EstadoFeed:
+    """Clasifica la respuesta del puente. Ver `EstadoFeed`.
+
+    El discriminador de "roto" es `parsed.version`, y esa elección tiene una
+    historia corta: `bozo` no sirve para esto. feedparser es tan indulgente que
+    digiere HTML sin quejarse —devuelve `bozo=False` y hasta rellena
+    `feed.summary` con el texto de la página de error—, así que confiar en
+    `bozo` dejaba pasar justo el caso que este chequeo existe para atrapar.
+    `version` sólo trae valor (`rss20`, `atom10`…) cuando reconoció un formato
+    de sindicación de verdad; ante HTML queda en cadena vacía.
     """
     parsed = feedparser.parse(feed_body)
-    if parsed.entries:
-        return (False, None)
+    entradas = len(parsed.entries)
+
+    if entradas:
+        return EstadoFeed(roto=False, motivo=None, entradas=entradas)
 
     if not getattr(parsed, "version", ""):
         reason = getattr(parsed, "bozo_exception", None)
         detalle = f"{type(reason).__name__}: {reason}" if reason else "no es RSS ni Atom"
-        return (True, f"la respuesta no es un feed ({detalle})")
+        return EstadoFeed(
+            roto=True, motivo=f"la respuesta no es un feed ({detalle})", entradas=0
+        )
 
     if getattr(parsed, "bozo", 0):
         reason = getattr(parsed, "bozo_exception", None)
-        return (True, f"XML inválido ({reason})" if reason else "XML inválido")
+        motivo = f"XML inválido ({reason})" if reason else "XML inválido"
+        return EstadoFeed(roto=True, motivo=motivo, entradas=0)
 
-    return (False, None)
+    return EstadoFeed(roto=False, motivo=None, entradas=0)
+
+
+def feed_is_broken(feed_body: str) -> tuple[bool, str | None]:
+    """`(roto, motivo)` — la pregunta estrecha, sobre `revisar_feed`.
+
+    Se conserva porque "¿es esto un feed?" es una pregunta legítima por sí sola
+    y hay tests que la hacen. Lo que **no** responde es si el feed trae algo, y
+    confundir las dos cosas es lo que dejó una fuente muerta reportando
+    corridas exitosas durante días.
+    """
+    estado = revisar_feed(feed_body)
+    return (estado.roto, estado.motivo)
 
 
 def build_external_id(dispatch: Dispatch) -> str:
@@ -442,7 +480,7 @@ class Bomberos104Collector(BaseCollector):
             ) from exc
 
         try:
-            broken, reason = feed_is_broken(body)
+            estado = revisar_feed(body)
             dispatches = parse_dispatches(body, self.keys)
         except Exception as exc:
             raise CollectorError(
@@ -450,12 +488,36 @@ class Bomberos104Collector(BaseCollector):
                 detail={"url": self.url, "muestra": body[:200]},
             ) from exc
 
-        if broken:
+        if estado.roto:
             # Se avisa y se sigue: la corrida queda `partial`, con el motivo
             # visible en `collector_runs`. Un feed ilegible es un problema del
             # puente —RSSHub sirviendo una página de error con HTTP 200— y no
             # justifica perder lo poco que se haya podido leer.
-            self.warn(f"el feed llegó sin ítems interpretables ({reason})")
+            self.warn(f"el feed llegó sin ítems interpretables ({estado.motivo})")
+        elif not estado.entradas:
+            # El caso que costó días de silencio: un feed **válido** y **vacío**.
+            #
+            # Pasa las dos comprobaciones de arriba —es RSS de verdad, el XML
+            # está bien— y produce cero despachos, exactamente igual que una
+            # madrugada sin rescates. Sin este aviso, la corrida sale `success`
+            # y el tablero declara sana una fuente que lleva días muerta. Es el
+            # mismo modo de fallo silencioso que este proyecto persigue en todas
+            # las capas, sólo que disfrazado de buena noticia.
+            #
+            # No se distingue "vacío una vez" de "vacío desde hace días": el
+            # collector no tiene memoria entre corridas. Un aviso por corrida es
+            # suficiente para que se vea en `collector_runs`, y quien mire dos
+            # filas seguidas saca la conclusión.
+            #
+            # Ojo con la asimetría deliberada: que el feed traiga entradas y
+            # ninguna sea una 10-4 **no** se avisa. Eso sí es una noche
+            # tranquila, y avisarlo entrenaría a todo el mundo a ignorar el
+            # aviso — que es como se pierde la señal que sí importa.
+            self.warn(
+                "el feed es válido pero no trae ninguna entrada; una central de "
+                "despacho no pasa días en silencio, así que probablemente la "
+                "fuente esté caída aunque responda"
+            )
 
         return dispatches
 
@@ -524,6 +586,7 @@ __all__ = [
     "BOMBEROS_CONFIDENCE",
     "Bomberos104Collector",
     "Dispatch",
+    "EstadoFeed",
     "build_external_id",
     "build_text",
     "entry_text",
@@ -533,5 +596,6 @@ __all__ = [
     "matches_key",
     "normalise_code",
     "parse_dispatches",
+    "revisar_feed",
     "strip_html",
 ]

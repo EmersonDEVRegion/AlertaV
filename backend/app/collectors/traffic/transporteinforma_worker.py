@@ -384,7 +384,18 @@ def parse_notice(payload: Any) -> TrafficNotice | None:
 # hace `extract_streets_via_llm` con `is_accident`.
 
 #: Selectores donde el portal publica sus avisos, en orden de especificidad.
+#:
+#: `div.card--state` es el del portal **actual** (rediseño de 2026) y el único
+#: que devuelve algo hoy: cada tarjeta es un aviso con ubicación, categoría
+#: —`Incidentes` o `Trabajos`—, fecha, descripción y enlace al detalle.
+#:
+#: Los dos siguientes son del portal anterior, construido con Elementor. Se
+#: conservan a propósito aunque hoy no encuentren nada: el rediseño llegó
+#: primero a Valparaíso y otras regiones pueden seguir con la maqueta vieja, y
+#: un selector que no empareja no cuesta nada. Si dentro de un año siguen sin
+#: usarse, se borran.
 _BLOCK_SELECTORS: tuple[str, ...] = (
+    "div.card--state",
     "article",
     "div.elementor-widget-container",
     # Respaldo: si Elementor desaparece en un rediseño, los avisos casi siempre
@@ -392,6 +403,20 @@ _BLOCK_SELECTORS: tuple[str, ...] = (
     "div.entry-content",
     "div.post-content",
 )
+
+#: Iconos tipográficos que **contaminan el texto** si se extrae a lo bruto.
+#:
+#: El portal usa Material Symbols, que funcionan por ligadura: el nombre del
+#: icono va como texto dentro de la etiqueta y la fuente lo dibuja. En pantalla
+#: se ve un pin; en el HTML dice `<i class="material-symbols-rounded">location_on</i>`,
+#: y un `get_text()` normal produce «location_on Av. España» en vez de
+#: «Av. España».
+#:
+#: No es cosmético. Ese texto es lo que se manda al LLM para extraer calles y lo
+#: que se guarda en `raw_data`: un nombre de icono metido en medio de una
+#: dirección empeora la geocodificación y queda archivado como si la fuente lo
+#: hubiera escrito.
+_ICON_CLASS_PREFIX = "material-"
 
 #: Palabras que delatan un aviso de tránsito. Se comparan sin tildes y en
 #: minúsculas, así que "Precaución" y "PRECAUCION" entran igual.
@@ -403,6 +428,16 @@ TRAFFIC_KEYWORDS: tuple[str, ...] = (
     "transito suspendido",
     "volcamiento",
     "atropello",
+    # El portal nuevo **etiqueta** cada tarjeta con `Categoría: Incidentes` o
+    # `Categoría: Trabajos`. Es la propia fuente diciendo de qué habla, y eso
+    # vale más que adivinar por vocabulario: entra en singular porque la
+    # comparación es por subcadena y así cubre las dos formas.
+    #
+    # No convierte esto en un filtro de siniestros —un "incidente" puede ser un
+    # paso fronterizo habilitado— y no pretende serlo: sigue siendo la etapa 2,
+    # la que separa un aviso de tránsito del menú de navegación. Quien decide si
+    # es un accidente es `is_accident`, más adelante.
+    "incidente",
 )
 
 #: Un bloque más corto que esto es una etiqueta suelta ("Accidente") sin
@@ -412,9 +447,30 @@ _MIN_BLOCK_CHARS = 25
 _MAX_BLOCK_CHARS = 1200
 
 
+def _es_icono(tag: Any) -> bool:
+    """¿Esta etiqueta es un icono tipográfico? Ver `_ICON_CLASS_PREFIX`."""
+    clases = getattr(tag, "get", lambda *_: None)("class") or ()
+    return any(str(clase).startswith(_ICON_CLASS_PREFIX) for clase in clases)
+
+
 def _block_text(node: Tag) -> str:
-    """Texto visible de un nodo, con los espacios normalizados."""
-    return " ".join(node.get_text(" ", strip=True).split())
+    """Texto **visible** de un nodo, con los espacios normalizados.
+
+    Visible de verdad: se saltan las ligaduras de los iconos, que un
+    `get_text()` normal incluiría. Ver `_ICON_CLASS_PREFIX` para por qué eso
+    importa más de lo que parece.
+
+    Se recorren las cadenas en vez de eliminar los `<i>` del árbol porque el
+    árbol es compartido —el mismo `soup` alimenta varias pasadas— y arrancarle
+    nodos a mitad de camino haría que el resultado dependiera del orden en que
+    se llame a esta función.
+    """
+    partes = [
+        str(cadena)
+        for cadena in node.find_all(string=True)
+        if not _es_icono(cadena.parent)
+    ]
+    return " ".join(" ".join(partes).split())
 
 
 def matched_keywords(text: str) -> list[str]:

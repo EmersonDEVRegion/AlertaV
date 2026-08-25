@@ -305,9 +305,21 @@ class Settings(BaseSettings):
     BOMBEROS_POLL_INTERVAL_SECONDS: int = 180  # 3 min
 
     # -- Accidentes viales: Transporte Informa -------------------------------
-    #: Portal del MTT para la Región de Valparaíso. Es HTML (WordPress con
-    #: Elementor), no una API: se raspa. Vacío = apagado.
-    TRANSPORTE_INFORMA_URL: str = "https://www.transporteinforma.cl/valparaiso/"
+    #: Portal del MTT para la Región de Valparaíso. Es HTML (WordPress), no una
+    #: API: se raspa. Vacío = apagado.
+    #:
+    #: Ojo con dos cosas que cambiaron en el rediseño de 2026 y que dejaron este
+    #: collector devolviendo cero avisos:
+    #:
+    #: * la región pasó de **ruta a subdominio**. `www…/valparaiso/` da 404;
+    #: * apunta a `/estado-de-la-movilidad/` y no a la portada. Es la sección que
+    #:   lista los avisos de tránsito; la portada sólo muestra los destacados.
+    #:
+    #: Se buscaron salidas mejores que raspar y las dos están cerradas: la REST
+    #: API de WordPress responde `401 Rest API disabled` y el feed RSS da error.
+    TRANSPORTE_INFORMA_URL: str = (
+        "https://valparaiso.transporteinforma.cl/estado-de-la-movilidad/"
+    )
     TRANSPORTE_INFORMA_TIMEOUT_SECONDS: float = 30.0
     TRANSPORTE_INFORMA_POLL_INTERVAL_SECONDS: int = 600  # 10 min
     #: Tope de geocodificaciones por corrida. A 1 s por llamada (ver

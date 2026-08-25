@@ -139,6 +139,29 @@ DERIVED_POINT_KEY = "_punto_derivado"
 #: accionable; ese 400, no.
 RUTA_MUERTA = "obtieneImage"
 
+#: Reintentos de la descarga, por encima de los 2 que trae `request_response`.
+#:
+#: **El greylisting existía; sólo estaba en otro sitio.** Durante el intento del
+#: priming se teorizó que un WAF dropeaba la primera conexión de un cliente
+#: desconocido. Aquel priming desapareció con el pivote al archivo estático, pero
+#: el comportamiento no: con el collector ya funcionando y trayendo 29 órdenes,
+#: **el 43 % de las corridas muere** con
+#: `ConnectError: [SSL: WRONG_VERSION_NUMBER]` — 3 de 7 corridas seguidas
+#: observadas en `collector_runs`, alternando con corridas perfectas contra la
+#: misma URL.
+#:
+#: Los valores por defecto no alcanzan y se ve en la aritmética: el backoff es
+#: `backoff * 2**intento`, así que con `retries=2, backoff=1.5` los tres intentos
+#: ocurren en t=0, t≈1.5 s y t≈4.5 s. Si la ventana del greylisting dura más que
+#: eso —y los datos dicen que sí— los tres caen juntos y la corrida se pierde
+#: entera.
+#:
+#: Con estos valores hay 5 intentos repartidos en ~30 s (2+4+8+16), que cabe de
+#: sobra en los 300 s de cadencia. Los fallos de handshake son inmediatos, no
+#: timeouts, así que el coste real es la espera y no el tiempo de conexión.
+PRIMING_RETRIES = 4
+PRIMING_BACKOFF_SECONDS = 2.0
+
 #: Parámetro rompe-cachés que añade el visor. Se replica porque el archivo es
 #: estático y servido con las cabeceras de caché de un estático: sin él, una CDN
 #: o un proxy corporativo pueden devolver el volcado de hace horas. En un mapa de
@@ -344,6 +367,12 @@ class ChilquintaCollector(BasePowerOutageCollector):
                     {},
                     origin=self.company,
                     headers=self.request_headers(),
+                    # Más insistencia que la de la familia, y sólo acá. Ver
+                    # `PRIMING_RETRIES`: el host dropea conexiones de forma
+                    # intermitente y los 4,5 s que cubren los valores por
+                    # defecto se quedan cortos.
+                    retries=PRIMING_RETRIES,
+                    backoff=PRIMING_BACKOFF_SECONDS,
                 )
                 cuerpo = respuesta.text
         except CollectorError:
@@ -437,6 +466,8 @@ __all__ = [
     "DERIVED_POINT_KEY",
     "ENVELOPE_KEY",
     "JSONP_CALLBACK",
+    "PRIMING_BACKOFF_SECONDS",
+    "PRIMING_RETRIES",
     "RUTA_MUERTA",
     "SEGMENTS_KEY",
     "SEGMENT_LAT",
