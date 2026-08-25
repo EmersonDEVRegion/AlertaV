@@ -30,11 +30,13 @@ from app.collectors.power.chilquinta_worker import (
     ACCEPT_HEADER,
     ALL_ORDERS,
     API_KEY_HEADER,
+    CSRF_HEADER,
     JSON_ACCEPT,
     REFERER_HEADER,
     SESSION_COOKIE,
     VISOR_PATH,
     ChilquintaCollector,
+    extraer_csrf,
     pagina_del_visor,
 )
 from app.collectors.power.outage_parser import (
@@ -99,6 +101,21 @@ def registro(**overrides) -> dict:
 #: Valor ficticio de la cookie de sesión que emite el visor al cargarse.
 SESION_FALSA = "s3s10n-f4ls4"
 
+#: Token ficticio. Laravel emite 40 caracteres alfanuméricos; se respeta la forma
+#: para que un test que la asuma falle acá y no en producción.
+CSRF_FALSO = "TkN0k3nD3Pru3b4Qu3N0EsElR3alXXXXXXXXXXXX"
+
+
+def portada(token: str | None = CSRF_FALSO) -> str:
+    """HTML mínimo del visor, con el `<meta>` del token donde Laravel lo pone.
+
+    No es la página real —que trae el bundle entero— sino lo que de ella importa:
+    la etiqueta de la que se extrae el token. Se deja parametrizable para poder
+    montar la portada *sin* token, que es un caso que hay que probar.
+    """
+    meta = f'<meta name="csrf-token" content="{token}">' if token is not None else ""
+    return f"<!doctype html><html><head>{meta}</head><body>visor</body></html>"
+
 
 def prepara_sesion(url: str = ""):
     """Mock de la página del visor: responde el HTML y emite la cookie de sesión.
@@ -121,7 +138,7 @@ def prepara_sesion(url: str = ""):
         return_value=httpx.Response(
             200,
             headers={"set-cookie": f"{SESSION_COOKIE}={SESION_FALSA}; path=/"},
-            text="<!doctype html><html><body>visor</body></html>",
+            text=portada(),
         )
     )
 
@@ -690,12 +707,12 @@ def test_chilquinta_consulta_por_get():
 
 
 @respx.mock
-def test_las_cinco_cabeceras_de_la_consulta_van_completas():
+def test_las_seis_cabeceras_de_la_consulta_van_completas():
     """Acá las cabeceras son los parámetros: si falta una, la consulta es otra.
 
-    Las tres primeras dicen *qué* se pide. Las dos últimas dicen *quién* lo pide
-    y en qué formato lo quiere, y son las que Laravel mira para decidir si esto
-    salió de su visor o de un cliente cualquiera.
+    Las tres primeras dicen *qué* se pide. Las tres últimas dicen *quién* lo pide,
+    en qué formato lo quiere y que la sesión es suya, y son las que la aplicación
+    mira para decidir si esto salió de su visor o de un cliente cualquiera.
     """
     from app.collectors.power.chilquinta_worker import (
         COMPANY_HEADER,
@@ -714,6 +731,7 @@ def test_las_cinco_cabeceras_de_la_consulta_van_completas():
     assert cabeceras[ORDER_HEADER] == ALL_ORDERS
     assert cabeceras[REFERER_HEADER] == CHILQUINTA_VISOR
     assert cabeceras[ACCEPT_HEADER] == JSON_ACCEPT == "application/json"
+    assert cabeceras[CSRF_HEADER] == CSRF_FALSO
 
 
 @respx.mock
@@ -1149,9 +1167,7 @@ def test_un_visor_que_responde_sin_cookie_tampoco_detiene_la_corrida():
     hacer desde acá —la petición de datos dirá si importaba—, pero queda en el
     log nombrando lo que sí llegó, que es la única pista antes del 401.
     """
-    respx.get(CHILQUINTA_VISOR).mock(
-        return_value=httpx.Response(200, text="<html>sin cookie</html>")
-    )
+    respx.get(CHILQUINTA_VISOR).mock(return_value=httpx.Response(200, text=portada()))
     ruta_datos = respx.get(CHILQUINTA_URL).mock(
         return_value=httpx.Response(200, json={"data": []})
     )
@@ -1162,6 +1178,176 @@ def test_un_visor_que_responde_sin_cookie_tampoco_detiene_la_corrida():
 
     assert ruta_datos.called
     assert "Cookie" not in ruta_datos.calls[0].request.headers
+
+
+# --- El token CSRF ----------------------------------------------------------
+#
+# Tercera y última causa del 401. La sesión y el `Referer` no bastaron: delante
+# de Laravel hay un firewall que valida CSRF **también en GET**, contra el
+# comportamiento estándar del framework. Se manda igual porque la evidencia mandó
+# sobre la doctrina.
+#
+# El token no viaja en una cookie que httpx reenvíe solo: está incrustado en el
+# HTML de la portada, en `<meta name="csrf-token">`, y hay que ir a leerlo. Eso
+# introduce la única dependencia temporal del módulo —`request_headers()` sólo
+# tiene token si `prime_session()` corrió antes— y un estado mutable en la
+# instancia que hay que mantener limpio entre corridas. Los tests de acá abajo
+# cubren las dos cosas.
+
+
+@respx.mock
+def test_el_token_del_meta_llega_a_la_peticion_de_datos():
+    """El camino completo: `<meta>` de la portada → cabecera del XHR."""
+    ruta_datos = responde_vacio()
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    assert ruta_datos.calls[0].request.headers[CSRF_HEADER] == CSRF_FALSO
+
+
+@pytest.mark.parametrize(
+    "etiqueta",
+    [
+        '<meta name="csrf-token" content="TOKEN">',
+        "<meta name='csrf-token' content='TOKEN'>",
+        '<meta content="TOKEN" name="csrf-token">',  # atributos al revés
+        '<meta   name="csrf-token"   content="TOKEN"   />',  # espacios y cierre
+        '<meta name="CSRF-TOKEN" content="TOKEN">',  # mayúsculas
+        '<meta charset="utf-8"><meta name="csrf-token" content="TOKEN">',
+    ],
+)
+def test_el_token_se_encuentra_en_las_formas_plausibles_del_meta(etiqueta):
+    """La plantilla puede escribir la etiqueta de varias formas legítimas.
+
+    Es el mismo criterio que con el sobre del JSON: no se sabe exactamente cómo
+    la escribe *esta* plantilla, así que se aceptan las variantes que produce
+    Blade y las que produce quien la edite a mano.
+    """
+    assert extraer_csrf(f"<html><head>{etiqueta}</head></html>") == "TOKEN"
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        "<html><head></head><body>sin meta</body></html>",
+        '<meta name="otro-token" content="no-es-el-nuestro">',
+        '<meta name="csrf-token">',  # la etiqueta sin content
+        '<meta name="csrf-token" content="">',  # content vacío
+        '<meta name="csrf-token" content="   ">',  # sólo espacios
+        "",
+    ],
+)
+def test_una_portada_sin_token_devuelve_none_sin_lanzar(html):
+    """`None` y no una excepción: no encontrarlo no justifica perder la corrida.
+
+    Los dos últimos casos son los que importan: un `content` vacío se trata como
+    ausente, porque mandar la cabecera con una cadena de longitud cero es afirmar
+    que se tiene un token y presentar uno inválido. Este proyecto ya sabe lo que
+    cuesta un valor de longitud cero — ver `ALL_ORDERS`.
+    """
+    assert extraer_csrf(html) is None
+
+
+@respx.mock
+def test_una_portada_sin_token_no_manda_la_cabecera_vacia():
+    """Sin token, la cabecera no va. No va vacía: no va.
+
+    Una cabecera vacía es peor que su ausencia — afirma tener un token y presenta
+    uno que no vale— y produciría un rechazo idéntico pero más difícil de leer.
+    """
+    respx.get(CHILQUINTA_VISOR).mock(
+        return_value=httpx.Response(
+            200,
+            headers={"set-cookie": f"{SESSION_COOKIE}={SESION_FALSA}; path=/"},
+            text=portada(token=None),
+        )
+    )
+    ruta_datos = respx.get(CHILQUINTA_URL).mock(
+        return_value=httpx.Response(200, json={"data": []})
+    )
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    cortes = asyncio.run(instancia.fetch())
+
+    assert CSRF_HEADER not in ruta_datos.calls[0].request.headers
+    assert cortes == [], "y la corrida sigue: el endpoint dirá si el token hacía falta"
+    assert instancia.warnings == []
+
+
+def test_un_priming_fallido_no_deja_el_token_de_la_corrida_anterior():
+    """El token pertenece a **una** sesión, y el cookie jar es nuevo cada corrida.
+
+    Este es el fallo que no se ve venir: la primera corrida prima bien y guarda
+    el token; la segunda no consigue primar —red caída, TLS, lo que sea— y, si el
+    token sobreviviera en la instancia, se mandaría emparejado con una sesión que
+    ya no existe.
+
+    Un 401 por no mandar nada se depura en un minuto. Uno por mandar un token que
+    no corresponde a la sesión se depura mirando este método durante una tarde.
+
+    Dos bloques `with respx.mock` y no un `respx.reset()` en medio: son dos
+    corridas del collector, con dos clientes y dos cookie jars, y montarlas como
+    dos contextos es lo que se parece a eso. (`reset()` además deja de parchear y
+    la segunda petición se iría a la red de verdad.)
+    """
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+
+    # Primera corrida: prima bien y se queda con el token.
+    with respx.mock:
+        responde_vacio()
+        asyncio.run(instancia.fetch())
+
+    assert instancia.csrf_token == CSRF_FALSO
+
+    # Segunda corrida: el visor no responde.
+    with respx.mock:
+        respx.get(CHILQUINTA_VISOR).mock(side_effect=httpx.ConnectError("sin red"))
+        ruta_datos = respx.get(CHILQUINTA_URL).mock(
+            return_value=httpx.Response(200, json={"data": []})
+        )
+        asyncio.run(instancia.fetch())
+
+    assert instancia.csrf_token is None, "el token viejo no sobrevive a un priming fallido"
+    assert CSRF_HEADER not in ruta_datos.calls[0].request.headers
+
+
+def test_sin_priming_las_cabeceras_se_arman_igual_sin_token():
+    """`request_headers()` depende del priming, pero no explota sin él.
+
+    Es la única dependencia temporal del módulo y conviene que degrade en vez de
+    reventar: la suite construye collectors con `__new__` y los llama sueltos, y
+    un `AttributeError` acá sería un fallo de programación disfrazado de fallo de
+    la fuente.
+    """
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+
+    cabeceras = instancia.request_headers()
+
+    assert instancia.csrf_token is None
+    assert CSRF_HEADER not in cabeceras
+    assert cabeceras[REFERER_HEADER] == CHILQUINTA_VISOR, "el resto sí se arma"
+
+
+@respx.mock
+def test_el_token_no_queda_escrito_en_la_traza_de_la_corrida():
+    """`run_params` va a `collector_runs`, que cualquiera puede consultar.
+
+    El token identifica una sesión viva, así que cuenta como credencial por el
+    mismo motivo que la API key: no tiene por qué quedar en el historial.
+    """
+    responde_vacio()
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    assert instancia.csrf_token == CSRF_FALSO, "lo tiene…"
+    assert CSRF_FALSO not in str(instancia.run_params()), "…pero no lo publica"
 
 
 def test_el_gancho_de_sesion_no_hace_nada_por_defecto():

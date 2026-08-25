@@ -76,20 +76,29 @@ se rodea. Las rutas internas del mismo host sirven TLS correctamente, y
 `/mapas?emp=006` es la que el navegador carga de verdad, devuelve 200 y emite
 `mapa_interrupciones_session`. Ver `VISOR_PATH`.
 
-El 401 que se está resolviendo tenía, entonces, dos causas sumadas —sin sesión y
-con un `orderId` que la aplicación tomaba por una orden ajena— y las tres piezas
-de este módulo (priming, `Referer`, `ALL_ORDERS`) atacan una cada una. Si alguna
-vez vuelve el 401, se pueden probar por separado: son independientes.
+El 401 resultó tener **tres** causas sumadas, y se descubrieron de a una porque
+cada arreglo destapaba la siguiente: la petición no pertenecía a ninguna sesión,
+el `orderId` se tomaba por una orden ajena, y faltaba el token CSRF. Las cuatro
+piezas de este módulo (priming, `Referer`, `ALL_ORDERS`, `X-CSRF-TOKEN`) atacan
+una cada una y son independientes: si el 401 vuelve, se pueden descartar por
+separado.
 
 Las cabeceras como parámetros
 ------------------------------
-Toda la consulta cabe en cinco cabeceras y ninguna es opcional:
+Toda la consulta cabe en seis cabeceras y ninguna es opcional:
 
     x-api-key         credencial; sin ella, 401
     X-Company-Code    filial a consultar. 006 = Chilquinta
     X-Orden-Buscada   orden de trabajo concreta, o `ALL_ORDERS` para todas
     Referer           la página del visor de la que "sale" el XHR
     Accept            application/json — se pide el JSON, no el HTML del visor
+    X-CSRF-TOKEN      el token del `<meta>` de la página, leído en el priming
+
+La última contradice el comportamiento estándar de Laravel, que sólo verifica
+CSRF en métodos que escriben. Se manda igual porque **la evidencia mandó sobre
+la doctrina**: el 401 sobrevivió a la sesión y al `Referer`, y lo que hay delante
+es un firewall que valida por su cuenta. Si algún día deja de hacer falta, sobra
+una cabecera; no mandarla cuando hace falta cuesta la capa eléctrica entera.
 
 `X-Orden-Buscada` va siempre, nunca se omite: omitir la cabecera y mandarla con
 el centinela no son lo mismo para este endpoint. Su valor es el mismo
@@ -116,6 +125,7 @@ no es motivo para consultar más seguido.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -162,6 +172,30 @@ HTML_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 #: —de eso se encarga el cookie jar de httpx—; se nombra para poder comprobar
 #: que llegó y decirlo en el log cuando no llega.
 SESSION_COOKIE = "mapa_interrupciones_session"
+
+#: Cabecera con el token CSRF. Esta **sí** se escribe a mano: el token no viaja
+#: en una cookie que httpx pueda reenviar solo, sino incrustado en el HTML de la
+#: página, y hay que ir a buscarlo. Ver `extraer_csrf` y `prime_session`.
+CSRF_HEADER = "X-CSRF-TOKEN"
+
+#: `name` del `<meta>` donde Laravel publica el token para su propio JavaScript.
+#: Es el mecanismo estándar del framework (`csrf_token()` en la plantilla), no
+#: algo particular de Chilquinta.
+CSRF_META_NAME = "csrf-token"
+
+#: El `<meta>` del token, tolerando lo que varía entre plantillas: comillas
+#: simples o dobles, espacios de más, `/>` o `>`, mayúsculas.
+#:
+#: Deliberadamente **no** se parsea el HTML. Traer un parser entero para leer un
+#: atributo sería peor negocio que este par de expresiones: si la plantilla
+#: cambia lo suficiente como para que esto falle, el token también habrá dejado
+#: de estar donde creemos, y lo que hace falta entonces es mirar la página, no un
+#: árbol DOM. Se parte en dos patrones para no depender del orden de los
+#: atributos: el primero encuentra la etiqueta, el segundo le saca el `content`.
+_META_CSRF = re.compile(
+    rf"<meta[^>]+name=[\"']{CSRF_META_NAME}[\"'][^>]*>", re.IGNORECASE
+)
+_META_CONTENT = re.compile(r"content=[\"']([^\"']*)[\"']", re.IGNORECASE)
 
 #: Ruta de la página del visor: la que se carga para abrir sesión y la que se
 #: declara como `Referer`.
@@ -254,6 +288,41 @@ def pagina_del_visor(url: str, *, emp: str = "") -> str:
     return urlunsplit((partes.scheme, partes.netloc, VISOR_PATH, consulta, ""))
 
 
+def extraer_csrf(html: str) -> str | None:
+    """Token CSRF del `<meta name="csrf-token">` de la página, o `None`.
+
+    Laravel publica el token en dos sitios y **no son intercambiables**, que es
+    la trampa de todo esto:
+
+    * el `<meta>` lleva el token **en claro**, y es el que la aplicación espera
+      de vuelta en `X-CSRF-TOKEN`. Es el que lee esta función;
+    * la cookie `XSRF-TOKEN` lleva el mismo token **cifrado** por Laravel y
+      además url-encodeado, y corresponde a la cabecera `X-XSRF-TOKEN`, que la
+      aplicación descifra antes de comparar.
+
+    Cruzarlos —mandar el valor del meta como `X-XSRF-TOKEN`, o el de la cookie
+    como `X-CSRF-TOKEN`— produce un 419/401 idéntico al de no mandar nada, y sin
+    ninguna pista de que el problema es el emparejamiento. Se usa el meta porque
+    es el único de los dos que se puede leer sin la clave de la aplicación.
+
+    Devuelve `None` —y no lanza— cuando la página no trae el token: puede ser un
+    cambio de plantilla, una página de error con forma de página, o simplemente
+    que el priming no llegó. Ninguno de esos casos justifica perder la corrida,
+    y todos se ven en el log de `prime_session`.
+
+    Un token vacío (`content=""`) se trata como ausente: mandar la cabecera con
+    una cadena de longitud cero es la misma clase de error que ya costó dos
+    despliegues con `?orderId=`.
+    """
+    etiqueta = _META_CSRF.search(html)
+    if etiqueta is None:
+        return None
+    contenido = _META_CONTENT.search(etiqueta.group(0))
+    if contenido is None:
+        return None
+    return contenido.group(1).strip() or None
+
+
 def con_order_id(url: str) -> str:
     """`url` con un `orderId` **no vacío** garantizado.
 
@@ -330,6 +399,23 @@ class ChilquintaCollector(BasePowerOutageCollector):
 
     # -- Sesión ---------------------------------------------------------------
 
+    @property
+    def csrf_token(self) -> str | None:
+        """Token leído del visor en el priming de **esta** corrida, o `None`.
+
+        Se inicializa perezosamente y no en `__init__` por la convención del
+        proyecto: los tests construyen collectors con `__new__` para probar
+        `normalize()` sin tocar sesión ni base de datos, y un atributo de
+        instancia normal rompería esos tests. Es el mismo patrón que
+        `BaseCollector.warnings`.
+
+        Que sea estado mutable en la instancia es incómodo y es el precio de que
+        el token no viaje en una cookie: httpx no puede reenviarlo solo, hay que
+        leerlo de un HTML y acordarse de él hasta la petición siguiente. Vive lo
+        que vive la corrida — ver el reseteo al principio de `prime_session`.
+        """
+        return getattr(self, "_csrf_token", None)
+
     def visor_url(self) -> str:
         """La página del visor: la que se prima y la que se declara en `Referer`.
 
@@ -379,26 +465,42 @@ class ChilquintaCollector(BasePowerOutageCollector):
         `SSLError: WRONG_VERSION_NUMBER`, sin respuesta HTTP que absorber. Ver
         `VISOR_PATH`.
 
-        Sobre el CSRF: el `XSRF-TOKEN` entra al jar por el mismo camino, pero no
-        se promueve a cabecera `X-XSRF-TOKEN` porque Laravel sólo verifica CSRF
-        en métodos que escriben (POST, PUT, PATCH, DELETE) y esto es un GET. Si
-        el 401 sobreviviera a este cambio, ese es el siguiente pomo que girar, y
-        el token ya estará en `client.cookies` esperando.
+        La segunda cosa que se trae de acá es el **token CSRF**, y esa sí hay que
+        ir a buscarla: no viaja en una cookie que httpx reenvíe solo, sino
+        incrustado en el HTML (`<meta name="csrf-token">`). Por eso este método
+        lee el cuerpo de la respuesta y guarda el token en la instancia, y por
+        eso `request_headers()` depende de que esto haya corrido antes.
+
+        Que la aplicación exija CSRF en un **GET** contradice el comportamiento
+        estándar de Laravel, que sólo lo verifica en métodos que escriben. Se
+        manda igual porque la evidencia manda sobre la doctrina: el 401
+        sobrevivió a la sesión y al `Referer`, y lo que queda delante es un
+        firewall que valida por su cuenta. Si algún día esto deja de hacer falta,
+        sobra una cabecera; no mandarla cuando hace falta cuesta la capa entera.
 
         **Ningún fallo de acá es fatal**, y la asimetría es a propósito. Este es
         un preámbulo: si el visor no responde, la petición de datos dirá `401` o
         lo que corresponda, y ese error describe el problema mejor que "no pude
         cargar la página". Lo que no puede pasar es que falle en silencio, así
-        que queda en el log —incluido el caso más traicionero, que responda 200 y
-        aun así no emita la cookie—. Es `logger` y no `self.warn`
-        deliberadamente: un priming fallido no degrada una corrida que después
-        devuelve los cortes completos, y marcarla `partial` haría ruido justo en
-        la señal que sirve para detectar degradaciones reales.
+        que queda en el log —incluidos los dos casos traicioneros: que responda
+        200 sin emitir la cookie, y que la emita pero sin el token—. Es `logger`
+        y no `self.warn` deliberadamente: un priming fallido no degrada una
+        corrida que después devuelve los cortes completos, y marcarla `partial`
+        haría ruido justo en la señal que sirve para detectar degradaciones
+        reales.
 
         Que el fallo no sea fatal es lo que hizo *barato* descubrir lo del TLS:
         el `WRONG_VERSION_NUMBER` salió por el log como una línea, no como una
         corrida perdida.
         """
+        # Primero de todo, y aunque parezca redundante con el `__init__` que no
+        # existe: el token pertenece a **una** sesión. Si esta corrida no
+        # consigue primar, lo que queda de la anterior no sirve —su sesión ya no
+        # está en el cookie jar, que es nuevo en cada corrida— y mandarlo
+        # emparejaría un token viejo con una sesión ausente. Un 401 por no mandar
+        # nada se depura; uno por mandar un token que no corresponde, no.
+        self._csrf_token: str | None = None
+
         pagina = self.visor_url()
         if not pagina:
             logger.debug(
@@ -412,7 +514,7 @@ class ChilquintaCollector(BasePowerOutageCollector):
         except Exception as exc:  # frontera con una fuente ajena
             logger.warning(
                 "no se pudo preparar la sesión de Chilquinta; la petición de "
-                "datos va sin cookie y probablemente reciba 401",
+                "datos va sin cookie ni token y probablemente reciba 401",
                 extra={
                     "collector": self.name,
                     "url": pagina,
@@ -420,6 +522,23 @@ class ChilquintaCollector(BasePowerOutageCollector):
                 },
             )
             return
+
+        # `respuesta.text` y no `.content`: httpx resuelve la codificación
+        # declarada por el servidor, y un token es ASCII pero la página que lo
+        # rodea está en español y no siempre en UTF-8.
+        self._csrf_token = extraer_csrf(respuesta.text)
+        if self._csrf_token is None:
+            logger.warning(
+                "el visor de Chilquinta no trae el meta del token CSRF; la "
+                "petición de datos va sin él",
+                extra={
+                    "collector": self.name,
+                    "url": pagina,
+                    "status": respuesta.status_code,
+                    "meta_esperado": CSRF_META_NAME,
+                    "bytes_recibidos": len(respuesta.content),
+                },
+            )
 
         if SESSION_COOKIE not in client.cookies:
             # 200 sin cookie es el caso que más se parece a "funcionó". Se nombra
@@ -439,13 +558,21 @@ class ChilquintaCollector(BasePowerOutageCollector):
     # -- Petición de datos ----------------------------------------------------
 
     def request_headers(self) -> dict[str, str]:
-        """Las de la familia más las cinco que definen la consulta.
+        """Las de la familia más las que definen la consulta y la sesión.
 
         Junto con el `?orderId=` de `request_url()`, estas cabeceras **son** los
         parámetros: no hay cuerpo, así que entre las dos piezas se arma la
         petición entera.
 
-        Cuatro decisiones que no se ven en el resultado:
+        **Este método depende de que `prime_session()` haya corrido**, y es la
+        única dependencia temporal del módulo. `X-CSRF-TOKEN` sale de un HTML que
+        sólo existe si el priming lo trajo; la garantía es el orden dentro de
+        `load_records()`, donde el gancho se llama antes de que estas cabeceras
+        se construyan. Llamado suelto —los tests lo hacen— simplemente omite la
+        cabecera en vez de reventar: es una degradación honesta, no un error de
+        programación.
+
+        Cinco decisiones que no se ven en el resultado:
 
         * La llave se lee de `settings` en cada petición en vez de guardarse en
           la instancia. Si rota, basta reiniciar el proceso con el `.env` nuevo y
@@ -462,10 +589,17 @@ class ChilquintaCollector(BasePowerOutageCollector):
           a partir del priming, y añadirla a mano requeriría leerla, guardarla y
           mantenerla: tres oportunidades de que se quede vieja. Si en la petición
           saliente no hay `Cookie`, el que no corrió es `prime_session()`.
+        * `X-CSRF-TOKEN` es la excepción a lo anterior y sólo porque no queda
+          otra: el token no viaja en una cookie, sino en un `<meta>` del HTML, y
+          nadie lo reenvía por nosotros. Va **sólo si existe**. Mandar la
+          cabecera vacía sería peor que no mandarla —afirma tener un token y
+          presenta uno inválido—, y este proyecto ya sabe lo que cuesta un valor
+          de longitud cero: ver `ALL_ORDERS`.
 
         Nada de esto llega a `run_params()`, y por tanto nada llega a
         `collector_runs`. Una credencial en la traza es una credencial visible
-        para cualquiera que consulte el historial de corridas.
+        para cualquiera que consulte el historial de corridas — y el token CSRF
+        cuenta como tal: identifica una sesión viva.
         """
         headers = super().request_headers()
         headers[API_KEY_HEADER] = _require_api_key()
@@ -478,6 +612,8 @@ class ChilquintaCollector(BasePowerOutageCollector):
         referer = self.visor_url()
         if referer:
             headers[REFERER_HEADER] = referer
+        if self.csrf_token:
+            headers[CSRF_HEADER] = self.csrf_token
         return headers
 
     def request_url(self) -> str:
@@ -542,6 +678,8 @@ __all__ = [
     "ALL_ORDERS",
     "API_KEY_HEADER",
     "COMPANY_HEADER",
+    "CSRF_HEADER",
+    "CSRF_META_NAME",
     "HTML_ACCEPT",
     "JSON_ACCEPT",
     "ORDER_HEADER",
@@ -552,5 +690,6 @@ __all__ = [
     "VISOR_PATH",
     "ChilquintaCollector",
     "con_order_id",
+    "extraer_csrf",
     "pagina_del_visor",
 ]
