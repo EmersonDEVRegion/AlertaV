@@ -59,11 +59,22 @@ navegador cargó la página. En esa primera carga el servidor emite
 `mapa_interrupciones_session` (y el `XSRF-TOKEN` que la acompaña), y el XHR
 posterior la devuelve junto con un `Referer` que dice de qué página salió.
 
-`prime_session()` reproduce exactamente eso: un GET silencioso a la raíz con el
-**mismo** `httpx.AsyncClient`, cuyo cookie jar absorbe el `Set-Cookie` y lo
-reenvía solo en la petición de datos. No hay que leer la cookie ni copiarla a
-mano; hay que hacer las dos peticiones con el mismo cliente y en ese orden. Ver
-el gancho `BasePowerOutageCollector.prime_session`, que existe por este caso.
+`prime_session()` reproduce exactamente eso: un GET silencioso a la página del
+visor con el **mismo** `httpx.AsyncClient`, cuyo cookie jar absorbe el
+`Set-Cookie` y lo reenvía solo en la petición de datos. No hay que leer la
+cookie ni copiarla a mano; hay que hacer las dos peticiones con el mismo cliente
+y en ese orden. Ver el gancho `BasePowerOutageCollector.prime_session`, que
+existe por este caso.
+
+**Y la página es `/mapas?emp=006`, no la raíz.** Lo intuitivo —y lo que se
+intentó primero— es cargar `https://mapainterrupciones.chilquinta.cl/`, pero esa
+ruta está mal configurada del lado de Chilquinta: responde tráfico **sin TLS**
+por el puerto 443, así que el handshake muere con
+`SSLError: WRONG_VERSION_NUMBER` antes de que exista una respuesta HTTP. No es un
+problema de certificado ni de nuestra configuración, y no se arregla desde acá:
+se rodea. Las rutas internas del mismo host sirven TLS correctamente, y
+`/mapas?emp=006` es la que el navegador carga de verdad, devuelve 200 y emite
+`mapa_interrupciones_session`. Ver `VISOR_PATH`.
 
 El 401 que se está resolviendo tenía, entonces, dos causas sumadas —sin sesión y
 con un `orderId` que la aplicación tomaba por una orden ajena— y las tres piezas
@@ -120,7 +131,9 @@ logger = logging.getLogger(__name__)
 #: Cabecera donde el endpoint espera la llave. El nombre lo fija Chilquinta.
 API_KEY_HEADER = "x-api-key"
 
-#: Cabecera con la filial a consultar. Reemplaza al viejo `?emp=006`.
+#: Cabecera con la filial a consultar. Reemplaza al viejo `?emp=006` **en la
+#: ruta de datos**; el `?emp=` no desapareció del visor, sigue en la URL de la
+#: página. Ver `VISOR_EMP_PARAM`.
 COMPANY_HEADER = "X-Company-Code"
 
 #: Cabecera que acota la consulta a una orden de trabajo. `ALL_ORDERS` = todas.
@@ -149,6 +162,27 @@ HTML_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 #: —de eso se encarga el cookie jar de httpx—; se nombra para poder comprobar
 #: que llegó y decirlo en el log cuando no llega.
 SESSION_COOKIE = "mapa_interrupciones_session"
+
+#: Ruta de la página del visor: la que se carga para abrir sesión y la que se
+#: declara como `Referer`.
+#:
+#: **No es `/`, y el motivo no es preferencia.** La raíz del host está mal
+#: configurada del lado de Chilquinta y responde tráfico sin TLS por el puerto
+#: 443: el intento de priming contra ella muere en el handshake con
+#: `SSLError: WRONG_VERSION_NUMBER`, sin llegar a haber respuesta HTTP. Las rutas
+#: internas del mismo host sí sirven TLS, así que se carga la página que el
+#: navegador carga de verdad. Devuelve 200 y emite `SESSION_COOKIE`.
+#:
+#: Ojo con la simetría inversa: `/mapas` es la ruta **correcta para la página** y
+#: la equivocada para los datos —devuelve el HTML del visor—, mientras que
+#: `/obtieneImage` es lo contrario. Las dos viven en este módulo y se parecen lo
+#: suficiente como para que alguien "unifique" la que no debe.
+VISOR_PATH = "/mapas"
+
+#: Filial en la URL del visor. Es el mismo código que viaja en `COMPANY_HEADER`
+#: y sale del mismo sitio (`CHILQUINTA_COD_EMP`): la página y el XHR tienen que
+#: hablar de la misma empresa, y con dos literales acabarían no haciéndolo.
+VISOR_EMP_PARAM = "emp"
 
 #: Parámetro de query con el mismo significado que `ORDER_HEADER`. El endpoint
 #: exige los dos: sin el de la URL responde
@@ -186,19 +220,28 @@ ORDER_PARAM = "orderId"
 ALL_ORDERS = "null"
 
 
-def origen_de(url: str) -> str:
-    """Raíz (`https://host/`) de la que cuelga `url`, o `""` si no se puede.
+def pagina_del_visor(url: str, *, emp: str = "") -> str:
+    """Página del visor que acompaña al endpoint `url`, o `""` si no se deduce.
 
-    Es la página del visor: lo que un navegador carga antes de hacer el XHR, y
-    por tanto de dónde salen la cookie de sesión y el valor del `Referer`.
+    Es lo que un navegador carga antes de hacer el XHR, y por tanto de dónde
+    salen la cookie de sesión y el valor del `Referer`. En producción da
+    `https://mapainterrupciones.chilquinta.cl/mapas?emp=006`.
 
-    Se **deriva** del endpoint en vez de escribirse como constante, y no es
-    ergonomía: una cookie está atada a su host. Primar una raíz fija mientras se
-    consulta otro host daría un cookie jar lleno de cookies que httpx no
-    enviaría —correctamente— a la petición de datos, y el resultado sería el
-    mismo 401 pero sin ninguna pista de por qué. Derivándola, las dos peticiones
-    comparten origen por construcción y `CHILQUINTA_API_URL` sigue siendo la
-    única variable que hay que cambiar si el visor se muda.
+    **Ruta fija, host derivado**, y cada mitad tiene su motivo:
+
+    * la ruta es `VISOR_PATH` y no la raíz porque la raíz no habla TLS — ver
+      allí, es un fallo de configuración de Chilquinta que sólo se puede rodear;
+    * el host sale del endpoint configurado en vez de escribirse en una
+      constante porque **una cookie está atada a su host**. Con el host escrito a
+      mano, apuntar `CHILQUINTA_API_URL` a otro entorno dejaría un cookie jar
+      lleno de cookies que httpx —correctamente— no enviaría a la petición de
+      datos, y el síntoma sería el mismo 401 sin ninguna pista de por qué.
+      Derivándolo, las dos peticiones comparten origen por construcción.
+
+    `emp` se recibe en vez de leerse de `settings` acá dentro para que la función
+    sea pura y se pueda probar sin tocar la configuración; quien la llama ya lo
+    tiene. Vacío, se omite el parámetro en vez de mandar `?emp=`: un valor de
+    longitud cero es exactamente lo que este proyecto ya aprendió a no enviar.
 
     Devuelve `""` en vez de lanzar cuando la URL no tiene esquema y host: sin
     ellos no hay nada que primar, y quien tiene que quejarse de una URL
@@ -207,7 +250,8 @@ def origen_de(url: str) -> str:
     partes = urlsplit(url)
     if not partes.scheme or not partes.netloc:
         return ""
-    return urlunsplit((partes.scheme, partes.netloc, "/", "", ""))
+    consulta = urlencode({VISOR_EMP_PARAM: emp}) if emp else ""
+    return urlunsplit((partes.scheme, partes.netloc, VISOR_PATH, consulta, ""))
 
 
 def con_order_id(url: str) -> str:
@@ -293,11 +337,18 @@ class ChilquintaCollector(BasePowerOutageCollector):
         `Referer` es la afirmación "vengo de esta página" y el priming es lo que
         la hace cierta; si se calcularan por separado, un día dirían cosas
         distintas y la petición pasaría a ser una mentira con la forma correcta.
+
+        Que el `Referer` lleve también el `?emp=006` no es un descuido: es lo que
+        manda un navegador. Con la política de referrer por defecto, una petición
+        al mismo origen declara la URL de la página **entera**, query incluida.
         """
-        return origen_de(self.request_url())
+        return pagina_del_visor(
+            self.request_url(),
+            emp=str(settings.CHILQUINTA_COD_EMP or "").strip(),
+        )
 
     def priming_headers(self) -> dict[str, str]:
-        """Cabeceras del GET a la raíz: las de un navegador abriendo la página.
+        """Cabeceras del GET al visor: las de un navegador abriendo la página.
 
         **Sin la API key**, y es deliberado. La llave autoriza la ruta de datos;
         la página del visor es pública y no la pide. Mandarla igualmente sería
@@ -313,14 +364,20 @@ class ChilquintaCollector(BasePowerOutageCollector):
         return headers
 
     async def prime_session(self, client: httpx.AsyncClient) -> None:
-        """GET silencioso a la raíz para que el cookie jar absorba la sesión.
+        """GET silencioso al visor para que el cookie jar absorba la sesión.
 
-        Es la primera mitad de lo que hace un navegador: cargar la página del
-        visor. El servidor responde con `Set-Cookie: mapa_interrupciones_session`
-        (más el `XSRF-TOKEN`), httpx los guarda en el cookie jar de `client`, y
-        la petición de datos que viene después los reenvía sola. No se lee ni se
-        copia ninguna cookie acá: lo único que hay que garantizar es que las dos
-        peticiones usen **este** cliente, y por eso el gancho recibe el cliente.
+        Es la primera mitad de lo que hace un navegador: cargar
+        `/mapas?emp=006`. El servidor responde 200 con
+        `Set-Cookie: mapa_interrupciones_session` (más el `XSRF-TOKEN`), httpx
+        los guarda en el cookie jar de `client`, y la petición de datos que viene
+        después los reenvía sola. No se lee ni se copia ninguna cookie acá: lo
+        único que hay que garantizar es que las dos peticiones usen **este**
+        cliente, y por eso el gancho recibe el cliente.
+
+        La página es `/mapas` y no `/`. La raíz del host devuelve tráfico sin TLS
+        por el 443 y el priming contra ella moría en el handshake con
+        `SSLError: WRONG_VERSION_NUMBER`, sin respuesta HTTP que absorber. Ver
+        `VISOR_PATH`.
 
         Sobre el CSRF: el `XSRF-TOKEN` entra al jar por el mismo camino, pero no
         se promueve a cabecera `X-XSRF-TOKEN` porque Laravel sólo verifica CSRF
@@ -329,32 +386,36 @@ class ChilquintaCollector(BasePowerOutageCollector):
         el token ya estará en `client.cookies` esperando.
 
         **Ningún fallo de acá es fatal**, y la asimetría es a propósito. Este es
-        un preámbulo: si la raíz no responde, la petición de datos dirá `401` o
+        un preámbulo: si el visor no responde, la petición de datos dirá `401` o
         lo que corresponda, y ese error describe el problema mejor que "no pude
-        cargar la portada". Lo que no puede pasar es que falle en silencio, así
-        que queda en el log —incluido el caso más traicionero, que la raíz
-        responda 200 y aun así no emita la cookie—. Es `logger` y no `self.warn`
+        cargar la página". Lo que no puede pasar es que falle en silencio, así
+        que queda en el log —incluido el caso más traicionero, que responda 200 y
+        aun así no emita la cookie—. Es `logger` y no `self.warn`
         deliberadamente: un priming fallido no degrada una corrida que después
         devuelve los cortes completos, y marcarla `partial` haría ruido justo en
         la señal que sirve para detectar degradaciones reales.
+
+        Que el fallo no sea fatal es lo que hizo *barato* descubrir lo del TLS:
+        el `WRONG_VERSION_NUMBER` salió por el log como una línea, no como una
+        corrida perdida.
         """
-        raiz = self.visor_url()
-        if not raiz:
+        pagina = self.visor_url()
+        if not pagina:
             logger.debug(
-                "sin origen que primar",
+                "sin página de visor que primar",
                 extra={"collector": self.name, "url": self.request_url()},
             )
             return
 
         try:
-            respuesta = await client.get(raiz, headers=self.priming_headers())
+            respuesta = await client.get(pagina, headers=self.priming_headers())
         except Exception as exc:  # frontera con una fuente ajena
             logger.warning(
                 "no se pudo preparar la sesión de Chilquinta; la petición de "
                 "datos va sin cookie y probablemente reciba 401",
                 extra={
                     "collector": self.name,
-                    "url": raiz,
+                    "url": pagina,
                     "error": f"{type(exc).__name__}: {exc}",
                 },
             )
@@ -365,10 +426,10 @@ class ChilquintaCollector(BasePowerOutageCollector):
             # lo que sí llegó: si el visor renombra su cookie, esta línea del log
             # es el único sitio donde se va a ver antes del 401.
             logger.warning(
-                "la raíz de Chilquinta respondió sin la cookie de sesión",
+                "el visor de Chilquinta respondió sin la cookie de sesión",
                 extra={
                     "collector": self.name,
-                    "url": raiz,
+                    "url": pagina,
                     "status": respuesta.status_code,
                     "cookie_esperada": SESSION_COOKIE,
                     "cookies_recibidas": sorted(client.cookies.keys()),
@@ -395,8 +456,8 @@ class ChilquintaCollector(BasePowerOutageCollector):
           basura, la consulta cambia de significado.
         * `Referer` no es decoración ni cortesía: Laravel lo mira, y una petición
           sin él es una petición que no salió de su visor. Sale de `visor_url()`
-          —la misma página que `prime_session()` acaba de cargar— para que la
-          afirmación sea cierta y no sólo esté bien escrita.
+          —la misma página que `prime_session()` acaba de cargar, `?emp=` y
+          todo— para que la afirmación sea cierta y no sólo esté bien escrita.
         * La cookie de sesión **no aparece acá**. La pone el cookie jar de httpx
           a partir del priming, y añadirla a mano requeriría leerla, guardarla y
           mantenerla: tres oportunidades de que se quede vieja. Si en la petición
@@ -487,7 +548,9 @@ __all__ = [
     "ORDER_PARAM",
     "REFERER_HEADER",
     "SESSION_COOKIE",
+    "VISOR_EMP_PARAM",
+    "VISOR_PATH",
     "ChilquintaCollector",
     "con_order_id",
-    "origen_de",
+    "pagina_del_visor",
 ]

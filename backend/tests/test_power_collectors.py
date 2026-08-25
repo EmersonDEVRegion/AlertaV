@@ -33,8 +33,9 @@ from app.collectors.power.chilquinta_worker import (
     JSON_ACCEPT,
     REFERER_HEADER,
     SESSION_COOKIE,
+    VISOR_PATH,
     ChilquintaCollector,
-    origen_de,
+    pagina_del_visor,
 )
 from app.collectors.power.outage_parser import (
     PowerOutage,
@@ -100,21 +101,23 @@ SESION_FALSA = "s3s10n-f4ls4"
 
 
 def prepara_sesion(url: str = ""):
-    """Mock de la raíz del visor: responde el HTML y emite la cookie de sesión.
+    """Mock de la página del visor: responde el HTML y emite la cookie de sesión.
 
     Hace falta en **todo** test que llegue a la red por el camino de Chilquinta,
-    porque el collector visita la raíz antes de pedir los datos. Que respx exija
+    porque el collector la visita antes de pedir los datos. Que respx exija
     mockearla es exactamente la propiedad que se quiere: si alguien borra el
     priming, estas rutas dejan de llamarse y los tests que lo comprueban fallan;
     si alguien lo añade a otra fuente sin querer, aparece una petición
     inesperada.
 
-    La raíz se deriva de la URL de datos con la misma función que usa el
+    La página se deriva de la URL de datos con la misma función que usa el
     collector: si el derivado cambiara, el mock y el código cambiarían juntos y
-    el test no se enteraría — de eso se encarga `test_la_raiz_se_deriva_del_endpoint`,
-    que fija la cadena literal.
+    el test no se enteraría — de eso se encarga
+    `test_la_pagina_del_visor_se_deriva_del_endpoint`, que fija la cadena literal.
     """
-    return respx.get(origen_de(url or CHILQUINTA_URL)).mock(
+    return respx.get(
+        pagina_del_visor(url or CHILQUINTA_URL, emp=settings.CHILQUINTA_COD_EMP)
+    ).mock(
         return_value=httpx.Response(
             200,
             headers={"set-cookie": f"{SESSION_COOKIE}={SESION_FALSA}; path=/"},
@@ -636,7 +639,7 @@ def test_normalize_mantiene_el_invariante_aunque_fetch_ya_filtre():
 #
 # De ahí las tres piezas que se prueban por separado, porque son independientes
 # y el día que vuelva el 401 hay que poder descartarlas de a una: el priming de
-# la raíz, las cabeceras de navegador y el centinela `"null"`.
+# la página del visor, las cabeceras de navegador y el centinela `"null"`.
 #
 # Nada de esto se puede verificar contra el servidor real desde la suite, así
 # que lo que se prueba acá es que la petición **sale armada como se descubrió**,
@@ -646,16 +649,21 @@ def test_normalize_mantiene_el_invariante_aunque_fetch_ya_filtre():
 
 CHILQUINTA_URL = "https://mapainterrupciones.chilquinta.cl/obtieneImage"
 
-#: La página del visor. El collector la deriva de la URL de datos; acá se
-#: escribe entera para que el test note un derivado equivocado.
-CHILQUINTA_RAIZ = "https://mapainterrupciones.chilquinta.cl/"
+#: La página del visor: la que se carga para abrir sesión y la que se declara
+#: como `Referer`. El collector la deriva de la URL de datos; acá se escribe
+#: entera para que el test note un derivado equivocado.
+#:
+#: **No es la raíz del host**, y ese es justamente el punto: `https://…/` sirve
+#: tráfico sin TLS por el 443 y el priming contra ella moría con
+#: `SSLError: WRONG_VERSION_NUMBER`. Ver `test_el_priming_no_toca_la_raiz`.
+CHILQUINTA_VISOR = "https://mapainterrupciones.chilquinta.cl/mapas?emp=006"
 
 
 def responde_vacio(url: str = CHILQUINTA_URL):
-    """Mocks del camino completo: raíz que da sesión + endpoint que da datos.
+    """Mocks del camino completo: visor que da sesión + endpoint que da datos.
 
     Devuelve **la ruta del endpoint**, que es sobre la que asertan casi todos los
-    tests. La de la raíz se monta igual siempre porque sin ella el collector se
+    tests. La del visor se monta igual siempre porque sin ella el collector se
     queda sin ruta mockeada en el priming y respx aborta la petición.
 
     `respx.get` porque el método también está bajo prueba.
@@ -704,7 +712,7 @@ def test_las_cinco_cabeceras_de_la_consulta_van_completas():
     assert cabeceras[API_KEY_HEADER] == API_KEY_FALSA
     assert cabeceras[COMPANY_HEADER] == "006"
     assert cabeceras[ORDER_HEADER] == ALL_ORDERS
-    assert cabeceras[REFERER_HEADER] == CHILQUINTA_RAIZ
+    assert cabeceras[REFERER_HEADER] == CHILQUINTA_VISOR
     assert cabeceras[ACCEPT_HEADER] == JSON_ACCEPT == "application/json"
 
 
@@ -923,10 +931,10 @@ def test_la_llave_no_viaja_en_la_url():
 
 
 @respx.mock
-def test_la_raiz_se_visita_antes_de_pedir_los_datos():
+def test_el_visor_se_visita_antes_de_pedir_los_datos():
     """El orden es el mecanismo entero: al revés no hay cookie que enviar.
 
-    Dos peticiones por corrida, la raíz primero. Si alguien invirtiera las
+    Dos peticiones por corrida, la página primero. Si alguien invirtiera las
     llamadas —o moviera el priming a después del XHR "para no retrasarlo"— el
     cookie jar estaría vacío en el único momento en que importa, y el síntoma
     sería otra vez un 401 sin nada raro en el código.
@@ -938,7 +946,7 @@ def test_la_raiz_se_visita_antes_de_pedir_los_datos():
     asyncio.run(instancia.fetch())
 
     assert len(respx.calls) == 2, "una carga del visor y un XHR, como el navegador"
-    assert respx.calls[0].request.url.path == "/", "la raíz va primero"
+    assert respx.calls[0].request.url.path == VISOR_PATH, "la página va primero"
     assert respx.calls[1].request.url.path == "/obtieneImage"
     assert ruta_datos.called
 
@@ -948,7 +956,7 @@ def test_la_cookie_de_sesion_llega_a_la_peticion_de_datos():
     """La aserción que prueba que el priming sirvió de algo.
 
     Nadie escribe esta cabecera: la pone el cookie jar de `httpx.AsyncClient` a
-    partir del `Set-Cookie` de la raíz. Por eso el gancho recibe el **cliente** y
+    partir del `Set-Cookie` del visor. Por eso el gancho recibe el **cliente** y
     no la URL — con un cliente distinto para cada petición, todo lo demás
     seguiría igual y la cookie no viajaría.
     """
@@ -984,7 +992,7 @@ def test_el_priming_no_lleva_la_credencial():
 
 @respx.mock
 def test_el_priming_pide_la_pagina_y_no_el_json():
-    """`Accept: text/html` en la raíz, `application/json` en los datos.
+    """`Accept: text/html` en la página, `application/json` en los datos.
 
     No es un detalle cosmético: a una aplicación Laravel se le puede pedir JSON
     en una ruta que sirve HTML, y lo que devuelva entonces será otra cosa —y con
@@ -1018,39 +1026,109 @@ def test_el_referer_es_la_pagina_que_se_primo():
 
     visitada = str(respx.calls[0].request.url)
     assert ruta_datos.calls[0].request.headers[REFERER_HEADER] == visitada
-    assert visitada == CHILQUINTA_RAIZ
+    assert visitada == CHILQUINTA_VISOR
+    assert "emp=006" in visitada, "un navegador declara la URL entera, query incluida"
 
 
-def test_la_raiz_se_deriva_del_endpoint_y_no_se_escribe_a_mano():
-    """Una cookie está atada a su host: primar otro origen no sirve de nada.
+def test_la_pagina_del_visor_se_deriva_del_endpoint_pero_la_ruta_es_fija():
+    """Ruta fija, host derivado. Cada mitad tiene su motivo y son distintos.
 
-    Derivarla es lo que garantiza que las dos peticiones compartan host por
-    construcción. Con una constante escrita a mano, apuntar
-    `CHILQUINTA_API_URL` a otro entorno dejaría el cookie jar lleno de cookies
-    que httpx —correctamente— no enviaría, y el 401 volvería sin ninguna pista.
+    La **ruta** es `/mapas` y se escribe: la raíz del host no habla TLS, así que
+    no hay nada que derivar, hay que saberlo.
+
+    El **host** sale del endpoint configurado porque una cookie está atada a su
+    host: con el host escrito a mano, apuntar `CHILQUINTA_API_URL` a otro entorno
+    dejaría un cookie jar que httpx —correctamente— no enviaría, y el 401
+    volvería sin ninguna pista.
     """
-    assert origen_de(CHILQUINTA_URL) == CHILQUINTA_RAIZ
-    assert origen_de(f"{CHILQUINTA_URL}?orderId={ALL_ORDERS}") == CHILQUINTA_RAIZ
-    assert origen_de("https://staging.chilquinta.cl/a/b/c") == "https://staging.chilquinta.cl/"
+    assert pagina_del_visor(CHILQUINTA_URL, emp="006") == CHILQUINTA_VISOR
+    assert (
+        pagina_del_visor(f"{CHILQUINTA_URL}?orderId={ALL_ORDERS}", emp="006")
+        == CHILQUINTA_VISOR
+    ), "el orderId del endpoint no se arrastra a la página"
+    assert (
+        pagina_del_visor("https://staging.chilquinta.cl/otra/ruta", emp="006")
+        == "https://staging.chilquinta.cl/mapas?emp=006"
+    ), "el host sigue al endpoint; la ruta no"
+    # Sin filial se omite el parámetro en vez de mandar `?emp=`: un valor de
+    # longitud cero es exactamente lo que este proyecto ya aprendió a no enviar.
+    assert pagina_del_visor(CHILQUINTA_URL) == (
+        "https://mapainterrupciones.chilquinta.cl/mapas"
+    )
     # Sin esquema y host no hay nada que primar, y quien tiene que quejarse de
     # una URL inservible es la petición de datos, no el preámbulo.
-    assert origen_de("obtieneImage") == ""
-    assert origen_de("") == ""
+    assert pagina_del_visor("obtieneImage", emp="006") == ""
+    assert pagina_del_visor("", emp="006") == ""
 
 
 @respx.mock
-def test_una_raiz_caida_no_se_lleva_la_corrida():
+def test_el_priming_no_toca_la_raiz():
+    """La raíz del host devuelve tráfico sin TLS: `SSLError: WRONG_VERSION_NUMBER`.
+
+    Es un fallo de configuración del lado de Chilquinta —tráfico plano por el
+    puerto 443— y no se arregla desde acá, se rodea: las rutas internas del mismo
+    host sirven TLS correctamente. `/` es, además, exactamente lo que uno
+    escribiría para "la página principal", así que este test existe para que
+    volver allí sea un fallo rojo y no un `WRONG_VERSION_NUMBER` en el log de
+    producción.
+
+    La aserción es que **ninguna** petición sale hacia la raíz, no que la del
+    visor esté bien: de eso se encarga el test de más arriba.
+    """
+    responde_vacio()
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    rutas = [call.request.url.path for call in respx.calls]
+    assert "/" not in rutas, "la raíz no habla TLS; se carga /mapas en su lugar"
+
+
+@respx.mock
+def test_la_filial_de_la_pagina_es_la_misma_que_la_de_la_cabecera():
+    """La página y el XHR tienen que hablar de la misma empresa.
+
+    Salen las dos de `CHILQUINTA_COD_EMP`. Con dos literales acabarían no
+    coincidiendo, y una sesión abierta sobre la filial equivocada es justo el
+    tipo de fallo que no da error: da una lista vacía.
+    """
+    from app.collectors.power.chilquinta_worker import COMPANY_HEADER
+
+    ruta_datos = responde_vacio()
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    assert respx.calls[0].request.url.params["emp"] == settings.CHILQUINTA_COD_EMP
+    assert (
+        ruta_datos.calls[0].request.headers[COMPANY_HEADER]
+        == respx.calls[0].request.url.params["emp"]
+    )
+
+
+@respx.mock
+def test_un_visor_caido_no_se_lleva_la_corrida():
     """El priming es un preámbulo: su fallo no puede ser más ruidoso que el real.
 
-    Si la raíz no responde, la petición de datos dirá lo que corresponda —un 401,
-    probablemente— y ese error describe el problema mejor que "no pude cargar la
-    portada". Y si el endpoint contesta igual, mejor: la corrida sale entera.
+    Si la página no responde, la petición de datos dirá lo que corresponda —un
+    401, probablemente— y ese error describe el problema mejor que "no pude
+    cargar la portada". Y si el endpoint contesta igual, mejor: la corrida sale
+    entera.
+
+    Esto no es hipotético: el error de TLS de la raíz entró exactamente por acá.
+    Que no fuera fatal es lo que lo convirtió en una línea de log en vez de en
+    una corrida perdida, y por eso el caso se prueba con un fallo de conexión y
+    no con un 500.
 
     `warnings` vacío es parte de la aserción y es deliberado: `partial` es la
     señal de que una corrida trajo datos degradados, y un preámbulo fallido que
     no degradó nada no tiene por qué gastarla.
     """
-    respx.get(CHILQUINTA_RAIZ).mock(side_effect=httpx.ConnectError("sin red"))
+    respx.get(CHILQUINTA_VISOR).mock(
+        side_effect=httpx.ConnectError("[SSL] record layer failure (WRONG_VERSION_NUMBER)")
+    )
     respx.get(CHILQUINTA_URL).mock(
         return_value=httpx.Response(200, json={"data": [registro()]})
     )
@@ -1064,14 +1142,14 @@ def test_una_raiz_caida_no_se_lleva_la_corrida():
 
 
 @respx.mock
-def test_una_raiz_que_responde_sin_cookie_tampoco_detiene_la_corrida():
+def test_un_visor_que_responde_sin_cookie_tampoco_detiene_la_corrida():
     """El caso que más se parece a que funcionó: 200 y ningún `Set-Cookie`.
 
     Es lo que pasaría si el visor renombrara su cookie de sesión. No hay nada que
     hacer desde acá —la petición de datos dirá si importaba—, pero queda en el
     log nombrando lo que sí llegó, que es la única pista antes del 401.
     """
-    respx.get(CHILQUINTA_RAIZ).mock(
+    respx.get(CHILQUINTA_VISOR).mock(
         return_value=httpx.Response(200, text="<html>sin cookie</html>")
     )
     ruta_datos = respx.get(CHILQUINTA_URL).mock(
@@ -1171,10 +1249,16 @@ def test_la_api_key_no_queda_escrita_en_la_traza_de_la_corrida():
 
 
 def test_las_urls_definitivas_estan_configuradas():
-    """La de Chilquinta es la ruta XHR, no la del visor.
+    """La configurada es la ruta XHR, no la del visor. Las dos se usan, aparte.
 
     `obtieneImage` devuelve JSON pese al nombre: es ofuscación del frontend. Si
     alguien "corrige" esta URL hacia `/mapas`, llega HTML y el collector falla.
+
+    La simetría es traicionera y por eso se deja escrita: desde el priming,
+    `/mapas` es la ruta **correcta** —es la página que abre sesión— y
+    `/obtieneImage` sería la equivocada. Son la misma pareja de rutas jugando
+    papeles opuestos según quién pregunte, y sólo una de las dos se configura:
+    la otra la deriva `pagina_del_visor()`.
     """
     assert settings.CHILQUINTA_API_URL == (
         "https://mapainterrupciones.chilquinta.cl/obtieneImage"
