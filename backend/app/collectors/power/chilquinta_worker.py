@@ -59,22 +59,26 @@ navegador cargó la página. En esa primera carga el servidor emite
 `mapa_interrupciones_session` (y el `XSRF-TOKEN` que la acompaña), y el XHR
 posterior la devuelve junto con un `Referer` que dice de qué página salió.
 
-`prime_session()` reproduce exactamente eso: un GET silencioso a la página del
-visor con el **mismo** `httpx.AsyncClient`, cuyo cookie jar absorbe el
-`Set-Cookie` y lo reenvía solo en la petición de datos. No hay que leer la
-cookie ni copiarla a mano; hay que hacer las dos peticiones con el mismo cliente
-y en ese orden. Ver el gancho `BasePowerOutageCollector.prime_session`, que
-existe por este caso.
+`prime_session()` reproduce el efecto de eso: una petición previa con el
+**mismo** `httpx.AsyncClient`, cuyo cookie jar absorbe el `Set-Cookie` y lo
+reenvía solo en la petición de datos. No hay que leer la cookie ni copiarla a
+mano; hay que hacer las dos peticiones con el mismo cliente y en ese orden. Ver
+el gancho `BasePowerOutageCollector.prime_session`, que existe por este caso.
 
-**Y la página es `/mapas?emp=006`, no la raíz.** Lo intuitivo —y lo que se
-intentó primero— es cargar `https://mapainterrupciones.chilquinta.cl/`, pero esa
-ruta está mal configurada del lado de Chilquinta: responde tráfico **sin TLS**
-por el puerto 443, así que el handshake muere con
-`SSLError: WRONG_VERSION_NUMBER` antes de que exista una respuesta HTTP. No es un
-problema de certificado ni de nuestra configuración, y no se arregla desde acá:
-se rodea. Las rutas internas del mismo host sirven TLS correctamente, y
-`/mapas?emp=006` es la que el navegador carga de verdad, devuelve 200 y emite
-`mapa_interrupciones_session`. Ver `VISOR_PATH`.
+**Pero no se carga la página: se golpea la propia ruta de datos.** El priming
+pide `/obtieneImage` a sabiendas de que va a ser rechazado, porque Laravel abre
+sesión al atender la petición aunque después no la autorice, y ese rechazo trae
+las dos cookies. Es un caballo de Troya y conviene llamarlo por su nombre.
+
+Se llegó ahí rodeando, no entendiendo. Cargar la página HTML —primero `/`, luego
+`/mapas?emp=006`— moría con `SSLError: WRONG_VERSION_NUMBER`, un fallo de
+handshake TLS. La ruta de datos negocia bien, así que el preámbulo se mudó a
+ella y el visor dejó de ser un punto de fallo. Lo que **no** hay es una
+explicación cerrada: un drop por huella TLS no puede depender de la ruta, porque
+el path viaja cifrado y el servidor decide antes de conocerlo. La hipótesis viva
+es una redirección hacia otro esquema o puerto; ver `prime_session`, que
+conserva el `follow_redirects=False` y registra el `Location` por si hay que
+volver a tirar de ese hilo.
 
 El 401 resultó tener **tres** causas sumadas, y se descubrieron de a una porque
 cada arreglo destapaba la siguiente: la petición no pertenecía a ninguna sesión,
@@ -166,40 +170,10 @@ ACCEPT_HEADER = "Accept"
 #: Lo que pide el XHR de datos.
 JSON_ACCEPT = "application/json"
 
-#: Lo que pide el navegador al cargar la página del visor. El priming manda esto
-#: y no `application/json` a propósito: se está pidiendo la página, y una
-#: aplicación Laravel a la que se le pide JSON en una ruta HTML puede responder
-#: otra cosa —y con ella, otro `Set-Cookie`, o ninguno—.
-HTML_ACCEPT = (
-    "text/html,application/xhtml+xml,application/xml;q=0.9,"
-    "image/avif,image/webp,*/*;q=0.8"
-)
-
-#: Cabeceras que completan el disfraz de navegador en el priming.
-LANGUAGE_HEADER = "Accept-Language"
-UPGRADE_HEADER = "Upgrade-Insecure-Requests"
+#: Nombre de la cabecera del `User-Agent`. Se nombra para poder afirmar en un
+#: test que el de AlertaV va en **las dos** peticiones: hubo una versión en la
+#: que el priming se disfrazaba de Chrome, y se quitó al dejar de cargar HTML.
 USER_AGENT_HEADER = "User-Agent"
-
-#: Idioma que declararía un navegador en Chile.
-BROWSER_LANGUAGE = "es-ES,es;q=0.9"
-
-#: `User-Agent` de navegador para **el priming solamente**.
-#:
-#: Esto es una excepción consciente a la política del proyecto —ver
-#: `BasePowerOutageCollector.request_headers`, donde está escrito que
-#: identificarse es lo correcto cuando se consulta un servidor ajeno— y conviene
-#: que se lea como excepción y no como costumbre. La petición de **datos** sigue
-#: yendo con el `User-Agent` de AlertaV y su dirección de contacto: quien opere
-#: el servidor sigue teniendo a quién escribirle, que era el punto de la política.
-#:
-#: Sobre lo que este disfraz puede y no puede hacer, ver `prime_session`: no
-#: evita un fallo de handshake, porque en un handshake fallido ninguna cabecera
-#: llega a salir. Sólo influye en lo que el servidor decida *después* de leer la
-#: petición.
-BROWSER_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-)
 
 #: Cookie de sesión que emite el visor al cargarse. No se lee ni se copia a mano
 #: —de eso se encarga el cookie jar de httpx—; se nombra para poder comprobar
@@ -475,91 +449,105 @@ class ChilquintaCollector(BasePowerOutageCollector):
         return getattr(self, "_xsrf_token", None)
 
     def visor_url(self) -> str:
-        """La página del visor: la que se prima y la que se declara en `Referer`.
+        """La página del visor, que ahora sirve sólo para el `Referer`.
 
-        Un solo método para los dos usos porque **tienen que coincidir**. El
-        `Referer` es la afirmación "vengo de esta página" y el priming es lo que
-        la hace cierta; si se calcularan por separado, un día dirían cosas
-        distintas y la petición pasaría a ser una mentira con la forma correcta.
+        Ya **no** se visita: el priming pasó a golpear la ruta de datos. Sigue
+        calculándose porque el `Referer` es una afirmación sobre de dónde vendría
+        un navegador —"este XHR sale de la página del visor"— y esa página es la
+        misma tanto si nosotros la cargamos como si no. Un navegador que abre
+        `/mapas?emp=006` y luego pide `/obtieneImage` manda exactamente esto.
 
-        Que el `Referer` lleve también el `?emp=006` no es un descuido: es lo que
-        manda un navegador. Con la política de referrer por defecto, una petición
-        al mismo origen declara la URL de la página **entera**, query incluida.
+        Que lleve también el `?emp=006` no es un descuido: con la política de
+        referrer por defecto, una petición al mismo origen declara la URL de la
+        página **entera**, query incluida.
         """
         return pagina_del_visor(
             self.request_url(),
             emp=str(settings.CHILQUINTA_COD_EMP or "").strip(),
         )
 
-    def priming_headers(self) -> dict[str, str]:
-        """Cabeceras del GET al visor: las de un navegador abriendo la página.
+    def priming_url(self) -> str:
+        """A dónde se golpea para abrir sesión: la **propia ruta de datos**.
 
-        **No hereda de `super().request_headers()`**, y ese es el cambio que
-        merece atención: la familia pone el `User-Agent` de AlertaV, y acá se
-        manda uno de Chrome. Es una excepción a la política del proyecto de
-        identificarse ante servidores ajenos, acotada a esta petición: la de
-        datos sigue llevando el `User-Agent` con la dirección de contacto, así
-        que quien opere el servidor sigue teniendo a quién escribirle.
+        Antes era la página del visor. El cambio tiene una consecuencia que no se
+        ve y que decide si esto funciona: **el priming tiene que pasar el API
+        Gateway**. El gateway valida los parámetros obligatorios antes de enrutar
+        y contesta `400 Missing required request parameters: [orderId]` sin
+        molestar a Laravel; una petición "desnuda" a `/obtieneImage` moriría ahí,
+        Laravel no llegaría a ejecutarse y **no habría sesión que emitir**. Sería
+        un priming que no prima nada.
 
-        **Sin la API key**, y es deliberado. La llave autoriza la ruta de datos;
-        la página del visor es pública y no la pide. Mandarla igualmente sería
-        exponerla en una petición que no la necesita —a otra ruta, a otros logs
-        intermedios, a un servidor de estáticos— a cambio de nada.
-
-        Tampoco van `X-Company-Code` ni `X-Orden-Buscada`: no significan nada
-        para una página HTML, y el objetivo del priming es parecerse a la carga
-        del visor, no a un XHR con la URL equivocada.
-
-        Lo que este disfraz **no** puede hacer está en `prime_session`: si la
-        conexión muere en el handshake TLS, ninguna de estas cabeceras llegó a
-        salir. Sólo sirven para lo que el servidor decida después de leerlas.
+        Por eso esto devuelve `request_url()` —con su `?orderId=null`— y no la
+        ruta pelada: el objetivo es llegar hasta Laravel y que sea *él* quien
+        rechace, porque su rechazo es el que trae las cookies.
         """
-        return {
-            USER_AGENT_HEADER: BROWSER_USER_AGENT,
-            ACCEPT_HEADER: HTML_ACCEPT,
-            LANGUAGE_HEADER: BROWSER_LANGUAGE,
-            UPGRADE_HEADER: "1",
-        }
+        return self.request_url()
+
+    def priming_headers(self) -> dict[str, str]:
+        """Las mismas cabeceras de la petición de datos, sin el token.
+
+        Es literalmente `request_headers()`, y no una coincidencia: el priming
+        **es** la petición de datos hecha una vez sin credencial de sesión, para
+        que la aplicación conteste con un rechazo que trae las cookies. Que sea
+        el mismo método garantiza que las dos peticiones no puedan divergir.
+
+        No hace falta quitarle nada. `prime_session()` resetea el token antes de
+        llamar acá, así que en ese momento `request_headers()` omite sola el
+        `X-XSRF-TOKEN` —no lo tiene todavía— y devuelve exactamente la petición
+        que buscamos. Si algún día alguien invierte ese orden, el priming
+        mandaría el token de la corrida anterior y el efecto sería sutil y feo;
+        el reseteo está comentado allá arriba por eso.
+
+        Aquí murió el disfraz de navegador. Mientras el priming cargaba una
+        página HTML tenía sentido parecerse a un navegador; ahora consulta la
+        misma ruta de API que el resto del collector, donde un `User-Agent` de
+        Chrome sería más raro que el nuestro, no menos. Con eso vuelve además la
+        política del proyecto —identificarse ante un servidor ajeno— a **todas**
+        las peticiones, y desaparece la asimetría de dos `User-Agent` distintos
+        dentro de una misma sesión, que era en sí misma una señal.
+        """
+        return self.request_headers()
 
     async def prime_session(self, client: httpx.AsyncClient) -> None:
-        """GET silencioso al visor para que el cookie jar absorba la sesión.
+        """Una primera petición a la ruta de datos, sin token, para abrir sesión.
 
-        Es la primera mitad de lo que hace un navegador: cargar
-        `/mapas?emp=006`. El servidor responde 200 con
-        `Set-Cookie: mapa_interrupciones_session` (más el `XSRF-TOKEN`), httpx
-        los guarda en el cookie jar de `client`, y la petición de datos que viene
-        después los reenvía sola. No se lee ni se copia ninguna cookie acá: lo
-        único que hay que garantizar es que las dos peticiones usen **este**
+        El patrón es el del caballo de Troya: se golpea `/obtieneImage` sabiendo
+        que va a ser rechazado. Lo que interesa **no** es el cuerpo de la
+        respuesta sino sus `Set-Cookie`: Laravel abre sesión al atender la
+        petición, aunque después decida no autorizarla, así que el rechazo trae
+        `mapa_interrupciones_session` y `XSRF-TOKEN`. httpx los guarda en el
+        cookie jar de `client` y la petición de datos que viene detrás los
+        reenvía sola. Lo único que hay que garantizar es que las dos usen **este**
         cliente, y por eso el gancho recibe el cliente.
 
-        La página es `/mapas` y no `/`. La raíz del host devuelve tráfico sin TLS
-        por el 443 y el priming contra ella moría en el handshake con
-        `SSLError: WRONG_VERSION_NUMBER`, sin respuesta HTTP que absorber. Ver
-        `VISOR_PATH`.
+        No hace falta capturar ningún `HTTPStatusError`: `client.get()` no lanza
+        ante un 4xx —sólo lo haría `raise_for_status()`, que no se llama acá—, de
+        modo que un 401 llega como una respuesta normal y sus cookies entran al
+        jar por el camino de siempre. Está comprobado en los tests.
 
-        Sobre el `WRONG_VERSION_NUMBER` y qué puede arreglarlo
-        ------------------------------------------------------
-        Conviene tener el orden de los hechos a mano, porque invita a un arreglo
-        que no puede funcionar. Es un fallo de **handshake**: lo primero que sale
-        al cable es el ClientHello de TLS y, si el otro extremo contesta texto
-        plano, la conexión muere ahí. En ese momento el servidor **no ha visto
-        una sola cabecera nuestra** —ni `User-Agent`, ni `Accept`, ni `Referer`—,
-        así que ningún disfraz de navegador puede evitarlo. Tampoco puede
-        depender de la ruta: el path viaja cifrado, o sea *después*, de modo que
-        "TLS funciona en `/obtieneImage` pero no en `/mapas`" no puede ser
-        literal para el mismo host y el mismo puerto.
+        Por qué se dejó de cargar `/mapas?emp=006`
+        -------------------------------------------
+        Porque el priming contra la página HTML moría con
+        `SSLError: WRONG_VERSION_NUMBER` y la ruta de datos no. La ruta de datos
+        es, además, la única que este collector necesita que funcione: si ella
+        negocia TLS, el preámbulo puede vivir ahí y el visor deja de ser un punto
+        de fallo. Es un rodeo, no una explicación.
 
-        Lo que sí encaja con los dos hechos —la API negocia bien, el visor no— es
-        una **redirección**: el primer handshake funciona, el servidor lee la
-        petición y contesta un 3xx hacia otro esquema o puerto; seguirlo abre una
-        conexión nueva, y es esa segunda la que muere. Por eso acá se pide
-        `follow_redirects=False` y se registra el `Location`: si el 3xx aparece,
-        la causa queda escrita en el log sin necesidad de capturar tráfico.
+        La explicación sigue sin cerrar, y conviene decirlo en vez de dejar que
+        el próximo la reconstruya mal. **Un drop por huella TLS —JA3— no puede
+        depender de la ruta**: la huella está en el ClientHello y el path viaja
+        cifrado, o sea después, así que en el momento de decidir el servidor no
+        sabe qué ruta se le va a pedir. Sobre el mismo host y puerto, "TLS falla
+        en `/mapas` pero no en `/obtieneImage`" no es literalmente posible; httpx
+        además reutiliza la misma conexión para las dos, así que un handshake que
+        sirve para una sirve para la otra.
 
-        Las cabeceras de navegador de `priming_headers()` entran en la misma
-        historia un escalón más arriba: no evitan el fallo de TLS, pero sí pueden
-        cambiar si el servidor decide emitir ese 3xx. Van las dos cosas, y el log
-        distingue un caso del otro con `cabeceras_llegaron_al_servidor`.
+        Lo que sí encaja con los hechos observados es que el fallo ocurriera en
+        una **segunda** conexión: el visor contesta un 3xx hacia otro esquema o
+        puerto y seguirlo abre una conexión nueva contra algo que habla texto
+        plano. De ahí el `follow_redirects=False` que se conserva más abajo. Si
+        alguna vez hay que volver a `/mapas`, ese es el hilo del que tirar, y el
+        log del `Location` lo dirá en una línea.
 
         La segunda cosa que se trae de acá es el **token CSRF**. Está en la
         cookie `XSRF-TOKEN`, que el jar ya reenvía sola, pero eso no basta: la
@@ -582,19 +570,24 @@ class ChilquintaCollector(BasePowerOutageCollector):
         sobra una cabecera; no mandarla cuando hace falta cuesta la capa entera.
 
         **Ningún fallo de acá es fatal**, y la asimetría es a propósito. Este es
-        un preámbulo: si el visor no responde, la petición de datos dirá `401` o
-        lo que corresponda, y ese error describe el problema mejor que "no pude
-        cargar la página". Lo que no puede pasar es que falle en silencio, así
-        que queda en el log —incluidos los dos casos traicioneros: que responda
-        200 sin emitir la cookie de sesión, y que la emita pero no la del token—.
-        Es `logger` y no `self.warn` deliberadamente: un priming fallido no
-        degrada una corrida que después devuelve los cortes completos, y marcarla
-        `partial` haría ruido justo en la señal que sirve para detectar
-        degradaciones reales.
+        un preámbulo: si la petición no llega, la de datos dirá `401` o lo que
+        corresponda, y ese error describe el problema mejor que "no pude hacer el
+        preámbulo". Lo que no puede pasar es que falle en silencio, así que queda
+        en el log —incluidos los dos casos traicioneros: que responda sin emitir
+        la cookie de sesión, y que la emita pero no la del token—. Es `logger` y
+        no `self.warn` deliberadamente: un priming fallido no degrada una corrida
+        que después devuelve los cortes completos, y marcarla `partial` haría
+        ruido justo en la señal que sirve para detectar degradaciones reales.
 
         Que el fallo no sea fatal es lo que hizo *barato* descubrir lo del TLS:
         el `WRONG_VERSION_NUMBER` salió por el log como una línea, no como una
         corrida perdida.
+
+        Cortesía: esto **no** añade peticiones. Antes eran dos por corrida —el
+        visor y los datos— y siguen siendo dos; lo que cambia es que las dos van
+        ahora a la misma ruta. Vale la pena saberlo por si alguna vez el operador
+        pregunta por qué ve el doble de consultas a `/obtieneImage`: es el
+        preámbulo, a la cadencia de siempre.
         """
         # Primero de todo, y aunque parezca redundante con el `__init__` que no
         # existe: el token pertenece a **una** sesión. Si esta corrida no
@@ -604,23 +597,23 @@ class ChilquintaCollector(BasePowerOutageCollector):
         # nada se depura; uno por mandar un token que no corresponde, no.
         self._xsrf_token: str | None = None
 
-        pagina = self.visor_url()
+        pagina = self.priming_url()
         if not pagina:
             logger.debug(
-                "sin página de visor que primar",
+                "sin URL que primar",
                 extra={"collector": self.name, "url": self.request_url()},
             )
             return
 
         try:
             # `follow_redirects=False` **sólo acá**, contra el `True` del cliente
-            # de la familia. Es la mitad de este blindaje que puede realmente
-            # arreglar un `WRONG_VERSION_NUMBER`: si el visor contesta un 3xx
-            # hacia un destino con esquema o puerto equivocado —`http://…`, o un
-            # `https://host:80`—, seguirlo abre una conexión **nueva** que negocia
-            # TLS contra un puerto que habla texto plano, y ahí muere. Sin
-            # seguirlo, la respuesta 3xx llega entera y sus `Set-Cookie` entran
-            # igual al jar, que es lo único que se venía a buscar.
+            # de la familia. Se conserva aunque el priming ya no toque la ruta
+            # HTML: si un 3xx apunta a un destino con esquema o puerto equivocado
+            # —`http://…`, o un `https://host:80`—, seguirlo abre una conexión
+            # **nueva** que negocia TLS contra un puerto que habla texto plano, y
+            # ahí muere. Sin seguirlo, la respuesta llega entera y sus
+            # `Set-Cookie` entran igual al jar, que es lo único que se venía a
+            # buscar.
             respuesta = await client.get(
                 pagina, headers=self.priming_headers(), follow_redirects=False
             )
@@ -648,13 +641,28 @@ class ChilquintaCollector(BasePowerOutageCollector):
             # un `Location` con `http://` o con `:80` explica el
             # `WRONG_VERSION_NUMBER` sin necesidad de capturar tráfico.
             logger.warning(
-                "el visor de Chilquinta redirige en vez de servir la página; no "
-                "se sigue la redirección a propósito",
+                "el priming de Chilquinta recibió una redirección; no se sigue "
+                "a propósito",
                 extra={
                     "collector": self.name,
                     "url": pagina,
                     "status": respuesta.status_code,
                     "location": respuesta.headers.get("location", ""),
+                },
+            )
+        elif respuesta.is_success:
+            # El preámbulo esperaba un rechazo y le contestaron que sí. No es un
+            # problema —las cookies llegan igual y la corrida sigue— pero sí una
+            # señal fuerte: si la ruta responde 200 sin token, la teoría del CSRF
+            # dejó de ser cierta y sobra media clase. Queda en info, no en
+            # warning: nada está degradado, sólo desactualizado.
+            logger.info(
+                "el priming de Chilquinta fue autorizado sin token; revisar si "
+                "la cabecera CSRF sigue haciendo falta",
+                extra={
+                    "collector": self.name,
+                    "url": pagina,
+                    "status": respuesta.status_code,
                 },
             )
 
@@ -665,8 +673,8 @@ class ChilquintaCollector(BasePowerOutageCollector):
         self._xsrf_token = leer_xsrf(client.cookies)
         if self._xsrf_token is None:
             logger.warning(
-                "el visor de Chilquinta no emitió la cookie del token CSRF; la "
-                "petición de datos va sin la cabecera",
+                "Chilquinta no emitió la cookie del token CSRF; la petición de "
+                "datos va sin la cabecera",
                 extra={
                     "collector": self.name,
                     "url": pagina,
@@ -814,17 +822,12 @@ __all__ = [
     "ACCEPT_HEADER",
     "ALL_ORDERS",
     "API_KEY_HEADER",
-    "BROWSER_LANGUAGE",
-    "BROWSER_USER_AGENT",
     "COMPANY_HEADER",
-    "HTML_ACCEPT",
     "JSON_ACCEPT",
-    "LANGUAGE_HEADER",
     "ORDER_HEADER",
     "ORDER_PARAM",
     "REFERER_HEADER",
     "SESSION_COOKIE",
-    "UPGRADE_HEADER",
     "USER_AGENT_HEADER",
     "VISOR_EMP_PARAM",
     "VISOR_PATH",

@@ -30,13 +30,9 @@ from app.collectors.power.chilquinta_worker import (
     ACCEPT_HEADER,
     ALL_ORDERS,
     API_KEY_HEADER,
-    BROWSER_LANGUAGE,
-    BROWSER_USER_AGENT,
     JSON_ACCEPT,
-    LANGUAGE_HEADER,
     REFERER_HEADER,
     SESSION_COOKIE,
-    UPGRADE_HEADER,
     USER_AGENT_HEADER,
     VISOR_PATH,
     XSRF_COOKIE,
@@ -147,26 +143,32 @@ def galletas(sesion: bool = True, xsrf: str | None = XSRF_FALSO_ENCODED) -> list
     return cabeceras
 
 
-def prepara_sesion(url: str = ""):
-    """Mock de la página del visor: responde el HTML y emite la cookie de sesión.
+def responde(url: str, *datos: httpx.Response):
+    """Mock de la ruta: la **primera** respuesta es del priming, el resto de datos.
 
-    Hace falta en **todo** test que llegue a la red por el camino de Chilquinta,
-    porque el collector la visita antes de pedir los datos. Que respx exija
-    mockearla es exactamente la propiedad que se quiere: si alguien borra el
-    priming, estas rutas dejan de llamarse y los tests que lo comprueban fallan;
-    si alguien lo añade a otra fuente sin querer, aparece una petición
-    inesperada.
+    Desde que el priming golpea la propia ruta de datos, las dos peticiones de una
+    corrida van a la misma URL, así que un solo `side_effect` las sirve en orden.
+    Esa es también la razón de `priming_de()` y `datos_de()`: `calls[0]` ya no es
+    la petición que casi todos los tests quieren mirar.
 
-    La página se deriva de la URL de datos con la misma función que usa el
-    collector: si el derivado cambiara, el mock y el código cambiarían juntos y
-    el test no se enteraría — de eso se encarga
-    `test_la_pagina_del_visor_se_deriva_del_endpoint`, que fija la cadena literal.
+    La respuesta del priming es un 401 con cookies, que es lo que se espera en
+    producción: el preámbulo va sin token, la aplicación lo rechaza, y ese rechazo
+    trae `mapa_interrupciones_session` y `XSRF-TOKEN`.
     """
-    return respx.get(
-        pagina_del_visor(url or CHILQUINTA_URL, emp=settings.CHILQUINTA_COD_EMP)
-    ).mock(
-        return_value=httpx.Response(200, headers=galletas(), text=portada())
+    rechazo = httpx.Response(
+        401, headers=galletas(), json={"error": "Esta petición no esta autorizada"}
     )
+    return respx.get(url).mock(side_effect=[rechazo, *datos])
+
+
+def priming_de(ruta):
+    """La petición del preámbulo: la primera de la corrida."""
+    return ruta.calls[0].request
+
+
+def datos_de(ruta):
+    """La petición que trae los cortes: la segunda, ya con el token."""
+    return ruta.calls[1].request
 
 
 # --- Formas del sobre --------------------------------------------------------
@@ -554,12 +556,7 @@ def test_el_filtro_espacial_actua_en_la_extraccion():
     actuar sobre lo que la red devuelve, no sólo sobre registros armados a mano.
     """
     url = "https://feed.test/cortes"
-    prepara_sesion(url)
-    respx.get(url).mock(
-        return_value=httpx.Response(
-            200, json={"data": [registro(), *outside_records()]}
-        )
-    )
+    responde(url, httpx.Response(200, json={"data": [registro(), *outside_records()]}))
 
     instancia = collector()
     instancia.url = url
@@ -603,12 +600,7 @@ def test_un_feed_entero_fuera_de_region_no_es_una_degradacion():
     señal de que el esquema cambió y merece `partial`.
     """
     url = "https://feed.test/cortes"
-    prepara_sesion(url)
-    # `route` y no `get`: lo que este test comprueba —el filtro espacial, el
-    # parseo— es común a las dos distribuidoras, sea cual sea su transporte.
-    respx.route(url=url).mock(
-        return_value=httpx.Response(200, json={"data": outside_records()})
-    )
+    responde(url, httpx.Response(200, json={"data": outside_records()}))
 
     instancia = collector()
     instancia.url = url
@@ -621,12 +613,7 @@ def test_un_feed_entero_fuera_de_region_no_es_una_degradacion():
 @respx.mock
 def test_un_feed_ilegible_si_avisa():
     url = "https://feed.test/cortes"
-    prepara_sesion(url)
-    # `route` y no `get`: lo que este test comprueba —el filtro espacial, el
-    # parseo— es común a las dos distribuidoras, sea cual sea su transporte.
-    respx.route(url=url).mock(
-        return_value=httpx.Response(200, json={"data": [{"sin": "coordenadas"}]})
-    )
+    responde(url, httpx.Response(200, json={"data": [{"sin": "coordenadas"}]}))
 
     instancia = collector()
     instancia.url = url
@@ -703,16 +690,8 @@ CHILQUINTA_VISOR = "https://mapainterrupciones.chilquinta.cl/mapas?emp=006"
 
 
 def responde_vacio(url: str = CHILQUINTA_URL):
-    """Mocks del camino completo: visor que da sesión + endpoint que da datos.
-
-    Devuelve **la ruta del endpoint**, que es sobre la que asertan casi todos los
-    tests. La del visor se monta igual siempre porque sin ella el collector se
-    queda sin ruta mockeada en el priming y respx aborta la petición.
-
-    `respx.get` porque el método también está bajo prueba.
-    """
-    prepara_sesion(url)
-    return respx.get(url).mock(return_value=httpx.Response(200, json={"data": []}))
+    """El camino feliz completo: priming rechazado con cookies, datos vacíos."""
+    return responde(url, httpx.Response(200, json={"data": []}))
 
 
 @respx.mock
@@ -751,7 +730,7 @@ def test_las_seis_cabeceras_de_la_consulta_van_completas():
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    cabeceras = ruta.calls[0].request.headers
+    cabeceras = datos_de(ruta).headers
     assert cabeceras[API_KEY_HEADER] == API_KEY_FALSA
     assert cabeceras[COMPANY_HEADER] == "006"
     assert cabeceras[ORDER_HEADER] == ALL_ORDERS
@@ -780,7 +759,7 @@ def test_la_cabecera_de_orden_dice_lo_mismo_que_la_url():
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    peticion = ruta.calls[0].request
+    peticion = datos_de(ruta)
     assert ORDER_HEADER in peticion.headers, "omitir la cabecera no es mandarla"
     assert peticion.headers[ORDER_HEADER] == peticion.url.params[ORDER_PARAM]
 
@@ -836,10 +815,10 @@ def test_el_orderid_viaja_en_la_url_y_con_valor():
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    assert str(ruta.calls[0].request.url) == (
+    assert str(datos_de(ruta).url) == (
         "https://mapainterrupciones.chilquinta.cl/obtieneImage?orderId=null"
     )
-    assert ruta.calls[0].request.url.query == b"orderId=null"
+    assert datos_de(ruta).url.query == b"orderId=null"
 
 
 @respx.mock
@@ -856,7 +835,7 @@ def test_la_peticion_no_lleva_cuerpo():
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    assert ruta.calls[0].request.content == b""
+    assert datos_de(ruta).content == b""
 
 
 def test_el_orderid_lo_garantiza_la_url_y_no_el_payload():
@@ -957,7 +936,7 @@ def test_la_llave_no_viaja_en_la_url():
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    assert API_KEY_FALSA not in str(ruta.calls[0].request.url)
+    assert API_KEY_FALSA not in str(datos_de(ruta).url)
 
 
 # --- La sesión: el 401 de Laravel -------------------------------------------
@@ -975,24 +954,26 @@ def test_la_llave_no_viaja_en_la_url():
 
 
 @respx.mock
-def test_el_visor_se_visita_antes_de_pedir_los_datos():
+def test_el_priming_va_antes_de_pedir_los_datos():
     """El orden es el mecanismo entero: al revés no hay cookie que enviar.
 
-    Dos peticiones por corrida, la página primero. Si alguien invirtiera las
-    llamadas —o moviera el priming a después del XHR "para no retrasarlo"— el
-    cookie jar estaría vacío en el único momento en que importa, y el síntoma
-    sería otra vez un 401 sin nada raro en el código.
+    Dos peticiones por corrida, y desde el pivote las dos van a la **misma** ruta:
+    la primera sin token —para que la rechacen y suelten las cookies— y la segunda
+    con él. Si alguien invirtiera las llamadas, o moviera el priming a después del
+    XHR "para no retrasarlo", el cookie jar estaría vacío en el único momento en
+    que importa y el síntoma sería otra vez un 401 sin nada raro en el código.
     """
-    ruta_datos = responde_vacio()
+    ruta = responde_vacio()
 
     instancia = collector()
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    assert len(respx.calls) == 2, "una carga del visor y un XHR, como el navegador"
-    assert respx.calls[0].request.url.path == VISOR_PATH, "la página va primero"
-    assert respx.calls[1].request.url.path == "/obtieneImage"
-    assert ruta_datos.called
+    assert len(respx.calls) == 2, "el preámbulo y la consulta; ni una más"
+    assert priming_de(ruta).url.path == "/obtieneImage"
+    assert datos_de(ruta).url.path == "/obtieneImage"
+    assert XSRF_HEADER not in priming_de(ruta).headers, "el preámbulo va primero…"
+    assert XSRF_HEADER in datos_de(ruta).headers, "…y la consulta después"
 
 
 @respx.mock
@@ -1010,91 +991,44 @@ def test_la_cookie_de_sesion_llega_a_la_peticion_de_datos():
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    enviadas = ruta_datos.calls[0].request.headers.get("Cookie", "")
+    enviadas = datos_de(ruta_datos).headers.get("Cookie", "")
     assert f"{SESSION_COOKIE}={SESION_FALSA}" in enviadas
 
 
 @respx.mock
-def test_el_priming_no_lleva_la_credencial():
-    """La página del visor es pública: no hay motivo para mostrarle la llave.
+def test_el_priming_lleva_la_credencial_a_proposito():
+    """Cambió con el pivote, y conviene que se note por qué.
 
-    La API key autoriza la ruta de datos. Mandarla también en la carga de la
-    portada la expondría en una petición que no la necesita —otra ruta, otros
-    logs intermedios, quizá un CDN— a cambio de nada.
+    Mientras el priming cargaba la página del visor, mandarle la API key habría
+    sido exponerla en una petición que no la necesita. Ahora golpea la ruta de
+    datos, donde la llave es justamente lo que permite **llegar hasta Laravel**:
+    sin ella el rechazo lo emite otra capa y no hay sesión que abrir.
+
+    Sigue sin viajar en la URL, que es lo que la dejaría escrita en logs
+    intermedios.
     """
-    responde_vacio()
+    ruta = responde_vacio()
 
     instancia = collector()
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    priming = respx.calls[0].request
-    assert API_KEY_HEADER not in priming.headers
-    assert API_KEY_FALSA not in str(priming.headers)
+    priming = priming_de(ruta)
+    assert priming.headers[API_KEY_HEADER] == API_KEY_FALSA
     assert API_KEY_FALSA not in str(priming.url)
 
 
 @respx.mock
-def test_el_priming_pide_la_pagina_y_no_el_json():
-    """`Accept: text/html` en la página, `application/json` en los datos.
+def test_el_priming_pide_lo_mismo_que_la_peticion_de_datos():
+    """El priming **es** la petición de datos sin token. Misma URL, mismas cabeceras.
 
-    No es un detalle cosmético: a una aplicación Laravel se le puede pedir JSON
-    en una ruta que sirve HTML, y lo que devuelva entonces será otra cosa —y con
-    ella, otro `Set-Cookie`, o ninguno—. Se está pidiendo la página, así que se
-    pide como la pide un navegador.
-    """
-    responde_vacio()
+    No es una coincidencia que convenga preservar: es el mecanismo. Si el
+    preámbulo pidiera otra cosa —otra ruta, otro `Accept`, otro `orderId`— podría
+    abrir una sesión que no corresponde a la consulta que viene detrás, o morir
+    en el API Gateway antes de que Laravel llegue a emitir cookie alguna.
 
-    instancia = collector()
-    instancia.url = CHILQUINTA_URL
-    asyncio.run(instancia.fetch())
-
-    assert respx.calls[0].request.headers[ACCEPT_HEADER].startswith("text/html")
-    assert respx.calls[1].request.headers[ACCEPT_HEADER] == JSON_ACCEPT
-
-
-@respx.mock
-def test_el_priming_se_disfraza_de_navegador():
-    """El juego completo de cabeceras que manda un navegador abriendo una página.
-
-    No es cosmética: si delante hay un filtro que decide por la petición —emitir
-    un 3xx, servir un interstitial, cortar—, esto es lo único que ve. Se fija el
-    juego entero porque las cabeceras de un navegador se evalúan juntas: una sola
-    de ellas ausente entre las demás delata más que no mandar ninguna.
-
-    Lo que este disfraz **no** puede hacer está en el test de más abajo sobre el
-    handshake.
-    """
-    responde_vacio()
-
-    instancia = collector()
-    instancia.url = CHILQUINTA_URL
-    asyncio.run(instancia.fetch())
-
-    priming = respx.calls[0].request.headers
-    assert priming[USER_AGENT_HEADER] == BROWSER_USER_AGENT
-    assert "Chrome/" in priming[USER_AGENT_HEADER]
-    assert "image/avif" in priming[ACCEPT_HEADER]
-    assert priming[LANGUAGE_HEADER] == BROWSER_LANGUAGE == "es-ES,es;q=0.9"
-    assert priming[UPGRADE_HEADER] == "1"
-    assert "python-httpx" not in priming[USER_AGENT_HEADER].lower()
-
-
-@respx.mock
-def test_los_dos_user_agent_son_distintos_a_proposito():
-    """El disfraz es del priming; la petición de datos sigue identificándose.
-
-    La política del proyecto —decir quién golpea y a quién escribirle— se sostiene
-    donde importa: la petición que trae los datos lleva el `User-Agent` de AlertaV
-    con su dirección de contacto. El disfraz está acotado a la carga de la página.
-
-    Queda anotado que la asimetría tiene un costo: un navegador real usa el mismo
-    `User-Agent` para la página y para su XHR, así que dos distintos dentro de una
-    misma sesión son, para un filtro que mire eso, una señal en sí misma. Si el
-    bloqueo persistiera y se sospechara de esto, el arreglo es una línea: que
-    `request_headers()` use también `BROWSER_USER_AGENT`. No se hace ahora porque
-    renunciar a identificarse en **todas** las peticiones es un precio mayor, y
-    todavía no hay evidencia de que haga falta.
+    La única diferencia permitida es el `X-XSRF-TOKEN`, que en el priming no
+    existe todavía.
     """
     ruta_datos = responde_vacio()
 
@@ -1102,41 +1036,155 @@ def test_los_dos_user_agent_son_distintos_a_proposito():
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    assert respx.calls[0].request.headers[USER_AGENT_HEADER] == BROWSER_USER_AGENT
-    assert (
-        ruta_datos.calls[0].request.headers[USER_AGENT_HEADER]
-        == settings.NOMINATIM_USER_AGENT
+    priming, datos = priming_de(ruta_datos), datos_de(ruta_datos)
+
+    assert str(priming.url) == str(datos.url)
+    assert priming.headers[ACCEPT_HEADER] == datos.headers[ACCEPT_HEADER] == JSON_ACCEPT
+    assert priming.headers[API_KEY_HEADER] == datos.headers[API_KEY_HEADER]
+    assert priming.headers[REFERER_HEADER] == datos.headers[REFERER_HEADER]
+    assert XSRF_HEADER not in priming.headers, "en el priming no hay token todavía"
+    assert datos.headers[XSRF_HEADER] == XSRF_FALSO
+
+
+@respx.mock
+def test_el_priming_lleva_el_orderid_para_pasar_el_gateway():
+    """Sin `?orderId=` el preámbulo muere en el gateway y no prima nada.
+
+    Es la trampa de mover el priming a la ruta de datos, y no se ve: una petición
+    "desnuda" a `/obtieneImage` parece lo natural —no queremos datos, sólo
+    cookies— pero el API Gateway valida los parámetros obligatorios **antes de
+    enrutar** y contesta `400 Missing required request parameters: [orderId]` sin
+    molestar a Laravel. Laravel es quien abre la sesión; si no se ejecuta, no hay
+    `Set-Cookie` y el priming es una petición desperdiciada.
+    """
+    from app.collectors.power.chilquinta_worker import ORDER_PARAM
+
+    ruta = responde_vacio()
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    priming = priming_de(ruta)
+    assert priming.url.params[ORDER_PARAM] == ALL_ORDERS
+    assert priming.headers[API_KEY_HEADER] == API_KEY_FALSA, (
+        "la llave también hace falta para llegar hasta Laravel"
     )
 
 
 @respx.mock
+def test_un_401_en_el_priming_es_un_exito_silencioso():
+    """El rechazo **es** el mecanismo: trae las cookies y la corrida sigue.
+
+    Es lo que se espera en producción — el preámbulo va sin token, así que la
+    aplicación lo rechaza— y por eso no puede tratarse como un fallo. `client.get`
+    no lanza ante un 4xx (sólo lo haría `raise_for_status()`, que no se llama),
+    de modo que un 401 llega como una respuesta normal y sus `Set-Cookie` entran
+    al jar por el camino de siempre. No hace falta capturar nada.
+    """
+    respx.get(CHILQUINTA_URL).mock(
+        side_effect=[
+            httpx.Response(
+                401,
+                headers=galletas(),
+                json={"error": "Esta petición no esta autorizada"},
+            ),
+            httpx.Response(200, json={"data": [registro()]}),
+        ]
+    )
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    cortes = asyncio.run(instancia.fetch())
+
+    assert respx.calls[0].response.status_code == 401, "el preámbulo fue rechazado…"
+    assert instancia.xsrf_token == XSRF_FALSO, "…y aun así dejó el token"
+    assert respx.calls[1].request.headers[XSRF_HEADER] == XSRF_FALSO
+    assert [corte.commune for corte in cortes] == ["Viña del Mar"]
+    assert instancia.warnings == [], "un rechazo esperado no degrada la corrida"
+
+
+@respx.mock
+def test_un_400_del_gateway_en_el_priming_tampoco_detiene_la_corrida():
+    """El otro rechazo posible, y el que **no** trae cookies.
+
+    Un 400 del gateway significa que Laravel no llegó a ejecutarse: no hay sesión
+    ni token. La corrida sigue igual y la petición de datos dará el error real,
+    pero queda en el log que la cookie no llegó — que es la pista de que el
+    preámbulo se está muriendo antes de tiempo.
+    """
+    respx.get(CHILQUINTA_URL).mock(
+        side_effect=[
+            httpx.Response(
+                400, json={"error": "Missing required request parameters: [orderId]"}
+            ),
+            httpx.Response(200, json={"data": []}),
+        ]
+    )
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    cortes = asyncio.run(instancia.fetch())
+
+    assert instancia.xsrf_token is None
+    assert XSRF_HEADER not in respx.calls[1].request.headers
+    assert cortes == []
+
+
+@respx.mock
+def test_el_user_agent_del_proyecto_va_en_las_dos_peticiones():
+    """Se acabó el disfraz asimétrico, y es una mejora.
+
+    Hubo una versión en la que el priming se hacía pasar por Chrome, porque
+    cargaba una página HTML y parecerse a un navegador tenía sentido. Al mudarse a
+    la ruta de API dejó de tenerlo: un `User-Agent` de Chrome pidiendo el JSON
+    interno es más raro que el nuestro, no menos.
+
+    Con eso vuelven dos cosas: la política del proyecto de identificarse ante un
+    servidor ajeno, ahora en **todas** las peticiones, y la coherencia de la
+    sesión — dos `User-Agent` distintos dentro de una misma sesión eran, para
+    cualquier filtro que mirara eso, una señal en sí misma.
+    """
+    ruta_datos = responde_vacio()
+
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
+    asyncio.run(instancia.fetch())
+
+    esperado = settings.NOMINATIM_USER_AGENT
+    assert priming_de(ruta_datos).headers[USER_AGENT_HEADER] == esperado
+    assert datos_de(ruta_datos).headers[USER_AGENT_HEADER] == esperado
+    assert "Chrome/" not in esperado
+
+
+@respx.mock
 def test_el_priming_no_sigue_las_redirecciones():
-    """La mitad del blindaje que sí puede arreglar un `WRONG_VERSION_NUMBER`.
+    """La guarda que se conserva del intento anterior, y por qué sigue puesta.
 
     Un 3xx hacia otro esquema o puerto —`http://…`, o un `https://host:80`— abre,
     al seguirlo, una conexión **nueva** que negocia TLS contra un puerto que habla
-    texto plano. Ese es el escenario que encaja con los dos hechos observados: la
-    API negocia bien y el visor no, sobre el mismo host. Sin seguir el 3xx, la
-    respuesta llega entera y sus `Set-Cookie` entran igual al jar, que es lo único
-    que se venía a buscar.
+    texto plano. Ese es el mecanismo que mejor explica el `WRONG_VERSION_NUMBER`
+    del visor, y aunque el priming ya no toque esa ruta, nada garantiza que la de
+    datos no empiece a redirigir mañana. Sin seguir el 3xx, la respuesta llega
+    entera y sus `Set-Cookie` entran igual al jar.
 
     El cliente de la familia va con `follow_redirects=True`; esto lo invierte sólo
     para esta petición.
     """
-    trampa = respx.get("http://mapainterrupciones.chilquinta.cl/mapas").mock(
-        return_value=httpx.Response(200, text=portada())
-    )
-    respx.get(CHILQUINTA_VISOR).mock(
-        return_value=httpx.Response(
-            302,
-            headers=[
-                *galletas(),
-                ("location", "http://mapainterrupciones.chilquinta.cl/mapas"),
-            ],
-        )
-    )
-    ruta_datos = respx.get(CHILQUINTA_URL).mock(
+    trampa = respx.get("http://mapainterrupciones.chilquinta.cl/obtieneImage").mock(
         return_value=httpx.Response(200, json={"data": []})
+    )
+    ruta = respx.get(CHILQUINTA_URL).mock(
+        side_effect=[
+            httpx.Response(
+                302,
+                headers=[
+                    *galletas(),
+                    ("location", "http://mapainterrupciones.chilquinta.cl/obtieneImage"),
+                ],
+            ),
+            httpx.Response(200, json={"data": []}),
+        ]
     )
 
     instancia = collector()
@@ -1144,7 +1192,7 @@ def test_el_priming_no_sigue_las_redirecciones():
     asyncio.run(instancia.fetch())
 
     assert not trampa.called, "seguir el 3xx es lo que abre la conexión que muere"
-    assert ruta_datos.called, "y la corrida continúa igual"
+    assert len(ruta.calls) == 2, "y la corrida continúa igual"
 
 
 @respx.mock
@@ -1155,20 +1203,20 @@ def test_las_cookies_de_un_3xx_sirven_igual():
     llegaran con un 200, `follow_redirects=False` cambiaría un fallo de TLS por
     una sesión vacía, que es el mismo 401 con otro disfraz.
     """
-    respx.get(CHILQUINTA_VISOR).mock(
-        return_value=httpx.Response(
-            302, headers=[*galletas(), ("location", "https://otro.host/login")]
-        )
-    )
-    ruta_datos = respx.get(CHILQUINTA_URL).mock(
-        return_value=httpx.Response(200, json={"data": []})
+    ruta = respx.get(CHILQUINTA_URL).mock(
+        side_effect=[
+            httpx.Response(
+                302, headers=[*galletas(), ("location", "https://otro.host/login")]
+            ),
+            httpx.Response(200, json={"data": []}),
+        ]
     )
 
     instancia = collector()
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    peticion = ruta_datos.calls[0].request
+    peticion = datos_de(ruta)
     assert instancia.xsrf_token == XSRF_FALSO
     assert peticion.headers[XSRF_HEADER] == XSRF_FALSO
     assert f"{SESSION_COOKIE}={SESION_FALSA}" in peticion.headers["Cookie"]
@@ -1194,24 +1242,29 @@ def test_un_fallo_de_handshake_se_distingue_de_uno_de_aplicacion():
 
 
 @respx.mock
-def test_el_referer_es_la_pagina_que_se_primo():
-    """El `Referer` afirma "vengo de esta página" y el priming lo hace cierto.
+def test_el_referer_sigue_apuntando_al_visor_aunque_ya_no_se_visite():
+    """El `Referer` es una afirmación sobre de dónde vendría un navegador.
 
-    Se comprueba contra la URL que se visitó de verdad y no contra una constante:
-    lo que tiene que sostenerse es la coincidencia entre las dos peticiones. Si
-    un día se calcularan por separado, la cabecera seguiría estando bien escrita
-    y sería mentira.
+    Y esa página sigue siendo `/mapas?emp=006` aunque nosotros ya no la carguemos:
+    un navegador que abre el visor y luego pide `/obtieneImage` manda exactamente
+    esto. Dejar de visitarla no cambia de dónde saldría el XHR.
+
+    Antes este test comprobaba que el `Referer` coincidiera con la URL que el
+    priming había visitado. Esa coincidencia se rompió con el pivote —el priming
+    visita la ruta de datos— y lo honesto es afirmar lo que sigue siendo cierto,
+    no relajar la aserción hasta que pase.
     """
-    ruta_datos = responde_vacio()
+    ruta = responde_vacio()
 
     instancia = collector()
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    visitada = str(respx.calls[0].request.url)
-    assert ruta_datos.calls[0].request.headers[REFERER_HEADER] == visitada
-    assert visitada == CHILQUINTA_VISOR
-    assert "emp=006" in visitada, "un navegador declara la URL entera, query incluida"
+    assert datos_de(ruta).headers[REFERER_HEADER] == CHILQUINTA_VISOR
+    assert priming_de(ruta).headers[REFERER_HEADER] == CHILQUINTA_VISOR
+    assert "emp=006" in CHILQUINTA_VISOR, "un navegador declara la URL entera"
+    rutas = [llamada.request.url.path for llamada in respx.calls]
+    assert VISOR_PATH not in rutas, "el visor ya no se visita: sólo se cita"
 
 
 def test_la_pagina_del_visor_se_deriva_del_endpoint_pero_la_ruta_es_fija():
@@ -1266,55 +1319,54 @@ def test_el_priming_no_toca_la_raiz():
     asyncio.run(instancia.fetch())
 
     rutas = [call.request.url.path for call in respx.calls]
-    assert "/" not in rutas, "la raíz no habla TLS; se carga /mapas en su lugar"
+    assert "/" not in rutas, "la raíz no habla TLS y no se toca"
+    assert VISOR_PATH not in rutas, "y desde el pivote, la página HTML tampoco"
 
 
 @respx.mock
-def test_la_filial_de_la_pagina_es_la_misma_que_la_de_la_cabecera():
-    """La página y el XHR tienen que hablar de la misma empresa.
+def test_la_filial_del_referer_es_la_misma_que_la_de_la_cabecera():
+    """La página que se cita y el XHR tienen que hablar de la misma empresa.
 
     Salen las dos de `CHILQUINTA_COD_EMP`. Con dos literales acabarían no
-    coincidiendo, y una sesión abierta sobre la filial equivocada es justo el
-    tipo de fallo que no da error: da una lista vacía.
+    coincidiendo, y decir que se viene de la página de una filial mientras se
+    consulta otra es justo el tipo de incoherencia que no da error: da una lista
+    vacía.
     """
     from app.collectors.power.chilquinta_worker import COMPANY_HEADER
 
-    ruta_datos = responde_vacio()
+    ruta = responde_vacio()
 
     instancia = collector()
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    assert respx.calls[0].request.url.params["emp"] == settings.CHILQUINTA_COD_EMP
-    assert (
-        ruta_datos.calls[0].request.headers[COMPANY_HEADER]
-        == respx.calls[0].request.url.params["emp"]
-    )
+    peticion = datos_de(ruta)
+    assert f"emp={settings.CHILQUINTA_COD_EMP}" in peticion.headers[REFERER_HEADER]
+    assert peticion.headers[COMPANY_HEADER] == settings.CHILQUINTA_COD_EMP
 
 
 @respx.mock
-def test_un_visor_caido_no_se_lleva_la_corrida():
+def test_un_priming_caido_no_se_lleva_la_corrida():
     """El priming es un preámbulo: su fallo no puede ser más ruidoso que el real.
 
-    Si la página no responde, la petición de datos dirá lo que corresponda —un
-    401, probablemente— y ese error describe el problema mejor que "no pude
-    cargar la portada". Y si el endpoint contesta igual, mejor: la corrida sale
-    entera.
+    Si no llega, la petición de datos dirá lo que corresponda —un 401,
+    probablemente— y ese error describe el problema mejor que "no pude hacer el
+    preámbulo". Y si el endpoint contesta igual, mejor: la corrida sale entera.
 
-    Esto no es hipotético: el error de TLS de la raíz entró exactamente por acá.
-    Que no fuera fatal es lo que lo convirtió en una línea de log en vez de en
-    una corrida perdida, y por eso el caso se prueba con un fallo de conexión y
-    no con un 500.
+    Esto no es hipotético: el error de TLS del visor entró exactamente por acá.
+    Que no fuera fatal es lo que lo convirtió en una línea de log en vez de en una
+    corrida perdida, y por eso el caso se prueba con un fallo de conexión y no con
+    un 500.
 
     `warnings` vacío es parte de la aserción y es deliberado: `partial` es la
-    señal de que una corrida trajo datos degradados, y un preámbulo fallido que
-    no degradó nada no tiene por qué gastarla.
+    señal de que una corrida trajo datos degradados, y un preámbulo fallido que no
+    degradó nada no tiene por qué gastarla.
     """
-    respx.get(CHILQUINTA_VISOR).mock(
-        side_effect=httpx.ConnectError("[SSL] record layer failure (WRONG_VERSION_NUMBER)")
-    )
     respx.get(CHILQUINTA_URL).mock(
-        return_value=httpx.Response(200, json={"data": [registro()]})
+        side_effect=[
+            httpx.ConnectError("[SSL] record layer failure (WRONG_VERSION_NUMBER)"),
+            httpx.Response(200, json={"data": [registro()]}),
+        ]
     )
 
     instancia = collector()
@@ -1326,24 +1378,27 @@ def test_un_visor_caido_no_se_lleva_la_corrida():
 
 
 @respx.mock
-def test_un_visor_que_responde_sin_cookie_tampoco_detiene_la_corrida():
-    """El caso que más se parece a que funcionó: 200 y ningún `Set-Cookie`.
+def test_una_respuesta_sin_cookie_tampoco_detiene_la_corrida():
+    """El caso que más se parece a que funcionó: responde y no emite `Set-Cookie`.
 
-    Es lo que pasaría si el visor renombrara su cookie de sesión. No hay nada que
-    hacer desde acá —la petición de datos dirá si importaba—, pero queda en el
-    log nombrando lo que sí llegó, que es la única pista antes del 401.
+    Es lo que pasaría si la aplicación renombrara su cookie de sesión, o si el
+    rechazo lo emitiera una capa que está antes de Laravel. No hay nada que hacer
+    desde acá —la petición de datos dirá si importaba—, pero queda en el log
+    nombrando lo que sí llegó, que es la única pista antes del 401.
     """
-    respx.get(CHILQUINTA_VISOR).mock(return_value=httpx.Response(200, text=portada()))
-    ruta_datos = respx.get(CHILQUINTA_URL).mock(
-        return_value=httpx.Response(200, json={"data": []})
+    ruta = respx.get(CHILQUINTA_URL).mock(
+        side_effect=[
+            httpx.Response(401, json={"error": "no autorizada"}),
+            httpx.Response(200, json={"data": []}),
+        ]
     )
 
     instancia = collector()
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    assert ruta_datos.called
-    assert "Cookie" not in ruta_datos.calls[0].request.headers
+    assert len(ruta.calls) == 2
+    assert "Cookie" not in datos_de(ruta).headers
 
 
 # --- El token CSRF ----------------------------------------------------------
@@ -1379,7 +1434,7 @@ def test_el_token_de_la_cookie_llega_a_la_peticion_de_datos():
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    assert ruta_datos.calls[0].request.headers[XSRF_HEADER] == XSRF_FALSO
+    assert datos_de(ruta_datos).headers[XSRF_HEADER] == XSRF_FALSO
 
 
 @respx.mock
@@ -1396,7 +1451,7 @@ def test_la_cookie_viaja_ademas_por_su_canal_de_siempre():
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    peticion = ruta_datos.calls[0].request
+    peticion = datos_de(ruta_datos)
     assert peticion.headers[XSRF_HEADER] == XSRF_FALSO, "decodificado en la cabecera"
     assert XSRF_FALSO_ENCODED in peticion.headers["Cookie"], "crudo en la cookie"
 
@@ -1416,7 +1471,7 @@ def test_no_se_manda_la_cabecera_del_token_en_claro():
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
-    assert "X-CSRF-TOKEN" not in ruta_datos.calls[0].request.headers
+    assert "X-CSRF-TOKEN" not in datos_de(ruta_datos).headers
 
 
 def test_el_token_se_url_decodifica():
@@ -1491,24 +1546,24 @@ def test_dos_cookies_con_el_mismo_nombre_no_tumban_la_corrida():
 
 
 @respx.mock
-def test_un_visor_sin_la_cookie_del_token_no_manda_la_cabecera_vacia():
+def test_un_priming_sin_la_cookie_del_token_no_manda_la_cabecera_vacia():
     """Sin token, la cabecera no va. No va vacía: no va.
 
     Y la corrida sigue: el endpoint dirá si el token hacía falta, y ese error es
     más informativo que uno que inventemos acá.
     """
-    respx.get(CHILQUINTA_VISOR).mock(
-        return_value=httpx.Response(200, headers=galletas(xsrf=None), text=portada())
-    )
-    ruta_datos = respx.get(CHILQUINTA_URL).mock(
-        return_value=httpx.Response(200, json={"data": []})
+    ruta = respx.get(CHILQUINTA_URL).mock(
+        side_effect=[
+            httpx.Response(401, headers=galletas(xsrf=None), json={"error": "no"}),
+            httpx.Response(200, json={"data": []}),
+        ]
     )
 
     instancia = collector()
     instancia.url = CHILQUINTA_URL
     cortes = asyncio.run(instancia.fetch())
 
-    assert XSRF_HEADER not in ruta_datos.calls[0].request.headers
+    assert XSRF_HEADER not in datos_de(ruta).headers
     assert cortes == []
     assert instancia.warnings == []
 
@@ -1516,8 +1571,8 @@ def test_un_visor_sin_la_cookie_del_token_no_manda_la_cabecera_vacia():
 def test_un_priming_fallido_no_deja_el_token_de_la_corrida_anterior():
     """El token pertenece a **una** sesión, y el cookie jar es nuevo cada corrida.
 
-    Este es el fallo que no se ve venir: la primera corrida prima bien y guarda
-    el token; la segunda no consigue primar —red caída, TLS, lo que sea— y, si el
+    Este es el fallo que no se ve venir: la primera corrida prima bien y guarda el
+    token; la segunda no consigue primar —red caída, TLS, lo que sea— y, si el
     token sobreviviera en la instancia, se mandaría emparejado con una sesión que
     ya no existe.
 
@@ -1539,16 +1594,18 @@ def test_un_priming_fallido_no_deja_el_token_de_la_corrida_anterior():
 
     assert instancia.xsrf_token == XSRF_FALSO
 
-    # Segunda corrida: el visor no responde.
+    # Segunda corrida: el preámbulo no llega.
     with respx.mock:
-        respx.get(CHILQUINTA_VISOR).mock(side_effect=httpx.ConnectError("sin red"))
-        ruta_datos = respx.get(CHILQUINTA_URL).mock(
-            return_value=httpx.Response(200, json={"data": []})
+        ruta = respx.get(CHILQUINTA_URL).mock(
+            side_effect=[
+                httpx.ConnectError("sin red"),
+                httpx.Response(200, json={"data": []}),
+            ]
         )
         asyncio.run(instancia.fetch())
 
     assert instancia.xsrf_token is None, "el token viejo no sobrevive a un priming fallido"
-    assert XSRF_HEADER not in ruta_datos.calls[0].request.headers
+    assert XSRF_HEADER not in ruta.calls[0].request.headers
 
 
 def test_sin_priming_las_cabeceras_se_arman_igual_sin_token():
@@ -1602,24 +1659,6 @@ def test_el_gancho_de_sesion_no_hace_nada_por_defecto():
 
 
 @respx.mock
-def test_el_user_agent_del_proyecto_sigue_yendo():
-    """Consultamos un servidor ajeno: quien lo opere tiene derecho a saber quién es.
-
-    Las cabeceras propias se añaden *sobre* las de la familia, no en lugar de
-    ellas.
-    """
-    ruta = responde_vacio()
-
-    instancia = collector()
-    instancia.url = CHILQUINTA_URL
-    asyncio.run(instancia.fetch())
-
-    assert (
-        ruta.calls[0].request.headers["User-Agent"] == settings.NOMINATIM_USER_AGENT
-    )
-
-
-@respx.mock
 def test_el_filtro_espacial_sigue_actuando_por_el_camino_real():
     """Cambiar el transporte no puede aflojar el recorte territorial.
 
@@ -1627,11 +1666,9 @@ def test_el_filtro_espacial_sigue_actuando_por_el_camino_real():
     `settings.region_bbox`, antes de mapear al dominio— comprobado por el camino
     que se usa en producción: sesión, cabeceras y GET.
     """
-    prepara_sesion()
-    respx.get(CHILQUINTA_URL).mock(
-        return_value=httpx.Response(
-            200, json={"data": [registro(), *outside_records()]}
-        )
+    responde(
+        CHILQUINTA_URL,
+        httpx.Response(200, json={"data": [registro(), *outside_records()]}),
     )
 
     instancia = collector()
