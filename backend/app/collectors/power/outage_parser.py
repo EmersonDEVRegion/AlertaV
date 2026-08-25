@@ -60,6 +60,9 @@ _LIST_KEYS: tuple[str, ...] = (
     "results",
     "interrupciones",
     "cortes",
+    # Chilquinta llama "orden" a cada corte: es la orden de trabajo con la que
+    # lo gestiona internamente, y la lista viene bajo `ordenes`.
+    "ordenes",
     "outages",
     "eventos",
 )
@@ -75,6 +78,7 @@ _CLIENTS_KEYS: tuple[str, ...] = (
     "afectados",
     "customers",
     "cantidad_clientes",
+    "cant_clientes",  # Chilquinta, y como string ("68")
 )
 _RESTORE_KEYS: tuple[str, ...] = (
     "hora_reposicion",
@@ -85,6 +89,9 @@ _RESTORE_KEYS: tuple[str, ...] = (
     "restoration_time",
     "hora_estimada_reposicion",
     "eta",
+    # Chilquinta: `etr`, de "estimated time of restoration", en dd-mm-yyyy y
+    # hora de Chile. La abreviatura es del gremio eléctrico, no una errata.
+    "etr",
 )
 _START_KEYS: tuple[str, ...] = (
     "hora_inicio",
@@ -94,7 +101,15 @@ _START_KEYS: tuple[str, ...] = (
     "started_at",
     "fecha",
 )
-_ID_KEYS: tuple[str, ...] = ("id", "codigo", "folio", "outage_id", "uuid", "gid")
+_ID_KEYS: tuple[str, ...] = (
+    "id",
+    "codigo",
+    "folio",
+    "outage_id",
+    "uuid",
+    "gid",
+    "orden",  # Chilquinta: número de orden de trabajo, estable durante el corte
+)
 _COMMUNE_KEYS: tuple[str, ...] = ("comuna", "commune", "municipio", "localidad")
 _SECTOR_KEYS: tuple[str, ...] = ("sector", "direccion", "descripcion", "detalle")
 

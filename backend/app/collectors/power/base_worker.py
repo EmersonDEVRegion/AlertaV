@@ -3,8 +3,9 @@
 Chilquinta y CGE hacen exactamente lo mismo: leen los cortes que publica la
 empresa, los normalizan y los emiten como señales `power_outage`. Lo que cambia
 entre ellas es la URL, el nombre de la empresa, la fuente del enum y también el
-transporte: Chilquinta resultó estar tras un POST con API key, y CGE no publica
-una API sino un KMZ estático.
+transporte — aunque menos de lo que parecía: **ninguna de las dos tiene API**.
+Las dos publican un archivo estático que su visor lee, un JSONP en un caso y un
+KMZ en el otro, y las dos sobrescriben `load_records()` para desenvolverlo.
 
 Existe esta clase intermedia y no dos ficheros gemelos porque el día que haya
 que arreglar el parseo —y con un esquema sin verificar, ese día llega— arreglarlo
@@ -25,10 +26,11 @@ con guion bajo, que es estructura interna nuestra y no contrato.
 
 Cómo cada empresa consulta lo suyo
 -----------------------------------
-No todas las distribuidoras publican igual. Una expone un JSON abierto por GET;
-otra esconde el suyo tras un POST con API key; CGE ni siquiera expone una API,
-sino un archivo KMZ estático. Esas diferencias se declaran con cuatro ganchos y
-no duplicando el `fetch()`:
+No todas las distribuidoras publican igual, aunque las dos que hay hoy acabaron
+pareciéndose: ninguna expone un servicio, las dos sirven un archivo —Chilquinta
+un JSONP, CGE un KMZ—. Una fuente con un JSON abierto por GET seguiría cabiendo
+sin tocar nada. Esas diferencias se declaran con cinco ganchos y no duplicando
+el `fetch()`:
 
     http_method        "GET" (por defecto) | "POST"
     request_headers()  cabeceras propias — API keys van acá
@@ -43,8 +45,16 @@ KMZ en memoria.
 
 `prime_session()` es el más nuevo y el menos evidente: hay fuentes cuyo backend
 no responde a una petición aislada, sino sólo dentro de una sesión que la propia
-web abre al cargarse. Ver `ChilquintaCollector.prime_session`, que es el caso que
-lo obligó.
+web abre al cargarse.
+
+Hoy **no lo usa nadie**, y conviene decir por qué sigue aquí. Lo escribió el
+intento de hablar con un endpoint de Chilquinta que resultó no ser el que su
+visor usa —seis iteraciones contra una premisa falsa; ver `chilquinta_worker`—,
+así que su caso motivador se evaporó. Se conserva porque el gancho es correcto
+con independencia de aquello: es no-op por defecto, no cuesta una petición a
+quien no lo implemente, y el patrón que resuelve —una fuente que sólo atiende
+dentro de una sesión— es real y va a reaparecer. Si dentro de un año sigue sin
+usarse, bórralo sin pena.
 
 Todo lo demás —reintentos, detección de HTML, filtro espacial, normalización—
 sigue siendo uno solo. Una fuente con otro formato no deja de necesitar el
@@ -139,8 +149,8 @@ class BasePowerOutageCollector(BaseCollector):
         pierde—, así que se aplica sobre la URL, que es lo único que siempre
         viaja tal cual.
 
-        Ver `ChilquintaCollector.request_url`, que es el caso que obligó a
-        separarlo.
+        Ver `ChilquintaCollector.request_url`, que lo usa para el rompe-cachés
+        del archivo que descarga.
         """
         return self.url
 
@@ -172,7 +182,7 @@ class BasePowerOutageCollector(BaseCollector):
         """Cliente HTTP compartido por las distribuidoras.
 
         Mismo timeout y misma política de redirects para cualquier transporte:
-        que CGE descargue un binario y Chilquinta un JSON no cambia cómo nos
+        que CGE descargue un ZIP y Chilquinta un JSONP no cambia cómo nos
         comportamos frente a un servidor que no nos pertenece.
         """
         return httpx.AsyncClient(
@@ -200,7 +210,8 @@ class BasePowerOutageCollector(BaseCollector):
         Quien lo implemente decide también si sus fallos son fatales. Lo normal
         es que no lo sean: si el priming no consigue la sesión, la petición de
         datos dirá que no está autorizada, y ese error es más informativo que el
-        del preámbulo. Ver `ChilquintaCollector.prime_session`.
+        del preámbulo — y además deja la corrida viva para traer los datos si
+        resulta que la sesión no hacía falta.
         """
         return None
 

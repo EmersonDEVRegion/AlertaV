@@ -210,28 +210,26 @@ class Settings(BaseSettings):
     USGS_POLL_INTERVAL_SECONDS: int = 300  # 5 min
 
     # -- Cortes de suministro eléctrico --------------------------------------
-    #: Endpoint de datos de Chilquinta. **No es la URL del visor**: es la ruta
-    #: que el visor consulta por XHR. El nombre no describe lo que devuelve
-    #: —`obtieneImage` entrega JSON, no una imagen— y eso no es un error nuestro
-    #: al copiarlo: es ofuscación por oscuridad del propio frontend. Se deja
-    #: escrito acá para que nadie lo "corrija" al leerlo.
+    #: Volcado de cortes de Chilquinta. **No es un endpoint**: es un archivo
+    #: estático que la empresa regenera, igual que el KMZ de CGE. Chilquinta no
+    #: publica API; su visor lee este archivo y nada más.
     #:
-    #: Apuntar esta variable a `mapainterrupciones.chilquinta.cl/mapas` devuelve
-    #: el HTML de la aplicación; `request_json` lo detecta y falla con ese
-    #: mensaje, que es exactamente lo que pasaba antes de encontrar esta ruta.
-    CHILQUINTA_API_URL: str = "https://mapainterrupciones.chilquinta.cl/obtieneImage"
-    #: API key estática que el endpoint exige en la cabecera `x-api-key`. Sin
-    #: ella la ruta responde 401/403 y el collector falla al construirse.
+    #: El `006` del nombre es el código de filial —el mismo que el visor lleva en
+    #: `/mapas?emp=006`— y va en la URL porque es parte del nombre del archivo,
+    #: no un parámetro. Si el grupo publicara otras filiales, se cubrirían
+    #: cambiando ese número.
     #:
-    #: Vive en el `.env` y no en el código aunque venga incrustada en un bundle
-    #: público: es una credencial de un tercero, puede rotar sin avisar, y el día
-    #: que rote la corrección tiene que ser una variable de entorno y no un
-    #: despliegue. Es el mismo criterio que `FIRMS_MAP_KEY`.
-    CHILQUINTA_API_KEY: str = ""
-    #: Código de empresa que el visor manda en el cuerpo de la consulta. `006` es
-    #: Chilquinta; el mismo backend sirve a otras filiales del grupo bajo otros
-    #: códigos. Reemplaza al viejo `?emp=006` del query string.
-    CHILQUINTA_COD_EMP: str = "006"
+    #: El nombre de la variable conserva el sufijo `_API_URL` por consistencia
+    #: con las otras fuentes y para no romper los `.env` desplegados, pero lo que
+    #: apunta es un archivo, y además **JSONP**: el JSON viene envuelto en
+    #: `eqfeed_callback( … )`. Ver `chilquinta_worker`.
+    #:
+    #: Hubo seis intentos apuntando esta variable a `…/obtieneImage`, una ruta
+    #: que devuelve 401 y que el visor nunca llama. Si alguien la encuentra en un
+    #: log viejo y quiere "restaurarla", que lea antes el módulo del collector.
+    CHILQUINTA_API_URL: str = (
+        "https://mapainterrupciones.chilquinta.cl/dt/results_006.js"
+    )
     #: Archivo de afectaciones de CGE. **No es un endpoint JSON**: es un KMZ
     #: —un ZIP con un KML dentro— que la plataforma de CGE regenera cada pocos
     #: minutos y sirve como estático. Es el archivo sobre el que se dibuja su
