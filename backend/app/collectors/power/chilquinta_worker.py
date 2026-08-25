@@ -15,10 +15,14 @@ porque ninguna se deduce leyendo el código:
    imagen: devuelve el JSON de los cortes. No es una errata al transcribirla.
    Es ofuscación por oscuridad, y alguien que "corrija" el nombre romperá el
    collector.
-2. **Es un GET sin query string.** La petición no lleva parámetros en la URL ni
-   cuerpo: los filtros viajan como **cabeceras propias**. Es la segunda capa de
-   la misma ofuscación — un GET a una URL desnuda no delata qué se está pidiendo,
-   y quien mire el tráfico por encima no ve un `?emp=006` que copiar.
+2. **Es un GET cuyos filtros van en cabeceras, más un `?orderId=` obligatorio.**
+   Casi toda la consulta viaja como **cabeceras propias** —segunda capa de la
+   misma ofuscación: un GET a una URL casi desnuda no delata qué se pide, y
+   quien mire el tráfico por encima no ve un `?emp=006` que copiar—. La
+   excepción es `?orderId=`: sin ese parámetro en la URL el servidor responde
+   `400 {"error":"Missing required request parameters: [orderId]"}` aunque la
+   cabecera `X-Orden-Buscada` vaya presente y vacía. Por eso el parámetro se
+   añade a la **URL** (`request_url`) y no al payload: ver allí.
 3. **Exige una API key estática** en la cabecera `x-api-key`. Estática quiere
    decir que viene incrustada en el bundle del visor: es un identificador de
    cliente, no un secreto de usuario, y no autoriza a nada que el visor público
@@ -57,6 +61,7 @@ mismo que vería una persona con el visor abierto, al ritmo al que le sirve.
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from app.collectors.power.base_worker import BasePowerOutageCollector
 from app.core.config import settings
@@ -85,6 +90,29 @@ ORDER_PARAM = "orderId"
 #: suelto porque una cadena vacía en medio de un diccionario parece un olvido y
 #: no una decisión.
 ALL_ORDERS = ""
+
+
+def con_order_id(url: str) -> str:
+    """`url` con `?orderId=` garantizado, sin tocar lo que ya traiga.
+
+    Es idempotente a propósito: si la URL configurada ya declara `orderId` —en
+    el `.env` de producción, por ejemplo— se devuelve tal cual, así que añadir
+    el parámetro en los dos sitios no produce `?orderId=&orderId=`.
+
+    Se manipula la URL con `urlsplit`/`urlencode` y no concatenando `"?orderId="`
+    porque la concatenación asume que la URL no tiene query, y el día que alguien
+    configure `…/obtieneImage?v=2` produciría `…?v=2?orderId=`, que no es una
+    URL válida y que el servidor rechazaría con el mismo 400 que se está
+    intentando evitar.
+    """
+    partes = urlsplit(url)
+    # `keep_blank_values` porque el valor que nos importa es precisamente vacío:
+    # sin esto, un `?orderId=` ya presente se leería como ausente y se duplicaría.
+    consulta = parse_qsl(partes.query, keep_blank_values=True)
+    if any(clave == ORDER_PARAM for clave, _ in consulta):
+        return url
+    consulta.append((ORDER_PARAM, ALL_ORDERS))
+    return urlunsplit(partes._replace(query=urlencode(consulta)))
 
 
 def _require_api_key() -> str:
@@ -152,25 +180,50 @@ class ChilquintaCollector(BasePowerOutageCollector):
         headers[ORDER_HEADER] = ALL_ORDERS
         return headers
 
-    def request_payload(self) -> dict[str, Any]:
-        """`?orderId=` — obligatorio aunque vaya vacío, y aunque la cabecera esté.
+    def request_url(self) -> str:
+        """La URL configurada **más** `?orderId=`, siempre.
 
-        Como `http_method` es GET, `load_records()` manda esto como query string
-        y no como cuerpo. La URL resultante es `…/obtieneImage?orderId=`.
+        Este parámetro es obligatorio aunque vaya vacío: sin él el endpoint
+        responde `400 {"error":"Missing required request parameters: [orderId]"}`
+        incluso con `X-Orden-Buscada` presente y vacía. Que el mismo dato tenga
+        que ir en la cabecera *y* en la URL es redundancia del backend de
+        Chilquinta; no hay forma de saber cuál de las dos lee sin provocar el
+        400, así que van las dos.
 
-        La cadena vacía es el valor con el que el visor pide todas las órdenes.
-        Y es **obligatoria**: sin el parámetro, el endpoint responde
-        `400 {"error":"Missing required request parameters: [orderId]"}` incluso
-        con `X-Orden-Buscada` presente. Que el mismo dato tenga que ir en la
-        cabecera *y* en la URL es redundancia del backend de Chilquinta; no hay
-        forma de saber cuál de las dos lee sin provocar el 400, así que van las
-        dos.
+        Va acá y no en `request_payload()`, que es donde estuvo primero y donde
+        no sobrevivió a producción. El camino del payload tiene dos puntos donde
+        una query se evapora en silencio:
 
-        Cuidado con "simplificar" esto a `{}`: el diccionario vacío es falsy y
-        `load_records()` lo trata como «sin filtros», con lo que el `?orderId=`
-        desaparece y vuelve el 400.
+        * `load_records()` descarta el payload cuando es falsy, y `{"orderId": ""}`
+          es fácil de "simplificar" a `{}` en una limpieza bienintencionada;
+        * `request_response` sólo pasa `params` a httpx cuando el diccionario
+          tiene claves, porque httpx **reemplaza** la query de la URL con lo que
+          reciba en `params`.
+
+        La URL, en cambio, viaja tal cual la devuelve este método. Ese es todo el
+        motivo del cambio: el parámetro obligatorio deja de depender de que un
+        diccionario sobreviva tres capas.
+
+        Se recalcula en cada petición en vez de fijarse en `__init__` para que
+        siga valiendo si alguien reasigna `self.url` —los tests lo hacen— y para
+        que la garantía no dependa del orden de construcción.
         """
-        return {ORDER_PARAM: ALL_ORDERS}
+        return con_order_id(super().request_url())
+
+    def request_payload(self) -> dict[str, Any]:
+        """Vacío a propósito: la consulta entera va en la URL y las cabeceras.
+
+        **No devolver `{ORDER_PARAM: ALL_ORDERS}` acá.** Un payload con claves
+        hace que `load_records()` se lo pase a httpx como `params`, y httpx
+        *reemplaza* la query de la URL con lo que reciba — es decir, el
+        `?orderId=` que `request_url()` acaba de garantizar pasaría a depender
+        otra vez de este diccionario. Vacío, la guarda de `request_response`
+        manda `params=None` y la query de la URL llega intacta.
+
+        El resultado por el cable es el mismo `…/obtieneImage?orderId=` de
+        siempre; lo que cambia es quién lo garantiza.
+        """
+        return {}
 
     @classmethod
     def poll_interval_seconds(cls) -> int:
@@ -182,5 +235,7 @@ __all__ = [
     "API_KEY_HEADER",
     "COMPANY_HEADER",
     "ORDER_HEADER",
+    "ORDER_PARAM",
     "ChilquintaCollector",
+    "con_order_id",
 ]

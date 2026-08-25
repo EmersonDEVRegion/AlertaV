@@ -672,7 +672,13 @@ def test_el_orderid_vacio_viaja_en_la_url():
 
     Se comprueba sobre la URL cruda y no sobre `params`, porque el riesgo real
     está en el camino: httpx podría descartar un parámetro de valor vacío al
-    serializar y el fallo sería un 400 en producción, no acá.
+    serializar y el fallo sería un 400 en producción, no acá — que es justo lo
+    que pasó cuando el parámetro dependía de `request_payload()`.
+
+    La aserción es sobre la URL saliente **entera** y no sólo sobre la query: lo
+    que falló en producción fue la dirección completa, y es la forma de que este
+    test se entere si mañana el `?orderId=` sobrevive pero el host o la ruta
+    cambian.
     """
     ruta = responde_vacio()
 
@@ -680,6 +686,9 @@ def test_el_orderid_vacio_viaja_en_la_url():
     instancia.url = CHILQUINTA_URL
     asyncio.run(instancia.fetch())
 
+    assert str(ruta.calls[0].request.url) == (
+        "https://mapainterrupciones.chilquinta.cl/obtieneImage?orderId="
+    )
     assert ruta.calls[0].request.url.query == b"orderId="
 
 
@@ -700,23 +709,68 @@ def test_la_peticion_no_lleva_cuerpo():
     assert ruta.calls[0].request.content == b""
 
 
-def test_el_payload_no_puede_quedar_vacio():
-    """La trampa de `{}`: un diccionario vacío es falsy y borra el `?orderId=`.
+def test_el_orderid_lo_garantiza_la_url_y_no_el_payload():
+    """Quién sostiene el parámetro obligatorio, y por qué no es el payload.
 
-    `load_records()` trata un payload sin claves como «sin filtros» y no añade
-    query string. Si alguien "simplifica" `request_payload()` a `{}` —que es como
-    estaba antes de descubrir el 400— la petición vuelve a salir sin el
-    parámetro obligatorio y el endpoint la rechaza.
+    Estuvo en `request_payload()` y no sobrevivió a producción: el camino del
+    payload tiene dos coladores —`load_records()` descarta un diccionario falsy,
+    y `request_response` sólo pasa `params` a httpx cuando tiene claves, porque
+    httpx *reemplaza* la query de la URL con lo que reciba—. La URL, en cambio,
+    viaja tal cual.
 
-    Este test guarda esa decisión desde el otro lado: no mira la URL, mira que el
-    payload declare algo.
+    De ahí las dos aserciones: el payload tiene que estar vacío (para que httpx
+    no pise la query) y la URL efectiva tiene que traer el parámetro.
     """
-    from app.collectors.power.chilquinta_worker import ALL_ORDERS, ORDER_PARAM
+    instancia = collector()
+    instancia.url = CHILQUINTA_URL
 
-    payload = collector().request_payload()
+    assert instancia.request_payload() == {}, (
+        "un payload con claves hace que httpx reemplace la query de la URL"
+    )
+    assert instancia.request_url() == f"{CHILQUINTA_URL}?orderId="
 
-    assert payload == {ORDER_PARAM: ALL_ORDERS}
-    assert payload, "un payload falsy hace que load_records() omita la query"
+
+def test_la_url_efectiva_es_exactamente_la_del_endpoint():
+    """La dirección literal que espera Chilquinta, carácter por carácter.
+
+    Se fija así de duro a propósito: el 400 de producción era exactamente la
+    diferencia entre esta cadena y la misma sin `?orderId=`.
+    """
+    instancia = collector()
+    # La URL configurada, no la constante del test: así lo que se comprueba es la
+    # cadena que saldría en producción, `.env` incluido.
+    instancia.url = settings.CHILQUINTA_API_URL
+
+    assert instancia.request_url() == (
+        "https://mapainterrupciones.chilquinta.cl/obtieneImage?orderId="
+    )
+
+
+def test_un_orderid_ya_presente_en_la_url_no_se_duplica():
+    """Idempotencia: el `.env` puede traerlo y el worker lo añade igual.
+
+    Si las dos capas escribieran, saldría `?orderId=&orderId=` — no es lo que
+    manda el visor y no hay motivo para averiguar cómo lo interpreta el backend.
+    """
+    from app.collectors.power.chilquinta_worker import con_order_id
+
+    ya_lo_trae = f"{CHILQUINTA_URL}?orderId="
+
+    assert con_order_id(ya_lo_trae) == ya_lo_trae
+
+
+def test_el_orderid_se_suma_a_una_query_existente():
+    """Concatenar `"?orderId="` a ciegas rompería una URL que ya tenga query.
+
+    `…/obtieneImage?v=2` + `"?orderId="` da `…?v=2?orderId=`, que no es una URL
+    válida y que provocaría el mismo 400 que se está evitando. Por eso la URL se
+    arma con `urlsplit`/`urlencode` y no pegando cadenas.
+    """
+    from app.collectors.power.chilquinta_worker import con_order_id
+
+    resultado = con_order_id(f"{CHILQUINTA_URL}?v=2")
+
+    assert resultado == f"{CHILQUINTA_URL}?v=2&orderId="
 
 
 @respx.mock

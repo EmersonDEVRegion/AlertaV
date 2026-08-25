@@ -111,7 +111,32 @@ class BasePowerOutageCollector(BaseCollector):
         # El método queda en la traza de la corrida: cuando el feed empiece a
         # fallar, saber si se consultó por GET o por POST ahorra media
         # investigación. La API key NO se registra acá; ver `request_headers`.
-        return {"company": self.company, "url": self.url, "method": self.http_method}
+        #
+        # La URL que se registra es la **efectiva** (`request_url()`), no la
+        # configurada: si una subclase le añade algo obligatorio, la traza tiene
+        # que mostrar lo que de verdad se pidió. Un `collector_runs` que dice una
+        # URL distinta de la que salió por el cable es peor que no decir nada.
+        return {
+            "company": self.company,
+            "url": self.request_url(),
+            "method": self.http_method,
+        }
+
+    def request_url(self) -> str:
+        """La URL a la que se consulta de verdad. Por defecto, la configurada.
+
+        Existe como método y no como lectura directa de `self.url` porque hay
+        fuentes cuyo endpoint **exige** algo en el query string que no es un
+        filtro opcional sino parte de la dirección: sin ello no responden. Ese
+        añadido no puede depender de que `request_payload()` sobreviva el camino
+        hasta httpx —donde un diccionario falsy se descarta y la query se
+        pierde—, así que se aplica sobre la URL, que es lo único que siempre
+        viaja tal cual.
+
+        Ver `ChilquintaCollector.request_url`, que es el caso que obligó a
+        separarlo.
+        """
+        return self.url
 
     def request_headers(self) -> dict[str, str]:
         """Cabeceras de la petición. Las subclases añaden las suyas.
@@ -170,19 +195,22 @@ class BasePowerOutageCollector(BaseCollector):
         """
         cuerpo = self.request_payload()
         es_post = self.http_method.upper() == "POST"
+        destino = self.request_url()
         # En GET los filtros son query string; en POST, cuerpo JSON. Se decide
         # acá y no en `request_json` porque es una característica de la fuente,
         # no del transporte.
         #
         # Ojo con el `or {}`: si `cuerpo` viene vacío hay que pasar `{}` para que
         # `request_response` aplique su guarda y **no** toque la query que ya
-        # traiga la URL configurada. Es la trampa de httpx documentada allí.
+        # traiga la URL configurada. Es la trampa de httpx documentada allí, y es
+        # justo lo que permite que `request_url()` cargue un parámetro
+        # obligatorio sin que un payload vacío lo borre.
         params = {} if es_post or not cuerpo else dict(cuerpo)
         try:
             async with self.http_client() as client:
                 payload = await request_json(
                     client,
-                    self.url,
+                    destino,
                     params,
                     origin=self.company,
                     method=self.http_method,
@@ -195,7 +223,7 @@ class BasePowerOutageCollector(BaseCollector):
             raise CollectorError(
                 f"{self.company}: fallo inesperado al leer el feed: "
                 f"{type(exc).__name__}: {exc}",
-                detail={"url": self.url, "method": self.http_method},
+                detail={"url": destino, "method": self.http_method},
             ) from exc
 
         registros = extract_records(payload)
@@ -208,7 +236,7 @@ class BasePowerOutageCollector(BaseCollector):
                 f"respuesta ({describe_shape(payload)}). Si el endpoint es "
                 f"correcto, hay que agregar su clave a `_LIST_KEYS` en "
                 f"outage_parser.py.",
-                detail={"url": self.url},
+                detail={"url": destino},
             )
         return registros
 
