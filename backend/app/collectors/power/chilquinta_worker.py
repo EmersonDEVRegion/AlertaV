@@ -15,14 +15,29 @@ porque ninguna se deduce leyendo el código:
    imagen: devuelve el JSON de los cortes. No es una errata al transcribirla.
    Es ofuscación por oscuridad, y alguien que "corrija" el nombre romperá el
    collector.
-2. **Es un POST**, aunque sea una lectura. El visor manda los filtros en el
-   cuerpo (`codEmp`/`empresa`) en vez de en el query string, que es lo que antes
-   se intentaba con `?emp=006`.
+2. **Es un GET sin query string.** La petición no lleva parámetros en la URL ni
+   cuerpo: los filtros viajan como **cabeceras propias**. Es la segunda capa de
+   la misma ofuscación — un GET a una URL desnuda no delata qué se está pidiendo,
+   y quien mire el tráfico por encima no ve un `?emp=006` que copiar.
 3. **Exige una API key estática** en la cabecera `x-api-key`. Estática quiere
    decir que viene incrustada en el bundle del visor: es un identificador de
    cliente, no un secreto de usuario, y no autoriza a nada que el visor público
    no muestre ya. Aun así vive en el `.env` (`CHILQUINTA_API_KEY`) porque puede
    rotar y porque una credencial ajena no se versiona.
+
+Las cabeceras como parámetros
+------------------------------
+Toda la consulta cabe en tres cabeceras y ninguna es opcional:
+
+    x-api-key         credencial; sin ella, 401
+    X-Company-Code    filial a consultar. 006 = Chilquinta
+    X-Orden-Buscada   orden de trabajo concreta, o "" para pedirlas todas
+
+`X-Orden-Buscada` vacía **no es un descuido**: es el valor que manda el visor al
+cargar el mapa completo, y es el que nos interesa. Omitir la cabecera y mandarla
+vacía no son lo mismo para este endpoint, así que se envía siempre — ver
+`request_headers`, donde está la nota para quien sienta la tentación de
+"limpiarla".
 
 Qué sigue sin verificarse
 -------------------------
@@ -51,6 +66,17 @@ from app.models.enums import EventSource
 #: Cabecera donde el endpoint espera la llave. El nombre lo fija Chilquinta.
 API_KEY_HEADER = "x-api-key"
 
+#: Cabecera con la filial a consultar. Reemplaza al viejo `?emp=006`.
+COMPANY_HEADER = "X-Company-Code"
+
+#: Cabecera que acota la consulta a una orden de trabajo. Vacía = todas.
+ORDER_HEADER = "X-Orden-Buscada"
+
+#: Valor de `X-Orden-Buscada` cuando se quiere el mapa completo, que es siempre
+#: en este collector. Se nombra en vez de escribir `""` suelto porque una cadena
+#: vacía en medio de un diccionario parece un olvido y no una decisión.
+ALL_ORDERS = ""
+
 
 def _require_api_key() -> str:
     """La API key configurada, o un `CollectorError` que nombra la variable.
@@ -76,7 +102,8 @@ class ChilquintaCollector(BasePowerOutageCollector):
     company = "chilquinta"
     url_setting = "CHILQUINTA_API_URL"
     default_interval_seconds = 300
-    #: El visor consulta por GET con los filtros en el cuerpo.
+    #: GET a una URL desnuda: los filtros van en cabeceras, no en el query
+    #: string ni en el cuerpo. Ver `request_headers` y `request_payload`.
     http_method = "GET"
 
     def __init__(self, session: Any) -> None:
@@ -89,34 +116,52 @@ class ChilquintaCollector(BasePowerOutageCollector):
         _require_api_key()
 
     def request_headers(self) -> dict[str, str]:
-        """Las de la familia más la API key.
+        """Las de la familia más las tres que definen la consulta.
 
-        La llave se lee de `settings` en cada petición en vez de guardarse en la
-        instancia: si rota, basta reiniciar el proceso con el `.env` nuevo y no
-        hay una copia vieja escondida en un atributo.
+        En este endpoint las cabeceras **son** los parámetros: no hay query
+        string ni cuerpo, así que lo que se arma acá es la petición entera.
 
-        Se añade acá y no en `run_params()` a propósito: las cabeceras no entran
-        en la traza de la corrida, así que la credencial no queda escrita en
-        `collector_runs` para cualquiera que consulte el historial.
+        Tres decisiones que no se ven en el resultado:
+
+        * La llave se lee de `settings` en cada petición en vez de guardarse en
+          la instancia. Si rota, basta reiniciar el proceso con el `.env` nuevo y
+          no queda una copia vieja escondida en un atributo.
+        * `X-Orden-Buscada` va vacía y **eso es deliberado**. Es lo que manda el
+          visor para pedir el mapa completo; omitir la cabecera no es equivalente
+          a mandarla vacía. Si alguien la borra por parecer basura, la consulta
+          cambia de significado.
+        * Nada de esto llega a `run_params()`, y por tanto nada llega a
+          `collector_runs`. Una credencial en la traza es una credencial visible
+          para cualquiera que consulte el historial de corridas.
         """
         headers = super().request_headers()
         headers[API_KEY_HEADER] = _require_api_key()
+        # Desde `settings` y no literal: es el mismo "006" que pide el visor,
+        # pero deja el código de filial donde ya estaba configurado en vez de
+        # duplicarlo en el código fuente.
+        headers[COMPANY_HEADER] = str(settings.CHILQUINTA_COD_EMP or "").strip()
+        headers[ORDER_HEADER] = ALL_ORDERS
         return headers
 
     def request_payload(self) -> dict[str, Any]:
-        """Filtro de empresa, tal como lo manda el visor.
+        """Vacío: este endpoint no recibe nada por URL ni por cuerpo.
 
-        Los dos campos llevan el mismo valor y eso no es una redundancia
-        nuestra: es lo que envía el frontend. Se replica al pie de la letra
-        porque no sabemos cuál de los dos lee el backend, y adivinar mal
-        devolvería el catálogo de otra filial o ninguno.
+        No es que no haya filtros — es que viajan en cabeceras. Devolver `{}`
+        hace que `load_records()` no añada query string (y que respete el que
+        traiga la URL configurada, por la guarda de `request_response`) y que no
+        arme cuerpo JSON.
         """
-        codigo = str(settings.CHILQUINTA_COD_EMP or "").strip()
-        return {"codEmp": codigo, "empresa": codigo}
+        return {}
 
     @classmethod
     def poll_interval_seconds(cls) -> int:
         return settings.POWER_POLL_INTERVAL_SECONDS
 
 
-__all__ = ["API_KEY_HEADER", "ChilquintaCollector"]
+__all__ = [
+    "ALL_ORDERS",
+    "API_KEY_HEADER",
+    "COMPANY_HEADER",
+    "ORDER_HEADER",
+    "ChilquintaCollector",
+]

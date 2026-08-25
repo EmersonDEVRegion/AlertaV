@@ -270,7 +270,7 @@ def test_los_miles_chilenos_no_se_leen_como_decimales():
 
 def test_un_decimal_de_verdad_se_rechaza_en_vez_de_truncarse():
     """Ante la duda, ningún dato es mejor que un dato equivocado."""
-    assert "clientes_afectados" in parse_description("Clientes afectados: 1.25")
+    assert "clientes_afectados" not in parse_description("Clientes afectados: 1.25")
 
 
 def test_el_horario_de_reposicion_se_lee_como_hora_chilena():
@@ -312,7 +312,7 @@ def test_sin_informacion_es_ausencia_y_no_un_texto():
     """Un corte recién abierto no tiene hora de reposición. Es normal, no un fallo."""
     for marcador in ("Sin información", "POR DEFINIR", "N/A", "-"):
         campos = parse_description(f"Horario de reposición: {marcador}")
-        assert "hora_reposicion" in campos, marcador
+        assert "hora_reposicion" not in campos, marcador
 
 
 def test_el_html_doblemente_escapado_se_resuelve():
@@ -440,7 +440,7 @@ def test_un_html_del_portal_falla_diciendo_que_no_es_un_zip():
         asyncio.run(collector().fetch())
 
     assert "ZIP" in str(fallo.value)
-    assert "json" in str(fallo.value).lower()
+    assert "json" not in str(fallo.value).lower()
 
 
 @respx.mock
