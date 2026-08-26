@@ -86,9 +86,14 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from app.collectors.geoservices import as_float, request_response
+from app.collectors.geoservices import (
+    ServiceErrorEnvelope,
+    as_float,
+    detect_service_error,
+    request_response,
+)
 from app.collectors.power.base_worker import BasePowerOutageCollector
-from app.collectors.power.outage_parser import describe_shape, extract_records
+from app.collectors.power.outage_parser import records_or_raise
 from app.core.config import settings
 from app.core.exceptions import CollectorError
 from app.models.enums import EventSource
@@ -403,21 +408,58 @@ class ChilquintaCollector(BasePowerOutageCollector):
                 detail={"url": destino},
             ) from exc
 
+        # El sobre EXTERIOR se mira primero. Cuando la pasarela responde un
+        # error, lo hace en la raíz —no dentro de `original`, que ni siquiera
+        # existe— así que desenvolver antes de comprobar dejaría el diagnóstico
+        # apuntando al interior de algo que nunca llegó.
+        error_exterior = detect_service_error(payload)
+        if error_exterior is not None:
+            raise self._error_del_servidor(error_exterior, destino)
+
         interior = payload
         if isinstance(payload, Mapping) and ENVELOPE_KEY in payload:
             interior = payload[ENVELOPE_KEY]
 
-        registros = extract_records(interior)
-        if registros is None:
-            raise CollectorError(
-                f"{self.company}: no se encontró la lista de órdenes en el "
-                f"volcado ({describe_shape(interior)}). Si el archivo es el "
-                f"correcto, hay que agregar su clave a `_LIST_KEYS` en "
-                f"outage_parser.py.",
-                detail={"url": destino},
-            )
+        # `records_or_raise` vuelve a comprobar sobre el interior —por si el
+        # error viniera anidado— y, si no lo es, aplica el diagnóstico de forma
+        # con su consejo de `_LIST_KEYS`, que ahí sí es el correcto.
+        registros = records_or_raise(interior, company=self.company, url=destino)
 
         return [self.con_punto(orden) for orden in registros]
+
+    def _error_del_servidor(
+        self, error: ServiceErrorEnvelope, destino: str
+    ) -> CollectorError:
+        """Traduce un sobre de error a la excepción del proyecto.
+
+        Vive acá y no en el parser porque el mensaje menciona el archivo estático
+        y su rompe-cachés, que son de esta fuente. La distinción entre
+        transitorio y permanente sí es genérica y viene ya resuelta en `error`.
+        """
+        if error.transient:
+            pista = (
+                "El código sugiere algo pasajero —límite de tasa o el servidor "
+                "ocupado—. La próxima corrida, en cinco minutos, probablemente "
+                "traiga datos; si tres seguidas fallan igual, deja de serlo."
+            )
+        else:
+            pista = (
+                f"No es un cambio de formato: el parser no llegó a ver datos. "
+                f"Comprueba que {self.url} siga existiendo — este collector lee "
+                f"un archivo estático, y si la empresa lo renombra o mueve, su "
+                f"CDN puede responder un error con HTTP 200 en vez de un 404."
+            )
+        return CollectorError(
+            f"{self.company}: el servidor respondió con un error dentro de una "
+            f"respuesta HTTP 2xx — {error.describe()}. {pista}",
+            detail={
+                "url": destino,
+                "server_code": error.code,
+                "server_message": error.message,
+                "transient": error.transient,
+                "keys": list(error.keys),
+            },
+        )
 
     def con_punto(self, orden: Any) -> Any:
         """La orden con un punto utilizable, y **marcada** si lo pusimos nosotros.

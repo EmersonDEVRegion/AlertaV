@@ -290,7 +290,6 @@ export function IncidentMap({
           data={rain.data}
           visible={rain.enabled}
           theme={theme}
-          hasRisk={rain.hasRisk}
         />
       )}
 

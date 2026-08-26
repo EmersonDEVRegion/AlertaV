@@ -62,6 +62,31 @@ export interface RainProperties {
   /** Siempre `true`: esta capa habla del futuro, no de algo ocurrido. */
   es_pronostico: boolean
   is_confirmed_incident: boolean
+  /**
+   * **Derivada en el cliente**, no viene del backend. `inicio` y `fin` ya
+   * formateados como `"14:00 → 21:00"` en hora de Chile continental.
+   *
+   * # Por qué esto no puede ser una expresión de MapLibre
+   *
+   * La capa de texto necesita la ventana horaria, y la tentación evidente es
+   * `["slice", ["get","inicio"], 11, 16]`: la cadena ISO ya trae las horas en
+   * la posición fija 11–16, sin parsear nada.
+   *
+   * **Eso mostraría UTC.** El backend emite `+00:00` y Chile continental va a
+   * UTC−4 en invierno y UTC−3 en verano: un aguacero de las 14:00 aparecería
+   * anunciado a las 18:00. En una app de emergencias, una hora equivocada es
+   * peor que ninguna hora — y como el `slice` no falla, nadie se enteraría.
+   *
+   * MapLibre no tiene operadores de fecha ni de zona horaria, así que la
+   * conversión no puede vivir en el estilo. `Intl.DateTimeFormat` con
+   * `America/Santiago` sí sabe de horario de verano, y hacerlo una vez por
+   * respuesta —36 comunas, dos formateos cada una— es trabajo despreciable
+   * comparado con lo que ya cuesta el `JSON.parse`.
+   *
+   * `''` cuando las marcas de tiempo no parsean: la expresión omite la línea
+   * en vez de escribir `"Invalid Date"` sobre el mapa.
+   */
+  ventana: string
 }
 
 export type RainFeature = Feature<Point, RainProperties>

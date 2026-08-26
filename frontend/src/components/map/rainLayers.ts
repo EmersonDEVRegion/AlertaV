@@ -1,13 +1,16 @@
 /**
  * Capas de MapLibre para la lluvia pronosticada.
  *
- * Tres capas, de abajo hacia arriba:
+ * Cinco capas, de abajo hacia arriba:
  *
  *   1. `rain-halo`      — mancha ancha y muy difusa. Da la sensación de nube.
  *   2. `rain-core`      — el cuerpo. Color por `riesgo_inundacion`, radio por
  *                         `mm_hora_max`.
- *   3. `rain-risk-ring` — anillo fino, **sólo** sobre las comunas con el flag.
- *                         Es la única que se anima. Ver `hooks/useRainPulse.ts`.
+ *   3. `rain-nucleus`   — disco interior, un paso más caliente de la rampa.
+ *   4. `rain-risk-ring` — anillo fino, **sólo** sobre las comunas con el flag.
+ *                         Contorno estático de las comunas en riesgo.
+ *   5. `rain-text`      — el pronóstico en letra, a partir de z10,5. La única
+ *                         capa de símbolo del mapa.
  *
  * # Jerarquía: por qué `beforeId` y por qué apunta al cono
  *
@@ -28,23 +31,41 @@
  * y los pines de cortes por encima de todo por ser marcadores del DOM.
  */
 
-import type { CircleLayerSpecification, ExpressionSpecification } from 'maplibre-gl'
-import { RAIN_MM_MAX, RAIN_MM_MIN, RAIN_PALETTE, RAIN_ZOOM_STOPS } from '@/domain/rainSymbology'
+import type {
+  CircleLayerSpecification,
+  ExpressionSpecification,
+  SymbolLayerSpecification,
+} from 'maplibre-gl'
+import {
+  RAIN_MM_MAX,
+  RAIN_MM_MIN,
+  RAIN_PALETTE,
+  RAIN_TEXT,
+  RAIN_TEXT_FADE,
+  RAIN_TEXT_MIN_ZOOM,
+  RAIN_TEXT_SIZE,
+  RAIN_ZOOM_STOPS,
+} from '@/domain/rainSymbology'
 
 export type RainLayerSpec = Omit<CircleLayerSpecification, 'source'>
+export type RainTextLayerSpec = Omit<SymbolLayerSpecification, 'source'>
 
 type Theme = 'light' | 'dark'
 
 export const RAIN_SOURCE_ID = 'rain-forecast'
 export const RAIN_HALO_LAYER_ID = 'rain-halo'
 export const RAIN_CORE_LAYER_ID = 'rain-core'
+export const RAIN_NUCLEUS_LAYER_ID = 'rain-nucleus'
 export const RAIN_RISK_RING_LAYER_ID = 'rain-risk-ring'
+export const RAIN_TEXT_LAYER_ID = 'rain-text'
 
 /** En orden de dibujo. Lo usa el re-anclaje tras un cambio de estilo. */
 export const RAIN_LAYER_IDS = [
   RAIN_HALO_LAYER_ID,
   RAIN_CORE_LAYER_ID,
+  RAIN_NUCLEUS_LAYER_ID,
   RAIN_RISK_RING_LAYER_ID,
+  RAIN_TEXT_LAYER_ID,
 ] as const
 
 /**
@@ -119,6 +140,19 @@ function rainColor(theme: Theme): ExpressionSpecification {
 }
 
 /**
+ * Color del núcleo: un paso más caliente de la misma rampa.
+ *
+ * `circle` no tiene degradados radiales, así que el salto de matiz entre el
+ * cuerpo y el núcleo es lo único que aproxima la caída de intensidad de una
+ * celda de radar. Con un color plano en los tres discos la pila sólo cambiaba
+ * de opacidad y se leía como una mancha, no como un campo.
+ */
+function rainNucleusColor(theme: Theme): ExpressionSpecification {
+  const palette = RAIN_PALETTE[theme]
+  return ['case', IS_FLOOD_RISK, palette.nucleusRisk, palette.nucleus]
+}
+
+/**
  * Halo: la mancha ancha.
  *
  * `circle-blur: 1` difumina el borde en el propio fragment shader. Es la
@@ -166,15 +200,61 @@ export function rainCoreLayer(theme: Theme, visible: boolean): RainLayerSpec {
 }
 
 /**
+ * Disco interior.
+ *
+ * # Por qué tres círculos y no uno
+ *
+ * MapLibre no tiene degradados radiales en la capa `circle`: `circle-blur`
+ * difumina el borde, pero el relleno es plano. Apilar tres discos concéntricos
+ * —halo muy difuso y tenue, cuerpo intermedio, núcleo pequeño y más denso— es
+ * la forma barata de aproximar la caída radial de intensidad que tiene una zona
+ * de precipitación real.
+ *
+ * Cada capa cuesta un `circle` sobre 36 puntos, así que el total sigue siendo
+ * despreciable: es geometría estática que la GPU dibuja una vez y sólo repinta
+ * al mover el mapa. Ninguna animación, ningún `setPaintProperty` por frame.
+ */
+export function rainNucleusLayer(theme: Theme, visible: boolean): RainLayerSpec {
+  const palette = RAIN_PALETTE[theme]
+  return {
+    id: RAIN_NUCLEUS_LAYER_ID,
+    type: 'circle',
+    layout: { visibility: visible ? 'visible' : 'none' },
+    paint: {
+      // Poco más de la mitad del cuerpo: deja ver los dos escalones exteriores.
+      'circle-radius': rainRadius(0.55),
+      'circle-color': rainNucleusColor(theme),
+      'circle-opacity': [
+        'case',
+        IS_FLOOD_RISK,
+        palette.nucleusOpacityRisk,
+        palette.nucleusOpacity,
+      ],
+      // Menos difuso que el cuerpo: el degradado se cierra hacia el centro.
+      'circle-blur': 0.35,
+    },
+  }
+}
+
+/**
  * Anillo de riesgo. Sólo las comunas con el flag.
  *
- * Es la única capa animada, y por eso es la única con un `filter`: el pulso
- * escribe una propiedad de pintura constante sobre ella y no sobre las 36
- * comunas. En un invierno normal esto son 0 a 3 features.
+ * Estática, como el resto de la capa. Antes latía con un `requestAnimationFrame`
+ * que escribía `circle-stroke-opacity` a ~12 Hz; se quitó para no tener el mapa
+ * repintando de forma permanente por un adorno.
+ *
+ * Lo que se perdió en movimiento se compensa con definición: trazo algo más
+ * grueso, opacidad fija en el extremo alto del rango y un `circle-stroke-opacity`
+ * que sube con el zoom. El anillo llama la atención por contraste, no por
+ * moverse — que además es lo correcto para quien tenga `prefers-reduced-motion`
+ * y para una pantalla que alguien mira de reojo.
+ *
+ * Conserva el `filter` porque sigue siendo cierto que sólo aplica a las comunas
+ * con el flag: en un invierno normal, 0 a 3 features.
  */
 export function rainRiskRingLayer(theme: Theme, visible: boolean): RainLayerSpec {
   const palette = RAIN_PALETTE[theme]
-  const [, resting] = palette.ringOpacity
+  const [, strong] = palette.ringOpacity
 
   return {
     id: RAIN_RISK_RING_LAYER_ID,
@@ -187,21 +267,207 @@ export function rainRiskRingLayer(theme: Theme, visible: boolean): RainLayerSpec
       'circle-radius': rainRadius(1, 3),
       'circle-color': 'transparent',
       'circle-stroke-color': palette.ring,
-      'circle-stroke-width': 1.6,
-      // Valor en reposo. El pulso lo sobrescribe mientras corre y lo restituye
-      // al terminar, así que este es también el estado con `prefers-reduced-motion`.
-      'circle-stroke-opacity': resting,
       /*
-       * Transición en 0 a propósito.
-       *
-       * MapLibre interpola las propiedades de pintura en 300 ms por defecto. El
-       * pulso escribe cada ~80 ms, así que con el valor por defecto cada
-       * escritura encolaría su propia interpolación: el mapa quedaría repintando
-       * a 60 fps de forma permanente para animar algo que ya viene animado desde
-       * fuera. Con `duration: 0` cada escritura es un salto y el mapa repinta
-       * exactamente una vez por escritura.
+       * El grosor crece con el zoom. A escala regional el anillo es una
+       * insinuación; al acercarse a una comuna se vuelve un contorno legible.
+       * Un grosor fijo se ve grueso de lejos y raquítico de cerca.
        */
-      'circle-stroke-opacity-transition': { duration: 0, delay: 0 },
+      'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 7, 1.2, 12, 2.4],
+      'circle-stroke-opacity': strong,
+    },
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* Capa de texto: el pronóstico sin clic                                      */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Probabilidad, con el separador incluido. `''` cuando el modelo no la publica.
+ *
+ * `probabilidad_max` es **legítimamente `null`**: no todos los modelos de
+ * Open-Meteo emiten la variable. El truco es `["to-string", …] == ""`, que es
+ * la única forma limpia de detectar el nulo dentro de una expresión —
+ * `["has", …]` devuelve `true` porque la clave existe, sólo que con valor nulo,
+ * y un `number-format` sobre nulo escribiría `0 %`. Anunciar 0 % de
+ * probabilidad cuando lo que pasa es que no se sabe sería inventar un dato
+ * tranquilizador; se omite la línea y queda el milimetraje, que sí es cierto.
+ */
+const PROBABILITY_TEXT: ExpressionSpecification = [
+  'case',
+  ['==', ['to-string', ['get', 'probabilidad_max']], ''],
+  '',
+  [
+    'concat',
+    ['number-format', ['get', 'probabilidad_max'], { locale: 'es-CL', 'max-fraction-digits': 0 }],
+    '% · ',
+  ],
+]
+
+/**
+ * Acumulado de la ventana, un decimal.
+ *
+ * `mm_total` y no `mm_hora_max`: "milímetros esperados" es lo que va a caer,
+ * mientras que `mm_hora_max` es la punta que alimenta el radio y el flag de
+ * riesgo. Mostrar la punta como si fuera el total inflaría la cifra por un
+ * factor de veinte en una lluvia larga y suave.
+ *
+ * `number-format` con `locale: 'es-CL'` para que el separador decimal sea la
+ * coma. `to-string` de un número daría `18.4` con punto, que en Chile se lee
+ * como separador de miles.
+ */
+const MILLIMETERS_TEXT: ExpressionSpecification = [
+  'concat',
+  [
+    'number-format',
+    ['to-number', ['get', 'mm_total'], 0],
+    { locale: 'es-CL', 'min-fraction-digits': 1, 'max-fraction-digits': 1 },
+  ],
+  ' mm',
+]
+
+/**
+ * Ventana horaria, precedida de su salto de línea.
+ *
+ * El salto va DENTRO del `case` y no fuera: con `ventana` vacía —marcas de
+ * tiempo que no parsearon— un `\n` incondicional dejaría una tercera línea en
+ * blanco, y el bloque quedaría descentrado respecto a su punto sin que se vea
+ * por qué.
+ */
+const WINDOW_TEXT: ExpressionSpecification = [
+  'case',
+  ['==', ['to-string', ['get', 'ventana']], ''],
+  '',
+  ['concat', '\n', ['get', 'ventana']],
+]
+
+/**
+ * El bloque completo.
+ *
+ * ```
+ *   Viña del Mar
+ *   60% · 18,4 mm
+ *   14:00 → 09:00 +1 d
+ * ```
+ *
+ * # Por qué aparece el nombre de la comuna, que nadie pidió
+ *
+ * Porque esta capa se lo quita al basemap. MapLibre resuelve las colisiones de
+ * etiquetas recorriendo el estilo **de arriba hacia abajo** (`PauseablePlacement`
+ * arranca en `order.length - 1` y decrementa), así que la capa que está más
+ * arriba coloca primero y gana. La lluvia va por encima de la cartografía de
+ * CARTO, o sea que su bloque desplaza el topónimo "Viña del Mar" del basemap.
+ * Sin repetirlo acá, el resultado neto de encender la capa sería un `60% ·
+ * 18,4 mm` flotando sobre una ciudad que acaba de perder su nombre.
+ *
+ * `format` en vez de un `concat` plano por el `font-scale`: la comuna a tamaño
+ * completo y los datos algo menores dan la jerarquía de lectura sin necesitar
+ * una segunda fuente —que además habría que verificar que el endpoint de
+ * glifos de CARTO sirva—. El escalado de un SDF es gratis.
+ */
+const RAIN_TEXT_FIELD = [
+  'format',
+  ['get', 'comuna'],
+  { 'font-scale': 1 },
+  '\n',
+  {},
+  ['concat', PROBABILITY_TEXT, MILLIMETERS_TEXT],
+  { 'font-scale': 0.92 },
+  WINDOW_TEXT,
+  { 'font-scale': 0.86 },
+] as unknown as ExpressionSpecification
+
+/**
+ * Bloque de pronóstico legible sin clic.
+ *
+ * # Jerarquía
+ *
+ * Comparte el `beforeId` de las manchas y se monta la ÚLTIMA, así que queda
+ * justo debajo del cono: por encima de los cuatro discos de lluvia —que es
+ * donde tiene que estar para leerse— y por debajo del cono, del radio sísmico,
+ * de los sismos, de los incidentes y de los pines de cortes, que son marcadores
+ * del DOM y viven fuera del lienzo. **Ningún pin de emergencia queda tapado**:
+ * los incidentes son capas `circle` y el orden del arreglo también manda en el
+ * orden de dibujo, así que se pintan encima de este texto.
+ *
+ * # Coste
+ *
+ * Es la primera capa de símbolo propia del mapa, y las de símbolo no son
+ * gratis: MapLibre recalcula colisiones en cada frame de movimiento. Lo que lo
+ * mantiene despreciable es el `minzoom`, que la excluye del recorrido de
+ * colisiones por completo mientras no se llegue a z10,5 — que es la mayor parte
+ * del tiempo, porque el mapa arranca a escala regional.
+ */
+export function rainTextLayer(theme: Theme, visible: boolean): RainTextLayerSpec {
+  const style = RAIN_TEXT[theme]
+  const [fadeFrom, fadeTo] = RAIN_TEXT_FADE
+  const sizeStops = RAIN_TEXT_SIZE.flatMap(([zoom, size]) => [zoom, size])
+
+  return {
+    id: RAIN_TEXT_LAYER_ID,
+    type: 'symbol',
+    // Corte duro: saca la capa del cálculo de colisiones, no sólo del dibujo.
+    minzoom: RAIN_TEXT_MIN_ZOOM,
+    layout: {
+      visibility: visible ? 'visible' : 'none',
+      'text-field': RAIN_TEXT_FIELD,
+      /*
+       * Sin `text-font`: el defecto de MapLibre es `["Open Sans Regular",
+       * "Arial Unicode MS Regular"]` y el endpoint de glifos de CARTO sirve
+       * "Open Sans Regular" en los dos estilos. Nombrar una fuente que el
+       * endpoint no tenga no rompe el estilo: simplemente **no se dibuja
+       * ninguna letra**, con un error en consola que es fácil pasar por alto.
+       */
+      'text-size': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        ...sizeStops,
+      ] as unknown as ExpressionSpecification,
+      /*
+       * Anclaje variable en vez de un `text-offset` fijo.
+       *
+       * El disco crece con el zoom y con la intensidad: cualquier
+       * desplazamiento fijo que funcione a z11 queda dentro del núcleo a z14.
+       * Con `text-variable-anchor` MapLibre prueba las cuatro posiciones y se
+       * queda con la primera que no colisione, así que dos comunas vecinas se
+       * apartan solas en vez de tapar una a la otra.
+       */
+      'text-variable-anchor': ['top', 'bottom', 'left', 'right'],
+      'text-radial-offset': 1.3,
+      'text-justify': 'auto',
+      // "Viña del Mar" y "Villa Alemana" caben en una línea; el defecto de 10
+      // em las partiría.
+      'text-max-width': 14,
+      'text-line-height': 1.25,
+      'text-padding': 4,
+      /*
+       * Que colisione, que es justo lo que se quiere: treinta y seis bloques de
+       * tres líneas superpuestos no serían legibles. MapLibre descarta los que
+       * no caben y al acercarse van apareciendo.
+       */
+      'text-allow-overlap': false,
+      'text-ignore-placement': false,
+      /*
+       * Prioridad de colocación: el riesgo primero.
+       *
+       * Se colocan en orden ascendente de esta clave, así que cuando dos
+       * bloques se pisan sobrevive el de la comuna en riesgo. Sin esto el
+       * desempate lo decidiría el orden de los features en el GeoJSON — o sea,
+       * el azar.
+       */
+      'symbol-sort-key': ['case', IS_FLOOD_RISK, 0, 1],
+    },
+    paint: {
+      'text-color': ['case', IS_FLOOD_RISK, style.colorRisk, style.color],
+      'text-halo-color': style.halo,
+      'text-halo-width': style.haloWidth,
+      'text-halo-blur': style.haloBlur,
+      /*
+       * El desvanecido. `minzoom` ya cortó en seco por debajo; esto evita que
+       * el bloque aparezca de golpe justo al cruzar el umbral.
+       */
+      'text-opacity': ['interpolate', ['linear'], ['zoom'], fadeFrom, 0, fadeTo, 1],
     },
   }
 }

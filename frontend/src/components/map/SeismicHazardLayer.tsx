@@ -74,13 +74,36 @@ export function SeismicHazardLayer({
   useEffect(() => {
     if (!map) return
     const instance = map.getMap()
+
+    /*
+     * Carrera al montar.
+     *
+     * El `<Source>` se añade al mapa en el mismo commit que registra estos
+     * escuchas. Con el archivo en la caché del navegador —o servido por el
+     * service worker— puede quedar cargado ANTES de que `on('sourcedata')`
+     * llegue a engancharse, y entonces el evento no se pierde: nunca se emite
+     * para nosotros. El resultado era una capa dibujada correctamente con el
+     * interruptor atascado en «Descargando modelo…».
+     *
+     * Preguntar por el estado actual antes de escuchar cierra esa ventana. Va
+     * dentro de un try/catch porque `isSourceLoaded` lanza si la fuente todavía
+     * no existe, que es el caso normal y no un error.
+     */
+    try {
+      if (instance.getSource(HAZARD_SOURCE_ID) && instance.isSourceLoaded(HAZARD_SOURCE_ID)) {
+        onLoaded()
+      }
+    } catch {
+      /* la fuente aún no está registrada: se resolverá por evento */
+    }
+
     instance.on('sourcedata', handleSourceData)
     instance.on('error', handleError)
     return () => {
       instance.off('sourcedata', handleSourceData)
       instance.off('error', handleError)
     }
-  }, [map, handleSourceData, handleError])
+  }, [map, handleSourceData, handleError, onLoaded])
 
   return (
     <Source

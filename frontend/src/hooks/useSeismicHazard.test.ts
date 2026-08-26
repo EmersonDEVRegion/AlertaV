@@ -8,7 +8,7 @@
  */
 
 import { act, renderHook } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { useSeismicHazard } from './useSeismicHazard'
 
 describe('useSeismicHazard', () => {
@@ -66,14 +66,58 @@ describe('useSeismicHazard', () => {
     }
   })
 
-  it('registra el error sin desmontar la capa', () => {
+  it('al fallar APAGA el interruptor: nada encendido sobre un mapa vacío', () => {
     const { result } = renderHook(() => useSeismicHazard())
 
     act(() => result.current.toggle())
+    expect(result.current.enabled).toBe(true)
+
     act(() => result.current.onError())
 
+    // La inconsistencia que había que quitar: el control se veía activo y el
+    // mapa no mostraba nada.
+    expect(result.current.enabled).toBe(false)
     expect(result.current.status).toBe('error')
+    // La fuente sigue montada; reintentar es una decisión explícita.
     expect(result.current.hasMounted).toBe(true)
+  })
+
+  it('un silencio prolongado cuenta como fallo', async () => {
+    vi.useFakeTimers()
+    try {
+      const { result } = renderHook(() => useSeismicHazard())
+      act(() => result.current.toggle())
+      expect(result.current.status).toBe('loading')
+
+      // Ni `sourcedata` ni `error`: la red se cayó a media descarga.
+      await act(async () => {
+        vi.advanceTimersByTime(20_000)
+      })
+
+      expect(result.current.status).toBe('error')
+      expect(result.current.enabled).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('una carga exitosa cancela el cronómetro', async () => {
+    vi.useFakeTimers()
+    try {
+      const { result } = renderHook(() => useSeismicHazard())
+      act(() => result.current.toggle())
+      act(() => result.current.onLoaded())
+
+      await act(async () => {
+        vi.advanceTimersByTime(60_000)
+      })
+
+      // Sin cancelación, el cronómetro habría tumbado una capa que sí cargó.
+      expect(result.current.status).toBe('ready')
+      expect(result.current.enabled).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('el reintento cambia `attempt` para forzar un remontaje', () => {

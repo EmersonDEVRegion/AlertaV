@@ -45,6 +45,54 @@ function makeFeature(over: Record<string, unknown> = {}) {
 
 const collection = (...features: unknown[]) => ({ type: 'FeatureCollection', features })
 
+/**
+ * La ventana horaria derivada.
+ *
+ * Es el bloque que más barato sale equivocarse y más caro cuesta detectar: un
+ * `slice` sobre la cadena ISO habría dado un resultado con la forma correcta y
+ * la hora desplazada 3 o 4 h, sin error en ninguna parte.
+ */
+describe('ventana horaria: UTC del backend, hora de Chile en pantalla', () => {
+  const windowOf = (over: Record<string, unknown> = {}) =>
+    parseRainCollection(collection(makeFeature(over))).features[0]?.properties.ventana
+
+  it('convierte a hora de Chile, no repite la marca UTC', () => {
+    // Junio: horario de invierno, UTC−4. Las 14:00 UTC son las 10:00 en Chile.
+    expect(windowOf()).toBe('10:00 → 10:00 +1 d')
+  })
+
+  it('sigue el horario de verano en vez de asumir un desplazamiento fijo', () => {
+    // Enero: UTC−3. Las mismas 14:00 UTC son ahora las 11:00, no las 10:00.
+    // Un `- 4h` a mano fallaría medio año.
+    expect(
+      windowOf({ inicio: '2026-01-15T14:00:00+00:00', fin: '2026-01-15T20:00:00+00:00' }),
+    ).toBe('11:00 → 17:00')
+  })
+
+  it('marca los días que cruza: 24 h casi siempre terminan mañana', () => {
+    // Sin el sufijo, "21:00 → 09:00" se lee como una ventana hacia atrás.
+    expect(windowOf()).toContain('+1 d')
+    expect(
+      windowOf({ inicio: '2026-06-15T14:00:00+00:00', fin: '2026-06-15T20:00:00+00:00' }),
+    ).not.toContain('+1 d')
+  })
+
+  it('cuenta el cruce sobre la fecha chilena, no sobre la duración', () => {
+    // Seis horas que empiezan a las 22:00 locales cruzan la medianoche igual.
+    expect(
+      windowOf({ inicio: '2026-06-16T02:00:00+00:00', fin: '2026-06-16T08:00:00+00:00' }),
+    ).toBe('22:00 → 04:00 +1 d')
+  })
+
+  it('devuelve cadena vacía si las marcas no parsean, nunca "Invalid Date"', () => {
+    // La expresión de MapLibre omite la línea; escribir "Invalid Date" sobre el
+    // mapa sería peor que no decir nada.
+    expect(windowOf({ inicio: 'no-es-una-fecha' })).toBe('')
+    expect(windowOf({ fin: null })).toBe('')
+    expect(windowOf({ inicio: '' })).toBe('')
+  })
+})
+
 describe('el estado "soleado"', () => {
   it('una colección vacía es una respuesta válida, no un error', () => {
     const parsed = parseRainCollection(collection())

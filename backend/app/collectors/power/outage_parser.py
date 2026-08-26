@@ -43,7 +43,8 @@ from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app.collectors.geoservices import as_float, parse_timestamp
+from app.collectors.geoservices import as_float, detect_service_error, parse_timestamp
+from app.core.exceptions import CollectorError
 
 logger = logging.getLogger(__name__)
 
@@ -316,6 +317,67 @@ def extract_records(payload: Any) -> list[Any] | None:
             return extract_records(next(iter(payload.values())))
 
     return None
+
+
+def records_or_raise(payload: Any, *, company: str, url: str) -> list[Any]:
+    """La lista de cortes, o un `CollectorError` que dice la verdad sobre qué pasó.
+
+    Existe por un incidente concreto: Chilquinta devolvió **HTTP 200** con el
+    cuerpo ``{"code": …, "message": …, "status": …}`` —un sobre de error de
+    pasarela, no un volcado— y el collector lo reportó como
+    «no se encontró la lista de órdenes… hay que agregar su clave a `_LIST_KEYS`».
+
+    Ese mensaje era peor que inútil: era **una instrucción dañina**. Seguirlo
+    —añadir `code`, `message` o `status` a `_LIST_KEYS`— habría hecho que el
+    collector tratara el texto de un error como una lista de cortes. Y de paso
+    tiraba a la basura lo único que servía: el `message` con el que el servidor
+    estaba explicando el problema.
+
+    Así que la pregunta se responde en dos pasos y en este orden:
+
+    1. **¿Es un error servido con 2xx?** Se cita el mensaje del servidor y se
+       dice si conviene esperar o mirar. Nunca se menciona `_LIST_KEYS`: el
+       esquema no cambió, la petición no llegó a los datos.
+    2. **¿Es un volcado con otra forma?** Ahí sí, el consejo de `_LIST_KEYS` es
+       el correcto y se da con las claves que llegaron.
+
+    Distinguir ambos casos es la diferencia entre un operador que espera cinco
+    minutos y uno que edita el parser para arreglar un problema que no está en
+    el parser.
+    """
+    error = detect_service_error(payload)
+    if error is not None:
+        pista = (
+            "Es un error del servidor, no un cambio de formato: no toques el "
+            "parser."
+        )
+        if error.transient:
+            pista += (
+                " El código sugiere algo pasajero; si la próxima corrida trae "
+                "datos, no hay nada que hacer."
+            )
+        raise CollectorError(
+            f"{company}: el servidor respondió con un error dentro de una "
+            f"respuesta HTTP 2xx — {error.describe()}. {pista}",
+            detail={
+                "url": url,
+                "server_code": error.code,
+                "server_message": error.message,
+                "transient": error.transient,
+                "keys": list(error.keys),
+            },
+        )
+
+    registros = extract_records(payload)
+    if registros is None:
+        raise CollectorError(
+            f"{company}: no se encontró una lista de cortes en la respuesta "
+            f"({describe_shape(payload)}). Si el endpoint es el correcto, hay "
+            f"que agregar su clave a `_LIST_KEYS` en outage_parser.py.",
+            detail={"url": url},
+        )
+
+    return registros
 
 
 def describe_shape(payload: Any, *, limit: int = 12) -> str:

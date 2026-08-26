@@ -338,6 +338,125 @@ def parse_feature_collection(payload: Any, *, origin: str) -> list[GeoFeature]:
     return parsed
 
 
+#: Claves donde un servidor deja el texto del error. Ordenadas por preferencia:
+#: se busca la más específica primero para no quedarse con un `status: "error"`
+#: cuando al lado hay un `message` que dice qué pasó de verdad.
+_ERROR_MESSAGE_KEYS: tuple[str, ...] = (
+    "message",
+    "mensaje",
+    "error_description",
+    "errorMessage",
+    "detail",
+    "description",
+    "error",
+    "title",
+)
+
+#: Claves donde suele venir el código. Un `code: 429` cambia el diagnóstico por
+#: completo respecto de un `code: 404`.
+_ERROR_CODE_KEYS: tuple[str, ...] = ("code", "status", "statusCode", "codigo", "error_code")
+
+#: Códigos que describen algo que se cura solo. La distinción no es cosmética:
+#: decide si el operador tiene que hacer algo ahora o si la próxima corrida —a
+#: cinco minutos— probablemente ya traiga datos.
+_TRANSIENT_CODES: frozenset[int] = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceErrorEnvelope:
+    """Un error que el servidor sirvió con HTTP 2xx."""
+
+    message: str
+    code: int | None = None
+    #: `True` si conviene esperar a la próxima corrida en vez de tocar nada.
+    transient: bool = False
+    #: Las claves que traía el cuerpo, para el mensaje de diagnóstico.
+    keys: tuple[str, ...] = ()
+
+    def describe(self) -> str:
+        partes = [f"«{self.message}»"]
+        if self.code is not None:
+            partes.append(f"code={self.code}")
+        partes.append("transitorio" if self.transient else "requiere revisión")
+        return " · ".join(partes)
+
+
+def detect_service_error(payload: Any) -> ServiceErrorEnvelope | None:
+    """¿Es esto un sobre de error en vez de datos? Devuelve el error, o None.
+
+    Complementa a `raise_if_service_error`, que sólo reconoce el formato de
+    ArcGIS y GeoServer (`error`, `exception`). Este reconoce el sobre genérico
+    `{"code": …, "message": …, "status": …}` que emiten pasarelas de API, WAF y
+    manejadores de error por defecto — y que llega **con HTTP 200**, así que el
+    transporte lo deja pasar como si fuera una respuesta buena.
+
+    La guarda contra falsos positivos
+    ---------------------------------
+    Un payload legítimo puede traer `status` o incluso `message` junto a los
+    datos. Por eso no basta con encontrar una clave conocida: **si el cuerpo
+    contiene cualquier lista, no es un error**. Un sobre de error no trae
+    colecciones; un volcado de cortes siempre trae la suya, aunque venga vacía.
+
+    Esa condición es la que hace seguro llamar a esta función desde collectors
+    que hoy funcionan: para confundirse tendría que llegar un payload sin una
+    sola lista y con un campo de mensaje, que es exactamente la definición de
+    un error.
+    """
+    if not isinstance(payload, Mapping) or not payload:
+        return None
+
+    # Si hay datos, no es un error. Se mira en profundidad uno: un sobre de dos
+    # niveles con la lista dentro sigue siendo datos.
+    for valor in payload.values():
+        if isinstance(valor, list):
+            return None
+        if isinstance(valor, Mapping) and any(
+            isinstance(anidado, list) for anidado in valor.values()
+        ):
+            return None
+
+    mensaje = _first_present(payload, _ERROR_MESSAGE_KEYS)
+    if mensaje is None:
+        return None
+
+    codigo = _as_status_code(_first_present(payload, _ERROR_CODE_KEYS))
+    return ServiceErrorEnvelope(
+        message=" ".join(str(mensaje).split())[:300],
+        code=codigo,
+        transient=codigo in _TRANSIENT_CODES if codigo is not None else False,
+        keys=tuple(sorted(str(clave) for clave in payload)),
+    )
+
+
+def _first_present(payload: Mapping[str, Any], keys: Sequence[str]) -> Any:
+    """Primer valor no vacío entre las claves dadas, sin distinguir mayúsculas."""
+    normalizado = {
+        str(clave).lower().replace("_", ""): valor for clave, valor in payload.items()
+    }
+    for clave in keys:
+        valor = normalizado.get(clave.lower().replace("_", ""))
+        if valor is not None and str(valor).strip():
+            return valor
+    return None
+
+
+def _as_status_code(value: Any) -> int | None:
+    """`429`, `"429"` o `"error"` → entero o None.
+
+    Muchos servidores ponen texto en `status` (`"error"`, `"KO"`) y el número en
+    `code`. Devolver None ante lo no numérico deja que el llamador siga
+    buscando en la otra clave en vez de inventar un código.
+    """
+    if isinstance(value, bool):  # `True` no es un código de estado
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
 def raise_if_service_error(payload: Mapping[str, Any], *, origin: str) -> None:
     """ArcGIS y GeoServer devuelven errores con HTTP 200. Hay que mirarlos.
 

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 /**
  * Estado de la capa de amenaza sísmica.
@@ -26,6 +26,17 @@ import { useCallback, useMemo, useState } from 'react'
  */
 
 export type HazardStatus = 'idle' | 'loading' | 'ready' | 'error'
+
+/**
+ * Tope de espera antes de dar la carga por fallida.
+ *
+ * Existe porque el modo de falla más molesto de esta capa no es el error: es el
+ * silencio. Si el `<Source>` se monta y la respuesta nunca llega —una red que
+ * se cae a media descarga, un proxy que traga la petición— MapLibre no emite
+ * `error` ni `sourcedata`, y sin este cronómetro el interruptor se quedaría
+ * encendido con un spinner eterno sobre un mapa donde no aparece nada.
+ */
+const LOAD_TIMEOUT_MS = 15_000
 
 export interface SeismicHazardState {
   enabled: boolean
@@ -56,6 +67,7 @@ export function useSeismicHazard(): SeismicHazardState {
       if (next) {
         setHasMounted(true)
         // Sólo la PRIMERA vez hay carga; después la fuente ya está en el mapa.
+        // Tras un error el reintento es explícito: encender no vuelve a pedir.
         setStatus((s) => (s === 'idle' ? 'loading' : s))
       }
       return next
@@ -63,7 +75,32 @@ export function useSeismicHazard(): SeismicHazardState {
   }, [])
 
   const onLoaded = useCallback(() => setStatus('ready'), [])
-  const onError = useCallback(() => setStatus('error'), [])
+
+  /**
+   * Fallo de carga.
+   *
+   * **Apaga la capa además de marcar el error.** Dejar `enabled` en `true` es
+   * justo la inconsistencia que había que quitar: el interruptor se veía
+   * encendido, el usuario asumía que la capa estaba puesta, y el mapa no
+   * mostraba nada. Un control encendido tiene que corresponder a algo dibujado.
+   *
+   * `hasMounted` NO se toca: la fuente sigue en el árbol y el botón de
+   * reintentar es lo que decide volver a pedirla.
+   */
+  const onError = useCallback(() => {
+    setStatus('error')
+    setEnabled(false)
+  }, [])
+
+  /*
+   * Cronómetro de seguridad. Sólo corre mientras se está esperando, y cualquier
+   * desenlace —éxito, error o que el usuario apague la capa— lo cancela.
+   */
+  useEffect(() => {
+    if (status !== 'loading') return
+    const timer = window.setTimeout(onError, LOAD_TIMEOUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [status, onError])
 
   const retry = useCallback(() => {
     setAttempt((n) => n + 1)

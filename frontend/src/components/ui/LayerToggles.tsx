@@ -119,6 +119,21 @@ const ROWS: readonly Row[] = [
  *  desplazamiento de cierre, y si se separaran el panel quedaría asomando. */
 const PANEL_WIDTH = 'w-60'
 
+/**
+ * Techo de altura del panel.
+ *
+ * El panel arranca en `top-[8.5rem]` (9.5rem desde `md`) y las capas de
+ * referencia despliegan leyendas al encenderse, así que su alto es variable y
+ * puede superar la pantalla. La resta deja 8.5rem para el encabezado que tiene
+ * encima y 1.5rem de aire abajo, para que el borde inferior no quede pegado al
+ * canto en un teléfono.
+ *
+ * `dvh` y no `vh`: en móvil la barra del navegador se retrae al hacer scroll y
+ * `vh` mantiene el valor de la ventana expandida, así que el panel se cortaría
+ * por debajo del área visible justo en los teléfonos donde más molesta.
+ */
+const PANEL_MAX_H = 'max-h-[calc(100dvh-10rem)] md:max-h-[calc(100dvh-11rem)]'
+
 /** Enlaza la pestaña con el panel para `aria-controls`. */
 const PANEL_ID = 'map-layer-panel'
 
@@ -176,6 +191,25 @@ function ReferenceSwitch({
 }) {
   return (
     <div className="flex items-center gap-2 rounded-lg px-1.5 py-1">
+      {/*
+        El riel.
+
+        La causa de los tres síntomas que se veían acá —pulgar fuera del riel,
+        sensación de que "apagado" estaba a la derecha, y el pulgar invadiendo
+        la etiqueta— era una sola: el `<span>` del pulgar estaba en `absolute`
+        SIN `left`. Un elemento absoluto sin desplazamiento horizontal se coloca
+        en su *posición estática*, y la posición estática dentro de un `<button>`
+        está CENTRADA, porque los navegadores le dan `text-align: center` por
+        hoja de estilo de usuario y Tailwind no lo reinicia.
+
+        Con el pulgar arrancando en el centro (x = 8 de 28), `translate-x-0.5`
+        lo dejaba en 10 —visualmente a la derecha— y `translate-x-3.5` lo
+        empujaba a 22-34, seis píxeles fuera de un riel de 28, justo dentro del
+        `gap-2` que lo separa del texto.
+
+        El arreglo es anclar el pulgar explícitamente con `left-0.5`: a partir
+        de ahí la traslación parte de un origen conocido y todo lo demás cuadra.
+      */}
       <button
         type="button"
         role="switch"
@@ -184,14 +218,22 @@ function ReferenceSwitch({
         onClick={onToggle}
         className={
           'relative h-4 w-7 shrink-0 rounded-full transition-colors ' +
+          // Área táctil real sin alterar el layout: el pseudo-elemento extiende
+          // la zona clicable 6 px en todas direcciones. Un riel de 16 px de alto
+          // es un objetivo hostil en un teléfono.
+          'before:absolute before:-inset-1.5 before:content-[""] ' +
+          'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ' +
           (checked ? accent : 'bg-slate-300 dark:bg-slate-600')
         }
       >
         <span
           aria-hidden
           className={
-            'absolute top-0.5 size-3 rounded-full bg-white transition-transform ' +
-            (checked ? 'translate-x-3.5' : 'translate-x-0.5')
+            // `left-0.5` fija el origen; `top-0.5` centra vertical (2 + 12 = 14
+            // dentro de 16). Encendido recorre 12 px: 14→26 dentro de 28, con
+            // 2 px de margen a cada lado.
+            'absolute left-0.5 top-0.5 size-3 rounded-full bg-white shadow-sm transition-transform ' +
+            (checked ? 'translate-x-3' : 'translate-x-0')
           }
         />
       </button>
@@ -343,7 +385,11 @@ export function LayerToggles({
            */
           inert={collapsed}
           aria-hidden={collapsed}
-          className={`${PANEL_WIDTH} rounded-2xl bg-white/95 p-2.5 shadow-lg ring-1 ring-slate-900/10 backdrop-blur dark:bg-slate-900/95 dark:ring-white/10`}
+          className={
+            `${PANEL_WIDTH} ${PANEL_MAX_H} overflow-y-auto overscroll-contain ` +
+            'rounded-2xl bg-white/95 p-2.5 shadow-lg ring-1 ring-slate-900/10 ' +
+            'backdrop-blur dark:bg-slate-900/95 dark:ring-white/10'
+          }
         >
       <fieldset>
         <legend className="sr-only">Capas del mapa</legend>
@@ -398,9 +444,12 @@ export function LayerToggles({
                   </button>
                 </div>
 
-                {/* ---- Lista desplegable ---- */}
+                {/* ---- Lista desplegable ----
+                    Sin `max-h` ni `overflow` propios: el scroll es del panel.
+                    Dos barras dentro de 240 px de ancho se pelean por el gesto
+                    y ninguna de las dos se siente bien. */}
                 {isOpen && row.key !== 'seismic' && (
-                  <ul className="mb-1 ml-1 max-h-56 space-y-0.5 overflow-y-auto border-l border-slate-200 pl-1.5 dark:border-slate-700">
+                  <ul className="mb-1 ml-1 space-y-0.5 border-l border-slate-200 pl-1.5 dark:border-slate-700">
                     {incidentsByLayer[row.key as IncidentLayerKey].map((incident) => (
                       <IncidentListItem
                         key={incident.code}
@@ -413,7 +462,7 @@ export function LayerToggles({
                 )}
 
                 {isOpen && row.key === 'seismic' && (
-                  <ul className="mb-1 ml-1 max-h-56 space-y-0.5 overflow-y-auto border-l border-slate-200 pl-1.5 dark:border-slate-700">
+                  <ul className="mb-1 ml-1 space-y-0.5 border-l border-slate-200 pl-1.5 dark:border-slate-700">
                     {seismicEvents.map((event) => {
                       const style = MAGNITUDE[bandOf(event)]
                       return (

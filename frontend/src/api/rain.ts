@@ -96,6 +96,89 @@ function toLevel(value: unknown): RainLevel {
   return LEVELS.includes(value as RainLevel) ? (value as RainLevel) : 'lluvia'
 }
 
+/**
+ * Zona horaria de la V Región. Ver la nota de `RainProperties.ventana`.
+ *
+ * Fija y no `undefined` (la del navegador): el usuario que mire esto desde
+ * fuera de Chile tiene que ver la hora del lugar donde va a llover, no la suya.
+ */
+const CHILE_TZ = 'America/Santiago'
+
+/**
+ * Los formateadores se construyen UNA vez.
+ *
+ * `Intl.DateTimeFormat` es caro de instanciar —carga los datos de la zona— y
+ * barato de reutilizar. Crearlo dentro del bucle costaría 72 construcciones por
+ * respuesta para producir siempre el mismo objeto.
+ */
+const CLOCK = new Intl.DateTimeFormat('es-CL', {
+  timeZone: CHILE_TZ,
+  hour: '2-digit',
+  minute: '2-digit',
+  /*
+   * `hourCycle: 'h23'` explícito, no `hour12: false` a secas.
+   *
+   * Varias locales resuelven `hour12: false` como el ciclo **h24**, que numera
+   * las horas de 1 a 24 y escribe la medianoche como `24:00`. Una ventana que
+   * empiece a medianoche diría "24:00 → 07:00", que se lee como el final del
+   * día en vez del principio. `h23` es el 00–23 de siempre.
+   */
+  hourCycle: 'h23',
+})
+
+/**
+ * Fecha civil chilena en `AAAA-MM-DD`, para contar los días que cruza la ventana.
+ *
+ * `en-CA` y no `es-CL`: es el atajo estándar para que `Intl` emita ISO. Con
+ * `es-CL` saldría `26-08-2026`, que `Date.parse` no acepta.
+ */
+const DAY = new Intl.DateTimeFormat('en-CA', {
+  timeZone: CHILE_TZ,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
+const DAY_MS = 86_400_000
+
+/**
+ * Días civiles chilenos entre las dos marcas.
+ *
+ * Se cuenta sobre la fecha ya convertida, no restando los `Date`: una ventana
+ * de 23 h que empiece a las 22:00 cruza la medianoche igual, y una de 25 h que
+ * empiece a las 02:00 también — la duración no dice nada sobre cuántas veces
+ * cambió el día. Ambas cadenas se parsean como medianoche UTC, así que la resta
+ * es exacta y el horario de verano no la desvía.
+ */
+function daysApart(start: Date, end: Date): number {
+  return Math.round((Date.parse(DAY.format(end)) - Date.parse(DAY.format(start))) / DAY_MS)
+}
+
+function toDate(value: unknown): Date | null {
+  if (typeof value !== 'string' || value === '') return null
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+/**
+ * `"14:00 → 21:00"`, o `"14:00 → 09:00 +1 d"` si la ventana cruza la medianoche.
+ *
+ * El sufijo no es un adorno. La ventana por defecto son 24 h, así que **casi
+ * siempre termina al día siguiente**: sin la marca, `"21:00 → 09:00"` se lee
+ * como una ventana de doce horas hacia atrás. Se compara el día ya convertido a
+ * hora de Chile, no el del `Date` en UTC, porque el cambio de fecha ocurre a
+ * medianoche local.
+ */
+function toWindow(startRaw: unknown, endRaw: unknown): string {
+  const start = toDate(startRaw)
+  const end = toDate(endRaw)
+  if (!start || !end) return ''
+
+  const days = daysApart(start, end)
+  const suffix = days > 0 ? ` +${days} d` : ''
+  return `${CLOCK.format(start)} → ${CLOCK.format(end)}${suffix}`
+}
+
 /** Un punto con coordenadas finitas. Un `NaN` haría que MapLibre lo dibuje en cualquier parte. */
 function toPoint(geometry: unknown): [number, number] | null {
   if (typeof geometry !== 'object' || geometry === null) return null
@@ -151,6 +234,9 @@ function toFeature(raw: unknown): RainFeature | null {
       source['is_confirmed_incident'] ?? false,
       'is_confirmed_incident',
     ),
+    // Derivada, no del contrato. Se calcula acá y no en el estilo porque
+    // MapLibre no sabe de zonas horarias. Ver `RainProperties.ventana`.
+    ventana: toWindow(source['inicio'], source['fin']),
   }
 
   return { type: 'Feature', geometry: { type: 'Point', coordinates }, properties }

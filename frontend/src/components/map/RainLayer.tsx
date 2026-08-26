@@ -1,16 +1,16 @@
 import { useEffect, useMemo } from 'react'
 import { Layer, Source, useMap } from 'react-map-gl/maplibre'
 import type { RainCollection } from '@/api/rainTypes'
-import { RAIN_PALETTE } from '@/domain/rainSymbology'
 import type { Theme } from '@/hooks/useTheme'
-import { useRainPulse } from '@/hooks/useRainPulse'
 import {
   RAIN_BEFORE_ID,
   RAIN_LAYER_IDS,
   RAIN_SOURCE_ID,
   rainCoreLayer,
   rainHaloLayer,
+  rainNucleusLayer,
   rainRiskRingLayer,
+  rainTextLayer,
 } from './rainLayers'
 
 /**
@@ -36,15 +36,11 @@ interface RainLayerProps {
   /** Encendida o apagada. Nunca desmonta: alterna `visibility`. */
   visible: boolean
   theme: Theme
-  /** ¿Hay alguna comuna con `riesgo_inundacion`? Decide si el pulso arranca. */
-  hasRisk: boolean
 }
 
-export function RainLayer({ data, visible, theme, hasRisk }: RainLayerProps) {
+export function RainLayer({ data, visible, theme }: RainLayerProps) {
   const { current: map } = useMap()
   const instance = map?.getMap() ?? null
-
-  useRainPulse(instance, visible && hasRisk, RAIN_PALETTE[theme].ringOpacity)
 
   /*
    * Re-anclaje tras un cambio de estilo.
@@ -88,7 +84,9 @@ export function RainLayer({ data, visible, theme, hasRisk }: RainLayerProps) {
   // comparación en cada repintado del árbol.
   const halo = useMemo(() => rainHaloLayer(theme, visible), [theme, visible])
   const core = useMemo(() => rainCoreLayer(theme, visible), [theme, visible])
+  const nucleus = useMemo(() => rainNucleusLayer(theme, visible), [theme, visible])
   const ring = useMemo(() => rainRiskRingLayer(theme, visible), [theme, visible])
+  const text = useMemo(() => rainTextLayer(theme, visible), [theme, visible])
 
   return (
     /*
@@ -97,11 +95,16 @@ export function RainLayer({ data, visible, theme, hasRisk }: RainLayerProps) {
      * contexto, y el contexto no se toca.
      */
     <Source id={RAIN_SOURCE_ID} type="geojson" data={data}>
-      {/* Los tres con el mismo `beforeId`: cada uno se inserta justo antes del
+      {/* Los cinco con el mismo `beforeId`: cada uno se inserta justo antes del
           ancla, así que el orden de inserción es el orden de dibujo. */}
       <Layer beforeId={RAIN_BEFORE_ID} {...halo} />
       <Layer beforeId={RAIN_BEFORE_ID} {...core} />
+      <Layer beforeId={RAIN_BEFORE_ID} {...nucleus} />
       <Layer beforeId={RAIN_BEFORE_ID} {...ring} />
+      {/* El texto va el ÚLTIMO: queda inmediatamente debajo del ancla, o sea
+          encima de sus propias manchas y debajo del cono, los sismos y los
+          incidentes. Moverlo de sitio en este bloque cambia la jerarquía. */}
+      <Layer beforeId={RAIN_BEFORE_ID} {...text} />
     </Source>
   )
 }

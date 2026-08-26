@@ -77,9 +77,8 @@ from app.collectors.geoservices import request_json
 from app.collectors.power.outage_parser import (
     PowerOutage,
     build_external_id,
-    describe_shape,
-    extract_records,
     parse_outage,
+    records_or_raise,
 )
 from app.core.config import settings
 from app.core.exceptions import CollectorError
@@ -273,19 +272,11 @@ class BasePowerOutageCollector(BaseCollector):
                 detail={"url": destino, "method": self.http_method},
             ) from exc
 
-        registros = extract_records(payload)
-        if registros is None:
-            # El esquema no es el que se esperaba. Se falla con la forma de lo
-            # que llegó incluida: es la diferencia entre depurar el primer
-            # despliegue en minutos o a ciegas. Ver `describe_shape`.
-            raise CollectorError(
-                f"{self.company}: no se encontró una lista de cortes en la "
-                f"respuesta ({describe_shape(payload)}). Si el endpoint es "
-                f"correcto, hay que agregar su clave a `_LIST_KEYS` en "
-                f"outage_parser.py.",
-                detail={"url": destino},
-            )
-        return registros
+        # `records_or_raise` distingue dos cosas que desde acá se ven iguales:
+        # un volcado con otra forma —el parser necesita una clave nueva— y un
+        # error que el servidor sirvió con HTTP 2xx, donde el parser no tiene
+        # nada que ver. Ver el incidente documentado en esa función.
+        return records_or_raise(payload, company=self.company, url=destino)
 
     async def fetch(self) -> Sequence[PowerOutage]:
         """Registros crudos → cortes dentro de la región.
