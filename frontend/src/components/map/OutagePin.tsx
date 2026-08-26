@@ -62,8 +62,13 @@ function OutagePinComponent({ incident, selected, onSelect }: OutagePinProps) {
         <span
           aria-hidden
           className={
-            'block size-[26px] rounded-full rounded-bl-none border-2 border-white shadow-md dark:border-slate-900 ' +
-            (selected ? 'ring-2 ring-slate-900 dark:ring-white' : '')
+            // El borde recorta el pin contra el terreno, así que sigue al fondo de la
+            // aplicación —claro sobre mapa claro, oscuro sobre mapa oscuro—, no a una
+            // superficie de panel.
+            'block size-[26px] rounded-full rounded-bl-none border-2 border-app shadow-md ' +
+            // `ring-ink` es el color de máximo contraste del tema: oscuro sobre claro
+            // y claro sobre oscuro. Un `slate-900` fijo se perdía en el mapa nocturno.
+            (selected ? 'ring-2 ring-ink' : '')
           }
           style={{ backgroundColor: style.color, transform: 'rotate(45deg)' }}
         />

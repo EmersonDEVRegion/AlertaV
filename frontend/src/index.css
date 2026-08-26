@@ -18,19 +18,316 @@
  * dentro de sus expresiones. Estos tokens son el espejo para el resto de la
  * interfaz: si cambia uno, cambia el otro.
  */
-@theme {
-  /* Tramos de confianza (política v2.0.0). Ojo con el orden: el rojo es el
-     tramo BAJO, el naranja el alto. Ver domain/symbology.ts. */
-  --color-level-unsafe: #dc2626;
-  --color-level-possible: #eab308;
-  --color-level-confirmed: #ea580c;
-  --color-level-closed: #475569;
+/* ===========================================================================
+ * Tokens de AlertaV
+ *
+ * Dos capas, y la separación es deliberada:
+ *
+ *   1. **Cromo** (esto). Superficies, líneas, tinta, radios. Vive en CSS,
+ *      cambia con el tema y no significa nada: es el marco.
+ *   2. **Datos** (`src/domain/*Symbology.ts`). Los colores de incendio,
+ *      tráfico, cortes, sismos y amenaza. Viven en TypeScript porque MapLibre
+ *      los necesita como valores de JavaScript dentro de sus expresiones, y
+ *      porque cada uno codifica un hecho: el naranja de `confirmed` no es una
+ *      preferencia estética, es una afirmación sobre la evidencia.
+ *
+ * Mezclarlas sería el error caro. Un rediseño que "aclare un poco los naranjas"
+ * no puede tocar la escala de confianza sin cambiar lo que el mapa afirma.
+ * =========================================================================== */
 
-  --color-alert-roja: #e11d48;
-  --color-alert-amarilla: #f59e0b;
-  --color-alert-preventiva: #3b82f6;
-  --color-alert-verde: #22c55e;
+/* --- Primitivas: no se usan directamente en componentes -------------------- */
+@theme {
+  /* Radios por ROL, no por tamaño.
+     Tres valores y ni uno más. Un panel de 240 px y un interruptor de 28 px no
+     pueden compartir radio sin que uno de los dos se vea mal, así que unificar
+     en un único `rounded-lg` produciría justo el aspecto improvisado que se
+     quiere quitar. La regla es: contenedor flotante, control, o píldora. */
+  --radius-control: 0.5rem;
+  --radius-surface: 0.875rem;
+
+  /* Desenfoque de los contenedores sobre el mapa. Un solo valor, bajo.
+     `backdrop-filter` obliga al compositor a remuestrear el fondo en cada
+     cuadro, y debajo hay un mapa que repinta al desplazarse. 8 px alcanza para
+     separar el panel del terreno; 24 px cuesta el triple y no se nota. */
+  --blur-panel: 8px;
+
+  /*
+   * Pila de interfaz. El orden importa:
+   *
+   *   `system-ui`     — resuelve a la fuente de interfaz del sistema.
+   *   `-apple-system` — respaldo para Safari viejo, que no conoce `system-ui`.
+   *   `Segoe UI Variable` — Windows 11 la expone antes que `Segoe UI`.
+   *   `Roboto`, `Ubuntu`, `Cantarell` — Android y escritorios Linux.
+   *   `Noto Sans`     — respaldo con la cobertura más amplia de alfabetos.
+   */
+  --font-ui:
+    system-ui, -apple-system, 'Segoe UI Variable', 'Segoe UI', Roboto, Ubuntu,
+    Cantarell, 'Noto Sans', sans-serif;
+
+  --font-mono:
+    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono',
+    monospace;
 }
+
+/* --- Semántica: lo que consumen los componentes ---------------------------- */
+:root {
+  color-scheme: light;
+
+  /* Superficies, de más al fondo a más al frente. */
+  --surface-app: #f1f5f9;
+  --surface-panel: rgb(255 255 255 / 0.92);
+  --surface-raised: #ffffff;
+  --surface-sunken: #f1f5f9;
+  --surface-hover: rgb(15 23 42 / 0.05);
+
+  --line: rgb(15 23 42 / 0.1);
+  --line-strong: rgb(15 23 42 / 0.18);
+
+  --ink: #0f172a;
+  --ink-muted: #475569;
+  --ink-faint: #94a3b8;
+
+  /* Acento de INTERFAZ: foco, selección, estado activo de un control.
+     No es un color de dato. Deliberadamente neutro para no competir con la
+     paleta de emergencias, que es la que debe llamar la atención. */
+  --accent: #2563eb;
+  --accent-ink: #ffffff;
+  --accent-soft: rgb(37 99 235 / 0.12);
+
+  /* Acción destructiva/urgente: el único rojo del cromo. */
+  --urgent: #dc2626;
+  --urgent-hover: #b91c1c;
+  --urgent-ink: #ffffff;
+
+  /* Avisos de la interfaz. NO son la paleta de datos: `warn` es "leé esto con
+     cuidado", no "hay riesgo moderado de incendio". La distinción importa
+     porque un aviso vive en una tarjeta y un dato vive en el mapa. */
+  /* Barra superior: oscura en LOS DOS temas, por diseño. Es el cromo de la
+     aplicación, no una superficie de contenido, y mantenerla constante da el
+     anclaje que se espera de una app nativa. */
+  --surface-chrome: #0f172a;
+  --ink-on-chrome: #f1f5f9;
+  --surface-chrome-raised: #1e293b;
+
+  /* Velo del modal. Oscurece el mapa sin teñirlo. */
+  --scrim: rgb(15 23 42 / 0.6);
+
+  --warn-bg: #fffbeb;
+  --warn-ink: #78350f;
+  --warn-line: rgb(180 83 9 / 0.25);
+
+  --info-bg: #eff6ff;
+  --info-ink: #1e3a8a;
+  --info-line: rgb(37 99 235 / 0.22);
+
+  --danger-bg: #fef2f2;
+  --danger-ink: #991b1b;
+  --danger-line: rgb(220 38 38 / 0.25);
+
+  --success-bg: #ecfdf5;
+  --success-ink: #065f46;
+  --success-line: rgb(16 185 129 / 0.25);
+
+  --shadow-panel: 0 4px 16px rgb(15 23 42 / 0.12), 0 1px 3px rgb(15 23 42 / 0.08);
+  --shadow-raised: 0 8px 24px rgb(15 23 42 / 0.18);
+}
+
+html.dark {
+  color-scheme: dark;
+
+  /* Obsidiana, no negro puro: sobre el mapa oscuro un #000 se funde con el
+     terreno y el panel pierde su borde. */
+  --surface-app: #020617;
+  --surface-panel: rgb(15 23 42 / 0.92);
+  --surface-raised: #1e293b;
+  --surface-sunken: rgb(255 255 255 / 0.04);
+  --surface-hover: rgb(255 255 255 / 0.07);
+
+  --line: rgb(255 255 255 / 0.1);
+  --line-strong: rgb(255 255 255 / 0.18);
+
+  --ink: #f1f5f9;
+  --ink-muted: #94a3b8;
+  --ink-faint: #64748b;
+
+  --accent: #60a5fa;
+  --accent-ink: #0f172a;
+  --accent-soft: rgb(96 165 250 / 0.16);
+
+  --urgent: #ef4444;
+  --urgent-hover: #dc2626;
+  --urgent-ink: #ffffff;
+
+  /* Sobre fondo oscuro el aviso no puede ser un rectángulo claro: deslumbra.
+     Se invierte a un tinte apagado del mismo matiz con tinta clara. */
+  --surface-chrome: #020617;
+  --ink-on-chrome: #f1f5f9;
+  --surface-chrome-raised: #1e293b;
+  --scrim: rgb(2 6 23 / 0.72);
+
+  --warn-bg: rgb(120 53 15 / 0.28);
+  --warn-ink: #fcd34d;
+  --warn-line: rgb(217 119 6 / 0.35);
+
+  --info-bg: rgb(30 58 138 / 0.32);
+  --info-ink: #93c5fd;
+  --info-line: rgb(59 130 246 / 0.35);
+
+  --danger-bg: rgb(127 29 29 / 0.3);
+  --danger-ink: #fca5a5;
+  --danger-line: rgb(239 68 68 / 0.35);
+
+  --success-bg: rgb(6 78 59 / 0.32);
+  --success-ink: #6ee7b7;
+  --success-line: rgb(16 185 129 / 0.35);
+
+  --shadow-panel: 0 4px 16px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
+  --shadow-raised: 0 8px 28px rgb(0 0 0 / 0.6);
+}
+
+/* `inline` es lo que hace que la utilidad emita `var(--token)` en vez del valor
+   resuelto. Sin esto, Tailwind hornearía el color claro en el CSS y la clase
+   `.dark` no tendría efecto sobre `bg-panel`. */
+@theme inline {
+  /* Expuestas como `font-ui` / `font-mono`. */
+  --font-ui: var(--font-ui);
+  --font-mono: var(--font-mono);
+
+  --color-app: var(--surface-app);
+  --color-panel: var(--surface-panel);
+  --color-raised: var(--surface-raised);
+  --color-sunken: var(--surface-sunken);
+  --color-hover: var(--surface-hover);
+
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-faint: var(--ink-faint);
+
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-urgent: var(--urgent);
+  --color-urgent-hover: var(--urgent-hover);
+  --color-urgent-ink: var(--urgent-ink);
+
+  --color-chrome: var(--surface-chrome);
+  --color-chrome-raised: var(--surface-chrome-raised);
+  --color-ink-on-chrome: var(--ink-on-chrome);
+  --color-scrim: var(--scrim);
+
+  --color-warn-bg: var(--warn-bg);
+  --color-warn-ink: var(--warn-ink);
+  --color-warn-line: var(--warn-line);
+
+  --color-info-bg: var(--info-bg);
+  --color-info-ink: var(--info-ink);
+  --color-info-line: var(--info-line);
+
+  --color-danger-bg: var(--danger-bg);
+  --color-danger-ink: var(--danger-ink);
+  --color-danger-line: var(--danger-line);
+
+  --color-success-bg: var(--success-bg);
+  --color-success-ink: var(--success-ink);
+  --color-success-line: var(--success-line);
+}
+
+/* --- Clases de composición -------------------------------------------------
+   Tres recetas repetidas en todo el cromo. Se declaran una vez para que un
+   panel nuevo no vuelva a inventar su propia mezcla de fondo, borde y sombra,
+   que es exactamente cómo se llegó a doce tonos de slate distintos. */
+@layer components {
+  .surface-floating {
+    background-color: var(--surface-panel);
+    border-radius: var(--radius-surface);
+    box-shadow: var(--shadow-panel);
+    box-shadow:
+      var(--shadow-panel),
+      inset 0 0 0 1px var(--line);
+    backdrop-filter: blur(var(--blur-panel));
+    -webkit-backdrop-filter: blur(var(--blur-panel));
+  }
+
+  /* Fila de control en interfaz densa: alto fijo para que una lista de capas
+     no cambie de ritmo según tenga o no subtítulo. */
+  .row-control {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2rem;
+    padding-inline: 0.375rem;
+    border-radius: var(--radius-control);
+  }
+
+  /* Caja de aviso dentro de una ficha. Se repite en la ficha de incidente, la
+     de sismo y el modal; declararla una vez evita que cada una elija su propio
+     ámbar. */
+  .callout {
+    border-radius: var(--radius-control);
+    padding: 0.5rem 0.625rem;
+    font-size: 11px;
+    line-height: 1.45;
+  }
+  .callout-warn {
+    background-color: var(--warn-bg);
+    color: var(--warn-ink);
+    box-shadow: inset 0 0 0 1px var(--warn-line);
+  }
+  .callout-info {
+    background-color: var(--info-bg);
+    color: var(--info-ink);
+    box-shadow: inset 0 0 0 1px var(--info-line);
+  }
+  .callout-danger {
+    background-color: var(--danger-bg);
+    color: var(--danger-ink);
+    box-shadow: inset 0 0 0 1px var(--danger-line);
+  }
+  .callout-success {
+    background-color: var(--success-bg);
+    color: var(--success-ink);
+    box-shadow: inset 0 0 0 1px var(--success-line);
+  }
+  .callout-muted {
+    background-color: var(--surface-sunken);
+    color: var(--ink-muted);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+
+  /*
+   * Contador que no desplaza el layout.
+   *
+   * `tabular-nums` resuelve la mitad del problema: iguala el ancho de los
+   * dígitos entre sí, así que 8 y 0 miden lo mismo. Pero pasar de 9 a 10 agrega
+   * un glifo, y el elemento crece igual — que es justo el salto que se ve
+   * cuando entra un incidente nuevo.
+   *
+   * La otra mitad es reservar el espacio. `ch` es el ancho del carácter «0», y
+   * con cifras tabulares eso equivale al ancho de CUALQUIER dígito, así que
+   * `2ch` reserva exactamente dos dígitos sin depender del tamaño de fuente.
+   * Alineado a la derecha, el número crece hacia la izquierda dentro de su
+   * propia caja y nada de lo que tiene al lado se mueve.
+   */
+  .count {
+    display: inline-block;
+    min-width: 2ch;
+    text-align: right;
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  .count-3 {
+    min-width: 3ch;
+  }
+
+  .focus-ring {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
 
 html,
 body,
@@ -38,18 +335,73 @@ body,
   height: 100%;
 }
 
+/* ===========================================================================
+ * Tipografía
+ *
+ * # Por qué `system-ui` y no Inter
+ *
+ * Inter es mejor tipografía que casi cualquier fuente de sistema. Pero AlertaV
+ * es una PWA que alguien abre en la calle, con red de teléfono, posiblemente
+ * durante una emergencia, y una fuente web cuesta una petición más antes de que
+ * el texto sea legible. Con `font-display: swap` el usuario ve el texto en la
+ * fuente de respaldo y luego un reflow; con `block`, no ve texto.
+ *
+ * Y la brecha se cerró: `system-ui` hoy resuelve a SF Pro en Apple, Roboto en
+ * Android y Segoe UI Variable en Windows. Las tres son tipografías de interfaz
+ * diseñadas para pantalla, con cifras tabulares y buen ajuste en cuerpos
+ * chicos, que es exactamente lo que pide un panel de alta densidad.
+ *
+ * Si más adelante se decide que la coherencia de marca lo vale, el cambio es
+ * autoalojar el archivo —no un CDN, que rompe el modo sin conexión— y sustituir
+ * `--font-ui`. Todo lo demás de este bloque sigue igual.
+ * =========================================================================== */
+
 body {
   margin: 0;
   background-color: #f1f5f9;
-  font-family:
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    Roboto,
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
+  font-family: var(--font-ui);
+
+  /*
+   * Cifras tabulares por defecto en toda la aplicación.
+   *
+   * `tnum` fija el ancho de avance de cada dígito, así que 111 y 999 miden lo
+   * mismo. Es lo que impide que una columna de porcentajes o un contador
+   * tiemblen al actualizarse. Se pone en `body` y no caso por caso porque en
+   * esta interfaz casi todo número es un dato que cambia solo.
+   *
+   * `lnum` fuerza cifras de caja alta: algunas fuentes de sistema usan cifras
+   * de estilo antiguo, que en una tabla se ven desalineadas.
+   */
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+  font-variant-numeric: tabular-nums lining-nums;
+
   /* El mapa gestiona su propio paneo; el rebote de la página solo estorba. */
   overscroll-behavior: none;
+}
+
+/*
+ * Suavizado según el tema, que es lo que pide «según corresponda».
+ *
+ * En claro, texto oscuro sobre fondo claro: el suavizado subpíxel usa los tres
+ * canales RGB del panel y da el trazo más nítido posible. Es el
+ * comportamiento por defecto del navegador y no hay razón para tocarlo.
+ *
+ * En oscuro se invierte el problema. El texto claro sobre fondo oscuro sufre
+ * halación: los píxeles encendidos se «derraman» sobre los apagados y las
+ * letras se ven más gruesas de lo que son. `antialiased` desactiva el subpíxel
+ * y adelgaza el trazo, que compensa justo ese engrosamiento.
+ *
+ * Sólo tiene efecto en WebKit y Blink; Firefox lo ignora, y no pasa nada: allí
+ * el texto se ve un punto más grueso en oscuro y sigue siendo legible.
+ */
+body {
+  -webkit-font-smoothing: subpixel-antialiased;
+  -moz-osx-font-smoothing: auto;
+}
+
+html.dark body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 html.dark body {
@@ -87,6 +439,68 @@ html.dark .maplibregl-ctrl-scale {
   background: rgba(15, 23, 42, 0.7);
   border-color: #64748b;
   color: #cbd5e1;
+}
+
+/* ===========================================================================
+ * Popup de MapLibre: sacarle el chasis, dejarle el marco
+ *
+ * MapLibre pinta el popup con un chasis propio —fondo blanco, radio de 3 px,
+ * sombra, 15/10 px de relleno y una flecha de 20 px— que no tiene forma de
+ * configurarse desde la API. La estrategia es la contraria a maquillarlo:
+ * se lo vacía por completo y el diseño entero pasa a `EmergencyPopup.tsx`,
+ * que sí conoce los tokens del tema. Lo que MapLibre conserva es lo único que
+ * sabe hacer y nosotros no: colocar el nodo en la coordenada correcta y
+ * reposicionarlo en cada cuadro del paneo.
+ * =========================================================================== */
+
+.maplibregl-popup-content {
+  /* El chasis. `border-radius: 0` en la base alcanza para las cuatro esquinas:
+     las reglas `-anchor-*` de MapLibre sólo achatan una esquina cada una, y
+     achatar algo que ya vale cero no hace nada. */
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+
+  /*
+   * La tipografía, que es el detalle que se pasa por alto.
+   *
+   * `.maplibregl-map` declara `font: 12px/20px Helvetica Neue, …` con el ATAJO
+   * `font`, no con `font-family`. El atajo reinicia TODOS los longhands que no
+   * menciona, y entre ellos está `font-variant-numeric`. Es decir: dentro del
+   * mapa se pierden las cifras tabulares que `body` activa para el resto de la
+   * aplicación, y una columna de "clientes afectados" vuelve a temblar al
+   * actualizarse.
+   *
+   * `font-feature-settings` sobrevive —el atajo no lo toca— así que en la
+   * práctica los dígitos siguen siendo tabulares por ese otro camino. Se
+   * restituye igual, explícito: depender de que una de las dos declaraciones
+   * de `body` se salve por casualidad no es una base para un layout.
+   */
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/*
+ * La flecha.
+ *
+ * `border-color: transparent` NO sirve: el triángulo es un `border: 10px` sobre
+ * una caja de 0×0, así que aunque se vuelva invisible sigue ocupando 20 px y
+ * separa la tarjeta del pin sin que nada explique el hueco. Se saca del flujo,
+ * y la distancia al marcador se recupera con la opción `offset` del
+ * constructor — ver `POPUP_OFFSET` en `components/map/IncidentPopup.tsx`.
+ */
+.maplibregl-popup-tip {
+  display: none;
+}
+
+/* El botón de cierre por defecto es una «×» de sistema pegada a la esquina, sin
+   área táctil ni color de tema. El nuestro vive en la cabecera de la tarjeta,
+   donde hereda los tokens y mide 24 px. */
+.maplibregl-popup-close-button {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

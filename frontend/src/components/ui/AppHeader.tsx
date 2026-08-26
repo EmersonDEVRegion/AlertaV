@@ -21,14 +21,14 @@ export function AppHeader({
   themeToggle,
 }: AppHeaderProps) {
   return (
-    <header className="flex items-center gap-3 bg-slate-900 px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] text-white dark:bg-slate-950">
+    <header className="flex items-center gap-3 bg-chrome px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] text-white">
       <div className="min-w-0 flex-1">
         <h1 className="text-sm font-bold leading-tight">
           Alerta<span className="text-orange-400">V</span>
         </h1>
         {/* Desglose por tramo, con el punto de color de cada uno: el número
             suelto no dice nada si no se ve a qué color corresponde. */}
-        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-400 dark:text-slate-500">
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-ink-faint">
           <span>{total} activos</span>
           {(['confirmed', 'possible', 'unsafe'] as const).map((key) => (
             <span key={key} className="inline-flex items-center gap-1">
@@ -45,7 +45,7 @@ export function AppHeader({
         </p>
       </div>
 
-      <label className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full bg-slate-800 px-3 py-1.5 text-xs font-medium">
+      <label className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full bg-chrome-raised px-3 py-1.5 text-xs font-medium">
         <input
           type="checkbox"
           checked={confirmedOnly}

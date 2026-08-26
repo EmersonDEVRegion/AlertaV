@@ -72,30 +72,27 @@ export function IncidentSheet({
     <section
       role="dialog"
       aria-label={`Incidente ${incident.code}`}
-      className="
-        pointer-events-auto fixed inset-x-0 bottom-0 z-20 flex max-h-[78dvh] flex-col
-        rounded-t-2xl bg-white shadow-[0_-8px_40px_rgba(15,23,42,0.25)]
+      className="pointer-events-auto fixed inset-x-0 bottom-0 z-20 flex max-h-[78dvh] flex-col
+        rounded-t-2xl bg-raised shadow-[var(--shadow-raised)]
         md:inset-y-0 md:left-auto md:right-0 md:max-h-none md:w-[26rem] md:rounded-none
-        md:rounded-l-2xl md:shadow-[-8px_0_40px_rgba(15,23,42,0.18)]
-        dark:bg-slate-900 dark:shadow-[0_-8px_40px_rgba(0,0,0,0.6)]
-        dark:md:shadow-[-8px_0_40px_rgba(0,0,0,0.55)]
-      "
+        md:rounded-l-2xl md:shadow-[var(--shadow-raised)]
+ "
     >
       {/* Asa de arrastre: señal visual de que la tarjeta es una hoja inferior. */}
-      <div aria-hidden className="mx-auto mt-2 h-1 w-10 rounded-full bg-slate-300 md:hidden dark:bg-slate-600" />
+      <div aria-hidden className="mx-auto mt-2 h-1 w-10 rounded-full bg-line-strong md:hidden" />
 
       <header className="flex items-start gap-3 px-4 pb-3 pt-3">
         <span
           aria-hidden
-          className="mt-1 size-3.5 shrink-0 rounded-full ring-2 ring-white dark:ring-slate-900"
+          className="mt-1 size-3.5 shrink-0 rounded-full ring-2 ring-white"
           style={{ backgroundColor: levelColor }}
         />
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-base font-bold text-slate-900 dark:text-slate-100">
+          <h2 className="truncate text-base font-bold text-ink">
             {incident.title ?? TYPE_LABEL[incident.type]}
           </h2>
-          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500 dark:text-slate-400">
-            <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-ink-muted">
+            <code className="rounded bg-sunken px-1.5 py-0.5 font-mono text-[11px] font-semibold text-ink-muted">
               {incident.code}
             </code>
             <span>{TYPE_LABEL[incident.type]}</span>
@@ -107,7 +104,7 @@ export function IncidentSheet({
           type="button"
           onClick={onClose}
           aria-label="Cerrar ficha del incidente"
-          className="-mr-1 -mt-1 grid size-9 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:text-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+          className="-mr-1 -mt-1 grid size-9 shrink-0 place-items-center rounded-full text-ink-faint transition hover:bg-sunken hover:text-ink-muted"
         >
           <span aria-hidden className="text-lg leading-none">✕</span>
         </button>
@@ -121,33 +118,33 @@ export function IncidentSheet({
             {style.label}
           </span>
           {closed && (
-            <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-300">
+            <span className="rounded-full bg-hover px-2.5 py-1 text-xs font-medium text-ink-muted">
               {STATUS_LABEL[incident.status]}
             </span>
           )}
           <AlertBadge level={incident.alert_level} />
           {incident.is_multi_source && (
-            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700">
+            <span className="rounded-full bg-sunken px-2.5 py-1 text-xs font-medium text-ink-muted ring-1 ring-line">
               {incident.source_count} fuentes independientes
             </span>
           )}
         </div>
 
         {unverified && (
-          <p className="mt-3 rounded-lg bg-amber-50 px-2.5 py-2 text-[11px] leading-snug text-amber-900 ring-1 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-800/50">
+          <p className="mt-3 callout callout-warn">
             <strong>Nivel confirmado por acumulación de evidencia.</strong> Ninguna
             fuente lo verificó en terreno: {VERIFYING_SOURCES[layer].negative}.
           </p>
         )}
 
         {(incident.commune || incident.province) && (
-          <p className="mt-3 text-sm text-slate-700 dark:text-slate-300">
+          <p className="mt-3 text-sm text-ink-muted">
             {[incident.commune, incident.province].filter(Boolean).join(', ')}
           </p>
         )}
 
         {/* --- Los dos ejes de confianza, separados y rotulados --------------- */}
-        <div className="mt-4 space-y-4 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
+        <div className="mt-4 space-y-4 rounded-surface bg-sunken p-3 ring-1 ring-line">
           <ConfidenceBar
             label="Confianza del hecho"
             value={incident.confidence}
@@ -175,7 +172,7 @@ export function IncidentSheet({
         {incident.outage && <OutageDetails outage={incident.outage} />}
 
         {/* --- Fuentes ------------------------------------------------------- */}
-        <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+        <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-ink-muted">
           Fuentes ({incident.source_count})
         </h3>
         <div className="mt-2">
@@ -183,36 +180,36 @@ export function IncidentSheet({
         </div>
 
         {/* --- Línea de tiempo ----------------------------------------------- */}
-        <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+        <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-ink-muted">
           Línea de tiempo
         </h3>
         <dl className="mt-2 space-y-1.5 text-sm">
           <div className="flex justify-between gap-3">
-            <dt className="text-slate-500 dark:text-slate-400">Primera señal</dt>
-            <dd className="text-right text-slate-800 dark:text-slate-200">
+            <dt className="text-ink-muted">Primera señal</dt>
+            <dd className="text-right text-ink">
               {formatDateTime(incident.first_seen_at)}
-              <span className="ml-1.5 text-xs text-slate-500 dark:text-slate-400">
+              <span className="ml-1.5 text-xs text-ink-muted">
                 ({formatRelative(incident.first_seen_at)})
               </span>
             </dd>
           </div>
           <div className="flex justify-between gap-3">
-            <dt className="text-slate-500 dark:text-slate-400">Última señal</dt>
-            <dd className="text-right text-slate-800 dark:text-slate-200">
+            <dt className="text-ink-muted">Última señal</dt>
+            <dd className="text-right text-ink">
               {formatDateTime(incident.last_seen_at)}
-              <span className="ml-1.5 text-xs text-slate-500 dark:text-slate-400">
+              <span className="ml-1.5 text-xs text-ink-muted">
                 ({formatRelative(incident.last_seen_at)})
               </span>
             </dd>
           </div>
           <div className="flex justify-between gap-3">
-            <dt className="text-slate-500 dark:text-slate-400">Señales totales</dt>
-            <dd className="text-slate-800 dark:text-slate-200">{incident.event_count}</dd>
+            <dt className="text-ink-muted">Señales totales</dt>
+            <dd className="text-ink">{incident.event_count}</dd>
           </div>
           {incident.resolved_at && (
             <div className="flex justify-between gap-3">
-              <dt className="text-slate-500 dark:text-slate-400">Resuelto</dt>
-              <dd className="text-slate-800 dark:text-slate-200">{formatDateTime(incident.resolved_at)}</dd>
+              <dt className="text-ink-muted">Resuelto</dt>
+              <dd className="text-ink">{formatDateTime(incident.resolved_at)}</dd>
             </div>
           )}
         </dl>
@@ -223,30 +220,30 @@ export function IncidentSheet({
         </div>
 
         {/* --- Señales que lo componen --------------------------------------- */}
-        <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+        <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-ink-muted">
           Señales correlacionadas
         </h3>
         {loadingDetail && events.length === 0 ? (
-          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Cargando señales…</p>
+          <p className="mt-2 text-sm text-ink-muted">Cargando señales…</p>
         ) : (
           <ul className="mt-2 space-y-2">
             {events.map((event) => (
               <li
                 key={event.raw_event_id}
-                className="rounded-lg bg-white p-2.5 text-xs ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700"
+                className="rounded-control bg-raised p-2.5 text-xs ring-1 ring-line"
               >
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">
+                  <span className="font-semibold text-ink">
                     {sourceLabel(event.source)}
                   </span>
-                  <span className="shrink-0 text-slate-500 dark:text-slate-400">
+                  <span className="shrink-0 text-ink-muted">
                     {formatRelative(event.timestamp)}
                   </span>
                 </div>
                 {event.text && (
-                  <p className="mt-1 line-clamp-3 text-slate-600 dark:text-slate-400">{event.text}</p>
+                  <p className="mt-1 line-clamp-3 text-ink-muted">{event.text}</p>
                 )}
-                <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+                <p className="mt-1 text-[11px] text-ink-faint">
                   {LINK_METHOD_LABEL[event.link_method]}
                   {event.distance_m !== null && ` · a ${formatDistance(event.distance_m)}`}
                   {event.matched_commune && ` · ${event.matched_commune}`}
@@ -259,16 +256,16 @@ export function IncidentSheet({
         {/* --- Propagación por viento (sólo incendios) --------------------- */}
         {layer === 'fire' && (windLoading || windError || wind) && (
           <>
-            <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-ink-muted">
               Viento y propagación
             </h3>
 
             {windLoading && (
-              <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Consultando el viento…</p>
+              <p className="mt-2 text-sm text-ink-muted">Consultando el viento…</p>
             )}
 
             {windError && (
-              <p className="mt-2 text-[11px] leading-snug text-slate-500 dark:text-slate-400">
+              <p className="mt-2 text-[11px] leading-snug text-ink-muted">
                 No se pudo obtener el viento desde Open-Meteo. El cono de
                 propagación no se dibuja.
               </p>
@@ -278,21 +275,21 @@ export function IncidentSheet({
               <>
                 <dl className="mt-2 space-y-1.5 text-sm">
                   <div className="flex justify-between gap-3">
-                    <dt className="text-slate-500 dark:text-slate-400">Viento</dt>
-                    <dd className="text-slate-800 dark:text-slate-200">
+                    <dt className="text-ink-muted">Viento</dt>
+                    <dd className="text-ink">
                       {Math.round(wind.windSpeedKmh)} km/h del{' '}
                       {compassLabel(wind.windDirectionDeg)}
                     </dd>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <dt className="text-slate-500 dark:text-slate-400">Avance estimado</dt>
-                    <dd className="text-slate-800 dark:text-slate-200">
+                    <dt className="text-ink-muted">Avance estimado</dt>
+                    <dd className="text-ink">
                       {windCone.lengthKm.toFixed(1)} km hacia el{' '}
                       {compassLabel(windCone.bearingDeg)}
                     </dd>
                   </div>
                 </dl>
-                <p className="mt-2 rounded-lg bg-orange-50 px-2.5 py-2 text-[11px] leading-snug text-orange-900 ring-1 ring-orange-200 dark:bg-orange-950/40 dark:text-orange-200 dark:ring-orange-900/50">
+                <p className="mt-2 callout callout-warn">
                   Proyección indicativa a {PROJECTION_HOURS} h suponiendo avance
                   al 10 % de la velocidad del viento en pastizal abierto. No
                   considera combustible ni pendiente, y{' '}
@@ -302,7 +299,7 @@ export function IncidentSheet({
             )}
 
             {wind && !windCone && (
-              <p className="mt-2 text-[11px] leading-snug text-slate-500 dark:text-slate-400">
+              <p className="mt-2 text-[11px] leading-snug text-ink-muted">
                 Viento en calma: no hay una dirección de propagación que
                 proyectar.
               </p>
@@ -310,13 +307,13 @@ export function IncidentSheet({
           </>
         )}
 
-        <p className="mt-5 rounded-lg bg-slate-50 p-2.5 text-[11px] leading-snug text-slate-500 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700">
+        <p className="mt-5 rounded-control bg-sunken p-2.5 text-[11px] leading-snug text-ink-muted ring-1 ring-line">
           AlertaV correlaciona fuentes públicas. Una detección satelital o un
           reporte ciudadano no equivalen a {UNCONFIRMED_NOUN[layer]}.{' '}
           {contact ? (
             <>
               Ante una emergencia, llama a {contact.service} al{' '}
-              <strong className="text-slate-700 dark:text-slate-300">
+              <strong className="text-ink-muted">
                 {contact.number}
               </strong>
               {layer === 'traffic' && ', o al 131 si hay personas lesionadas'}.

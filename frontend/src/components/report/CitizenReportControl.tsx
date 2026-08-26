@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { Button } from '@/components/ui/primitives'
+import { cn } from '@/lib/cn'
 import { CitizenReportModal } from './CitizenReportModal'
 
 interface CitizenReportControlProps {
@@ -22,34 +24,70 @@ interface CitizenReportControlProps {
  * `z-20`. El botón va en `z-30` para no quedar debajo de ninguno, y el modal se
  * monta en un portal sobre `document.body` con `z-50`, fuera del contexto de
  * apilamiento del mapa.
+ *
+ * Sobre el ícono: el 🚨 anterior era un emoji, y un emoji lo dibuja la fuente
+ * del sistema — distinto en Android, en iOS y en Windows, con su propio color
+ * fijo que no responde al tema y sin alineación fiable con el texto. El
+ * triángulo vectorial hereda `currentColor` y mide siempre lo mismo.
  */
 export function CitizenReportControl({ hiddenOnMobile = false }: CitizenReportControlProps) {
   const [open, setOpen] = useState(false)
 
   return (
     <>
-      <button
-        type="button"
+      {/*
+        Sombra en dos capas y sin tinte de color.
+
+        La versión anterior usaba una sombra roja saturada
+        (`0 6px 24px rgba(220,38,38,0.45)`), que es el recurso que hace que un
+        botón se vea de plantilla: el color se derrama sobre el mapa y compite
+        con los propios marcadores de emergencia, que son rojos y naranjas de
+        verdad. Una sombra neutra separa el botón del terreno sin teñirlo.
+
+        Las tres capas de profundidad —reposo, hover, activo— van en la variante
+        `urgent` de `Button`, no acá: la respuesta táctil tiene que ser la misma
+        en toda la aplicación.
+      */}
+      <Button
+        variant="urgent"
+        size="fab"
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className={`
-          absolute bottom-[calc(2.25rem_+_env(safe-area-inset-bottom))] left-1/2 z-30
-          -translate-x-1/2 items-center gap-2 rounded-full bg-red-600 px-5 py-3
-          text-sm font-bold text-white shadow-[0_6px_24px_rgba(220,38,38,0.45)]
-          ring-1 ring-red-700/20 transition
-          hover:bg-red-700 hover:shadow-[0_8px_28px_rgba(220,38,38,0.55)]
-          active:scale-[0.97]
-          focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300 focus-visible:ring-offset-2
-          dark:shadow-[0_4px_18px_rgba(220,38,38,0.40)] dark:ring-red-400/25
-          dark:hover:ring-red-400/60 dark:hover:shadow-[0_6px_22px_rgba(239,68,68,0.50)]
-          dark:focus-visible:ring-offset-slate-950
-          ${hiddenOnMobile ? 'hidden md:flex' : 'flex'}
-        `}
+        className={cn(
+          'absolute bottom-[calc(2.25rem+env(safe-area-inset-bottom))] left-1/2 z-30 -translate-x-1/2',
+          // Tres transformaciones se cruzan en este botón y ninguna pisa a otra,
+          // pero por motivos distintos según la versión de Tailwind:
+          //
+          //   - el centrado (`-translate-x-1/2`, acá) y la elevación al apuntar
+          //     (`-translate-y-0.5`, en el tamaño `fab`) escriben LA MISMA
+          //     propiedad `translate`, y conviven porque cada una sólo fija su
+          //     variable —`--tw-translate-x` / `--tw-translate-y`— y la
+          //     declaración las lee juntas;
+          //   - la reducción al pulsar (`active:scale`) escribe `scale`, que en
+          //     Tailwind v4 es una propiedad aparte y no `transform`.
+          //
+          // De ahí que la transición del primitivo nombre `translate` y `scale`
+          // por separado: `transform` no lo declara nadie.
+          hiddenOnMobile ? 'hidden md:inline-flex' : 'inline-flex',
+        )}
       >
-        <span aria-hidden className="text-base leading-none">🚨</span>
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2.2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+          className="size-[18px]"
+        >
+          <path d="M12 9v4" />
+          <path d="M12 17h.01" />
+          <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+        </svg>
         Reportar emergencia
-      </button>
+      </Button>
 
       {open && <CitizenReportModal onClose={() => setOpen(false)} />}
     </>

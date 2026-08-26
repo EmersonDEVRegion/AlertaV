@@ -26,40 +26,40 @@ export function ConfidenceAudit({ breakdown }: { breakdown: ConfidenceBreakdown 
     : null
 
   return (
-    <details className="rounded-xl bg-slate-50 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
-      <summary className="cursor-pointer list-none px-3 py-2.5 text-sm font-semibold text-slate-700 [&::-webkit-details-marker]:hidden dark:text-slate-300">
+    <details className="rounded-surface bg-sunken ring-1 ring-line">
+      <summary className="cursor-pointer list-none px-3 py-2.5 text-sm font-semibold text-ink-muted [&::-webkit-details-marker]:hidden">
         Cómo se calculó esta confianza
-        <span aria-hidden className="float-right text-slate-400 dark:text-slate-500">
+        <span aria-hidden className="float-right text-ink-faint">
           ▾
         </span>
       </summary>
 
-      <div className="border-t border-slate-200 px-3 py-3 dark:border-slate-700">
+      <div className="border-t border-line px-3 py-3">
         <table className="w-full text-xs">
           <thead>
-            <tr className="text-left text-slate-500 dark:text-slate-400">
+            <tr className="text-left text-ink-muted">
               <th className="pb-1 font-medium">Fuente</th>
               <th className="pb-1 text-center font-medium">Señales</th>
               <th className="pb-1 text-right font-medium">Aporte</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+          <tbody className="divide-y divide-line">
             {entries
               .sort((a, b) => (b[1]?.contribution ?? 0) - (a[1]?.contribution ?? 0))
               .map(([source, detail]) => (
                 <tr key={source}>
-                  <td className="py-1.5 text-slate-800 dark:text-slate-200">
+                  <td className="py-1.5 text-ink">
                     {sourceLabel(source)}
                     {detail?.confirming && (
-                      <span className="ml-1 text-red-600 dark:text-red-400" title="Confirma en terreno">
+                      <span className="ml-1 text-danger-ink" title="Confirma en terreno">
                         ✓
                       </span>
                     )}
                   </td>
-                  <td className="py-1.5 text-center tabular-nums text-slate-600 dark:text-slate-400">
+                  <td className="py-1.5 text-center tabular-nums text-ink-muted">
                     {detail?.signals ?? 0}
                   </td>
-                  <td className="py-1.5 text-right tabular-nums font-medium text-slate-800 dark:text-slate-200">
+                  <td className="py-1.5 text-right tabular-nums font-medium text-ink">
                     {formatPercent(detail?.contribution ?? 0)}
                   </td>
                 </tr>
@@ -68,13 +68,13 @@ export function ConfidenceAudit({ breakdown }: { breakdown: ConfidenceBreakdown 
         </table>
 
         {ceiling && (
-          <p className="mt-2.5 rounded-lg bg-amber-50 px-2.5 py-2 text-[11px] leading-snug text-amber-900 ring-1 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-800/50">
+          <p className="mt-2.5 callout callout-warn">
             {ceiling}
           </p>
         )}
 
         {breakdown.policy_version && (
-          <p className="mt-2 text-[10px] text-slate-400 dark:text-slate-500">
+          <p className="mt-2 text-[10px] text-ink-faint">
             Política de confianza v{breakdown.policy_version}
           </p>
         )}

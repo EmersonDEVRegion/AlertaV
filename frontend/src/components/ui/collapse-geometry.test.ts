@@ -23,7 +23,7 @@ import { describe, expect, it } from 'vitest'
 // Ruta desde la raíz del proyecto: `import.meta.url` apunta al módulo
 // transformado por Vite, no a un archivo en disco.
 const SOURCE = readFileSync(
-  resolve(process.cwd(), 'src/components/ui/LayerToggles.tsx'),
+  resolve(process.cwd(), 'src/components/ui/primitives/Sheet.tsx'),
   'utf8',
 )
 
@@ -37,7 +37,7 @@ function tailwindUnits(pattern: RegExp, label: string): number {
 }
 
 describe('geometría del panel colapsable', () => {
-  const panelWidth = rem(tailwindUnits(/PANEL_WIDTH = 'w-(\d+)'/, 'el ancho del panel'))
+  const panelWidth = rem(tailwindUnits(/SHEET_WIDTH = 'w-(\d+)'/, 'el ancho del panel'))
   const containerInset = rem(
     tailwindUnits(/absolute right-(\d+) top-\[8\.5rem\]/, 'el inset del contenedor'),
   )
@@ -81,7 +81,9 @@ describe('geometría del panel colapsable', () => {
   })
 
   it('la pestaña sólo redondea el costado que queda a la vista', () => {
-    expect(SOURCE).toContain('rounded-l-lg')
+    // `rounded-l-surface` es el radio por rol del sistema de diseño: la
+    // pestaña y el panel comparten curvatura porque son la misma pieza.
+    expect(SOURCE).toContain('rounded-l-surface')
     expect(SOURCE).toContain('rounded-r-none')
   })
 

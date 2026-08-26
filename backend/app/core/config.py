@@ -328,6 +328,56 @@ class Settings(BaseSettings):
     #: minutos colgado del rate limit ajeno.
     TRANSPORTE_INFORMA_MAX_GEOCODES: int = Field(default=20, ge=1, le=200)
 
+    # -- Redes sociales: Instagram vía Apify ---------------------------------
+    #: Token de la API de Apify. Viaja SIEMPRE en la cabecera `Authorization`,
+    #: nunca en la query: una URL con el token dentro termina en los logs de
+    #: acceso y en el mensaje de cualquier `CollectorError`, que se serializa a
+    #: `collector_runs.error`. Vacío = collector apagado (el constructor lanza).
+    APIFY_TOKEN: str = ""
+    APIFY_BASE_URL: str = "https://api.apify.com/v2"
+    #: Actor a leer. El separador entre usuario y actor es una **tilde**, no una
+    #: barra: `apify~instagram-scraper`. `apify_client` normaliza las barras,
+    #: pero conviene escribirlo bien acá.
+    #:
+    #: Es lo único que hay que cambiar para migrar a otro Actor del marketplace
+    #: —el parser acepta los alias de campo de los tres más usados—, cosa que
+    #: pasa más seguido de lo que parece: estos Actors suben de precio o dejan
+    #: de funcionar cuando Instagram cambia algo.
+    APIFY_INSTAGRAM_ACTOR_ID: str = "apify~instagram-scraper"
+    #: Cuentas que el Actor raspa. **Este backend NO se las pasa a Apify**: la
+    #: entrada del Actor se configura en su Schedule, en el panel de Apify, que
+    #: es también donde se paga. Acá están para que `collector_runs.params` diga
+    #: de dónde se supone que vienen los datos que se leyeron.
+    APIFY_INSTAGRAM_ACCOUNTS: CsvList = Field(
+        default_factory=lambda: ["alertanoticiasvalparaiso"]
+    )
+    APIFY_TIMEOUT_SECONDS: float = 30.0
+    APIFY_POLL_INTERVAL_SECONDS: int = 300  # 5 min
+    #: Items a leer del dataset por corrida, del más nuevo al más viejo. No es
+    #: cuántos posts se raspan —eso lo fija `resultsLimit` en el Schedule del
+    #: Actor y es lo único que mueve la factura—: es cuántos se miran.
+    APIFY_MAX_ITEMS: int = Field(default=50, ge=1, le=1000)
+    #: Antigüedad máxima tolerada de la última corrida EXITOSA del Actor antes de
+    #: avisar. Cubre el fallo silencioso de esta arquitectura: si el Schedule se
+    #: rompe, Apify sigue sirviendo el dataset de la última corrida buena y el
+    #: collector reportaría `success` con 0 eventos para siempre. Debe ser
+    #: holgadamente mayor que la cadencia del Schedule.
+    APIFY_MAX_RUN_AGE_MINUTES: int = Field(default=45, ge=5, le=1440)
+    #: Antigüedad máxima de un post para considerarlo descripción del presente.
+    #: Estas cuentas publican recuerdos y resúmenes; tres horas es el corte.
+    INSTAGRAM_MAX_AGE_MINUTES: int = Field(default=180, ge=5, le=1440)
+    #: Tope de geocodificaciones por corrida. Mismo motivo que en el MTT: a 1 s
+    #: por llamada, sin tope una jornada movida deja al worker colgado del rate
+    #: limit de Nominatim. Ojo: ese presupuesto es COMPARTIDO entre los dos
+    #: collectors, porque el limitador es global al proceso.
+    INSTAGRAM_MAX_GEOCODES: int = Field(default=15, ge=1, le=200)
+    #: Confianza de una señal de Instagram. 0.35 es el techo de la banda de
+    #: `SOCIAL_MEDIA` en `confidence.py` (`max_weight`): emitir más alto no la
+    #: sube, sólo archiva en `raw_events` un número que el motor no respeta.
+    #: Que la cuenta se llame "noticias" no la hace un medio: republica lo que
+    #: le llega por mensaje directo, sin verificar.
+    INSTAGRAM_CONFIDENCE: float = Field(default=0.35, ge=0.0, le=1.0)
+
     # -- Meteorología: lluvia y riesgo de inundación -------------------------
     #: API de pronóstico de Open-Meteo. Sin credencial y sin registro en su nivel
     #: abierto (10.000 llamadas/día, uso no comercial, atribución CC BY 4.0).
@@ -490,6 +540,7 @@ class Settings(BaseSettings):
         "USGS_EVENT_TYPES",
         "WAZE_ALERT_TYPES",
         "BOMBEROS_ACCIDENT_KEYS",
+        "APIFY_INSTAGRAM_ACCOUNTS",
         mode="before",
     )
     @classmethod

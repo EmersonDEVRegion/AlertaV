@@ -9,12 +9,12 @@ import { SeismicCard } from '@/components/incident/SeismicCard'
 import {
   DEFAULT_LAYER_VISIBILITY,
   DEFAULT_PROVIDER_VISIBILITY,
-  LayerToggles,
-} from '@/components/ui/LayerToggles'
+  SidePanel,
+} from '@/components/ui/SidePanel'
 import type {
   LayerVisibility,
   ProviderVisibility,
-} from '@/components/ui/LayerToggles'
+} from '@/components/ui/SidePanel'
 import { providerOf } from '@/domain/powerSymbology'
 import { layerOf } from '@/domain/families'
 import type { IncidentLayerKey } from '@/domain/families'
@@ -281,7 +281,7 @@ export default function App() {
 
         <MapLegend />
 
-        <LayerToggles
+        <SidePanel
           visibility={visibility}
           onChange={setVisibility}
           counts={{ ...countsByLayer, seismic: seismicList.length }}

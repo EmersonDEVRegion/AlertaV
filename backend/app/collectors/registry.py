@@ -17,6 +17,7 @@ from app.collectors.power.cge_worker import CgeCollector
 from app.collectors.power.chilquinta_worker import ChilquintaCollector
 from app.collectors.seismic.sismologia_worker import SismologiaCollector
 from app.collectors.senapred.collector import SenapredCollector
+from app.collectors.social.instagram_apify_worker import InstagramApifyCollector
 from app.collectors.traffic.bomberos_10_4_worker import Bomberos104Collector
 from app.collectors.traffic.transporteinforma_worker import TransporteInformaCollector
 from app.collectors.traffic.waze_worker import WazeCollector
@@ -91,6 +92,18 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     # inundación en comunas donde no se ha inundado nada. Mismo criterio que
     # `thermal_anomaly` con los incendios. El flag de riesgo va en el payload.
     OpenMeteoCollector.name: OpenMeteoCollector,
+    # -- Redes sociales -------------------------------------------------------
+    # Cuentas hiperlocales de Instagram, leídas a través de Apify porque el WAF
+    # de Meta bloquea cualquier intento directo. Emite `SOCIAL_MEDIA`, la banda
+    # más baja del catálogo: es la fuente más rápida del sistema y la única
+    # donde nadie verificó nada.
+    #
+    # Es también el único collector cuya fuente de datos **no la disparamos
+    # nosotros**: el Actor corre según su propio Schedule en el panel de Apify y
+    # acá sólo se lee el dataset resultante, que es gratis. Si el Schedule se
+    # detiene, este collector no falla — avisa (`datos rancios`) y queda
+    # `partial`. Ver `app/collectors/social/apify_client.py`.
+    InstagramApifyCollector.name: InstagramApifyCollector,
     # Próximos hitos:
     #   BroadcastifyCollector.name: BroadcastifyCollector,  # STT → evento
 }

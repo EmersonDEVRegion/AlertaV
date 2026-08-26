@@ -23,7 +23,7 @@ export function ThemeToggle({ theme, onToggle }: ThemeToggleProps) {
       aria-checked={theme === 'dark'}
       aria-label={goingDark ? 'Activar modo oscuro' : 'Activar modo claro'}
       title={goingDark ? 'Modo oscuro' : 'Modo claro'}
-      className="grid size-8 shrink-0 place-items-center rounded-full bg-slate-800 text-sm text-slate-200 transition hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600"
+      className="grid size-8 shrink-0 place-items-center rounded-full bg-chrome-raised text-sm text-ink-on-chrome transition hover:bg-chrome-raised"
     >
       <span aria-hidden>{goingDark ? '🌙' : '☀️'}</span>
     </button>

@@ -16,8 +16,16 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
+/**
+ * Dos fuentes: la geometría del interruptor vive en la primitiva desde el
+ * refactor, y el techo de altura sigue en el panel que la usa.
+ */
 const SOURCE = readFileSync(
-  resolve(process.cwd(), 'src/components/ui/LayerToggles.tsx'),
+  resolve(process.cwd(), 'src/components/ui/primitives/Switch.tsx'),
+  'utf8',
+)
+const PANEL = readFileSync(
+  resolve(process.cwd(), 'src/components/ui/primitives/Sheet.tsx'),
   'utf8',
 )
 
@@ -38,11 +46,11 @@ function unit(pattern: RegExp): number {
 }
 
 describe('interruptor de capas de referencia', () => {
-  const railW = px(unit(/'relative h-4 w-(\d+) shrink-0 rounded-full/))
-  const railH = px(unit(/'relative h-(\d+) w-\d+ shrink-0 rounded-full/))
-  const thumb = px(unit(/absolute left-0\.5 top-0\.5 size-(\d+) rounded-full/))
+  const railW = px(unit(/sm: 'h-4 w-(\d+)'/))
+  const railH = px(unit(/sm: 'h-(\d+) w-\d+'/))
+  const thumb = px(unit(/size: \{ sm: 'size-(\d+)' \}/))
   const inset = px(0.5)
-  const onShift = px(unit(/checked \? 'translate-x-(\d+)' : 'translate-x-0'/))
+  const onShift = px(unit(/checked: \{ true: 'translate-x-(\d+)', false: 'translate-x-0' \}/))
 
   it('las clases del riel y del pulgar siguen siendo legibles', () => {
     // Guardia de la propia prueba: si esto falla, los números de abajo son NaN
@@ -98,13 +106,40 @@ describe('altura del panel', () => {
   it('acota con `dvh`, no con `vh`', () => {
     // En móvil la barra del navegador se retrae y `vh` conserva el valor de la
     // ventana expandida: el panel se cortaría fuera del área visible.
-    expect(SOURCE).toMatch(/max-h-\[calc\(100dvh-[\d.]+rem\)\]/)
-    expect(SOURCE).not.toMatch(/max-h-\[calc\(100vh-/)
+    expect(PANEL).toMatch(/max-h-\[calc\(100dvh-[\d.]+rem\)\]/)
+    expect(PANEL).not.toMatch(/max-h-\[calc\(100vh-/)
   })
 
   it('pone el scroll en el panel y no anida barras en las listas', () => {
-    expect(SOURCE).toContain('overflow-y-auto overscroll-contain')
+    expect(PANEL).toContain('overflow-y-auto overscroll-contain')
     // Las listas del acordeón ya no tienen su propio scroll.
-    expect(SOURCE).not.toContain('max-h-56 space-y-0.5 overflow-y-auto')
+    expect(PANEL).not.toContain('max-h-56 space-y-0.5 overflow-y-auto')
+  })
+})
+
+describe('cohesión del sistema de diseño', () => {
+  const CHROME = ['LayerToggles', 'IncidentListItem', 'MapOverlayState'].map((n) =>
+    readFileSync(resolve(process.cwd(), `src/components/ui/${n}.tsx`), 'utf8'),
+  )
+  const ALL = [PANEL, ...CHROME].join('\n')
+
+  it('el cromo usa sólo los tres radios por rol', () => {
+    // `sm|md|lg|xl|2xl|3xl` son los que se repartían a mano y producían el
+    // aspecto improvisado. Si vuelve alguno, es que se saltó el sistema.
+    const sueltos = ALL.match(/rounded-(sm|md|lg|xl|2xl|3xl)\b/g) ?? []
+    expect(sueltos).toEqual([])
+  })
+
+  it('el cromo no vuelve a la paleta cruda de slate', () => {
+    // Doce tonos de slate usados como fondo fue el diagnóstico original.
+    const crudos = ALL.match(/\b(bg|text|border|ring)-slate-\d+/g) ?? []
+    expect(crudos).toEqual([])
+  })
+
+  it('el modo oscuro sale de los tokens, no de variantes por componente', () => {
+    // Con `@theme inline` los tokens se redefinen en `html.dark` y las
+    // utilidades emiten `var()`. Una clase `dark:` en el cromo delata que
+    // alguien resolvió un color a mano en vez de usar el token.
+    expect(PANEL.match(/dark:/g) ?? []).toEqual([])
   })
 })

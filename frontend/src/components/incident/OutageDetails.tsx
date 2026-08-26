@@ -40,7 +40,7 @@ export function OutageDetails({ outage }: { outage: OutageDetail }) {
 
   return (
     <>
-      <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+      <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-ink-muted">
         Corte de suministro
       </h3>
 
@@ -51,7 +51,7 @@ export function OutageDetails({ outage }: { outage: OutageDetail }) {
           {style.label}
         </span>
         {outage.outage_count > 1 && (
-          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700">
+          <span className="rounded-full bg-sunken px-2.5 py-1 text-xs font-medium text-ink-muted ring-1 ring-line">
             {outage.outage_count} cortes agrupados
           </span>
         )}
@@ -61,8 +61,8 @@ export function OutageDetails({ outage }: { outage: OutageDetail }) {
         {/* Clientes afectados: se oculta si la empresa no lo informó. */}
         {typeof clients === 'number' && (
           <div className="flex justify-between gap-3">
-            <dt className="text-slate-500 dark:text-slate-400">Clientes afectados</dt>
-            <dd className="font-medium tabular-nums text-slate-800 dark:text-slate-200">
+            <dt className="text-ink-muted">Clientes afectados</dt>
+            <dd className="font-medium tabular-nums text-ink">
               {formatClients(clients)}
             </dd>
           </div>
@@ -71,15 +71,15 @@ export function OutageDetails({ outage }: { outage: OutageDetail }) {
         {/* Reposición estimada: se oculta si falta o si no es una fecha real. */}
         {restorationValid && (
           <div className="flex justify-between gap-3">
-            <dt className="text-slate-500 dark:text-slate-400">Reposición estimada</dt>
-            <dd className="text-right text-slate-800 dark:text-slate-200">
+            <dt className="text-ink-muted">Reposición estimada</dt>
+            <dd className="text-right text-ink">
               {formatDateTime(restoration)}
               <span
                 className={
                   'ml-1.5 text-xs ' +
                   (isOverdue(restoration)
-                    ? 'text-amber-700 dark:text-amber-400'
-                    : 'text-slate-500 dark:text-slate-400')
+                    ? 'text-warn-ink'
+                    : 'text-ink-muted')
                 }
               >
                 ({formatRelative(restoration)})
@@ -90,8 +90,8 @@ export function OutageDetails({ outage }: { outage: OutageDetail }) {
 
         {outage.sector && (
           <div className="flex justify-between gap-3">
-            <dt className="text-slate-500 dark:text-slate-400">Sector</dt>
-            <dd className="max-w-[60%] text-right text-slate-800 dark:text-slate-200">
+            <dt className="text-ink-muted">Sector</dt>
+            <dd className="max-w-[60%] text-right text-ink">
               {outage.sector}
             </dd>
           </div>
@@ -99,14 +99,14 @@ export function OutageDetails({ outage }: { outage: OutageDetail }) {
       </dl>
 
       {restorationValid && isOverdue(restoration) && (
-        <p className="mt-2 rounded-lg bg-amber-50 px-2.5 py-2 text-[11px] leading-snug text-amber-900 ring-1 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-800/50">
+        <p className="mt-2 callout callout-warn">
           La hora comprometida por {style.label} ya pasó y el corte sigue
           publicado. La estimación puede haberse actualizado en su sistema.
         </p>
       )}
 
       {clients === null && !restorationValid && (
-        <p className="mt-2 text-[11px] leading-snug text-slate-500 dark:text-slate-400">
+        <p className="mt-2 text-[11px] leading-snug text-ink-muted">
           {style.label} publicó el corte sin detallar clientes afectados ni hora
           de reposición.
         </p>

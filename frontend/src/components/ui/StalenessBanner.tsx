@@ -31,7 +31,7 @@ export function StalenessBanner({
 
   if (!showWarning) {
     return (
-      <p className="px-3 py-1 text-center text-[11px] text-slate-500 dark:text-slate-400">
+      <p className="px-3 py-1 text-center text-[11px] text-ink-muted">
         Actualizando…
       </p>
     )
@@ -47,23 +47,23 @@ export function StalenessBanner({
     <div
       role="status"
       aria-live="polite"
-      className="flex items-center justify-between gap-3 bg-amber-100 px-3 py-2 text-amber-950 ring-1 ring-amber-300 dark:bg-amber-950/60 dark:text-amber-100 dark:ring-amber-800/60"
+      className="flex items-center justify-between gap-3 bg-warn-bg px-3 py-2 text-warn-ink ring-1 ring-warn-line"
     >
       <p className="text-xs leading-snug">
         <span className="font-semibold">{message}</span>{' '}
         {dataUpdatedAt ? (
-          <span className="text-amber-800 dark:text-amber-300">
+          <span className="text-warn-ink">
             Última actualización {formatRelative(dataUpdatedAt)}.
           </span>
         ) : (
-          <span className="text-amber-800 dark:text-amber-300">Aún no se recibe ningún dato.</span>
+          <span className="text-warn-ink">Aún no se recibe ningún dato.</span>
         )}
       </p>
       <button
         type="button"
         onClick={onRetry}
         disabled={isFetching}
-        className="shrink-0 rounded-full bg-amber-950 px-3 py-1 text-xs font-semibold text-amber-50 transition hover:bg-amber-900 disabled:opacity-50 dark:bg-amber-200 dark:text-amber-950 dark:hover:bg-amber-100"
+        className="shrink-0 rounded-full bg-warn-ink px-3 py-1 text-xs font-semibold text-warn-bg transition hover:opacity-90 disabled:opacity-50"
       >
         {isFetching ? 'Buscando…' : 'Reintentar'}
       </button>
