@@ -72,17 +72,54 @@ def client_and_repo() -> Any:
     app.dependency_overrides.pop(get_seismic_service, None)
 
 
+def _declared_paths() -> list[str]:
+    """Rutas declaradas, en orden de registro.
+
+    **Por qué no se lee `app.routes`.** Hasta FastAPI 0.115 esa lista era plana:
+    `include_router()` copiaba cada subruta al nivel de la aplicación y bastaba
+    con recorrerla. Desde Starlette 1.0 ya no — `include_router()` agrega un
+    único objeto contenedor (`_IncludedRouter`) que guarda las subrutas dentro y
+    **no** expone `.path`. La consecuencia práctica es que
+    `next(p for p in paths if p.endswith("/events/seismic"))` deja de encontrar
+    nada y el test revienta con `StopIteration`, sin que el endpoint tenga nada
+    malo: un fallo del instrumento de medición, no de lo medido.
+
+    El esquema OpenAPI sí es superficie pública y estable, y FastAPI lo arma
+    recorriendo las rutas en orden de registro, así que las claves de `paths`
+    llegan ordenadas y con el prefijo ya aplicado. Da la misma respuesta en las
+    dos versiones.
+    """
+    return list(app.openapi()["paths"])
+
+
 class TestSeismicRouting:
-    def test_seismic_no_queda_capturada_por_la_ruta_de_detalle(self) -> None:
+    def test_seismic_va_declarada_antes_que_la_ruta_de_detalle(self) -> None:
         """`/events/seismic` va antes que `/events/{public_id}`.
 
         Si se registraran al revés, FastAPI intentaría leer "seismic" como UUID
         y la ruta devolvería 422 en vez de la lista.
         """
-        paths = [getattr(route, "path", "") for route in app.routes]
+        paths = _declared_paths()
         seismic = next(i for i, p in enumerate(paths) if p.endswith("/events/seismic"))
         detail = next(i for i, p in enumerate(paths) if p.endswith("/events/{public_id}"))
         assert seismic < detail
+
+    def test_seismic_no_entra_por_la_ruta_de_detalle(
+        self, client_and_repo: Any
+    ) -> None:
+        """La misma garantía, comprobada por comportamiento y no por estructura.
+
+        Es la que de verdad protege al usuario: da igual cómo FastAPI guarde sus
+        rutas internamente mientras «seismic» no termine en el parseador de
+        UUID. Si el orden se invierte, esto devuelve 422 y el test cae — que es
+        exactamente el síntoma que vería el frontend.
+        """
+        client, _ = client_and_repo
+        response = client.get("/api/v1/events/seismic")
+
+        assert response.status_code == 200, response.text
+        # Un objeto en vez de una lista significaría que respondió el detalle.
+        assert isinstance(response.json(), list)
 
 
 class TestSeismicEndpoint:

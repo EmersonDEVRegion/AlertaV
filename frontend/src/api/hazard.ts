@@ -171,9 +171,17 @@ export async function fetchHazardGrid(signal?: AbortSignal): Promise<HazardGrid>
   try {
     response = await fetch(HAZARD_SOURCE_URL, {
       signal: signal ?? null,
-      // El modelo cambia cada varios años. Que el navegador lo sirva de su
-      // caché es exactamente lo que se quiere.
-      cache: 'force-cache',
+      /*
+       * `default`, no `force-cache`.
+       *
+       * El modelo cambia cada varios años, así que la tentación de forzar la
+       * caché es fuerte — pero `force-cache` sirve la copia guardada **sin
+       * revalidar**, y entonces una capa regenerada no llegaría nunca al
+       * navegador que ya tiene la vieja. El endpoint responde con `ETag` y
+       * `must-revalidate`: con la política por defecto, una carga normal cuesta
+       * un 304 sin cuerpo y una capa nueva sí se descarga.
+       */
+      cache: 'default',
     })
   } catch (error) {
     // `AbortError` tiene que propagarse tal cual: react-query lo distingue de
@@ -183,12 +191,47 @@ export async function fetchHazardGrid(signal?: AbortSignal): Promise<HazardGrid>
   }
 
   if (!response.ok) {
+    throw new HazardLoadError(await describeFailure(response))
+  }
+
+  /*
+   * `response.json()` puede reventar aunque la respuesta sea 200: un proxy o un
+   * hosting con reescritura a `index.html` devuelve HTML con código 200, y el
+   * `SyntaxError` que sale de ahí no es un `HazardLoadError` — se escaparía sin
+   * mensaje útil. Se traduce.
+   */
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch {
     throw new HazardLoadError(
-      response.status === 404
-        ? 'La capa de amenaza no está publicada en el servidor.'
-        : `El servidor respondió ${response.status} al pedir la capa de amenaza.`,
+      'La respuesta de la capa de amenaza no era JSON. ¿La petición llegó al backend ' +
+        'o la interceptó el hosting del frontend?',
     )
   }
 
-  return parseHazardGrid(await response.json())
+  return parseHazardGrid(payload)
+}
+
+/**
+ * Texto del fallo, aprovechando el sobre de error del backend si viene.
+ *
+ * El backend responde `{ error: { code, message, detail } }` y su `message` ya
+ * dice qué hacer —«genera la capa con `python -m scripts.fetch_seismic_hazard`»—
+ * que es infinitamente más útil que traducir un número de estado. Si el cuerpo
+ * no trae sobre (un 502 del proxy de Render, por ejemplo, que es HTML), se cae
+ * al mensaje genérico.
+ */
+async function describeFailure(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: { message?: unknown } }
+    const message = body?.error?.message
+    if (typeof message === 'string' && message.trim() !== '') return message
+  } catch {
+    // Cuerpo no-JSON: no aporta nada y no es motivo para perder el estado.
+  }
+
+  return response.status === 404
+    ? 'La capa de amenaza no está publicada en el servidor.'
+    : `El servidor respondió ${response.status} al pedir la capa de amenaza.`
 }

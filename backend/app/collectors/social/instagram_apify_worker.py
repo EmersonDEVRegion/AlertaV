@@ -81,8 +81,23 @@ from app.collectors.nominatim import GeocodeResult, geocode
 from app.collectors.nominatim import build_client as build_geo_client
 from app.collectors.social import apify_client
 from app.collectors.traffic import gemini
-from app.collectors.traffic.bomberos_10_4_worker import find_codes
 from app.collectors.traffic.transporteinforma_worker import extract_streets_via_llm
+from app.collectors.vocabulary import (
+    AGENCY_TERMS,
+    CODE_TYPES,
+    CRITICAL_TERMS,
+    FIRE_TERMS,
+    FLOOD_TERMS,
+    LANDSLIDE_TERMS,
+    NOISE_PHRASES,
+    OPERATIONAL_TERMS,
+    RESCUE_TERMS,
+    SUPPORT_CODES,
+    TRAFFIC_TERMS,
+    classify_event_type,
+    haystack,
+    is_emergency,
+)
 from app.core.config import settings
 from app.core.exceptions import CollectorError
 from app.models.enums import EventSource, EventType
@@ -92,352 +107,33 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-#  Pre-filtro de relevancia
+#  Pre-filtro de relevancia y clasificación
 # =============================================================================
 #
-# Qué protege
-# -----------
-# El presupuesto del LLM. De cada corrida del Actor salen decenas de posts y la
-# mayoría no son emergencias: política municipal, farándula, atardeceres desde
-# el cerro, promociones. Mandarlos al extractor cuesta tokens y no produce nada.
+# El diccionario de emergencia **vivía acá** —fue el primer collector que tuvo
+# que leer texto libre— y hoy vive en `app/collectors/vocabulary.py`. Este
+# archivo lo importa y lo re-exporta: los nombres son superficie pública desde
+# antes de la extracción, y los tests de esta fuente los usan tal cual.
 #
-# Es un filtro de RECALL, no de precisión. Un falso positivo cuesta una llamada
-# al modelo y termina descartado más adelante; un falso negativo pierde un
-# accidente para siempre y en silencio. Ante la duda, pasa.
+# Por qué se movió, en corto: cuando el worker de prensa lo importó, quedó un
+# collector de diarios dependiendo de uno de redes sociales, que es una flecha
+# que no describe ninguna relación real entre las dos fuentes — sólo el orden en
+# que se escribieron. La deuda estaba anotada acá mismo desde que `find_codes`
+# tuvo su segundo consumidor. El módulo nuevo trae además el vocabulario de
+# inundación y remoción en masa, que a esta fuente le faltaba tanto como a la
+# otra: estas cuentas publican calles anegadas todo el invierno y el sistema no
+# tenía cómo nombrarlas.
 #
-# Todo se compara sobre el texto ya normalizado por `normalise_text`
-# (`unicodedata` NFD → se descartan las marcas combinantes → minúsculas), así
-# que **todos los términos de este bloque se escriben sin tildes y en
-# minúscula**. Un término con tilde no coincidiría nunca y el fallo sería mudo:
-# `test_los_terminos_estan_normalizados` lo impide.
-#
-# Coincidencia por SUBCADENA, no por palabra. "atropell" cubre atropello,
-# atropellado y atropellaron sin enumerar conjugaciones; el precio es que hay
-# que elegir raíces que no aparezcan dentro de otra palabra.
+# Lo que NO cambió para este worker: `is_emergency` sigue siendo síncrono y sin
+# red —se llama dentro del bucle de `fetch()`—, sigue siendo un filtro de recall
+# y no de precisión, y `classify_event_type` sigue devolviendo `None` si y sólo
+# si `is_emergency` devolvió `False`.
 
-#: Tránsito. `accidente` a secas entra porque en estas cuentas casi siempre es
-#: vial; cuando no lo es, `classify_event_type` lo manda igual a la familia
-#: correcta o a `OTHER`.
-TRAFFIC_TERMS: frozenset[str] = frozenset(
-    {
-        "choque",
-        "colision",
-        "volcamiento",
-        "atropell",  # atropello, atropellado, atropellaron
-        "desbarrancamiento",
-        "desbarranc",  # desbarrancó, desbarrancado
-        "accidente de transito",
-        "accidente vehicular",
-        "accidente",
-        "alta energia",  # trauma de alta energía: jerga de rescate vehicular
-        "transito suspendido",
-        "siniestro vial",
-        "vuelco",
-    }
-)
-
-#: Incendios y materiales peligrosos.
-FIRE_TERMS: frozenset[str] = frozenset(
-    {
-        "incendio",
-        "fuego",
-        "emanacion",
-        "siniestro",
-        "primera alarma",
-        "segunda alarma",
-        "tercera alarma",
-        "estructural",
-        "pastizales",
-        "pastizal",
-        "forestal",
-        "llamas",
-        "amago",
-    }
-)
-
-#: Rescate de personas.
-RESCUE_TERMS: frozenset[str] = frozenset(
-    {
-        "rescate",
-        "persona atrapada",
-        "atrapad",  # atrapado, atrapada, atrapados
-        "caida de altura",
-    }
-)
-
-#: Términos que por sí solos bastan para pasar el filtro.
-CRITICAL_TERMS: frozenset[str] = TRAFFIC_TERMS | FIRE_TERMS | RESCUE_TERMS
-
-#: Entidades de respuesta. **Deliberadamente NO disparan solas.**
-#:
-#: Es la decisión menos obvia del bloque y la que más ruido evita. "Bomberos de
-#: Valparaíso celebró su aniversario junto al alcalde", "Carabineros lanza
-#: campaña de seguridad escolar" y "SENAPRED capacita a dirigentes vecinales"
-#: contienen la entidad y no son emergencias — y son, además, exactamente el
-#: tipo de post que estas cuentas publican a diario. Una entidad dice QUIÉN
-#: podría estar involucrado, nunca QUÉ pasó.
-AGENCY_TERMS: frozenset[str] = frozenset(
-    {
-        "bomberos",
-        "carabineros",
-        "samu",
-        "senapred",
-        "conaf",
-        "ambulancia",
-    }
-)
-
-#: Lo que convierte la mención de una entidad en un hecho. Entidad + contexto
-#: pasa el filtro; cualquiera de los dos por separado, no.
-OPERATIONAL_TERMS: frozenset[str] = frozenset(
-    {
-        "emergencia",
-        "evacuacion",
-        "evacuar",
-        "lesionad",  # lesionado, lesionados, lesionada
-        "herid",  # herido, heridos, herida
-        "fallecid",
-        "damnificad",
-        "de urgencia",
-        "concurr",  # concurre, concurren, concurrió
-        "acudi",  # acudió, acudieron
-        "trabajan en el lugar",
-    }
-)
-
-# -- Claves radiales del Sistema Nacional -------------------------------------
-#
-# El reconocimiento NO se reimplementa acá: se reutiliza `find_codes` del worker
-# de Bomberos, que ya resuelve las cinco formas de escribir la misma clave
-# (`10-4`, `10-0-4`, `10.4`, `10 – 4`) y rechaza las tres trampas que se le
-# parecen (`10-40`, que es otra clave; `10-41`; y `10-4-2026`, que es una
-# fecha). Ver el bloque «Reconocimiento de la clave» de
-# `app/collectors/traffic/bomberos_10_4_worker.py`.
-#
-# DEUDA CONOCIDA: esas tres funciones son vocabulario del dominio y hoy viven en
-# un worker concreto. El segundo consumidor —este— es la señal de que les
-# corresponde un módulo propio (`app/collectors/codes.py`). No se mueve en este
-# cambio para no arrastrar al worker de Bomberos y sus tests.
-
-#: Clave normalizada → naturaleza de la señal. La comparación es por PREFIJO de
-#: tupla, igual que en `matches_key`: `10-4-1` (rescate con víctima atrapada)
-#: responde a `10-4` porque es un subtipo del mismo despacho, no otra
-#: emergencia.
-#:
-#: Ojo con la familia `10-0`: `normalise_code` colapsa el cero intermedio, así
-#: que `10-0-4` normaliza a `(10, 4)` y NO a `(10, 0)`. Esta tabla reconoce el
-#: `10-0` escrito tal cual. Si el Cuerpo de la zona despacha los estructurales
-#: como `10-0-1`, hay que agregar `(10, 1)` acá.
-CODE_TYPES: dict[tuple[int, ...], EventType] = {
-    (10, 0): EventType.STRUCTURAL_FIRE,  # incendio estructural
-    (10, 2): EventType.WILDFIRE,  # pastizales
-    (10, 3): EventType.RESCUE,  # rescate de personas
-    (10, 4): EventType.ACCIDENT,  # rescate vehicular
-}
-
-#: `10-12` (apoyo) va aparte y **necesita compañía** para pasar el filtro. Dos
-#: razones, y la primera es de dominio, no un parche:
-#:
-#: * Un apoyo no describe una emergencia nueva: es un despacho adicional a una
-#:   que ya está en curso. Por sí solo no aporta un hecho al mapa.
-#: * `10-12` colisiona con una fecha escrita corta ("el 10-12 se realizará…").
-#:   Las fechas con año —`10-12-2026`— ya las rechaza `normalise_code`, pero la
-#:   forma sin año pasaría.
-#:
-#: Para que dispare solo, mover esta entrada a `CODE_TYPES`. Es una línea.
-SUPPORT_CODES: dict[tuple[int, ...], EventType] = {
-    (10, 12): EventType.OTHER,  # apoyo
-}
-
-# -- Ruido con forma de emergencia --------------------------------------------
-
-#: Frases que CONTIENEN un término crítico y no son una emergencia. Se **borran
-#: del texto** antes de buscar, en vez de vetar el post entero: la excisión es
-#: quirúrgica y un veto mal puesto perdería el accidente real que viniera en el
-#: mismo caption.
-#:
-#: `fuegos artificiales` no es un ejemplo de manual: el show de Año Nuevo en el
-#: Mar es el post más replicado del año en estas cuentas, y "fuego" lo habría
-#: mandado entero al modelo cada 31 de diciembre.
-#:
-#: **El orden importa**: se excinde de la frase más larga a la más corta. Si
-#: "prevencion de incendios" se borrara antes que "prevencion de incendios
-#: forestales", quedaría suelto un "forestales" que es término crítico por sí
-#: mismo y la campaña de CONAF pasaría igual.
-#:
-#: La lista se calibra con datos reales; empieza corta a propósito.
-_NOISE_PHRASES: tuple[str, ...] = (
-    "prevencion de incendios forestales",
-    "campana de prevencion de incendios",
-    "fuegos artificiales",
-    "fuego artificial",
-    "show de fuegos",
-    "simulacro de incendio",
-    "simulacro de emergencia",
-    "simulacro de evacuacion",
-    "aniversario del incendio",
-    "anos del incendio",
-    "prevencion de incendios",
-    "seguro contra incendios",
-    "a fuego lento",
-)
-
-
-def _haystack(caption: str) -> str:
-    """Texto listo para buscar: normalizado y con el ruido conocido excindido."""
-    text = normalise_text(caption)
-    if not text:
-        return ""
-    for phrase in _NOISE_PHRASES:
-        if phrase in text:
-            text = text.replace(phrase, " ")
-    return text
-
-
-def _codes_in(haystack: str, table: dict[tuple[int, ...], EventType]) -> EventType | None:
-    """Primer tipo cuya clave aparece en el texto. Comparación por prefijo."""
-    for code in find_codes(haystack):
-        for wanted, event_type in table.items():
-            if code[: len(wanted)] == wanted:
-                return event_type
-    return None
-
-
-def is_emergency(caption: str) -> bool:
-    """¿Este caption habla de una emergencia? Síncrono, en memoria, sin red.
-
-    Es el guardián del gasto: lo que devuelve `False` no llega nunca al
-    extractor. Cuatro caminos para pasar, y sólo uno de ellos involucra
-    entidades:
-
-    1. Un **término crítico** (tránsito, incendio o rescate).
-    2. Una **clave radial** de `CODE_TYPES` — la central diciendo qué despachó.
-    3. **Entidad + contexto operativo**: "Bomberos concurre a…", "SAMU trasladó
-       a un lesionado". Nunca la entidad sola (ver `AGENCY_TERMS`).
-    4. El **`10-12` de apoyo** acompañado de una entidad o de contexto (ver
-       `SUPPORT_CODES`).
-
-    El costo es un puñado de búsquedas de subcadena sobre un texto de 1.500
-    caracteres como máximo (`clean_caption` lo recorta). No hay I/O, no hay
-    `await` y no hay nada que ceda el control: se puede llamar dentro del bucle
-    de `fetch()` sin tocar el event loop que comparte con el motor de
-    correlación.
-    """
-    haystack = _haystack(caption)
-    if not haystack:
-        return False
-
-    if any(term in haystack for term in CRITICAL_TERMS):
-        return True
-
-    if _codes_in(haystack, CODE_TYPES) is not None:
-        return True
-
-    tiene_entidad = any(term in haystack for term in AGENCY_TERMS)
-    tiene_contexto = any(term in haystack for term in OPERATIONAL_TERMS)
-
-    if tiene_entidad and tiene_contexto:
-        return True
-
-    if _codes_in(haystack, SUPPORT_CODES) is not None:
-        return tiene_entidad or tiene_contexto
-
-    return False
-
-
-# --- Clasificación determinista ----------------------------------------------
-#
-# El orden importa: se evalúa de lo más específico a lo más genérico y gana la
-# primera coincidencia. "incendio forestal" tiene que mirarse antes que
-# "incendio", o todo fuego terminaría siendo estructural.
-
-_WILDFIRE = (
-    "incendio forestal",
-    "quema de pastizal",
-    "pastizales",
-    "pastizal",
-    "foco de incendio",
-)
-
-_STRUCTURAL_FIRE = (
-    "incendio estructural",
-    "incendio en una vivienda",
-    "incendio de vivienda",
-    "incendio en local",
-    "se quema una casa",
-    "casa en llamas",
-)
-
-#: Marcador genérico de fuego. Sólo se consulta si ninguno de los específicos
-#: coincidió, y produce `OTHER` a propósito — ver `classify_event_type`.
-_GENERIC_FIRE = ("incendio", "llamas", "amago", "fuego", "emanacion")
-
-_CLASSIFIERS: tuple[tuple[frozenset[str] | tuple[str, ...], EventType], ...] = (
-    (_WILDFIRE, EventType.WILDFIRE),
-    (_STRUCTURAL_FIRE, EventType.STRUCTURAL_FIRE),
-    (TRAFFIC_TERMS, EventType.ACCIDENT),
-    (RESCUE_TERMS, EventType.RESCUE),
-)
-
-
-def classify_event_type(text: str) -> EventType | None:
-    """¿Qué describe este caption? None si no describe una emergencia.
-
-    Reglas, no modelo. El contrato de Gemini en este proyecto son tres campos
-    geográficos y ningún juicio sobre el hecho (ver
-    `app/collectors/traffic/gemini.py`), y esa frontera no se mueve porque la
-    fuente sea nueva.
-
-    El fuego sin calificar (`incendio` a secas, que es como lo escribe la mitad
-    de estas cuentas) devuelve `OTHER` y **no** `WILDFIRE` ni `SMOKE`. Es
-    deliberado y es la decisión más discutible del módulo, así que conviene
-    dejarla escrita:
-
-    * `WILDFIRE` afirmaría que hay un incendio forestal, que es lo que CONAF
-      confirma yendo al lugar. Un post de Instagram no puede afirmar eso.
-    * `SMOKE` es un avistamiento de humo. Tampoco: el post dice fuego.
-    * `OTHER` cae en la familia `other`, así que **no se fusiona** con los
-      incendios que CONAF o FIRMS reporten a 500 m. Pierde corroboración, y ese
-      es exactamente el intercambio buscado: preferimos un punto huérfano en el
-      mapa antes que subirle la confianza a un incendio con evidencia que no
-      vale lo que parece.
-
-    Si mañana estas cuentas resultan ser buenas prediciendo incendios, el cambio
-    es una línea acá y una entrada en `EVENT_TO_INCIDENT_TYPE`. Al revés —haber
-    inflado incendios durante seis meses— no se puede deshacer.
-
-    **Invariante con el pre-filtro**: devuelve `None` si y sólo si
-    `is_emergency` devolvió `False`. Sin eso, un post podría pasar el filtro
-    —pagando su llamada al modelo— y desaparecer después en el `if event_type is
-    not None` de `fetch()`, que es la peor combinación posible: se gasta y no se
-    guarda. Lo cubre `test_el_prefiltro_y_el_clasificador_no_se_contradicen`.
-    """
-    haystack = _haystack(text)
-    if not haystack:
-        return None
-
-    # 1. La clave radial primero: es la central diciendo qué despachó, y eso
-    #    vale más que adivinar por vocabulario. Un "10-0 en calle Serrano" es
-    #    más específico que cualquier sinónimo de fuego que traiga el caption.
-    code_type = _codes_in(haystack, CODE_TYPES)
-    if code_type is not None:
-        return code_type
-
-    # 2. Vocabulario, de lo más específico a lo más genérico.
-    for markers, event_type in _CLASSIFIERS:
-        if any(marker in haystack for marker in markers):
-            return event_type
-
-    if any(marker in haystack for marker in _GENERIC_FIRE):
-        return EventType.OTHER
-
-    # 3. El pre-filtro dijo que sí y no sabemos de qué se trata (un apoyo, una
-    #    entidad con contexto). `OTHER` es impreciso pero cierto; `None` sería
-    #    tirar algo por lo que ya se pagó.
-    if is_emergency(text):
-        return EventType.OTHER
-
-    return None
+#: Alias de compatibilidad. El contenido y su justificación están en
+#: `vocabulary`; acá sólo se conserva el nombre por el que los tests y el resto
+#: del paquete ya los conocen.
+_NOISE_PHRASES: tuple[str, ...] = NOISE_PHRASES
+_haystack = haystack
 
 
 # --- Limpieza del caption ----------------------------------------------------
@@ -528,9 +224,14 @@ def clean_caption(text: str) -> str:
 
 
 def looks_like_digest(text: str) -> bool:
-    """¿El caption parece cubrir varios hechos? Sólo marca; no descarta."""
-    haystack = normalise_text(text)
-    return any(hint in haystack for hint in _MULTI_HINTS)
+    """¿El caption parece cubrir varios hechos? Sólo marca; no descarta.
+
+    Busca sobre el texto normalizado **sin excindir ruido**: acá interesa la
+    forma del caption, no si describe una emergencia, así que se usa
+    `normalise_text` y no `haystack`.
+    """
+    normalizado = normalise_text(text)
+    return any(hint in normalizado for hint in _MULTI_HINTS)
 
 
 # --- El post -----------------------------------------------------------------
@@ -1044,6 +745,9 @@ __all__ = [
     "CODE_TYPES",
     "CRITICAL_TERMS",
     "FIRE_TERMS",
+    "FLOOD_TERMS",
+    "LANDSLIDE_TERMS",
+    "NOISE_PHRASES",
     "OPERATIONAL_TERMS",
     "RESCUE_TERMS",
     "SUPPORT_CODES",

@@ -48,13 +48,24 @@ export const FOCUS_ZOOM = 14.5
 export const SEISMIC_FOCUS_ZOOM = 9.5
 
 /**
- * Capa de referencia de amenaza sísmica, servida por el backend en `/static`.
+ * Capa de referencia de amenaza sísmica.
  *
- * Ruta relativa a propósito: en producción la sirve el mismo origen que la API
- * y en desarrollo la reenvía el proxy de Vite. Una URL absoluta obligaría a
- * configurar CORS para un archivo estático.
+ * # Por qué ya no apunta a `/static`
+ *
+ * La versión anterior era `'/static/geo/amenaza_sismica_valpo.json'`, una ruta
+ * relativa, con el razonamiento de que «en producción la sirve el mismo origen
+ * que la API». Eso no es cierto en el despliegue real: el frontend vive en
+ * Vercel y la API en Render, así que una ruta relativa se resuelve contra el
+ * dominio del **frontend**, que nunca tuvo ese archivo. En desarrollo sí
+ * funcionaba, porque el proxy de Vite reenvía `/static` al backend — y esa
+ * asimetría es lo que hacía que el fallo sólo apareciera en producción.
+ *
+ * Ahora cuelga de `apiBaseUrl`, que ya resuelve las dos formas legítimas: ruta
+ * relativa en desarrollo (y el proxy la lleva al backend) o URL absoluta en
+ * producción. El endpoint sirve el mismo GeoJSON con `ETag`, respaldo en caché
+ * y un 502 explicado cuando el artefacto no se ha generado.
  */
-export const HAZARD_SOURCE_URL = '/static/geo/amenaza_sismica_valpo.json'
+export const HAZARD_SOURCE_URL = `${env.apiBaseUrl}/events/seismic/hazard`
 
 export const MAP_STYLE_URL = env.mapStyle
 export const MAP_STYLE_URL_DARK = env.mapStyleDark

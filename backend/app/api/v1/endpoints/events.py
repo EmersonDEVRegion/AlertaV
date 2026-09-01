@@ -11,9 +11,15 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
+from fastapi.responses import JSONResponse
 
-from app.api.deps import IngestServiceDep, SeismicServiceDep, WeatherServiceDep
+from app.api.deps import (
+    HazardServiceDep,
+    IngestServiceDep,
+    SeismicServiceDep,
+    WeatherServiceDep,
+)
 from app.api.v1.params import parse_bbox
 from app.core.config import settings
 from app.core.ratelimit import RateLimiter, client_ip
@@ -323,6 +329,61 @@ async def seismic_stats(
     hours: Annotated[int, Query(ge=1, le=720)] = 72,
 ) -> SeismicStats:
     return service.stats(await service.list_recent(hours=hours, limit=2000))
+
+
+@router.get(
+    "/seismic/hazard",
+    summary="Capa de amenaza sísmica del CSN (modelo MASCSN26)",
+    response_class=Response,
+    responses={
+        200: {"description": "GeoJSON de celdas con PGA y aceleraciones espectrales."},
+        304: {"description": "El artefacto no cambió desde el `ETag` que trae el cliente."},
+        502: {
+            "description": (
+                "El artefacto no está publicado ni hay copia en caché. El cuerpo "
+                "trae el sobre de error con la instrucción para regenerarlo."
+            )
+        },
+    },
+    description=(
+        "Modelo **probabilístico y estático**: dice cuánto puede llegar a "
+        "acelerar el suelo, no qué está temblando ahora. No pasa por el motor de "
+        "correlación ni por el pipeline de cinco minutos — lo genera a mano "
+        "`scripts/fetch_seismic_hazard.py` desde el producto descargable del "
+        "CSN.\n\n"
+        "Se sirve por la API y no sólo por `/static` porque el frontend vive en "
+        "otro origen: una ruta relativa a `/static` se resuelve contra el "
+        "dominio del frontend, que no tiene el archivo. Si el artefacto falta o "
+        "está corrupto, el servidor entrega la última copia buena que leyó "
+        "(cabecera `X-AlertaV-Hazard-Stale: true`) y, si no tiene ninguna, "
+        "responde 502 con un mensaje accionable en vez de un 404 desnudo."
+    ),
+)
+async def seismic_hazard(service: HazardServiceDep, request: Request) -> Response:
+    """Sirve el artefacto con validación condicional.
+
+    El modelo cambia cada varios años, así que lo caro no es generarlo sino
+    mandarlo entero en cada carga del mapa. Con `ETag` + `If-None-Match` el
+    navegador lo pide una vez y después recibe 304 sin cuerpo — lo mismo que
+    daba `StaticFiles`, que es lo que esta ruta reemplaza.
+    """
+    artifact = service.load()
+
+    headers = {
+        "ETag": artifact.etag,
+        # `must-revalidate` y no un `max-age` largo: el artefacto se regenera a
+        # mano y, cuando eso pasa, la capa nueva tiene que llegar en la
+        # siguiente carga y no dentro de un año. La revalidación cuesta un 304.
+        "Cache-Control": "public, max-age=0, must-revalidate",
+        "X-AlertaV-Hazard-Stale": "true" if artifact.stale else "false",
+    }
+    if artifact.generated_at:
+        headers["X-AlertaV-Hazard-Generated-At"] = artifact.generated_at
+
+    if request.headers.get("if-none-match") == artifact.etag:
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+
+    return JSONResponse(content=artifact.payload, headers=headers)
 
 
 # -- Meteorología (Open-Meteo) -----------------------------------------------

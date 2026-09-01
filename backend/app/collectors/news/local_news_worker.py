@@ -105,13 +105,17 @@ from app.collectors.base import BaseCollector
 from app.collectors.geoservices import normalise_text, parse_timestamp, request_text
 from app.collectors.nominatim import GeocodeResult, geocode
 from app.collectors.nominatim import build_client as build_geo_client
-from app.collectors.social.instagram_apify_worker import (
-    classify_event_type,
-    is_emergency,
-)
 from app.collectors.traffic import gemini
 from app.collectors.traffic.bomberos_10_4_worker import revisar_feed, strip_html
 from app.collectors.traffic.transporteinforma_worker import extract_streets_via_llm
+from app.collectors.vocabulary import (
+    HEADLINE_VERBS,
+    PRESS_NOISE_PHRASES,
+    clasificar_noticia,
+    es_emergencia,
+    haystack_prensa,
+    tipo_por_verbo,
+)
 from app.collectors.weather.comunas import COMUNAS_V_REGION
 from app.core.config import settings
 from app.core.exceptions import CollectorError
@@ -122,201 +126,36 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-#  Reutilización del vocabulario de emergencia
+#  Vocabulario de emergencia
 # =============================================================================
 #
-# El diccionario heurístico NO se reimplementa acá. `is_emergency` y
-# `classify_event_type` viven en `social/instagram_apify_worker.py` y se importan
-# tal cual: dos diccionarios de emergencia que se editan por separado terminan
-# divergiendo, y el día que alguien agregue "desbarrancamiento" en uno y no en el
-# otro, la mitad del sistema deja de ver desbarrancamientos sin que nada falle.
+# El diccionario heurístico no se reimplementa acá **y ya no se importa del
+# worker de Instagram**: vive en `app/collectors/vocabulary.py`, que es donde le
+# corresponde. Este archivo era el tercer acreedor de esa deuda y el que la hizo
+# insostenible —un collector de prensa importando de uno de redes sociales es una
+# dependencia que no describe ninguna relación real entre las dos fuentes—, así
+# que se pagó antes de sumar la fuente que la habría hecho cuádruple.
 #
-# DEUDA CONOCIDA, ahora con tres acreedores. El worker de Instagram ya anotó que
-# `find_codes` es vocabulario del dominio viviendo dentro de un worker concreto,
-# y que el segundo consumidor era la señal de que le corresponde un módulo propio
-# (`app/collectors/vocabulario.py`). Este es el **tercero**, y hereda el problema
-# amplificado: un collector de prensa importando de uno de redes sociales es una
-# dependencia que no describe ninguna relación real entre las dos fuentes.
+# Lo que se llevó el módulo nuevo, y que antes vivía en este archivo:
 #
-# No se mueve en este cambio porque extraerlo obliga a tocar el worker de
-# Instagram, el de Bomberos y sus dos archivos de tests, y eso merece un commit
-# que no traiga además una fuente nueva. Pero queda escrito: el próximo que
-# necesite este vocabulario debe extraerlo antes de usarlo, no después.
-
-
-# -- Ruido con forma de emergencia, específico de la prensa --------------------
+# * `_RUIDO_PRENSA` → `PRESS_NOISE_PHRASES`
+# * `_VERBOS_TITULAR` → `HEADLINE_VERBS`
+# * `_haystack_prensa`, `es_emergencia` y `clasificar_noticia`, tal cual
 #
-# `is_emergency` ya excinde su propia lista (`_NOISE_PHRASES`: fuegos
-# artificiales, simulacros, campañas de prevención). Esta la complementa con lo
-# que aparece en un diario y no en Instagram.
+# Los nombres viejos siguen disponibles como alias más abajo: son superficie
+# pública de este worker desde antes de la extracción y los tests los usan.
 #
-# Casi toda la lista gira alrededor de un solo hecho, y no es casualidad: el
-# **megaincendio de febrero de 2024** es el suceso más referenciado de la prensa
-# regional. Reconstrucción, subsidios, juicios, aniversarios, columnas de opinión
-# — todo eso contiene la palabra "incendio" y nada de eso es una emergencia en
-# curso. Sin este bloque, cada corrida pagaría llamadas al modelo por crónicas de
-# tribunales.
-#
-# La regla que define qué entra acá: **sólo formas fechadas**. "megaincendio" a
-# secas NO está en la lista y no debe estarlo — contiene "incendio" como
-# subcadena, así que excindirlo dejaría ciego al sistema justo el día que ocurra
-# el siguiente. Un falso positivo cuesta una llamada al modelo; un falso negativo
-# pierde un incendio para siempre y en silencio.
-#
-# El orden importa (se excinde de la frase más larga a la más corta, para que al
-# borrar la corta no quede suelto un término crítico de la larga), así que se
-# ordena por construcción en vez de a mano: una lista ordenada a mano es una
-# invariante que la próxima edición rompe sin avisar.
-_RUIDO_PRENSA: tuple[str, ...] = tuple(
-    sorted(
-        {
-            "megaincendio de febrero de 2024",
-            "megaincendio de 2024",
-            "incendio de febrero de 2024",
-            "incendio de febrero de 2023",
-            "incendio de 2024",
-            "incendio del 2024",
-            "aniversario del megaincendio",
-            "aniversario del incendio",
-            "a un ano del megaincendio",
-            "a dos anos del megaincendio",
-            "reconstruccion tras el megaincendio",
-            "damnificados del megaincendio",
-            "victimas del megaincendio",
-            # Cobertura deportiva y de espectáculos: "un choque de trenes",
-            # "el accidente de la temporada". Se excinden las formas figuradas
-            # más frecuentes, no la palabra.
-            "choque de trenes politico",
-            "accidente de la temporada",
-        },
-        key=len,
-        reverse=True,
-    )
-)
+# El módulo trae además el vocabulario que a esta fuente le faltaba más que a
+# ninguna: **inundación y remoción en masa**. Estos portales cubren el invierno
+# de Valparaíso calle por calle, y hasta ahora cada anegamiento y cada socavón
+# pasaba por el pre-filtro sin que una sola palabra lo reconociera.
 
-
-def _haystack_prensa(texto: str) -> str:
-    """Texto normalizado con el ruido de prensa excindido. Ver `_RUIDO_PRENSA`.
-
-    `normalise_text` es idempotente (descompone a NFD, descarta las marcas
-    combinantes y pasa a minúsculas: aplicarla dos veces da lo mismo), así que el
-    resultado se le puede pasar a `is_emergency` sin que su propio `_haystack`
-    lo estropee. Esa idempotencia es lo que permite encadenar las dos capas de
-    excisión en vez de copiar la de Instagram acá.
-    """
-    texto_normal = normalise_text(texto)
-    if not texto_normal:
-        return ""
-    for frase in _RUIDO_PRENSA:
-        if frase in texto_normal:
-            texto_normal = texto_normal.replace(frase, " ")
-    return " ".join(texto_normal.split())
-
-
-# -- El registro del titular ---------------------------------------------------
-#
-# Este bloque salió de un test que falló, y conviene contar por qué, porque es
-# un defecto de la reutilización y no un capricho de esta fuente.
-#
-# El diccionario compartido se calibró contra captions de Instagram, donde una
-# emergencia se anuncia con un **sustantivo**: "RESCATE en el Tranque La Luz",
-# "CHOQUE en la Ruta 68". Un titular de prensa usa **verbo conjugado**:
-# "Rescatan a excursionistas perdidos", "Chocan dos vehículos en San Felipe".
-# Y la comparación es por subcadena, así que "rescate" NO empareja con
-# "rescatan" ni con "rescataron": comparten cinco letras y difieren en la sexta.
-#
-# El resultado, antes de este bloque, era que la única emergencia real del feed
-# de Sitio del Suceso del 31 de agosto —el rescate de dos excursionistas— se caía
-# del sistema en silencio. Exactamente el fallo que el pre-filtro existe para no
-# cometer: un falso negativo no deja rastro en ninguna parte.
-#
-# La regla al elegir raíces es la que ya advierte el worker de Instagram, y acá
-# mordió al primer intento: **la raíz no puede aparecer dentro de otra palabra**.
-# "arde" quedó fuera de esta tabla porque está dentro de "tarde", y "de la tarde"
-# aparece en la mitad de las crónicas. "rescatar" quedó fuera por otro motivo,
-# más específico del dominio: en infinitivo casi siempre es figurado —"rescatar
-# espacios públicos", "rescatar el patrimonio"— mientras que las formas
-# conjugadas y el participio describen un hecho.
-#
-# El orden importa: se devuelve la primera coincidencia, así que va de lo
-# específico a lo genérico.
-_VERBOS_TITULAR: dict[str, EventType] = {
-    # Rescate
-    "rescatan": EventType.RESCUE,
-    "rescataron": EventType.RESCUE,
-    "rescatad": EventType.RESCUE,  # rescatado, rescatada, rescatados
-    # Tránsito
-    "chocan": EventType.ACCIDENT,
-    "chocaron": EventType.ACCIDENT,
-    "colisionan": EventType.ACCIDENT,
-    "colisionaron": EventType.ACCIDENT,
-    "colisiono": EventType.ACCIDENT,  # colisionó
-    "vuelca": EventType.ACCIDENT,
-    "volcaron": EventType.ACCIDENT,
-    "volco": EventType.ACCIDENT,  # volcó; «volcán» normaliza a «volcan»
-    "se estrello": EventType.ACCIDENT,  # se estrelló
-    # Fuego sin calificar. `OTHER` y no `WILDFIRE`, por la misma razón que
-    # documenta `classify_event_type`: un titular que dice "se incendia" no
-    # afirma que sea forestal, y afirmarlo por él lo fundiría con los incendios
-    # que CONAF reporte a 500 m, subiéndoles la confianza con evidencia que no
-    # vale lo que parece.
-    "incendia": EventType.OTHER,  # se incendia, incendian, incendiario
-}
-
-
-def _tipo_por_verbo(haystack: str) -> EventType | None:
-    """Primer tipo cuyo verbo de titular aparece en el texto normalizado."""
-    for termino, tipo in _VERBOS_TITULAR.items():
-        if termino in haystack:
-            return tipo
-    return None
-
-
-def es_emergencia(texto: str) -> bool:
-    """¿Esta noticia habla de una emergencia? Síncrono, en memoria, sin red.
-
-    Es el guardián del gasto: lo que devuelve `False` no llega nunca al modelo.
-    Delega en `is_emergency` —cuatro caminos para pasar: término crítico, clave
-    radial, entidad + contexto operativo, o el `10-12` acompañado— después de
-    quitarle al texto el ruido propio de un diario, y añade un quinto camino: el
-    verbo de titular que el diccionario compartido no cubre (ver
-    `_VERBOS_TITULAR`).
-
-    Sigue siendo un filtro de **recall**, no de precisión. Un falso positivo
-    cuesta una llamada al modelo y se descarta más adelante; un falso negativo
-    pierde un siniestro para siempre. Ante la duda, pasa.
-    """
-    haystack = _haystack_prensa(texto)
-    if not haystack:
-        return False
-    if is_emergency(haystack):
-        return True
-    return _tipo_por_verbo(haystack) is not None
-
-
-def clasificar_noticia(texto: str) -> EventType | None:
-    """¿Qué describe esta noticia? None si no describe una emergencia.
-
-    Reglas, no modelo — el contrato de Gemini en este proyecto son tres campos
-    geográficos y ningún juicio sobre el hecho, y esa frontera no se mueve porque
-    la fuente sea nueva.
-
-    **Invariante con el pre-filtro**: devuelve `None` si y sólo si
-    `es_emergencia` devolvió `False`. Es la misma que mantiene el worker de
-    Instagram y hay que sostenerla también acá, porque `_VERBOS_TITULAR` amplía
-    el pre-filtro: si la clasificación no se ampliara igual, una noticia pasaría
-    el filtro y desaparecería después en el `if event_type is not None` de
-    `fetch()`. No costaría dinero —el descarte ocurre antes del modelo— pero
-    perdería la señal sin dejar rastro, que es la peor forma de perderla. Lo
-    cubre `test_el_prefiltro_y_el_clasificador_de_prensa_no_se_contradicen`.
-    """
-    haystack = _haystack_prensa(texto)
-    if not haystack:
-        return None
-    tipo = classify_event_type(haystack)
-    if tipo is not None:
-        return tipo
-    return _tipo_por_verbo(haystack)
+#: Alias de compatibilidad. El contenido y su justificación están en
+#: `vocabulary`.
+_RUIDO_PRENSA: tuple[str, ...] = PRESS_NOISE_PHRASES
+_VERBOS_TITULAR: dict[str, EventType] = HEADLINE_VERBS
+_haystack_prensa = haystack_prensa
+_tipo_por_verbo = tipo_por_verbo
 
 
 # =============================================================================
@@ -1527,6 +1366,8 @@ class LocalNewsCollector(BaseCollector):
 
 
 __all__ = [
+    "HEADLINE_VERBS",
+    "PRESS_NOISE_PHRASES",
     "LocalNewsCollector",
     "NewsItem",
     "NewsPortal",

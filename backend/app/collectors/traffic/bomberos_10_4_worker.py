@@ -68,6 +68,7 @@ import httpx
 
 from app.collectors.base import BaseCollector
 from app.collectors.geoservices import parse_timestamp, request_text
+from app.collectors.vocabulary import find_codes, matches_key, normalise_code
 from app.core.config import settings
 from app.core.exceptions import CollectorError
 from app.models.enums import EventSource, EventType
@@ -86,139 +87,19 @@ _WHITESPACE = re.compile(r"\s+")
 #  Reconocimiento de la clave
 # =============================================================================
 #
-# El problema
-# -----------
-# La misma clave aparece escrita de varias formas en un feed de texto libre:
+# `normalise_code`, `find_codes` y `matches_key` **vivían acá** y hoy viven en
+# `app/collectors/vocabulary.py`. Se importan y se re-exportan: son parte de la
+# superficie pública de este worker desde antes de la extracción, y romper esos
+# nombres obligaría a tocar los tests de tránsito para nada.
 #
-#     10-4        forma canónica
-#     10-0-4      con el separador de familia que usan varios Cuerpos
-#     10-4-1      con sufijo de subtipo (rescate con víctima atrapada)
-#     10.4        con punto
-#     10 – 4      con guion largo y espacios, cortesía del autocorrector
+# El motivo del traslado está escrito completo en el módulo nuevo, junto con la
+# explicación de por qué el reconocimiento son dos pasos triviales y no una sola
+# regex ingeniosa. En una frase: una clave radial es vocabulario del Sistema
+# Nacional, no un detalle de este feed, y cuando el segundo y el tercer collector
+# la necesitaron, este archivo dejó de ser su lugar.
 #
-# Y hay cadenas que se le parecen y NO son la clave:
-#
-#     10-40       otra clave por completo (emanación de gas)
-#     10-41       ídem
-#     10-0-1      otra clave (incendio estructural)
-#     10-4-2026   una fecha, no un código
-#
-# Por qué no una sola expresión regular
-# --------------------------------------
-# Se puede escribir una regex que acepte las cinco variantes y rechace las
-# cuatro trampas. Queda así:
-#
-#     (?<!\d)10\s*[-–—.]\s*(?:0\s*[-–—.]\s*)?4(?:\s*[-–—.]\s*\d{1,2})?(?!\d)
-#
-# Funciona, y es exactamente el tipo de línea que nadie se atreve a tocar en seis
-# meses. El fallo que importa —confundir 10-40 con 10-4— depende de un
-# `(?!\d)` en el extremo derecho: un carácter fácil de perder en una edición
-# apurada, imposible de ver en una revisión, y cuyo síntoma es un despacho por
-# fuga de gas apareciendo en el mapa como accidente vehicular.
-#
-# La decisión
-# -----------
-# Se separa en dos pasos, cada uno trivialmente verificable:
-#
-#   1. `_CODE_TOKEN` reconoce *cualquier* cosa con forma de código —grupos de
-#      dígitos unidos por separadores— sin decidir cuál es.
-#   2. `normalise_code` convierte ese token en una tupla de enteros y aplica las
-#      dos reglas del dominio: descartar lo que no es un código (grupos de tres
-#      o más dígitos: años, alturas de calle) y colapsar el 0 intermedio del
-#      formato 10-0-x.
-#
-# Después basta comparar tuplas. `10-40` produce `(10, 40)` y `10-4` produce
-# `(10, 4)`: distintas por construcción, sin depender de ningún lookahead. La
-# comparación por prefijo es la que deja pasar `10-4-1` y rechazar `10-40`, y se
-# lee en voz alta sin explicación.
-
-#: Cualquier cosa con forma de código: grupos de dígitos unidos por separadores.
-#: Deliberadamente permisivo — filtrar es trabajo de `normalise_code`.
-_CODE_TOKEN = re.compile(
-    r"(?<!\d)(\d{1,4}(?:\s*[-–—/.]\s*\d{1,4}){1,3})(?!\d)"
-)
-
-#: Separadores admitidos, incluidos los guiones tipográficos que introducen los
-#: teclados de teléfono.
-_CODE_SPLIT = re.compile(r"[\s\-–—/.]+")
-
-#: Un grupo con tres o más dígitos delata que el token no es una clave: es una
-#: fecha ("10-4-2026") o una altura de calle. Ninguna clave del Sistema Nacional
-#: pasa de dos dígitos por grupo.
-_MAX_GROUP_DIGITS = 2
-
-
-def normalise_code(token: str) -> tuple[int, ...] | None:
-    """Token con forma de código → tupla de enteros comparable. None si no lo es.
-
-    Aplica las dos reglas del dominio:
-
-    * **Grupos de 3+ dígitos lo descalifican.** `10-4-2026` es una fecha.
-    * **El 0 intermedio del formato `10-0-x` se colapsa.** Varios Cuerpos lo usan
-      como separador de familia, no como parte del código, así que `10-0-4` y
-      `10-4` son la misma clave y tienen que normalizar a la misma tupla.
-
-    >>> normalise_code("10-4")
-    (10, 4)
-    >>> normalise_code("10-0-4")
-    (10, 4)
-    >>> normalise_code("10-4-1")
-    (10, 4, 1)
-    >>> normalise_code("10-40")
-    (10, 40)
-    >>> normalise_code("10-4-2026") is None
-    True
-    """
-    pieces = [piece for piece in _CODE_SPLIT.split(token.strip()) if piece]
-    if len(pieces) < 2:
-        return None
-    if any(len(piece) > _MAX_GROUP_DIGITS for piece in pieces):
-        return None
-
-    try:
-        groups = [int(piece) for piece in pieces]
-    except ValueError:  # pragma: no cover — la regex sólo captura dígitos
-        return None
-
-    # El 0 en segunda posición es separador de familia, no un valor.
-    if len(groups) > 2 and groups[1] == 0:
-        groups = [groups[0], *groups[2:]]
-    return tuple(groups)
-
-
-def find_codes(text: str) -> list[tuple[int, ...]]:
-    """Todos los códigos normalizados presentes en un texto."""
-    found: list[tuple[int, ...]] = []
-    for match in _CODE_TOKEN.finditer(text):
-        code = normalise_code(match.group(1))
-        if code is not None:
-            found.append(code)
-    return found
-
-
-def matches_key(text: str, keys: Sequence[str]) -> str | None:
-    """Devuelve la clave buscada que aparece en el texto, o None.
-
-    La comparación es **por prefijo de tupla**: un aviso con `10-4-1` responde a
-    la clave configurada `10-4` porque `(10, 4)` es prefijo de `(10, 4, 1)`. Ese
-    sufijo es un subtipo del mismo despacho —rescate con víctima atrapada—, no
-    otra emergencia, y descartarlo perdería justo los casos más graves.
-
-    `10-40` produce `(10, 40)`, que no tiene a `(10, 4)` por prefijo, así que no
-    coincide. Sin lookaheads y sin ambigüedad.
-    """
-    present = find_codes(text)
-    if not present:
-        return None
-
-    for key in keys:
-        wanted = normalise_code(key)
-        if wanted is None:
-            continue
-        for code in present:
-            if code[: len(wanted)] == wanted:
-                return key
-    return None
+# Lo que NO cambió: la comparación sigue siendo por prefijo de tupla, `10-4-1`
+# sigue respondiendo a `10-4`, y `10-40` sigue sin hacerlo.
 
 
 # =============================================================================

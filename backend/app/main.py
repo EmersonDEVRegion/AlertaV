@@ -63,6 +63,17 @@ app.add_middleware(
     allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
+    # Cabeceras que el navegador puede LEER desde otro origen. Por defecto no
+    # expone ninguna, y sin `ETag` la revalidación condicional de la capa de
+    # amenaza no funciona entre dominios: el navegador no puede guardar lo que
+    # no ve, así que se bajaría el artefacto entero en cada carga del mapa.
+    # `X-AlertaV-Hazard-Stale` avisa de que la capa salió de la caché de
+    # respaldo — un dato viejo servido sin marcarlo es una mentira silenciosa.
+    expose_headers=[
+        "ETag",
+        "X-AlertaV-Hazard-Stale",
+        "X-AlertaV-Hazard-Generated-At",
+    ],
     # El preflight de un endpoint que no cambia de forma no necesita repetirse
     # en cada carga del mapa.
     max_age=3600,
