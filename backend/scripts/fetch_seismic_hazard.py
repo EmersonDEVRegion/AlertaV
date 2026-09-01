@@ -471,18 +471,23 @@ async def parse_stream(
 
 
 def infer_grid_step(values: Sequence[float], *, fallback: float) -> float:
-    """Paso de la grilla, deducido de los datos y no escrito a mano.
+    """Paso de la grilla a lo largo de UN eje regular, deducido de los datos.
 
     Se toma la **mediana** de las diferencias positivas entre valores
-    consecutivos ordenados. La mediana y no la media porque la grilla del CSN no
-    es perfectamente regular —está definida en una proyección métrica y
-    convertida a geográficas, así que las columnas derivan una centésima de
-    grado a lo largo del país— y un solo salto grande, en un hueco de la
-    cobertura, arrastraría la media hacia arriba y engordaría todas las celdas.
+    consecutivos ordenados. La mediana y no la media porque un solo salto
+    grande, en un hueco de la cobertura, arrastraría la media hacia arriba y
+    engordaría todas las celdas.
 
     Un paso hardcodeado que no coincida con el real deja franjas sin pintar
     entre celdas o las hace solaparse. Ninguna de las dos cosas parece un error
     al mirar el mapa: parecen el mapa.
+
+    .. warning::
+       **Sólo sirve en el eje que se repite EXACTO entre líneas de la grilla.**
+       En el MASCSN26 ese eje es la latitud: las 40 filas comparten los mismos
+       40 valores, así que ``set()`` los colapsa y quedan 40 números separados
+       por el paso real. La longitud NO cumple eso — ver `infer_row_step`, y la
+       nota larga que hay ahí, que documenta el bug que costó este arreglo.
     """
     unicos = sorted(set(values))
     if len(unicos) < 2:
@@ -494,6 +499,107 @@ def infer_grid_step(values: Sequence[float], *, fallback: float) -> float:
 
     paso = statistics.median(saltos)
     return paso if paso > 0 else fallback
+
+
+def infer_row_step(
+    points: Sequence[GridPoint], *, lat_step: float, fallback: float
+) -> float:
+    """Paso en longitud, medido **dentro de cada fila** y no sobre el conjunto.
+
+    ===========================================================================
+    EL BUG QUE ESTA FUNCIÓN EXISTE PARA NO REPETIR
+    ===========================================================================
+
+    La versión anterior llamaba a `infer_grid_step` con **todas** las longitudes
+    del recorte. Sobre el MASCSN26 eso devolvía ``0.00134°`` —unos 125 m— cuando
+    el paso real de la grilla es ``0.0537°``, unos 5 km. Las celdas salían
+    **cuarenta veces más angostas de lo que representan**, y el resultado en
+    pantalla era exactamente lo que reportó el usuario: una cuadrícula de puntos
+    sobre un territorio vacío, en vez de una superficie continua.
+
+    El motivo es geométrico y no estadístico. La grilla del CSN está definida en
+    una proyección métrica y convertida a geográficas, así que **cada fila tiene
+    sus propias longitudes**: la columna que a ``lat = -33.14`` cae en
+    ``-71.99927`` cae a ``lat = -32.87`` en ``-71.99861``. Con 40 filas y 41
+    columnas, ``sorted(set(lons))`` no da 41 valores separados por el paso: da
+    1 640 valores agrupados en 41 racimos de 40 lecturas casi idénticas. La
+    mediana de las diferencias consecutivas mide entonces **la deriva dentro del
+    racimo**, no la distancia entre racimos.
+
+    Es un modo de falla silencioso de manual: ni el script ni el frontend lanzan
+    nada, el ``metadata.cell_size_deg`` queda escrito con el número equivocado y
+    el mapa se ve mal sin que nada explique por qué.
+
+    ---------------------------------------------------------------------------
+    LA CORRECCIÓN
+    ---------------------------------------------------------------------------
+
+    Se agrupan los nodos por fila —redondeando la latitud contra `lat_step`, que
+    sí es fiable— y se mide la mediana de los saltos **dentro** de cada fila.
+    Dentro de una fila no hay racimos: hay 41 columnas separadas por el paso
+    real. La mediana de las medianas por fila descarta además cualquier fila
+    incompleta del borde del recorte.
+    """
+    if lat_step <= 0 or not points:
+        return fallback
+
+    filas: dict[int, list[float]] = {}
+    for punto in points:
+        filas.setdefault(round(punto.lat / lat_step), []).append(punto.lon)
+
+    pasos: list[float] = []
+    for lons in filas.values():
+        if len(lons) < 2:
+            continue
+        ordenadas = sorted(lons)
+        saltos = [b - a for a, b in pairwise(ordenadas) if b > a]
+        if saltos:
+            pasos.append(statistics.median(saltos))
+
+    if not pasos:
+        return fallback
+
+    paso = statistics.median(pasos)
+    return paso if paso > 0 else fallback
+
+
+def check_grid_coverage(
+    points: Sequence[GridPoint], *, lon_step: float, lat_step: float
+) -> None:
+    """Avisa si el paso inferido no explica la nube de puntos que se recortó.
+
+    La comprobación es una invariante barata: una grilla regular de ``F`` filas
+    por ``C`` columnas tiene ``F × C`` nodos. Si el paso inferido fuera cuarenta
+    veces menor de lo real —el bug de `infer_row_step`—, ``C`` saldría cuarenta
+    veces mayor y el producto se dispararía frente al número de nodos que de
+    verdad hay.
+
+    No aborta: una cobertura con huecos legítimos (el recorte corta la costa en
+    diagonal) también desvía el producto, y ese caso es normal. Pero un desvío
+    de un orden de magnitud significa que el paso está mal y eso tiene que
+    aparecer en la traza del operador, no descubrirse mirando el mapa.
+    """
+    if not points or lon_step <= 0 or lat_step <= 0:
+        return
+
+    lons = [punto.lon for punto in points]
+    lats = [punto.lat for punto in points]
+    columnas = round((max(lons) - min(lons)) / lon_step) + 1
+    filas = round((max(lats) - min(lats)) / lat_step) + 1
+    esperados = columnas * filas
+
+    if esperados > len(points) * 4 or esperados * 4 < len(points):
+        logger.warning(
+            "el paso inferido no explica la nube: %d nodos recortados pero la "
+            "grilla %d×%d implicaría ~%d. ¿Es correcto el paso "
+            "(%.5f° lon × %.5f° lat)?",
+            len(points),
+            filas,
+            columnas,
+            esperados,
+            lon_step,
+            lat_step,
+        )
 
 
 def cell_polygon(
@@ -545,9 +651,13 @@ def build_feature_collection(
             f"¿Es correcta la caja? El CSV cubre Chile continental."
         )
 
+    # El orden importa: la latitud es el eje regular del MASCSN26 —las filas
+    # comparten valor exacto— y su paso es lo que permite agrupar por fila para
+    # medir el de la longitud. Al revés no funciona. Ver `infer_row_step`.
     lat_step = infer_grid_step([punto.lat for punto in points], fallback=0.045)
-    lon_step = infer_grid_step([punto.lon for punto in points], fallback=0.045)
+    lon_step = infer_row_step(points, lat_step=lat_step, fallback=lat_step)
     stats.lat_step, stats.lon_step = lat_step, lon_step
+    check_grid_coverage(points, lon_step=lon_step, lat_step=lat_step)
 
     features = [
         {

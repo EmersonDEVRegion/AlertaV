@@ -1,26 +1,24 @@
 /**
  * Carga del artefacto de amenaza sísmica.
  *
- * # Por qué ahora se hace `fetch` acá y ya no se le pasa la URL a MapLibre
+ * # Por qué se hace `fetch` acá y no se le pasa la URL a MapLibre
  *
- * La versión anterior montaba `<Source data="/static/…">` con una cadena, para
+ * La versión original montaba `<Source data="/static/…">` con una cadena, para
  * que MapLibre descargara y parseara el archivo en su web worker y el hilo
- * principal no se bloqueara. Era la decisión correcta **mientras la capa fuera
- * sólo un relleno de celdas**. Dejó de serlo por dos motivos:
+ * principal no se bloqueara.
  *
- *   1. **El mapa de calor necesita puntos.** `type: 'heatmap'` se alimenta de
- *      geometrías `Point`; las celdas son polígonos. El nodo original de la
- *      grilla viaja dentro de cada celda (`properties.lon` / `lat`), pero para
- *      llegar a él hay que tener el objeto en el hilo principal. Con la fuente
- *      por URL, ese objeto sólo existe dentro del worker de MapLibre y no hay
- *      forma pública de leerlo.
- *   2. **El estado de carga era observado, no poseído.** La capa deducía si el
- *      archivo había llegado escuchando `sourcedata` y `error` del mapa y
- *      filtrando por identificador de fuente. Eso es una máquina de estados
- *      alimentada por eventos que MapLibre no promete emitir —con el archivo en
- *      caché puede quedar cargado antes de que se enganche el escucha— y de ahí
- *      salía el rebote del interruptor descrito en la Fase 1. Una promesa sí
- *      resuelve o rechaza exactamente una vez.
+ * El motivo de traerlo al hilo principal es **el estado de carga**. Con la
+ * fuente por URL, la capa tenía que deducir si el archivo había llegado
+ * escuchando `sourcedata` y `error` del mapa y filtrando por identificador de
+ * fuente: una máquina de estados alimentada por eventos que MapLibre no promete
+ * emitir —con el archivo en caché puede quedar cargado antes de que se enganche
+ * el escucha— y de ahí salía el rebote del interruptor descrito en la Fase 1.
+ * Una promesa sí resuelve o rechaza exactamente una vez.
+ *
+ * (Hubo un segundo motivo, ya extinto: el `heatmap` regional necesitaba los
+ * centros de nodo como geometrías `Point`, y para derivarlos hacía falta tener
+ * el objeto en el hilo principal. Esa capa se retiró — ver
+ * `domain/hazardSymbology.ts`. El primer motivo basta y sigue en pie.)
  *
  * El costo es un `JSON.parse` en el hilo principal, una vez por sesión, tras un
  * gesto explícito del usuario que ya muestra un estado de carga. A cambio, la
@@ -28,13 +26,10 @@
  */
 
 import { HAZARD_SOURCE_URL } from '@/config/map'
-import { HAZARD_VARIABLE } from '@/domain/hazardSymbology'
 import type {
-  HazardCell,
   HazardCells,
   HazardGrid,
   HazardMetadata,
-  HazardNodes,
 } from './hazardTypes'
 
 /**
@@ -47,7 +42,6 @@ import type {
  */
 export const EMPTY_HAZARD: HazardGrid = {
   cells: { type: 'FeatureCollection', features: [] },
-  nodes: { type: 'FeatureCollection', features: [] },
   cellSizeDeg: null,
   metadata: null,
 }
@@ -63,54 +57,7 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
-/**
- * ¿Sirve esta celda para el mapa de calor?
- *
- * Tres condiciones, y ninguna es paranoia:
- *
- *   - el nodo tiene coordenadas numéricas — sin ellas no hay punto que pintar;
- *   - el valor de la variable es un número — `heatmap-weight` sobre `null`
- *     evalúa a 0 y **hunde** la densidad de esa zona en vez de omitirla, que es
- *     mentir hacia el lado tranquilizador;
- *   - el valor es positivo — un 0 exacto no es un dato del modelo, es un hueco.
- */
-function nodeOf(cell: HazardCell): HazardNodes['features'][number] | null {
-  const props = cell.properties as unknown as Record<string, unknown> | null
-  if (!props) return null
-
-  const lon = props['lon']
-  const lat = props['lat']
-  const value = props[HAZARD_VARIABLE]
-
-  if (!isFiniteNumber(lon) || !isFiniteNumber(lat)) return null
-  if (!isFiniteNumber(value) || value <= 0) return null
-
-  return {
-    type: 'Feature',
-    geometry: { type: 'Point', coordinates: [lon, lat] },
-    // Sólo `value`: el `heatmap` no lee nada más, y arrastrar las cinco
-    // variables del modelo multiplicaría por cinco lo que se sube a la GPU.
-    properties: { value },
-  }
-}
-
-/**
- * Deriva los nodos de la grilla a partir de las celdas.
- *
- * Pura y exportada para poder probarla sin red. El caso que fija el test es el
- * de una celda sin `pga_475`: tiene que **desaparecer** del mapa de calor, no
- * aportar un cero.
- */
-export function toHazardNodes(cells: HazardCells): HazardNodes {
-  const features: HazardNodes['features'] = []
-  for (const cell of cells.features) {
-    const node = nodeOf(cell)
-    if (node) features.push(node)
-  }
-  return { type: 'FeatureCollection', features }
-}
-
-/** Valida la forma del artefacto y arma las dos representaciones. */
+/** Valida la forma del artefacto y lo deja listo para la fuente del mapa. */
 export function parseHazardGrid(payload: unknown): HazardGrid {
   if (typeof payload !== 'object' || payload === null) {
     throw new HazardLoadError('El artefacto de amenaza no es un objeto JSON.')
@@ -152,7 +99,7 @@ export function parseHazardGrid(payload: unknown): HazardGrid {
       ? (size.lon + size.lat) / 2
       : null
 
-  return { cells, nodes: toHazardNodes(cells), cellSizeDeg, metadata }
+  return { cells, cellSizeDeg, metadata }
 }
 
 /**

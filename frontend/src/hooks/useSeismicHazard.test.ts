@@ -34,24 +34,33 @@ vi.mock('@/api/hazard', async () => {
 
 const { useSeismicHazard } = await import('./useSeismicHazard')
 
-/** Rejilla mínima: dos nodos, que es todo lo que miran estos tests. */
+/** Celda cuadrada centrada en el nodo, como la emite el script del CSN. */
+function makeCell(lon: number, lat: number, value: number): HazardGrid['cells']['features'][number] {
+  const d = 0.0225
+  return {
+    type: 'Feature',
+    geometry: {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [lon - d, lat - d],
+          [lon + d, lat - d],
+          [lon + d, lat + d],
+          [lon - d, lat + d],
+          [lon - d, lat - d],
+        ],
+      ],
+    },
+    properties: { lon, lat, pga_475: value },
+  }
+}
+
+/** Rejilla mínima: dos celdas, que es todo lo que miran estos tests. */
 function makeGrid(): HazardGrid {
   return {
-    cells: { type: 'FeatureCollection', features: [] },
-    nodes: {
+    cells: {
       type: 'FeatureCollection',
-      features: [
-        {
-          type: 'Feature',
-          geometry: { type: 'Point', coordinates: [-71.5, -33] },
-          properties: { value: 0.4 },
-        },
-        {
-          type: 'Feature',
-          geometry: { type: 'Point', coordinates: [-71.4, -33.1] },
-          properties: { value: 0.5 },
-        },
-      ],
+      features: [makeCell(-71.5, -33, 0.4), makeCell(-71.4, -33.1, 0.5)],
     },
     cellSizeDeg: 0.045,
     metadata: null,
@@ -273,12 +282,11 @@ describe('datos expuestos al mapa', () => {
   it('nunca entrega `undefined`: sin datos es una rejilla vacía', () => {
     const { result } = render()
 
-    expect(result.current.grid.nodes.features).toEqual([])
     expect(result.current.grid.cells.features).toEqual([])
     expect(result.current.count).toBe(0)
   })
 
-  it('cuenta los nodos de la grilla una vez cargada', async () => {
+  it('cuenta las celdas del modelo una vez cargada', async () => {
     const { result } = render()
 
     act(() => result.current.toggle())

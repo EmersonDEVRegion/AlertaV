@@ -1,23 +1,23 @@
 // @vitest-environment node
 /**
- * Parseo del artefacto de amenaza y derivación de sus nodos.
+ * Parseo del artefacto de amenaza.
  *
- * # Por qué la derivación merece tests propios
+ * # Qué se fue de este archivo
  *
- * El `heatmap` sólo se alimenta de geometrías `Point`, y las celdas del modelo
- * son polígonos. Traducir de una a otra es la línea que hace posible toda la
- * capa nueva, y su modo de falla es silencioso: una celda mal traducida no
- * lanza nada, sólo aporta un peso equivocado a un campo continuo. Nadie
- * distingue a ojo un mapa de calor correcto de uno con un 3 % de nodos malos.
+ * Un bloque entero probaba `toHazardNodes`, la derivación de puntos que
+ * alimentaba el mapa de calor regional. Esa capa se retiró —el porqué está en
+ * `domain/hazardSymbology.ts`— y con ella la derivación y sus tests.
  *
- * El caso que más importa es el de una celda sin la variable: tiene que
- * **desaparecer**, no aportar un cero. Un cero hunde la densidad de esa zona, y
- * hundir la amenaza sísmica hacia abajo es equivocarse del lado que tranquiliza.
+ * Lo que queda es lo que siempre importó más: que un artefacto que NO es el
+ * esperado se rechace con un mensaje accionable, en vez de dibujar una capa
+ * plausible y equivocada. Una colección vacía o mal formada no lanza nada por sí
+ * sola en MapLibre: pinta un mapa limpio, y un mapa limpio sobre una de las
+ * zonas sísmicas más activas del planeta es la peor mentira que esta capa puede
+ * contar.
  */
 
 import { describe, expect, it } from 'vitest'
-import { HazardLoadError, parseHazardGrid, toHazardNodes } from './hazard'
-import type { HazardCells } from './hazardTypes'
+import { HazardLoadError, parseHazardGrid } from './hazard'
 
 /** Celda tal como la emite `scripts/fetch_seismic_hazard.py`. */
 function cell(lon: number, lat: number, props: Record<string, unknown> = {}) {
@@ -40,58 +40,8 @@ function cell(lon: number, lat: number, props: Record<string, unknown> = {}) {
   }
 }
 
-function collection(...features: ReturnType<typeof cell>[]): HazardCells {
-  return { type: 'FeatureCollection', features } as unknown as HazardCells
-}
-
-describe('derivación de nodos', () => {
-  it('usa el nodo original del CSN, no un centroide recalculado', () => {
-    const nodes = toHazardNodes(collection(cell(-71.5, -33.05)))
-
-    // El script conserva el centro en `properties.lon` / `lat`. Promediar los
-    // vértices daría el mismo número hoy y se rompería el día que el artefacto
-    // emita celdas que no sean rectángulos.
-    expect(nodes.features).toHaveLength(1)
-    expect(nodes.features[0]!.geometry.coordinates).toEqual([-71.5, -33.05])
-  })
-
-  it('lleva el valor de la variable como peso', () => {
-    const nodes = toHazardNodes(collection(cell(-71.5, -33, { pga_475: 0.42 })))
-    expect(nodes.features[0]!.properties.value).toBe(0.42)
-  })
-
-  it('descarta la celda sin la variable en vez de darle un cero', () => {
-    const nodes = toHazardNodes(
-      collection(cell(-71.5, -33), cell(-71.4, -33, { pga_475: null })),
-    )
-
-    // Ver la nota de la cabecera: un cero mentiría hacia el lado que tranquiliza.
-    expect(nodes.features).toHaveLength(1)
-  })
-
-  it('descarta la celda con coordenadas no numéricas', () => {
-    const nodes = toHazardNodes(collection(cell(-71.5, -33, { lon: 'x' })))
-    expect(nodes.features).toHaveLength(0)
-  })
-
-  it('descarta el valor cero, que es un hueco y no un dato', () => {
-    const nodes = toHazardNodes(collection(cell(-71.5, -33, { pga_475: 0 })))
-    expect(nodes.features).toHaveLength(0)
-  })
-
-  it('no arrastra las otras variables del modelo', () => {
-    const nodes = toHazardNodes(
-      collection(cell(-71.5, -33, { pga_2475: 0.8, sa03_475: 0.9 })),
-    )
-
-    // El heatmap sólo lee `value`. Arrastrar las cinco variables multiplicaría
-    // por cinco lo que se sube a la GPU sin que nada las mire.
-    expect(Object.keys(nodes.features[0]!.properties)).toEqual(['value'])
-  })
-})
-
 describe('validación del artefacto', () => {
-  it('acepta una colección bien formada y deriva ambas representaciones', () => {
+  it('acepta una colección bien formada', () => {
     const grid = parseHazardGrid({
       type: 'FeatureCollection',
       features: [cell(-71.5, -33), cell(-71.4, -33)],
@@ -99,9 +49,20 @@ describe('validación del artefacto', () => {
     })
 
     expect(grid.cells.features).toHaveLength(2)
-    expect(grid.nodes.features).toHaveLength(2)
     expect(grid.cellSizeDeg).toBeCloseTo(0.045, 6)
     expect(grid.metadata?.model).toBe('MASCSN26')
+  })
+
+  it('conserva el centro del nodo en las propiedades', () => {
+    // Ninguna capa lo pinta hoy, pero es lo que permite consultar el valor bajo
+    // el cursor y volver a cruzar con el CSV del CSN sin recalcular centroides.
+    const grid = parseHazardGrid({
+      type: 'FeatureCollection',
+      features: [cell(-71.5, -33.05)],
+    })
+
+    expect(grid.cells.features[0]!.properties.lon).toBe(-71.5)
+    expect(grid.cells.features[0]!.properties.lat).toBe(-33.05)
   })
 
   it('rechaza una colección VACÍA, al revés que la lluvia', () => {
@@ -142,6 +103,6 @@ describe('validación del artefacto', () => {
 
     expect(grid.metadata).toBeNull()
     expect(grid.cellSizeDeg).toBeNull()
-    expect(grid.nodes.features).toHaveLength(1)
+    expect(grid.cells.features).toHaveLength(1)
   })
 })

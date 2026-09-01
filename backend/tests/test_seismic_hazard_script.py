@@ -32,6 +32,7 @@ from scripts.fetch_seismic_hazard import (
     cell_polygon,
     extract,
     infer_grid_step,
+    infer_row_step,
     parse_row,
     resolve_bbox,
     split_row,
@@ -223,6 +224,96 @@ def test_el_paso_usa_la_mediana_y_no_la_media():
 def test_el_paso_cae_al_valor_por_defecto_si_no_hay_datos():
     assert infer_grid_step([], fallback=0.045) == 0.045
     assert infer_grid_step([-33.0], fallback=0.045) == 0.045
+
+
+# --- El paso en longitud: la regresión que costó una capa entera -------------
+
+
+def grilla_a_la_csn(
+    *, filas: int = 8, columnas: int = 6, paso_lon: float = 0.0537
+) -> list[GridPoint]:
+    """Reproduce la irregularidad REAL del MASCSN26.
+
+    La grilla está definida en una proyección métrica, así que cada fila tiene
+    sus propias longitudes: la misma columna deriva unas milésimas de grado de
+    una latitud a la siguiente. Es esa deriva —y no un dato sucio— la que hacía
+    fracasar la inferencia sobre el conjunto completo.
+    """
+    puntos = []
+    for f in range(filas):
+        lat = -33.0 + f * PASO
+        deriva = f * 0.00134  # la misma escala que se observa en el archivo real
+        for c in range(columnas):
+            puntos.append(
+                GridPoint(lon=-72.0 + c * paso_lon + deriva, lat=lat, values={})
+            )
+    return puntos
+
+
+def test_el_paso_en_longitud_se_mide_dentro_de_la_fila():
+    """La regresión: 0.00134° en vez de 0.0537°, celdas 40× más angostas.
+
+    Medido sobre el conjunto, `sorted(set(lons))` agrupa las columnas en racimos
+    de una lectura por fila y la mediana termina midiendo la deriva DENTRO del
+    racimo. El resultado en pantalla era una cuadrícula de puntos sobre un
+    territorio vacío, y nada en el pipeline lo señalaba.
+    """
+    puntos = grilla_a_la_csn()
+
+    ingenuo = infer_grid_step([p.lon for p in puntos], fallback=0.045)
+    assert ingenuo < 0.01, "el test no reproduce el bug si el método ingenuo acierta"
+
+    correcto = infer_row_step(puntos, lat_step=PASO, fallback=0.045)
+    assert correcto == pytest.approx(0.0537, abs=1e-4)
+
+
+def test_el_paso_en_longitud_ignora_las_filas_incompletas_del_borde():
+    """El recorte corta la costa en diagonal: hay filas con un solo nodo."""
+    puntos = grilla_a_la_csn()
+    puntos.append(GridPoint(lon=-69.9, lat=-33.0 + 20 * PASO, values={}))
+
+    assert infer_row_step(puntos, lat_step=PASO, fallback=0.045) == pytest.approx(
+        0.0537, abs=1e-4
+    )
+
+
+def test_el_paso_en_longitud_cae_al_valor_por_defecto_sin_datos():
+    assert infer_row_step([], lat_step=PASO, fallback=0.045) == 0.045
+    assert (
+        infer_row_step(
+            [GridPoint(lon=-71.5, lat=-33.0, values={})], lat_step=PASO, fallback=0.045
+        )
+        == 0.045
+    )
+    # Un `lat_step` degenerado no puede agrupar por fila: mejor el respaldo que
+    # una división por cero.
+    assert infer_row_step(grilla_a_la_csn(), lat_step=0.0, fallback=0.045) == 0.045
+
+
+def test_las_celdas_vecinas_de_una_fila_se_tocan():
+    """La invariante que el bug rompía: la capa tiene que ser una SUPERFICIE.
+
+    Con el paso mal inferido, entre dos celdas contiguas quedaban 5 km de hueco
+    por 125 m de relleno. Se comprueba sobre el artefacto tal como lo arma
+    `build_feature_collection`, no sobre `cell_polygon` en aislamiento, porque
+    el bug vivía en el paso que se le pasaba y no en el rectángulo.
+    """
+    coleccion = build_feature_collection(
+        grilla_a_la_csn(), bbox=VALPO, stats=ExtractionStats()
+    )
+    paso_lon = coleccion["metadata"]["cell_size_deg"]["lon"]
+    assert paso_lon == pytest.approx(0.0537, abs=1e-4)
+
+    fila_sur = sorted(
+        (f for f in coleccion["features"] if f["properties"]["lat"] == pytest.approx(-33.0)),
+        key=lambda f: f["properties"]["lon"],
+    )
+    for izquierda, derecha in zip(fila_sur, fila_sur[1:]):
+        este = max(v[0] for v in izquierda["geometry"]["coordinates"][0])
+        oeste = min(v[0] for v in derecha["geometry"]["coordinates"][0])
+        # Un hueco menor al 2 % del paso es la tolerancia del redondeo de
+        # coordenadas; por encima de eso ya se ve como una franja en el mapa.
+        assert abs(oeste - este) < paso_lon * 0.02
 
 
 def test_la_celda_esta_centrada_en_el_nodo():

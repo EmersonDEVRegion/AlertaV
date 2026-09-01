@@ -20,6 +20,37 @@
  *   3. **Opacidad baja y sin trazo fuerte.** Es contexto bajo los datos, no
  *      encima.
  *
+ * ===========================================================================
+ * LA REESCRITURA: de una nube de puntos a una superficie
+ * ===========================================================================
+ *
+ * Esta capa tenía **dos** representaciones que se relevaban por zoom: un
+ * `heatmap` sobre los nodos de la grilla a escala regional y el relleno por
+ * celda al acercarse. En pantalla se veía como una cuadrícula de puntos
+ * violetas sobre un territorio vacío. Las dos mitades del problema:
+ *
+ *   1. **Las celdas no teselaban.** `scripts/fetch_seismic_hazard.py` infería
+ *      el paso de la grilla en longitud sobre el conjunto completo de nodos, y
+ *      la grilla del CSN —definida en una proyección métrica— tiene longitudes
+ *      distintas en cada fila. La mediana medía la deriva entre filas
+ *      (0,00134°) y no el paso real (0,0537°): cada celda salía **cuarenta
+ *      veces más angosta de lo que representa**, y entre dos vecinas quedaban
+ *      5 km de hueco. El detalle está en `infer_row_step`, en ese script.
+ *   2. **El `heatmap` era la herramienta equivocada.** Un mapa de calor es un
+ *      estimador de densidad por kernel: sirve para revelar concentración en
+ *      una nube **irregular** de puntos. La grilla del CSN es regular, así que
+ *      la densidad es constante por construcción y lo único que el kernel podía
+ *      hacer era **sumar el valor de los vecinos**. Eso no es PGA: un nodo
+ *      moderado rodeado de nodos altos salía más caliente que su propio valor.
+ *      Y con el radio calibrado por debajo del paso de la grilla, cada nodo se
+ *      dibujaba como una mota aislada — literalmente la cuadrícula de puntos.
+ *
+ * Con las celdas teselando, la segunda representación sobra: **el relleno por
+ * celda ES la superficie de intensidad continua**, en todo el rango de zoom, y
+ * es la misma gramática que usan los mapas oficiales del CSN. Una sola fuente,
+ * una sola capa de color, y cada píxel dice el valor que el modelo calculó para
+ * ese punto en vez de una suma de vecindad.
+ *
  * # La variable
  *
  * Se pinta `pga_475`: aceleración máxima del suelo en g, con 10 % de
@@ -36,22 +67,32 @@ export const HAZARD_VARIABLE = 'pga_475'
 /**
  * Extremos de la rampa, en g.
  *
- * Son una rampa continua y no cortes de clasificación **a propósito**: el
- * archivo se genera con un script y su distribución real puede cambiar entre
+ * # Por qué cambiaron, y por qué eso importaba tanto como la geometría
+ *
+ * Eran 0,15 g y 0,60 g. El artefacto real de la V Región va de **0,276 a
+ * 0,940 g** (mediana 0,42), así que la rampa estaba descuadrada por los dos
+ * extremos a la vez: ningún dato llegaba a tocar el primer color, y **todo el
+ * cuartil superior —la franja costera entera, que es justo la zona de mayor
+ * amenaza— saturaba en el último**. El resultado era un mapa de un solo violeta
+ * plano en el que la variación real, que es un gradiente limpio de costa a
+ * cordillera, no se veía.
+ *
+ * Los valores nuevos encuadran el rango observado con un margen mínimo. Siguen
+ * siendo una rampa continua y no cortes de clasificación **a propósito**: el
+ * archivo se regenera con un script y su distribución puede cambiar entre
  * versiones del modelo. Una interpolación degrada con elegancia si los valores
  * caen fuera del rango —satura en un extremo— mientras que unos cortes fijos
- * mal calibrados producirían un mapa de un solo color sin avisar.
+ * mal calibrados producirían un mapa de un solo color sin avisar. Que es
+ * exactamente lo que acababa de pasar.
  */
-export const HAZARD_MIN_G = 0.15
-export const HAZARD_MAX_G = 0.6
+export const HAZARD_MIN_G = 0.25
+export const HAZARD_MAX_G = 0.95
 
 export interface HazardRamp {
   /** Paradas [valor en g, color]. De menor a mayor amenaza. */
   stops: readonly (readonly [number, string])[]
   /** Color del borde de celda. Muy sutil: la grilla no es el dato. */
   line: string
-  fillOpacity: number
-  lineOpacity: number
 }
 
 /**
@@ -62,151 +103,97 @@ export interface HazardRamp {
  * brillante. Sobre un mapa **claro** la lectura se invierte: más amenaza es más
  * oscuro. Usar una sola rampa dejaría la zona de mayor amenaza casi invisible
  * en uno de los dos temas.
+ *
+ * Seis paradas y no cuatro. Con cuatro, el salto entre dos colores consecutivos
+ * cubría 0,15 g de rango y la interpolación tenía que cruzar demasiada
+ * distancia perceptual de una vez: sobre celdas de 5 km eso se ve como bandas.
+ * Las paradas están repartidas sobre los cuartiles reales del artefacto, que es
+ * donde hay dato que separar.
+ *
+ * # El extremo bajo NO puede desaparecer
+ *
+ * La tentación es arrancar la rampa en el color de fondo, para que la capa
+ * «entre» sin peso donde la amenaza es menor. Se probó y está descartado: en el
+ * mapa oscuro, un violeta casi negro al 36 % de opacidad sobre `#09090b` es
+ * indistinguible del terreno sin capa, y toda la mitad oriental de la región
+ * quedaba en blanco. Eso no dice «poca amenaza»: dice «acá no hay dato», o peor,
+ * «la capa se apagó». Y ninguna de las dos es cierta sobre 0,3 g — que es más de
+ * lo que muchos países consideran zona sísmica.
+ *
+ * El piso de cada rampa es, entonces, el primer color que se **lee** sobre su
+ * mapa base. La escala de amenaza empieza donde empieza la visibilidad.
  */
 export const HAZARD_RAMP: Record<'light' | 'dark', HazardRamp> = {
   light: {
     stops: [
-      [HAZARD_MIN_G, '#ede9fe'],
-      [0.3, '#c4b5fd'],
-      [0.45, '#8b5cf6'],
-      [HAZARD_MAX_G, '#5b21b6'],
+      [HAZARD_MIN_G, '#ddd6fe'],
+      [0.4, '#c4b5fd'],
+      [0.55, '#a78bfa'],
+      [0.7, '#7c3aed'],
+      [0.82, '#5b21b6'],
+      [HAZARD_MAX_G, '#3b0764'],
     ],
     line: '#6d28d9',
-    fillOpacity: 0.35,
-    lineOpacity: 0.18,
   },
   dark: {
     stops: [
-      [HAZARD_MIN_G, '#3b1d6e'],
-      [0.3, '#6d28d9'],
-      [0.45, '#a78bfa'],
-      [HAZARD_MAX_G, '#ddd6fe'],
+      [HAZARD_MIN_G, '#3730a3'],
+      [0.4, '#5b21b6'],
+      [0.55, '#7c3aed'],
+      [0.7, '#a78bfa'],
+      [0.82, '#c4b5fd'],
+      [HAZARD_MAX_G, '#f5f3ff'],
     ],
     line: '#a78bfa',
-    fillOpacity: 0.28,
-    lineOpacity: 0.14,
   },
 }
 
-/* ===========================================================================
- * Mapa de calor
- * ===========================================================================
- *
- * # Por qué la capa cambia de forma según la escala
- *
- * Las celdas y el mapa de calor dicen lo mismo con gramáticas distintas, y cada
- * una sólo funciona en su rango:
- *
- *   - A escala regional (z7–z11) el usuario no está leyendo el valor de una
- *     celda: está buscando **dónde se concentra la amenaza**. Cuatro mil
- *     rectángulos de 5 km pintados uno al lado del otro producen un mosaico que
- *     el ojo tiene que integrar solo. Un `heatmap` hace esa integración en el
- *     shader: es literalmente un estimador de densidad por kernel, y lo que
- *     devuelve es la tendencia.
- *   - Al acercarse a una comuna la pregunta cambia a **cuánto**, y ahí el
- *     difuminado es una pérdida de información: la celda tiene un borde real,
- *     un valor real, y el relleno lo respeta.
- *
- * El cruce es una interpolación de opacidad sobre el zoom, no un `minzoom`
- * duro: dos capas apareciendo y desapareciendo de golpe en el mismo umbral se
- * ve como un parpadeo. Con el solape, durante ~1,5 niveles de zoom conviven y
- * el ojo lee una transformación, no un cambio de capa.
- */
-
 /**
- * Ventana del cruce, en niveles de zoom: `[dominio del calor, dominio de las celdas]`.
+ * Opacidad del relleno por zoom: `[zoom, opacidad]`.
  *
- * Por debajo del primer valor manda el mapa de calor; por encima del segundo,
- * las celdas. En medio se cruzan. Los dos usan la MISMA ventana en direcciones
- * opuestas para que la suma de opacidades no se hunda a la mitad del camino.
+ * Ya no es un desvanecido cruzado con otra capa —no hay otra capa— sino una
+ * sola envolvente, y **baja al acercarse**. Es deliberado y es la regla que
+ * mantiene honesta a esta capa:
+ *
+ *   - A escala regional el usuario encendió la amenaza para leer *la amenaza*,
+ *     y el mapa base es sólo referencia. La capa puede pesar.
+ *   - Al acercarse a una calle, la pregunta vuelve a ser dónde está uno. Un
+ *     velo del 40 % sobre los nombres de calle convierte una capa de contexto
+ *     en un estorbo.
+ *
+ * El techo es distinto por tema porque el punto de partida lo es: sobre un mapa
+ * claro, un violeta pálido translúcido se pierde contra el papel; sobre uno
+ * oscuro, el mismo valor ya destaca.
  */
-export const HAZARD_CROSSFADE: readonly [number, number] = [10.5, 12.2]
-
-/**
- * Radio del kernel, en píxeles: `[zoom, radio]`.
- *
- * **Duplica en cada nivel de zoom, y eso no es estética.** El radio de un
- * `heatmap` se declara en píxeles de pantalla, pero lo que representa es una
- * distancia sobre el terreno: el paso de la grilla del CSN (~0,045°, unos 5 km).
- * Como cada nivel de zoom duplica los píxeles por metro, un radio fijo
- * significaría un kernel que cubre 30 km a z7 y 400 m a z13 — la misma capa
- * diciendo dos cosas distintas según cuánto se haya acercado el usuario.
- *
- * Los valores están calibrados sobre la resolución real a la latitud de
- * Valparaíso (~1 025 m/px a z7): el radio queda algo por encima del paso de la
- * grilla, que es lo que hace que los nodos vecinos se fundan en un campo
- * continuo en vez de leerse como una nube de puntos.
- */
-export const HAZARD_HEAT_RADIUS: readonly (readonly [number, number])[] = [
-  [7, 14],
-  [9, 30],
-  [11, 62],
-  [13, 130],
-]
-
-/**
- * Intensidad por zoom.
- *
- * Sube poco y a propósito. La intensidad multiplica la densidad acumulada antes
- * de mapearla a color: pasada de rosca, la rampa satura en su extremo caliente
- * y el mapa entero se vuelve del mismo color — que es el modo de falla clásico
- * del `heatmap` y el que lo hace ver «hecho a la rápida». La grilla es regular,
- * así que la densidad de puntos ya es constante; lo único que debe variar el
- * color es el PESO, o sea el PGA.
- */
-export const HAZARD_HEAT_INTENSITY: readonly (readonly [number, number])[] = [
-  [7, 0.9],
-  [11, 1.25],
-  [13, 1.5],
-]
-
-export interface HazardHeatRamp {
-  /**
-   * Paradas de `heatmap-density`, de 0 a 1.
-   *
-   * **La primera tiene que ser transparente.** `heatmap-color` se evalúa sobre
-   * TODO el lienzo, también donde la densidad es cero: un color opaco en la
-   * parada 0 pinta un velo sobre la región entera, incluido el mar. Es el error
-   * que hace que un mapa de calor se vea como una mancha sucia.
-   */
-  stops: readonly (readonly [number, string])[]
-  /** Opacidad de la capa en su rango dominante. */
-  opacity: number
+export const HAZARD_FILL_OPACITY: Record<
+  'light' | 'dark',
+  readonly (readonly [number, number])[]
+> = {
+  light: [
+    [7, 0.46],
+    [11, 0.42],
+    [14, 0.3],
+  ],
+  dark: [
+    [7, 0.4],
+    [11, 0.36],
+    [14, 0.26],
+  ],
 }
 
 /**
- * Rampas de densidad, una por tema.
+ * Ventana de aparición de la retícula: `[oculta, visible]`, en niveles de zoom.
  *
- * Misma lógica que el relleno de celdas y por la misma razón: sobre un mapa
- * oscuro el ojo lee intensidad como más luz; sobre uno claro, como más
- * saturación y menos luz. Y la familia sigue siendo violeta — el mapa de calor
- * no puede invadir el rojo y el naranja de las emergencias sólo porque la
- * convención de los `heatmap` sea el arcoíris de siempre. Un degradado que
- * termina en rojo diría «acá está pasando algo», que es exactamente lo que esta
- * capa NO afirma.
+ * La retícula **no es el dato** y a escala regional era justamente lo que hacía
+ * ver la capa como una cuadrícula. Sólo entra cuando una celda ya ocupa buena
+ * parte de la pantalla, que es cuando pasa a ser información útil: recuerda que
+ * el modelo se resuelve cada ~5 km y que el degradado suave de más lejos era
+ * una interpolación, no una medición continua del terreno.
  */
-export const HAZARD_HEAT: Record<'light' | 'dark', HazardHeatRamp> = {
-  light: {
-    stops: [
-      [0, 'rgba(237, 233, 254, 0)'],
-      [0.2, 'rgba(196, 181, 253, 0.35)'],
-      [0.45, 'rgba(139, 92, 246, 0.5)'],
-      [0.7, 'rgba(109, 40, 217, 0.62)'],
-      [1, 'rgba(76, 29, 149, 0.74)'],
-    ],
-    opacity: 0.85,
-  },
-  dark: {
-    stops: [
-      [0, 'rgba(30, 27, 75, 0)'],
-      [0.2, 'rgba(76, 29, 149, 0.4)'],
-      [0.45, 'rgba(124, 58, 237, 0.55)'],
-      [0.7, 'rgba(167, 139, 250, 0.68)'],
-      [1, 'rgba(221, 214, 254, 0.82)'],
-    ],
-    opacity: 0.8,
-  },
-}
+export const HAZARD_RETICULE: readonly [number, number] = [12.8, 14.2]
+
+/** Opacidad de la retícula en su rango visible. Un hilo, no una reja. */
+export const HAZARD_LINE_OPACITY = 0.16
 
 /** Etiquetas de la leyenda: los extremos, en el lenguaje de la variable. */
 export const HAZARD_LEGEND = {
@@ -214,10 +201,9 @@ export const HAZARD_LEGEND = {
   subtitle: '10 % de excedencia en 50 años',
   low: `${HAZARD_MIN_G} g`,
   high: `${HAZARD_MAX_G} g`,
-  /** Lo que el usuario ve según cuánto se haya acercado. Ver `HAZARD_CROSSFADE`. */
-  heat: 'Concentración regional',
-  cells: 'Celdas del modelo',
-  zoomHint: 'Acércate para ver el valor por celda',
+  /** Qué se está mirando. Ya no hay relevo de representación: hay una sola. */
+  scale: 'Celdas del modelo, ~5 km',
+  reticule: 'La retícula aparece al acercarse',
   caveat:
     'Modelo probabilístico del CSN. Describe la amenaza esperada del terreno, no un evento en curso.',
 } as const

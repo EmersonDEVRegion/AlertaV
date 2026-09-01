@@ -27,7 +27,7 @@
 import { describe, expect, it } from 'vitest'
 import { validateStyleMin } from '@maplibre/maplibre-gl-style-spec'
 import type { LayerSpecification, StyleSpecification } from 'maplibre-gl'
-import { hazardFillLayer, hazardHeatLayer, hazardLineLayer } from './hazardLayers'
+import { hazardFillLayer, hazardLineLayer } from './hazardLayers'
 import {
   rainCoreLayer,
   rainHaloLayer,
@@ -50,7 +50,7 @@ function buildStyle(): StyleSpecification {
   const layers: LayerSpecification[] = []
 
   for (const theme of THEMES) {
-    for (const factory of [hazardHeatLayer, hazardFillLayer, hazardLineLayer]) {
+    for (const factory of [hazardFillLayer, hazardLineLayer]) {
       layers.push({
         ...factory(theme, true),
         // Un `id` por tema: el validador rechaza duplicados y acá se monta la
@@ -113,7 +113,7 @@ describe('las capas compilan contra la spec de MapLibre', () => {
     // `visibility: 'none'` no exime de validar el resto de la capa, y es el
     // estado en el que ambas arrancan.
     const layers: LayerSpecification[] = [
-      { ...hazardHeatLayer('dark', false), source: 'hazard' } as LayerSpecification,
+      { ...hazardFillLayer('dark', false), source: 'hazard' } as LayerSpecification,
       { ...rainHeatLayer('dark', false), source: 'rain' } as LayerSpecification,
     ]
 

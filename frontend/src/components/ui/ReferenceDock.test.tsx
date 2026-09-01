@@ -114,13 +114,21 @@ describe('amenaza sísmica', () => {
     expect(screen.getByText(/no un evento en curso/i)).toBeInTheDocument()
   })
 
-  it('anuncia el relevo por zoom en vez de dejarlo como sorpresa', () => {
+  it('declara la resolución del modelo en vez de dejarla implícita', () => {
     renderDock({ hazardEnabled: true, hazardStatus: 'ready' })
 
-    // La capa cambia de forma al acercarse. Sin decirlo, el usuario cree que se
-    // apagó sola.
-    expect(screen.getByText(/concentración regional/i)).toBeInTheDocument()
-    expect(screen.getByText(/celdas del modelo/i)).toBeInTheDocument()
+    /*
+     * Antes acá se anunciaba un relevo de representación —«concentración
+     * regional → celdas del modelo»— porque la capa cambiaba de forma al hacer
+     * zoom. Ya no: es una sola superficie continua en todo el rango.
+     *
+     * Lo que queda por decir es la RESOLUCIÓN, y no es un detalle cosmético.
+     * Sin ella, un degradado suave se lee como una medición continua del
+     * terreno, cuando en realidad es la interpolación de una grilla de 5 km:
+     * dentro de una celda, el modelo no distingue un cerro de una quebrada.
+     */
+    expect(screen.getByText(/celdas del modelo, ~5 km/i)).toBeInTheDocument()
+    expect(screen.getByText(/retícula aparece al acercarse/i)).toBeInTheDocument()
   })
 })
 

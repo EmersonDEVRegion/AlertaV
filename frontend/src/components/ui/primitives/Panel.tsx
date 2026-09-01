@@ -25,6 +25,19 @@ export interface PanelProps {
   /** Saca el contenido del foco y del lector cuando está fuera de pantalla. */
   inert?: boolean
   'aria-hidden'?: boolean
+  /*
+   * Semántica, no estilo.
+   *
+   * Un panel es una caja visual y por sí solo no significa nada para un lector
+   * de pantalla. Cuando la superficie SÍ delimita una región navegable —el
+   * panel que abre una ficha en la interfaz compacta, por ejemplo— hace falta
+   * decirlo, y el sitio donde eso se sabe es quien lo usa. La alternativa era
+   * envolver el `Panel` en un `<section>`, que añade un nodo al DOM para
+   * transportar dos atributos.
+   */
+  role?: string
+  'aria-label'?: string
+  'aria-labelledby'?: string
 }
 
 export function Panel({ children, className, id, ref, inert, ...rest }: PanelProps) {

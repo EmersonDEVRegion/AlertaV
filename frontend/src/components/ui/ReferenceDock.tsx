@@ -2,9 +2,9 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { Button, Panel, Switch } from '@/components/ui/primitives'
 import {
-  HAZARD_CROSSFADE,
   HAZARD_LEGEND,
   HAZARD_RAMP,
+  HAZARD_RETICULE,
 } from '@/domain/hazardSymbology'
 import { RAIN_LEGEND, RAIN_PALETTE, RAIN_SWAP } from '@/domain/rainSymbology'
 import type { HazardStatus } from '@/hooks/useSeismicHazard'
@@ -304,7 +304,16 @@ function ScaleNote({ regional, local }: { regional: string; local: string }) {
 
 /* ------------------------------------------------------------------------- */
 
-export function ReferenceDock({
+/**
+ * Las dos tarjetas, sin el contenedor plegable.
+ *
+ * Existe separado porque en teléfono este contenido no vive en el riel
+ * izquierdo —dos superficies flotantes de 15 rem no caben a 430 px— sino dentro
+ * de la barra de fichas de `MobileMapControls`, donde la ficha ya hace de
+ * cabecera y un segundo plegado sería un clic de más para llegar a lo mismo.
+ * Ver la nota de `hooks/useMediaQuery.ts`.
+ */
+export function ReferenceLayers({
   hazardEnabled,
   hazardStatus,
   hazardError,
@@ -318,11 +327,122 @@ export function ReferenceDock({
   onRainRetry,
   theme,
 }: ReferenceDockProps) {
-  const [open, setOpen] = useState(true)
-
   const hazardAccent = HAZARD_RAMP[theme].stops[2]![1]
   const rainAccent = RAIN_PALETTE[theme].risk
-  const activeCount = Number(hazardEnabled) + Number(rainEnabled)
+
+  return (
+    <div className="space-y-0.5">
+      {/* --- Amenaza sísmica ------------------------------------------ */}
+      <LayerCard
+        label="Amenaza sísmica"
+        description={hazardDescription(hazardStatus, hazardError)}
+        icon={<WaveIcon />}
+        checked={hazardEnabled}
+        accentHex={hazardAccent}
+        failed={hazardStatus === 'error'}
+        busy={hazardStatus === 'loading'}
+        onToggle={onHazardToggle}
+        {...(hazardStatus === 'error' ? { onRetry: onHazardRetry } : {})}
+      >
+        <div className="px-0.5 pb-0.5 pt-2">
+          <div
+            aria-hidden
+            className="h-1.5 w-full rounded-full"
+            style={{
+              background: `linear-gradient(to right, ${HAZARD_RAMP[theme].stops
+                .map(([, color]) => color)
+                .join(', ')})`,
+            }}
+          />
+          <div className="mt-1 flex justify-between text-[9.5px] text-ink-faint">
+            <span>{HAZARD_LEGEND.low}</span>
+            <span className="font-medium text-ink-muted">PGA</span>
+            <span>{HAZARD_LEGEND.high}</span>
+          </div>
+          {/* Ya no hay relevo de representación que anunciar —la capa es
+              una sola superficie en todo el rango de zoom—, así que en
+              lugar de una flecha «de esto a esto» se declara la
+              RESOLUCIÓN. Es el dato que evita el malentendido que queda:
+              que el degradado suave sea una medición continua del terreno
+              y no la interpolación de una grilla de 5 km. */}
+          <p className="mt-1.5 text-[9.5px] leading-tight text-ink-faint">
+            {HAZARD_LEGEND.scale} · {HAZARD_LEGEND.reticule}
+          </p>
+          {/* No es negociable: esta capa describe el terreno, no un
+              evento en curso. */}
+          <p className="mt-1.5 text-[9.5px] leading-tight text-ink-faint">
+            {HAZARD_LEGEND.caveat}
+          </p>
+        </div>
+      </LayerCard>
+
+      {/* --- Lluvia pronosticada -------------------------------------- */}
+      <LayerCard
+        label={RAIN_LEGEND.title}
+        description={rainDescription(rainStatus, rainCount, rainRiskCount)}
+        icon={<RainIcon />}
+        checked={rainEnabled}
+        accentHex={rainAccent}
+        failed={rainStatus === 'error'}
+        busy={rainStatus === 'loading'}
+        onToggle={onRainToggle}
+        {...(rainStatus === 'error' ? { onRetry: onRainRetry } : {})}
+      >
+        <div className="px-0.5 pb-0.5 pt-2">
+          {rainStatus === 'empty' ? (
+            <p className="text-[9.5px] leading-tight text-ink-faint">
+              Ninguna comuna supera el umbral de emisión del pronóstico. La capa
+              está encendida y al día.
+            </p>
+          ) : (
+            <>
+              <div className="flex items-center gap-3 text-[9.5px] text-ink-muted">
+                <span className="flex items-center gap-1">
+                  <span
+                    aria-hidden
+                    className="size-2.5 shrink-0 rounded-full"
+                    style={{
+                      backgroundColor: RAIN_PALETTE[theme].rain,
+                      opacity: 0.7,
+                    }}
+                  />
+                  {RAIN_LEGEND.rain}
+                </span>
+                {rainRiskCount > 0 && (
+                  <span className="flex items-center gap-1" title={RAIN_LEGEND.risk}>
+                    <span
+                      aria-hidden
+                      className="size-2.5 shrink-0 rounded-full"
+                      style={{
+                        backgroundColor: RAIN_PALETTE[theme].risk,
+                        boxShadow: `0 0 0 1.5px ${RAIN_PALETTE[theme].ring}`,
+                      }}
+                    />
+                    Riesgo
+                  </span>
+                )}
+              </div>
+              <ScaleNote regional={RAIN_LEGEND.regional} local={RAIN_LEGEND.local} />
+              {/* No es negociable: la interfaz dice «riesgo pronosticado»
+                  y nunca «inundación» a secas. */}
+              <p className="mt-1.5 text-[9.5px] leading-tight text-ink-faint">
+                {RAIN_LEGEND.caveat}
+              </p>
+            </>
+          )}
+        </div>
+      </LayerCard>
+    </div>
+  )
+}
+
+/**
+ * El riel izquierdo de escritorio: las mismas tarjetas, dentro de una superficie
+ * flotante plegable.
+ */
+export function ReferenceDock(props: ReferenceDockProps) {
+  const [open, setOpen] = useState(true)
+  const activeCount = Number(props.hazardEnabled) + Number(props.rainEnabled)
 
   return (
     <Panel className="pointer-events-auto w-full overflow-hidden p-1.5">
@@ -365,99 +485,8 @@ export function ReferenceDock({
         )}
       >
         <div className="overflow-hidden">
-          <div className="mt-0.5 space-y-0.5">
-            {/* --- Amenaza sísmica ------------------------------------------ */}
-            <LayerCard
-              label="Amenaza sísmica"
-              description={hazardDescription(hazardStatus, hazardError)}
-              icon={<WaveIcon />}
-              checked={hazardEnabled}
-              accentHex={hazardAccent}
-              failed={hazardStatus === 'error'}
-              busy={hazardStatus === 'loading'}
-              onToggle={onHazardToggle}
-              {...(hazardStatus === 'error' ? { onRetry: onHazardRetry } : {})}
-            >
-              <div className="px-0.5 pb-0.5 pt-2">
-                <div
-                  aria-hidden
-                  className="h-1.5 w-full rounded-full"
-                  style={{
-                    background: `linear-gradient(to right, ${HAZARD_RAMP[theme].stops
-                      .map(([, color]) => color)
-                      .join(', ')})`,
-                  }}
-                />
-                <div className="mt-1 flex justify-between text-[9.5px] text-ink-faint">
-                  <span>{HAZARD_LEGEND.low}</span>
-                  <span className="font-medium text-ink-muted">PGA</span>
-                  <span>{HAZARD_LEGEND.high}</span>
-                </div>
-                <ScaleNote regional={HAZARD_LEGEND.heat} local={HAZARD_LEGEND.cells} />
-                {/* No es negociable: esta capa describe el terreno, no un
-                    evento en curso. */}
-                <p className="mt-1.5 text-[9.5px] leading-tight text-ink-faint">
-                  {HAZARD_LEGEND.caveat}
-                </p>
-              </div>
-            </LayerCard>
-
-            {/* --- Lluvia pronosticada -------------------------------------- */}
-            <LayerCard
-              label={RAIN_LEGEND.title}
-              description={rainDescription(rainStatus, rainCount, rainRiskCount)}
-              icon={<RainIcon />}
-              checked={rainEnabled}
-              accentHex={rainAccent}
-              failed={rainStatus === 'error'}
-              busy={rainStatus === 'loading'}
-              onToggle={onRainToggle}
-              {...(rainStatus === 'error' ? { onRetry: onRainRetry } : {})}
-            >
-              <div className="px-0.5 pb-0.5 pt-2">
-                {rainStatus === 'empty' ? (
-                  <p className="text-[9.5px] leading-tight text-ink-faint">
-                    Ninguna comuna supera el umbral de emisión del pronóstico. La capa
-                    está encendida y al día.
-                  </p>
-                ) : (
-                  <>
-                    <div className="flex items-center gap-3 text-[9.5px] text-ink-muted">
-                      <span className="flex items-center gap-1">
-                        <span
-                          aria-hidden
-                          className="size-2.5 shrink-0 rounded-full"
-                          style={{
-                            backgroundColor: RAIN_PALETTE[theme].rain,
-                            opacity: 0.7,
-                          }}
-                        />
-                        {RAIN_LEGEND.rain}
-                      </span>
-                      {rainRiskCount > 0 && (
-                        <span className="flex items-center gap-1" title={RAIN_LEGEND.risk}>
-                          <span
-                            aria-hidden
-                            className="size-2.5 shrink-0 rounded-full"
-                            style={{
-                              backgroundColor: RAIN_PALETTE[theme].risk,
-                              boxShadow: `0 0 0 1.5px ${RAIN_PALETTE[theme].ring}`,
-                            }}
-                          />
-                          Riesgo
-                        </span>
-                      )}
-                    </div>
-                    <ScaleNote regional={RAIN_LEGEND.regional} local={RAIN_LEGEND.local} />
-                    {/* No es negociable: la interfaz dice «riesgo pronosticado»
-                        y nunca «inundación» a secas. */}
-                    <p className="mt-1.5 text-[9.5px] leading-tight text-ink-faint">
-                      {RAIN_LEGEND.caveat}
-                    </p>
-                  </>
-                )}
-              </div>
-            </LayerCard>
+          <div className="mt-0.5">
+            <ReferenceLayers {...props} />
           </div>
         </div>
       </div>
@@ -465,8 +494,14 @@ export function ReferenceDock({
   )
 }
 
-/** Zonas de relevo, expuestas para los tests de coherencia con el mapa. */
+/**
+ * Zonas de relevo, expuestas para los tests de coherencia con el mapa.
+ *
+ * En la lluvia sigue siendo un relevo de representación. En la amenaza ya no lo
+ * es —hay una sola superficie— y el número que queda es la ventana en la que
+ * aparece la retícula de celda, que es lo único que cambia con el zoom.
+ */
 export const REFERENCE_SWAP_ZOOMS = {
-  hazard: HAZARD_CROSSFADE,
+  hazard: HAZARD_RETICULE,
   rain: RAIN_SWAP,
 } as const

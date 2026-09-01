@@ -27,12 +27,14 @@ import { windConeFor } from '@/domain/windCone'
 import { FOCUS_ZOOM, SEISMIC_FOCUS_ZOOM } from '@/config/map'
 import { toConeCollection, toReachCollection } from '@/lib/overlayGeojson'
 import { useCurrentWind } from '@/hooks/useCurrentWind'
+import { useIsCompact } from '@/hooks/useMediaQuery'
 import { useTheme } from '@/hooks/useTheme'
 import { useRainLayer } from '@/hooks/useRainLayer'
 import { useSeismicHazard } from '@/hooks/useSeismicHazard'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { CitizenReportControl } from '@/components/report/CitizenReportControl'
 import { AppHeader } from '@/components/ui/AppHeader'
+import { MobileMapControls } from '@/components/ui/MobileMapControls'
 import { ReferenceDock } from '@/components/ui/ReferenceDock'
 import { MapOverlayState } from '@/components/ui/MapOverlayState'
 import { StalenessBanner } from '@/components/ui/StalenessBanner'
@@ -48,6 +50,17 @@ export default function App() {
   const mapRef = useRef<MapRef>(null)
 
   const { theme, toggle: toggleTheme } = useTheme()
+
+  /*
+   * Punto de quiebre del cromo del mapa.
+   *
+   * Por debajo de `md`, los dos paneles flotantes no caben a la vez —488 px de
+   * cromo sobre una pantalla de 430— y se relevan por una barra de fichas que
+   * abre uno por vez. No es un cambio de estilo sino de árbol; el porqué está en
+   * `hooks/useMediaQuery.ts` y en `components/ui/MobileMapControls.tsx`.
+   */
+  const isCompact = useIsCompact()
+
   const hazard = useSeismicHazard()
   /*
    * Lluvia pronosticada. El hook no dispara ninguna llamada hasta que alguien
@@ -241,6 +254,45 @@ export default function App() {
   }, [list])
   const withAlert = list.filter((incident) => incident.alert_level !== null).length
 
+  /*
+   * Las dos bolsas de propiedades, armadas una sola vez.
+   *
+   * El mismo contenido se monta en dos cromos distintos —el riel y la hoja de
+   * escritorio, o la barra de fichas en teléfono— y escribir la lista de
+   * propiedades dos veces es garantía de que una de las dos se quede atrás
+   * cuando se añada un filtro. Acá se declaran una vez y cada rama las derrama.
+   */
+  const incidentControls = {
+    visibility,
+    onChange: setVisibility,
+    counts: { ...countsByLayer, seismic: seismicList.length },
+    incidentsByLayer,
+    seismicEvents: seismicList,
+    selectedCode,
+    selectedUsgsId,
+    onFocusIncident: focusIncident,
+    onFocusSeismic: focusSeismic,
+    seismicFilter,
+    onSeismicFilterChange: setSeismicFilter,
+    providers,
+    onProvidersChange: setProviders,
+  }
+
+  const referenceControls = {
+    hazardEnabled: hazard.enabled,
+    hazardStatus: hazard.status,
+    hazardError: hazard.errorMessage,
+    onHazardToggle: hazard.toggle,
+    onHazardRetry: hazard.retry,
+    rainEnabled: rain.enabled,
+    rainStatus: rain.status,
+    rainCount: rain.count,
+    rainRiskCount: rain.riskCount,
+    onRainToggle: rain.toggle,
+    onRainRetry: rain.retry,
+    theme,
+  }
+
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-app">
       <AppHeader
@@ -284,6 +336,9 @@ export default function App() {
           Riel izquierdo. Dos superficies apiladas en una sola columna, y el
           orden dice para qué sirve cada una:
 
+          **Sólo desde `md`.** Debajo de esa medida este riel y la hoja derecha
+          suman más ancho que la pantalla, y los reemplaza `MobileMapControls`.
+
             1. **Capas de referencia** — qué se está mostrando. Es un control.
             2. **Leyenda** — qué significa lo que se muestra. Es documentación.
 
@@ -296,44 +351,27 @@ export default function App() {
           hueco entre ambas superficies tiene que dejar pasar el arrastre del
           mapa, o el riel se convierte en una franja muerta de 250 px.
         */}
-        <div className="pointer-events-none absolute left-3 top-3 z-10 flex w-[15.5rem] flex-col gap-2">
-          <div className="animate-slide-in">
-            <ReferenceDock
-              hazardEnabled={hazard.enabled}
-              hazardStatus={hazard.status}
-              hazardError={hazard.errorMessage}
-              onHazardToggle={hazard.toggle}
-              onHazardRetry={hazard.retry}
-              rainEnabled={rain.enabled}
-              rainStatus={rain.status}
-              rainCount={rain.count}
-              rainRiskCount={rain.riskCount}
-              onRainToggle={rain.toggle}
-              onRainRetry={rain.retry}
-              theme={theme}
-            />
-          </div>
+        {isCompact ? (
+          <MobileMapControls
+            incidents={incidentControls}
+            reference={referenceControls}
+            incidentCount={list.length}
+          />
+        ) : (
+          <>
+            <div className="pointer-events-none absolute left-3 top-3 z-10 flex w-[15.5rem] flex-col gap-2">
+              <div className="animate-slide-in">
+                <ReferenceDock {...referenceControls} />
+              </div>
 
-          <div className="animate-slide-in stagger-1">
-            <MapLegend />
-          </div>
-        </div>
+              <div className="animate-slide-in stagger-1">
+                <MapLegend />
+              </div>
+            </div>
 
-        <SidePanel
-          visibility={visibility}
-          onChange={setVisibility}
-          counts={{ ...countsByLayer, seismic: seismicList.length }}
-          incidentsByLayer={incidentsByLayer}
-          seismicEvents={seismicList}
-          selectedCode={selectedCode}
-          selectedUsgsId={selectedUsgsId}
-          onFocusIncident={focusIncident}
-          onFocusSeismic={focusSeismic}
-          seismicFilter={seismicFilter}
-          onSeismicFilterChange={setSeismicFilter}
-          providers={providers}
-          onProvidersChange={setProviders}
-        />
+            <SidePanel {...incidentControls} />
+          </>
+        )}
 
         {/*
           El botón vive dentro del `main` relativo, no en el árbol del mapa: así

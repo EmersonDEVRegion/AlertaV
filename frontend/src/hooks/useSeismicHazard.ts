@@ -86,7 +86,7 @@ export interface SeismicHazardState {
   status: HazardStatus
   /** Nunca `undefined`: sin datos es una rejilla vacía compartida. */
   grid: HazardGrid
-  /** Nodos de la grilla, para el contador del panel. */
+  /** Celdas del modelo, para el contador del panel. */
   count: number
   toggle: () => void
   /** Reintento explícito tras un fallo. */
@@ -177,7 +177,7 @@ export function useSeismicHazard(): SeismicHazardState {
       hasMounted,
       status,
       grid,
-      count: grid.nodes.features.length,
+      count: grid.cells.features.length,
       toggle,
       retry,
       errorMessage,

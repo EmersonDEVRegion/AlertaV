@@ -661,16 +661,97 @@ html.dark body {
 html.dark .maplibregl-ctrl-icon {
   filter: invert(1) hue-rotate(180deg);
 }
-.maplibregl-ctrl-attrib,
-.maplibregl-ctrl-attrib a {
-  background: var(--surface-panel);
+
+/* ---------------------------------------------------------------------------
+ * La atribución: por qué salía blanca aunque ya estuviera declarada
+ * ---------------------------------------------------------------------------
+ *
+ * Había una regla `.maplibregl-ctrl-attrib { background: var(--surface-panel) }`
+ * y aun así el recuadro se dibujaba blanco con texto negro sobre un mapa
+ * oscuro. No era que la regla no se aplicara: era que **perdía**.
+ *
+ * MapLibre no pinta el fondo de la atribución desde una sola clase. Lo declara
+ * tres veces, y la que manda en la práctica lleva DOS clases:
+ *
+ *     .maplibregl-ctrl-attrib                       → (0,1,0)   nuestra rival
+ *     .maplibregl-ctrl-attrib.maplibregl-compact    → (0,2,0)   ← ésta ganaba
+ *     .maplibregl-ctrl-attrib-button                → (0,1,0)   el círculo «i»
+ *
+ * `<AttributionControl compact />` monta justamente la variante compacta, así
+ * que la única declaración que importaba era la de mayor especificidad, y la
+ * nuestra ni la rozaba. Un `!important` lo habría tapado; en su lugar se
+ * anida bajo `.maplibregl-map` —el contenedor que MapLibre siempre pone— y así
+ * cada selector gana por una clase, **sin depender del orden de los archivos**.
+ * Eso último importa: `maplibre-gl.css` se importa desde `IncidentMap.tsx` y
+ * este archivo desde `main.tsx`, así que quién va después depende del orden de
+ * los `import` de un módulo que nadie relaciona con esto.
+ *
+ * El botón «i» se trata aparte. Su icono es un SVG con relleno oscuro incrustado
+ * como `background-image`: no hay forma de recolorearlo por CSS, así que se
+ * invierte como el resto de la iconografía. Para que el `invert` afecte SÓLO al
+ * glifo, el botón renuncia a su propio fondo y deja que la superficie la ponga
+ * el contenedor — invertir un fondo ya tematizado lo devolvería a blanco, que
+ * es exactamente el problema del que se venía.
+ */
+.maplibregl-map .maplibregl-ctrl-attrib,
+.maplibregl-map .maplibregl-ctrl-attrib.maplibregl-compact,
+.maplibregl-map .maplibregl-ctrl-attrib.maplibregl-compact-show {
+  background-color: var(--surface-panel);
   color: var(--ink-faint);
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(var(--blur-panel)) saturate(var(--blur-saturate));
+  -webkit-backdrop-filter: blur(var(--blur-panel)) saturate(var(--blur-saturate));
 }
-.maplibregl-ctrl-scale {
-  background: var(--surface-panel);
+
+/* Plegada es un disco de 24 px y se queda redonda; desplegada es una barra y
+   toma el radio de control, como el resto del cromo flotante. */
+.maplibregl-map .maplibregl-ctrl-attrib.maplibregl-compact-show {
+  border-radius: var(--radius-control);
+}
+
+.maplibregl-map .maplibregl-ctrl-attrib a {
+  color: var(--ink-muted);
+}
+
+.maplibregl-map .maplibregl-ctrl-attrib a:hover {
+  color: var(--ink);
+}
+
+/*
+ * El botón «i», en sus dos estados.
+ *
+ * El segundo selector no es redundante: MapLibre le pone
+ * `background-color: rgba(0,0,0,.05)` **sólo mientras está desplegado**, con una
+ * regla de tres clases. Sin igualarla, ese 5 % de negro sobrevivía al `invert`
+ * de más abajo y volvía convertido en un 95 % de BLANCO — un disco encendido en
+ * la esquina de un mapa oscuro. Es el mismo error que este bloque vino a
+ * arreglar, reaparecido por la puerta de atrás.
+ */
+.maplibregl-map .maplibregl-ctrl-attrib-button,
+.maplibregl-map .maplibregl-ctrl-attrib.maplibregl-compact-show .maplibregl-ctrl-attrib-button {
+  background-color: transparent;
+}
+
+html.dark .maplibregl-map .maplibregl-ctrl-attrib-button {
+  filter: invert(1);
+}
+
+/* El foco por defecto es un `box-shadow` azul fijo (#0096ff) que no existe en
+   ninguna otra parte de la aplicación. Se reemplaza por el mismo anillo que
+   usan todos los controles propios. */
+.maplibregl-map .maplibregl-ctrl-attrib-button:focus-visible {
+  box-shadow: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.maplibregl-map .maplibregl-ctrl-scale {
+  background-color: var(--surface-panel);
   border-color: var(--line-strong);
   color: var(--ink-muted);
   border-radius: 0 0 var(--radius-control) 0;
+  backdrop-filter: blur(var(--blur-panel)) saturate(var(--blur-saturate));
+  -webkit-backdrop-filter: blur(var(--blur-panel)) saturate(var(--blur-saturate));
 }
 
 /* ===========================================================================

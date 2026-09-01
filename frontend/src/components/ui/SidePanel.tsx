@@ -116,7 +116,19 @@ const ROWS: readonly Row[] = [
   { key: 'seismic', label: 'Sismos', swatch: '#f97316', hollow: true, wide: true },
 ]
 
-export function SidePanel({
+/**
+ * El contenido, sin la hoja que lo envuelve.
+ *
+ * Existe separado porque en teléfono **no hay hoja**: los dos paneles flotantes
+ * no caben a la vez a 430 px, así que ahí este mismo contenido se muestra dentro
+ * de la barra de fichas de `MobileMapControls`, que abre uno por vez. Ver la
+ * nota de `hooks/useMediaQuery.ts`.
+ *
+ * La separación es la mínima posible: `SidePanel` sigue siendo el componente
+ * público de escritorio y no cambió ni su firma ni su comportamiento. Lo único
+ * que se movió es dónde empieza el `<Sheet>`.
+ */
+export function IncidentFilters({
   visibility,
   onChange,
   counts,
@@ -136,181 +148,187 @@ export function SidePanel({
     setExpanded((current) => (current === key ? null : key))
 
   return (
-    <Sheet>
-      <fieldset>
-        <legend className="sr-only">Capas del mapa</legend>
+    <fieldset>
+      <legend className="sr-only">Capas del mapa</legend>
 
-        <ul className="space-y-0.5">
-          {ROWS.map((row) => {
-            const isOpen = expanded === row.key
-            const count = counts[row.key]
+      <ul className="space-y-0.5">
+        {ROWS.map((row) => {
+          const isOpen = expanded === row.key
+          const count = counts[row.key]
 
-            return (
-              <AccordionRow
-                key={row.key}
-                open={isOpen}
-                header={
-                  <div className="row-control text-xs text-ink">
-                    <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
-                      <Checkbox
-                        checked={visibility[row.key]}
-                        onCheckedChange={(next) =>
-                          onChange({ ...visibility, [row.key]: next })
-                        }
-                        accentColor={row.swatch}
-                      />
-                      <span
-                        aria-hidden
-                        className="size-3 shrink-0 rounded-full"
-                        style={
-                          row.hollow
-                            ? { border: `2px solid ${row.swatch}` }
-                            : { backgroundColor: row.swatch }
-                        }
-                      />
-                      <span className="truncate font-medium">{row.label}</span>
-                    </label>
-
-                    {/* Hermano de la casilla, no dentro de su <label>: un
-                        <label> reenvía el clic a su input, así que abrir la
-                        lista apagaría la capa. */}
-                    <AccordionTrigger
-                      open={isOpen}
-                      disabled={count === 0}
-                      label={`${isOpen ? 'Ocultar' : 'Ver'} los ${count} de ${row.label}`}
-                      onToggle={() => toggleExpanded(row.key)}
-                    >
-                      <Badge variant="count" width={row.wide ? 'three' : 'two'}>
-                        {count}
-                      </Badge>
-                    </AccordionTrigger>
-                  </div>
-                }
-                aside={
-                  <>
-                    {/* ---- Sub-opciones por distribuidora ---- */}
-                    {row.key === 'power' && visibility.power && (
-                      <ul
-                        className="mb-1 ml-6 space-y-0.5 border-l border-line pl-2"
-                        aria-label="Empresas distribuidoras"
-                      >
-                        {PROVIDER_ORDER.map((provider) => {
-                          const style = PROVIDER[provider]
-                          const providerCount = incidentsByLayer.power.filter(
-                            (incident) => providerOf(incident) === provider,
-                          ).length
-
-                          return (
-                            <li key={provider}>
-                              <label className="flex cursor-pointer items-center gap-2 rounded-control px-1.5 py-1 text-[11px] text-ink-muted hover:bg-hover">
-                                <Checkbox
-                                  checked={providers[provider]}
-                                  onCheckedChange={(next) =>
-                                    onProvidersChange({ ...providers, [provider]: next })
-                                  }
-                                  accentColor={style.color}
-                                  className="size-3"
-                                />
-                                <span
-                                  aria-hidden
-                                  className="size-2.5 shrink-0 rounded-control"
-                                  style={{ backgroundColor: style.color }}
-                                />
-                                <span className="min-w-0 flex-1 truncate font-medium">
-                                  {style.label}
-                                </span>
-                                <Badge variant="count">{providerCount}</Badge>
-                              </label>
-                            </li>
-                          )
-                        })}
-                      </ul>
-                    )}
-
-                    {/* ---- Filtro de relevancia sísmica ---- */}
-                    {row.key === 'seismic' && visibility.seismic && (
-                      <div
-                        role="radiogroup"
-                        aria-label="Relevancia de los sismos"
-                        className="mb-1 ml-6 mt-0.5 flex rounded-control bg-sunken p-0.5"
-                      >
-                        {SEISMIC_FILTER_OPTIONS.map((option) => (
-                          <button
-                            key={option.key}
-                            type="button"
-                            role="radio"
-                            aria-checked={seismicFilter === option.key}
-                            title={option.hint}
-                            onClick={() => onSeismicFilterChange(option.key)}
-                            className={cn(
-                              'flex-1 rounded-control px-1.5 py-1 text-[10px] font-medium transition',
-                              seismicFilter === option.key
-                                ? 'bg-raised text-ink shadow-sm'
-                                : 'text-ink-muted hover:text-ink',
-                            )}
-                          >
-                            {option.label}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                }
-              >
-                {row.key !== 'seismic' &&
-                  incidentsByLayer[row.key as IncidentLayerKey].map((incident) => (
-                    <IncidentListItem
-                      key={incident.code}
-                      incident={incident}
-                      selected={incident.code === selectedCode}
-                      onSelect={onFocusIncident}
+          return (
+            <AccordionRow
+              key={row.key}
+              open={isOpen}
+              header={
+                <div className="row-control text-xs text-ink">
+                  <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                    <Checkbox
+                      checked={visibility[row.key]}
+                      onCheckedChange={(next) =>
+                        onChange({ ...visibility, [row.key]: next })
+                      }
+                      accentColor={row.swatch}
                     />
-                  ))}
+                    <span
+                      aria-hidden
+                      className="size-3 shrink-0 rounded-full"
+                      style={
+                        row.hollow
+                          ? { border: `2px solid ${row.swatch}` }
+                          : { backgroundColor: row.swatch }
+                      }
+                    />
+                    <span className="truncate font-medium">{row.label}</span>
+                  </label>
 
-                {row.key === 'seismic' &&
-                  seismicEvents.map((event) => {
-                    const style = MAGNITUDE[bandOf(event)]
-                    return (
-                      <li key={event.usgs_id}>
+                  {/* Hermano de la casilla, no dentro de su <label>: un
+                      <label> reenvía el clic a su input, así que abrir la
+                      lista apagaría la capa. */}
+                  <AccordionTrigger
+                    open={isOpen}
+                    disabled={count === 0}
+                    label={`${isOpen ? 'Ocultar' : 'Ver'} los ${count} de ${row.label}`}
+                    onToggle={() => toggleExpanded(row.key)}
+                  >
+                    <Badge variant="count" width={row.wide ? 'three' : 'two'}>
+                      {count}
+                    </Badge>
+                  </AccordionTrigger>
+                </div>
+              }
+              aside={
+                <>
+                  {/* ---- Sub-opciones por distribuidora ---- */}
+                  {row.key === 'power' && visibility.power && (
+                    <ul
+                      className="mb-1 ml-6 space-y-0.5 border-l border-line pl-2"
+                      aria-label="Empresas distribuidoras"
+                    >
+                      {PROVIDER_ORDER.map((provider) => {
+                        const style = PROVIDER[provider]
+                        const providerCount = incidentsByLayer.power.filter(
+                          (incident) => providerOf(incident) === provider,
+                        ).length
+
+                        return (
+                          <li key={provider}>
+                            <label className="flex cursor-pointer items-center gap-2 rounded-control px-1.5 py-1 text-[11px] text-ink-muted hover:bg-hover">
+                              <Checkbox
+                                checked={providers[provider]}
+                                onCheckedChange={(next) =>
+                                  onProvidersChange({ ...providers, [provider]: next })
+                                }
+                                accentColor={style.color}
+                                className="size-3"
+                              />
+                              <span
+                                aria-hidden
+                                className="size-2.5 shrink-0 rounded-control"
+                                style={{ backgroundColor: style.color }}
+                              />
+                              <span className="min-w-0 flex-1 truncate font-medium">
+                                {style.label}
+                              </span>
+                              <Badge variant="count">{providerCount}</Badge>
+                            </label>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
+
+                  {/* ---- Filtro de relevancia sísmica ---- */}
+                  {row.key === 'seismic' && visibility.seismic && (
+                    <div
+                      role="radiogroup"
+                      aria-label="Relevancia de los sismos"
+                      className="mb-1 ml-6 mt-0.5 flex rounded-control bg-sunken p-0.5"
+                    >
+                      {SEISMIC_FILTER_OPTIONS.map((option) => (
                         <button
+                          key={option.key}
                           type="button"
-                          onClick={() => onFocusSeismic(event)}
-                          aria-current={event.usgs_id === selectedUsgsId ? 'true' : undefined}
+                          role="radio"
+                          aria-checked={seismicFilter === option.key}
+                          title={option.hint}
+                          onClick={() => onSeismicFilterChange(option.key)}
                           className={cn(
-                            'flex w-full items-center gap-2 rounded-control px-1.5 py-1.5 text-left transition',
-                            event.usgs_id === selectedUsgsId
-                              ? 'bg-accent-soft'
-                              : 'hover:bg-hover',
+                            'flex-1 rounded-control px-1.5 py-1 text-[10px] font-medium transition',
+                            seismicFilter === option.key
+                              ? 'bg-raised text-ink shadow-sm'
+                              : 'text-ink-muted hover:text-ink',
                           )}
                         >
-                          <span
-                            aria-hidden
-                            className="size-2.5 shrink-0 rounded-full"
-                            style={{ border: `2px solid ${style.color}` }}
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-[11px] font-semibold text-ink">
-                              {event.magnitude !== null
-                                ? `M ${event.magnitude.toFixed(1)}`
-                                : 'Sin magnitud'}
-                              {event.depth_km !== null &&
-                                ` · ${Math.round(event.depth_km)} km`}
-                            </span>
-                            <span className="block truncate text-[10px] text-ink-muted">
-                              {event.commune ?? event.place ?? 'sin referencia'} ·{' '}
-                              {formatRelative(event.timestamp)}
-                            </span>
-                          </span>
+                          {option.label}
                         </button>
-                      </li>
-                    )
-                  })}
-              </AccordionRow>
-            )
-          })}
-        </ul>
-      </fieldset>
+                      ))}
+                    </div>
+                  )}
+                </>
+              }
+            >
+              {row.key !== 'seismic' &&
+                incidentsByLayer[row.key as IncidentLayerKey].map((incident) => (
+                  <IncidentListItem
+                    key={incident.code}
+                    incident={incident}
+                    selected={incident.code === selectedCode}
+                    onSelect={onFocusIncident}
+                  />
+                ))}
 
+              {row.key === 'seismic' &&
+                seismicEvents.map((event) => {
+                  const style = MAGNITUDE[bandOf(event)]
+                  return (
+                    <li key={event.usgs_id}>
+                      <button
+                        type="button"
+                        onClick={() => onFocusSeismic(event)}
+                        aria-current={event.usgs_id === selectedUsgsId ? 'true' : undefined}
+                        className={cn(
+                          'flex w-full items-center gap-2 rounded-control px-1.5 py-1.5 text-left transition',
+                          event.usgs_id === selectedUsgsId
+                            ? 'bg-accent-soft'
+                            : 'hover:bg-hover',
+                        )}
+                      >
+                        <span
+                          aria-hidden
+                          className="size-2.5 shrink-0 rounded-full"
+                          style={{ border: `2px solid ${style.color}` }}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[11px] font-semibold text-ink">
+                            {event.magnitude !== null
+                              ? `M ${event.magnitude.toFixed(1)}`
+                              : 'Sin magnitud'}
+                            {event.depth_km !== null &&
+                              ` · ${Math.round(event.depth_km)} km`}
+                          </span>
+                          <span className="block truncate text-[10px] text-ink-muted">
+                            {event.commune ?? event.place ?? 'sin referencia'} ·{' '}
+                            {formatRelative(event.timestamp)}
+                          </span>
+                        </span>
+                      </button>
+                    </li>
+                  )
+                })}
+            </AccordionRow>
+          )
+        })}
+      </ul>
+    </fieldset>
+  )
+}
+
+/** El panel de escritorio: el mismo contenido dentro de la hoja lateral. */
+export function SidePanel(props: SidePanelProps) {
+  return (
+    <Sheet>
+      <IncidentFilters {...props} />
     </Sheet>
   )
 }
