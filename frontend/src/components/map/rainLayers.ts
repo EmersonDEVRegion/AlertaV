@@ -34,12 +34,19 @@
 import type {
   CircleLayerSpecification,
   ExpressionSpecification,
+  HeatmapLayerSpecification,
   SymbolLayerSpecification,
 } from 'maplibre-gl'
 import {
+  RAIN_CIRCLE_MAX_ZOOM,
+  RAIN_HEAT,
+  RAIN_HEAT_INTENSITY,
+  RAIN_HEAT_MIN_ZOOM,
+  RAIN_HEAT_RADIUS,
   RAIN_MM_MAX,
   RAIN_MM_MIN,
   RAIN_PALETTE,
+  RAIN_SWAP,
   RAIN_TEXT,
   RAIN_TEXT_FADE,
   RAIN_TEXT_MIN_ZOOM,
@@ -49,18 +56,28 @@ import {
 
 export type RainLayerSpec = Omit<CircleLayerSpecification, 'source'>
 export type RainTextLayerSpec = Omit<SymbolLayerSpecification, 'source'>
+export type RainHeatLayerSpec = Omit<HeatmapLayerSpecification, 'source'>
 
 type Theme = 'light' | 'dark'
 
 export const RAIN_SOURCE_ID = 'rain-forecast'
+export const RAIN_HEAT_LAYER_ID = 'rain-heat'
 export const RAIN_HALO_LAYER_ID = 'rain-halo'
 export const RAIN_CORE_LAYER_ID = 'rain-core'
 export const RAIN_NUCLEUS_LAYER_ID = 'rain-nucleus'
 export const RAIN_RISK_RING_LAYER_ID = 'rain-risk-ring'
 export const RAIN_TEXT_LAYER_ID = 'rain-text'
 
-/** En orden de dibujo. Lo usa el re-anclaje tras un cambio de estilo. */
+/**
+ * En orden de dibujo. Lo usa el re-anclaje tras un cambio de estilo.
+ *
+ * El mapa de calor va el PRIMERO —o sea, el más abajo—: es el campo continuo
+ * sobre el que se apoyan los discos durante el solape, y dejarlo encima
+ * ensuciaría el núcleo de las comunas en riesgo justo en la ventana de zoom en
+ * la que las dos representaciones conviven.
+ */
 export const RAIN_LAYER_IDS = [
+  RAIN_HEAT_LAYER_ID,
   RAIN_HALO_LAYER_ID,
   RAIN_CORE_LAYER_ID,
   RAIN_NUCLEUS_LAYER_ID,
@@ -133,6 +150,50 @@ function rainRadius(scale = 1, pad = 0): ExpressionSpecification {
   return ['interpolate', ['linear'], ['zoom'], ...stops] as unknown as ExpressionSpecification
 }
 
+/**
+ * Envuelve una opacidad para que se desvanezca al entrar en el dominio del
+ * mapa de calor.
+ *
+ * # La estructura no es negociable
+ *
+ * `["zoom"]` sólo puede ser la entrada de un `interpolate` de nivel superior.
+ * La forma ingenua —multiplicar la expresión de datos por un factor de zoom—
+ * dejaría el zoom anidado y **tiraría el estilo completo**, que es el error que
+ * este repositorio ya pagó dos veces. Así que el `interpolate` sobre el zoom va
+ * afuera y la expresión por feature va DENTRO de cada tope.
+ *
+ * En el tope superior el valor es un `0` literal y no la expresión apagada: al
+ * final del desvanecido no hay nada que distinguir entre una comuna en riesgo y
+ * una sin riesgo, y escribir el `case` dos veces sólo daría más trabajo al
+ * compilador de estilos para llegar al mismo cero.
+ */
+function fadeOut(
+  atRegional: number | ExpressionSpecification,
+): ExpressionSpecification {
+  const [from, to] = RAIN_SWAP
+  return [
+    'interpolate',
+    ['linear'],
+    ['zoom'],
+    from,
+    atRegional,
+    to,
+    0,
+  ] as unknown as ExpressionSpecification
+}
+
+/** Interpolación sobre el zoom con topes escalares. */
+function byZoom(
+  stops: readonly (readonly [number, number])[],
+): ExpressionSpecification {
+  return [
+    'interpolate',
+    ['linear'],
+    ['zoom'],
+    ...stops.flatMap(([zoom, value]) => [zoom, value]),
+  ] as unknown as ExpressionSpecification
+}
+
 /** Color por riesgo. El mismo `case` en las dos capas de fondo. */
 function rainColor(theme: Theme): ExpressionSpecification {
   const palette = RAIN_PALETTE[theme]
@@ -166,6 +227,12 @@ export function rainHaloLayer(theme: Theme, visible: boolean): RainLayerSpec {
     id: RAIN_HALO_LAYER_ID,
     type: 'circle',
     /*
+     * Corte duro al entrar en el dominio del mapa de calor. Va más arriba que
+     * el final del desvanecido a propósito: si el corte cayera dentro de la
+     * rampa, la capa desaparecería de golpe a media opacidad.
+     */
+    maxzoom: RAIN_CIRCLE_MAX_ZOOM,
+    /*
      * Se apaga por `visibility`, nunca desmontando la fuente. Desmontar
      * destruiría el GeoJSON ya subido al worker y volver a encender la capa
      * pagaría la subida otra vez. Con `visibility: 'none'` MapLibre deja de
@@ -175,7 +242,7 @@ export function rainHaloLayer(theme: Theme, visible: boolean): RainLayerSpec {
     paint: {
       'circle-radius': rainRadius(1.45),
       'circle-color': rainColor(theme),
-      'circle-opacity': RAIN_PALETTE[theme].haloOpacity,
+      'circle-opacity': fadeOut(RAIN_PALETTE[theme].haloOpacity),
       'circle-blur': 1,
     },
   }
@@ -187,13 +254,19 @@ export function rainCoreLayer(theme: Theme, visible: boolean): RainLayerSpec {
   return {
     id: RAIN_CORE_LAYER_ID,
     type: 'circle',
+    maxzoom: RAIN_CIRCLE_MAX_ZOOM,
     layout: { visibility: visible ? 'visible' : 'none' },
     paint: {
       'circle-radius': rainRadius(),
       'circle-color': rainColor(theme),
       // El riesgo también sube la opacidad: en escala de grises —o para quien no
       // distingue el azul claro del profundo— el contraste sigue leyéndose.
-      'circle-opacity': ['case', IS_FLOOD_RISK, palette.coreOpacityRisk, palette.coreOpacity],
+      'circle-opacity': fadeOut([
+        'case',
+        IS_FLOOD_RISK,
+        palette.coreOpacityRisk,
+        palette.coreOpacity,
+      ]),
       'circle-blur': 0.55,
     },
   }
@@ -219,17 +292,18 @@ export function rainNucleusLayer(theme: Theme, visible: boolean): RainLayerSpec 
   return {
     id: RAIN_NUCLEUS_LAYER_ID,
     type: 'circle',
+    maxzoom: RAIN_CIRCLE_MAX_ZOOM,
     layout: { visibility: visible ? 'visible' : 'none' },
     paint: {
       // Poco más de la mitad del cuerpo: deja ver los dos escalones exteriores.
       'circle-radius': rainRadius(0.55),
       'circle-color': rainNucleusColor(theme),
-      'circle-opacity': [
+      'circle-opacity': fadeOut([
         'case',
         IS_FLOOD_RISK,
         palette.nucleusOpacityRisk,
         palette.nucleusOpacity,
-      ],
+      ]),
       // Menos difuso que el cuerpo: el degradado se cierra hacia el centro.
       'circle-blur': 0.35,
     },
@@ -259,6 +333,7 @@ export function rainRiskRingLayer(theme: Theme, visible: boolean): RainLayerSpec
   return {
     id: RAIN_RISK_RING_LAYER_ID,
     type: 'circle',
+    maxzoom: RAIN_CIRCLE_MAX_ZOOM,
     filter: IS_FLOOD_RISK,
     layout: { visibility: visible ? 'visible' : 'none' },
     paint: {
@@ -273,7 +348,114 @@ export function rainRiskRingLayer(theme: Theme, visible: boolean): RainLayerSpec
        * Un grosor fijo se ve grueso de lejos y raquítico de cerca.
        */
       'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 7, 1.2, 12, 2.4],
-      'circle-stroke-opacity': strong,
+      /*
+       * Se desvanece con sus discos.
+       *
+       * Sigue siendo un escalar por tope y **no** una expresión por feature:
+       * eso es lo que importaba de la nota original. Una interpolación sobre el
+       * zoom se compila una vez por nivel entero y viaja como uniform del
+       * shader; una expresión data-driven obligaría a reconstruir el búfer de
+       * vértices de pintura. Lo que se prohibió acá fue lo segundo.
+       *
+       * Sin este desvanecido el anillo quedaría flotando sobre el campo de
+       * calor entre z12,6 y z13,2 —solo, sin la mancha que contorneaba— y se
+       * leería como un objeto propio en vez de como un borde.
+       */
+      'circle-stroke-opacity': fadeOut(strong),
+    },
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* Campo de precipitación: el relevo local                                    */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Peso de cada comuna: la intensidad de punta, normalizada.
+ *
+ * `heatmap-weight` espera un número sin unidad donde 1 es «un punto entero».
+ * Los mm/h crudos (0,2 a 12) darían pesos de hasta doce veces lo previsto y la
+ * rampa saturaría en su extremo caliente con una sola comuna — el mapa entero
+ * del mismo azul profundo.
+ *
+ * El piso es 0,08 y no 0. Una comuna en el mínimo de emisión **está lloviendo**,
+ * y con peso 0 desaparecería del campo: un hueco entre dos comunas con lluvia
+ * se leería como un claro que el modelo no afirma.
+ *
+ * `RAIN_MM_MAX` es una cota de presentación, así que MapLibre satura por
+ * encima. Un aguacero de 30 mm/h pesa lo mismo que uno de 12: es correcto,
+ * porque a partir de ahí la diferencia ya no cabe en la rampa.
+ */
+function heatWeight(): ExpressionSpecification {
+  return [
+    'interpolate',
+    ['linear'],
+    INTENSITY,
+    RAIN_MM_MIN,
+    0.08,
+    RAIN_MM_MAX,
+    1,
+  ] as ExpressionSpecification
+}
+
+/**
+ * Rampa de densidad.
+ *
+ * `["heatmap-density"]` sólo existe dentro de esta propiedad, y esta expresión
+ * **no admite `["zoom"]`**: el color del campo no puede depender de la escala.
+ * Lo que sí depende del zoom son el radio, la intensidad y la opacidad.
+ */
+function heatColor(theme: Theme): ExpressionSpecification {
+  return [
+    'interpolate',
+    ['linear'],
+    ['heatmap-density'],
+    ...RAIN_HEAT[theme].stops.flatMap(([density, color]) => [density, color]),
+  ] as unknown as ExpressionSpecification
+}
+
+/**
+ * Campo de precipitación local.
+ *
+ * # Por qué no lleva el flag de riesgo
+ *
+ * Es la decisión más importante de esta capa. Los discos codifican el riesgo
+ * con color y con un anillo; el campo de calor **no lo hace y no debe hacerlo**.
+ *
+ * Un `heatmap` interpola entre puntos vecinos: el color de un píxel a mitad de
+ * camino entre dos comunas no pertenece a ninguna de las dos. Si el riesgo
+ * tiñera la rampa, ese píxel intermedio afirmaría un riesgo de inundación sobre
+ * un territorio para el que el backend nunca lo calculó — y `riesgo_inundacion`
+ * es un umbral evaluado **por comuna**, no un campo continuo.
+ *
+ * El campo dice intensidad y sólo intensidad. El riesgo lo siguen diciendo el
+ * bloque de texto, que sí es por comuna y sigue montado a esta escala, y el
+ * panel de referencia.
+ */
+export function rainHeatLayer(theme: Theme, visible: boolean): RainHeatLayerSpec {
+  return {
+    id: RAIN_HEAT_LAYER_ID,
+    type: 'heatmap',
+    /*
+     * Corte duro por debajo. Saca la capa del pipeline a escala regional, donde
+     * 36 puntos repartidos en 300 km no forman un campo sino lunares.
+     */
+    minzoom: RAIN_HEAT_MIN_ZOOM,
+    layout: { visibility: visible ? 'visible' : 'none' },
+    paint: {
+      'heatmap-weight': heatWeight(),
+      'heatmap-intensity': byZoom(RAIN_HEAT_INTENSITY),
+      'heatmap-color': heatColor(theme),
+      'heatmap-radius': byZoom(RAIN_HEAT_RADIUS),
+      /*
+       * Entra donde los discos se van. Los dos extremos salen de `RAIN_SWAP`,
+       * así que la suma de opacidades no se hunde a mitad de camino: no hay un
+       * zoom en el que la lluvia casi no se vea.
+       */
+      'heatmap-opacity': byZoom([
+        [RAIN_SWAP[0], 0],
+        [RAIN_SWAP[1], RAIN_HEAT[theme].opacity],
+      ]),
     },
   }
 }

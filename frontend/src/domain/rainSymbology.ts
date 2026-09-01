@@ -149,6 +149,132 @@ export const RAIN_PALETTE: Record<'light' | 'dark', RainPalette> = {
   },
 }
 
+/* ===========================================================================
+ * Relevo por zoom: de la mancha comunal al campo de precipitación
+ * ===========================================================================
+ *
+ * # Las dos escalas dicen cosas distintas
+ *
+ * El dato es **comunal**: una celda del modelo global de 9 a 11 km, resumida en
+ * un punto por comuna. A escala regional eso se lee perfecto como una mancha —
+ * treinta y seis discos repartidos por la V Región dicen «llueve acá y acá»,
+ * que es toda la pregunta a esa distancia.
+ *
+ * Al acercarse a una ciudad la mancha deja de funcionar por dos motivos. Uno,
+ * el disco crece hasta tapar las calles y el propio incidente que se está
+ * mirando. Dos, y más importante: un círculo con borde —por difuso que sea—
+ * afirma una frontera, y a nivel de ciudad esa frontera **no existe en el
+ * dato**. La lluvia no se detiene en el límite comunal.
+ *
+ * El `heatmap` no tiene ese problema: es un campo continuo sin borde, que es
+ * exactamente lo que el modelo describe. Interpola entre comunas vecinas, que
+ * es una aproximación honesta y visiblemente aproximada.
+ *
+ * # Por qué `maxzoom` / `minzoom` Y ADEMÁS una interpolación de opacidad
+ *
+ * Hacen dos cosas distintas y las dos hacen falta:
+ *
+ *   - `maxzoom` y `minzoom` son cortes DUROS: sacan la capa del trabajo, no
+ *     sólo del dibujo. Es lo que evita pagar cuatro capas `circle` sobre 36
+ *     puntos a nivel de calle y un `heatmap` a nivel regional donde no aporta.
+ *   - La interpolación de opacidad es lo que hace la transición SUAVE. Sin
+ *     ella, cruzar el umbral sería un parpadeo: una capa desaparece y otra
+ *     aparece en el mismo frame.
+ *
+ * Los cortes duros van deliberadamente MÁS AFUERA que la ventana del
+ * desvanecido —`RAIN_SWAP` está contenida en ambos rangos—, para que ninguna
+ * capa se corte mientras todavía se está viendo. Si el corte cayera dentro de
+ * la rampa, el desvanecido terminaría de golpe a media opacidad.
+ */
+
+/**
+ * Ventana del relevo, en niveles de zoom: `[fin del dominio de los círculos,
+ * inicio del dominio del calor]`.
+ *
+ * z11,2 no es arbitrario: a esa escala la pantalla cubre una comuna o dos, que
+ * es justo cuando la mancha comunal deja de tener sentido. Coincide además con
+ * la aparición del bloque de texto (`RAIN_TEXT_MIN_ZOOM`), así que el usuario
+ * gana la cifra exacta en el mismo gesto en el que pierde el borde del disco —
+ * la precisión no se va, cambia de soporte.
+ */
+export const RAIN_SWAP: readonly [number, number] = [11.2, 12.6]
+
+/** Corte duro de los círculos. Por encima ni siquiera se teselan. */
+export const RAIN_CIRCLE_MAX_ZOOM = 13.2
+
+/** Corte duro del mapa de calor. Por debajo no entra al pipeline. */
+export const RAIN_HEAT_MIN_ZOOM = 10.6
+
+/**
+ * Radio del kernel, en píxeles: `[zoom, radio]`.
+ *
+ * Duplica por nivel de zoom, igual que en la amenaza sísmica y por la misma
+ * razón: el radio se declara en píxeles pero representa una distancia sobre el
+ * terreno —acá, el paso de la grilla del modelo, 9 a 11 km—. Un radio fijo
+ * sería la misma capa afirmando dos resoluciones distintas según cuánto se haya
+ * acercado el usuario.
+ *
+ * Arranca generoso: con 36 puntos repartidos en toda la región, un kernel
+ * pequeño daría lunares aislados en vez de un campo.
+ */
+export const RAIN_HEAT_RADIUS: readonly (readonly [number, number])[] = [
+  [10.6, 44],
+  [12, 90],
+  [14, 220],
+  [16, 520],
+]
+
+/** Intensidad por zoom. Sube poco: ver la nota de `HAZARD_HEAT_INTENSITY`. */
+export const RAIN_HEAT_INTENSITY: readonly (readonly [number, number])[] = [
+  [10.6, 0.85],
+  [13, 1.15],
+  [16, 1.4],
+]
+
+export interface RainHeatRamp {
+  /**
+   * Paradas de `heatmap-density`, de 0 a 1.
+   *
+   * **La primera es transparente, sin excepción.** `heatmap-color` se evalúa
+   * sobre todo el lienzo, también donde la densidad es cero: un color opaco ahí
+   * pinta un velo azul sobre la ciudad entera, mar incluido.
+   */
+  stops: readonly (readonly [number, string])[]
+  opacity: number
+}
+
+/**
+ * Rampa de densidad de la lluvia.
+ *
+ * Es la MISMA familia cian de las manchas, recorrida en el mismo sentido que la
+ * rampa de discos de cada tema —en claro hacia el azul profundo, en oscuro
+ * hacia el cian brillante—. Que el relevo no cambie de paleta es lo que hace
+ * que se lea como una transformación de la misma capa y no como otra capa que
+ * se encendió sola.
+ */
+export const RAIN_HEAT: Record<'light' | 'dark', RainHeatRamp> = {
+  light: {
+    stops: [
+      [0, 'rgba(224, 242, 254, 0)'],
+      [0.2, 'rgba(125, 211, 252, 0.35)'],
+      [0.45, 'rgba(56, 189, 248, 0.5)'],
+      [0.7, 'rgba(2, 132, 199, 0.6)'],
+      [1, 'rgba(3, 105, 161, 0.72)'],
+    ],
+    opacity: 0.8,
+  },
+  dark: {
+    stops: [
+      [0, 'rgba(8, 47, 73, 0)'],
+      [0.2, 'rgba(3, 105, 161, 0.4)'],
+      [0.45, 'rgba(56, 189, 248, 0.55)'],
+      [0.7, 'rgba(103, 232, 249, 0.66)'],
+      [1, 'rgba(207, 250, 254, 0.78)'],
+    ],
+    opacity: 0.75,
+  },
+}
+
 /**
  * # Revelado por zoom del bloque de pronóstico
  *
@@ -236,6 +362,10 @@ export const RAIN_LEGEND = {
   subtitle: 'Pronóstico 24 h · Open-Meteo',
   rain: 'Lluvia',
   risk: 'Riesgo de inundación pronosticado',
+  /** Lo que el usuario ve según la escala. Ver `RAIN_SWAP`. */
+  regional: 'Manchas por comuna',
+  local: 'Campo de precipitación',
+  zoomHint: 'Acércate a una ciudad para ver el campo local',
   /** El estado más frecuente del año. No es un error de carga. */
   empty: 'Sin lluvia pronosticada',
   caveat: 'Pronóstico a escala comunal. No es una alerta oficial: esas las declara SENAPRED.',

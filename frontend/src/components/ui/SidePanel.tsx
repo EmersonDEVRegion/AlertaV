@@ -5,40 +5,40 @@ import {
   AccordionRow,
   AccordionTrigger,
   Badge,
-  Button,
   Checkbox,
   Sheet,
-  Switch,
 } from '@/components/ui/primitives'
 import { LAYER_LABEL } from '@/domain/families'
 import type { IncidentLayerKey } from '@/domain/families'
-import { HAZARD_LEGEND, HAZARD_RAMP } from '@/domain/hazardSymbology'
 import { OTHER_LEVEL } from '@/domain/otherSymbology'
 import { PROVIDER, PROVIDER_ORDER, providerOf } from '@/domain/powerSymbology'
-import { RAIN_LEGEND, RAIN_PALETTE } from '@/domain/rainSymbology'
 import { SEISMIC_FILTER_OPTIONS, type SeismicFilterKey } from '@/domain/seismicFilter'
 import { MAGNITUDE, bandOf } from '@/domain/seismicSymbology'
 import { LEVEL } from '@/domain/symbology'
 import { TRAFFIC_LEVEL } from '@/domain/trafficSymbology'
-import type { HazardStatus } from '@/hooks/useSeismicHazard'
-import type { RainStatus } from '@/hooks/useRainLayer'
 import { cn } from '@/lib/cn'
 import { formatRelative } from '@/lib/format'
 import { IncidentListItem } from './IncidentListItem'
 
 /**
- * Panel lateral del mapa.
+ * Panel lateral del mapa: **sólo capas de emergencia**.
  *
- * # Dos secciones que no se pueden mezclar
+ * # Qué se fue de acá
  *
- * Arriba, las **capas de emergencia**: casillas que filtran un conjunto ya
- * descargado. Abajo, las **capas de referencia**: interruptores que encienden
- * un modelo que ni siquiera se ha pedido todavía.
+ * Las capas de referencia —amenaza sísmica y lluvia— vivían al final de este
+ * panel, tras una línea divisoria. Ahora tienen el suyo, al otro lado de la
+ * pantalla: `components/ui/ReferenceDock.tsx`, donde está explicado el porqué.
  *
- * La diferencia de forma —casilla contra interruptor— es deliberada. Un vecino
- * que ve la amenaza sísmica encendida junto a los incendios activos podría leer
- * el modelo probabilístico como un evento en curso, y eso es exactamente lo que
- * el proyecto entero trata de evitar.
+ * Lo que queda es homogéneo, y eso es la mitad del beneficio: **todas las filas
+ * de este panel hacen lo mismo** —filtrar un conjunto ya descargado— así que
+ * todas pueden tener la misma forma. Antes convivían casillas e interruptores
+ * en la misma lista y la diferencia de forma tenía que cargar sola con una
+ * distinción conceptual que el espacio no ayudaba a hacer.
+ *
+ * La separación física también resuelve el riesgo que motivó aquella
+ * distinción: un vecino que veía la amenaza sísmica encendida junto a los
+ * incendios activos podía leer el modelo probabilístico como un evento en
+ * curso. Ahora ni siquiera comparten superficie.
  *
  * # La anatomía de una fila
  *
@@ -96,17 +96,6 @@ export interface SidePanelProps {
   onSeismicFilterChange: (filter: SeismicFilterKey) => void
   providers: ProviderVisibility
   onProvidersChange: (next: ProviderVisibility) => void
-  hazardEnabled: boolean
-  hazardStatus: HazardStatus
-  onHazardToggle: () => void
-  onHazardRetry: () => void
-  rainEnabled: boolean
-  rainStatus: RainStatus
-  rainCount: number
-  rainRiskCount: number
-  onRainToggle: () => void
-  onRainRetry: () => void
-  theme: 'light' | 'dark'
 }
 
 interface Row {
@@ -127,70 +116,6 @@ const ROWS: readonly Row[] = [
   { key: 'seismic', label: 'Sismos', swatch: '#f97316', hollow: true, wide: true },
 ]
 
-/**
- * Fila de una capa de referencia.
- *
- * El subtítulo carga con el estado —cargando, error, vacío— porque ahí se juega
- * la diferencia entre «no hay lluvia» y «no se pudo cargar». Son cosas
- * distintas y la interfaz no puede confundirlas.
- */
-function ReferenceSwitch({
-  label,
-  description,
-  checked,
-  accentHex,
-  onToggle,
-  onRetry,
-}: {
-  label: string
-  description: string
-  checked: boolean
-  /** Color del riel encendido. Valor, no clase: viene de la paleta de datos. */
-  accentHex: string
-  onToggle: () => void
-  /** Sólo se dibuja si se pasa: es el estado de error. */
-  onRetry?: () => void
-}) {
-  return (
-    <div className="row-control">
-      <Switch
-        checked={checked}
-        onCheckedChange={onToggle}
-        label={label}
-        accentColor={accentHex}
-      />
-
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-xs font-medium text-ink">{label}</span>
-        <span className="block truncate text-[10px] text-ink-muted">{description}</span>
-      </span>
-
-      {onRetry && (
-        <Button variant="subtle" size="sm" onClick={onRetry} className="shrink-0 text-[10px]">
-          Reintentar
-        </Button>
-      )}
-    </div>
-  )
-}
-
-function rainDescription(status: RainStatus, count: number, riskCount: number): string {
-  switch (status) {
-    case 'loading':
-      return 'Consultando el pronóstico…'
-    case 'error':
-      return 'No se pudo cargar'
-    case 'empty':
-      return RAIN_LEGEND.empty
-    case 'ready':
-      return riskCount > 0
-        ? `${count} comuna${count === 1 ? '' : 's'} · ${riskCount} con riesgo`
-        : `${count} comuna${count === 1 ? '' : 's'} · sin riesgo`
-    default:
-      return RAIN_LEGEND.subtitle
-  }
-}
-
 export function SidePanel({
   visibility,
   onChange,
@@ -205,17 +130,6 @@ export function SidePanel({
   onSeismicFilterChange,
   providers,
   onProvidersChange,
-  hazardEnabled,
-  hazardStatus,
-  onHazardToggle,
-  onHazardRetry,
-  rainEnabled,
-  rainStatus,
-  rainCount,
-  rainRiskCount,
-  onRainToggle,
-  onRainRetry,
-  theme,
 }: SidePanelProps) {
   const [expanded, setExpanded] = useState<keyof LayerVisibility | null>(null)
   const toggleExpanded = (key: keyof LayerVisibility) =>
@@ -397,99 +311,6 @@ export function SidePanel({
         </ul>
       </fieldset>
 
-      {/* --- Capas de referencia --------------------------------------------
-          Separadas por una línea y un encabezado propio: no son emergencias ni
-          se cuentan como tales. */}
-      <div className="mt-2 border-t border-line pt-2">
-        <p className="px-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
-          Capas de referencia
-        </p>
-
-        <ReferenceSwitch
-          label="Amenaza sísmica"
-          description={
-            hazardStatus === 'loading'
-              ? 'Descargando modelo…'
-              : hazardStatus === 'error'
-                ? 'No se pudo cargar'
-                : HAZARD_LEGEND.subtitle
-          }
-          checked={hazardEnabled}
-          accentHex={HAZARD_RAMP[theme].stops[2]![1]}
-          onToggle={onHazardToggle}
-          {...(hazardStatus === 'error' ? { onRetry: onHazardRetry } : {})}
-        />
-
-        {hazardEnabled && hazardStatus === 'ready' && (
-          <div className="px-1.5 pb-1">
-            <div
-              aria-hidden
-              className="h-1.5 w-full rounded-full"
-              style={{
-                background: `linear-gradient(to right, ${HAZARD_RAMP[theme].stops
-                  .map(([, color]) => color)
-                  .join(', ')})`,
-              }}
-            />
-            <div className="mt-0.5 flex justify-between text-[9px] text-ink-faint">
-              <span>{HAZARD_LEGEND.low}</span>
-              <span>PGA</span>
-              <span>{HAZARD_LEGEND.high}</span>
-            </div>
-          </div>
-        )}
-
-        <ReferenceSwitch
-          label={RAIN_LEGEND.title}
-          description={rainDescription(rainStatus, rainCount, rainRiskCount)}
-          checked={rainEnabled}
-          accentHex={RAIN_PALETTE[theme].risk}
-          onToggle={onRainToggle}
-          {...(rainStatus === 'error' ? { onRetry: onRainRetry } : {})}
-        />
-
-        {rainEnabled && (rainStatus === 'ready' || rainStatus === 'empty') && (
-          <div className="px-1.5 pb-1">
-            {rainStatus === 'ready' ? (
-              <>
-                <div className="flex items-center gap-3 text-[9px] text-ink-muted">
-                  <span className="flex items-center gap-1">
-                    <span
-                      aria-hidden
-                      className="size-2.5 shrink-0 rounded-full"
-                      style={{ backgroundColor: RAIN_PALETTE[theme].rain, opacity: 0.7 }}
-                    />
-                    {RAIN_LEGEND.rain}
-                  </span>
-                  {rainRiskCount > 0 && (
-                    <span className="flex items-center gap-1" title={RAIN_LEGEND.risk}>
-                      <span
-                        aria-hidden
-                        className="size-2.5 shrink-0 rounded-full"
-                        style={{
-                          backgroundColor: RAIN_PALETTE[theme].risk,
-                          boxShadow: `0 0 0 1.5px ${RAIN_PALETTE[theme].ring}`,
-                        }}
-                      />
-                      Riesgo
-                    </span>
-                  )}
-                </div>
-                {/* No es negociable: la interfaz dice «riesgo pronosticado» y
-                    nunca «inundación» a secas. */}
-                <p className="mt-1 text-[9px] leading-tight text-ink-faint">
-                  {RAIN_LEGEND.caveat}
-                </p>
-              </>
-            ) : (
-              <p className="text-[9px] leading-tight text-ink-faint">
-                Ninguna comuna supera el umbral de emisión del pronóstico. La capa está
-                encendida y al día.
-              </p>
-            )}
-          </div>
-        )}
-      </div>
     </Sheet>
   )
 }

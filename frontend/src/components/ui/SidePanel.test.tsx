@@ -16,21 +16,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { DEFAULT_LAYER_VISIBILITY, DEFAULT_PROVIDER_VISIBILITY, SidePanel } from './SidePanel'
-import type { RainStatus } from '@/hooks/useRainLayer'
 import { emptyByLayer, makeIncident } from '@/test/fixtures'
 
-/** Sobrescritura del estado de la capa de lluvia; el resto son valores neutros. */
-type RainOverride = Partial<{
-  enabled: boolean
-  status: RainStatus
-  count: number
-  riskCount: number
-}>
-
-function renderPanel(rain: RainOverride = {}) {
+function renderPanel() {
   const onChange = vi.fn()
-  const onHazardToggle = vi.fn()
-  const onRainToggle = vi.fn()
   render(
     <SidePanel
       visibility={DEFAULT_LAYER_VISIBILITY}
@@ -46,24 +35,13 @@ function renderPanel(rain: RainOverride = {}) {
       onSeismicFilterChange={vi.fn()}
       providers={DEFAULT_PROVIDER_VISIBILITY}
       onProvidersChange={vi.fn()}
-      hazardEnabled={false}
-      hazardStatus="idle"
-      onHazardToggle={onHazardToggle}
-      onHazardRetry={vi.fn()}
-      rainEnabled={rain.enabled ?? false}
-      rainStatus={rain.status ?? 'idle'}
-      rainCount={rain.count ?? 0}
-      rainRiskCount={rain.riskCount ?? 0}
-      onRainToggle={onRainToggle}
-      onRainRetry={vi.fn()}
-      theme="light"
     />,
   )
 
   const tab = screen.getByRole('button', { name: /filtros del mapa/i })
   const panel = document.getElementById('map-layer-panel') as HTMLElement
   const slider = panel.parentElement as HTMLElement
-  return { tab, panel, slider, onChange, onHazardToggle, onRainToggle }
+  return { tab, panel, slider, onChange }
 }
 
 describe('LayerToggles — panel colapsable', () => {
@@ -168,61 +146,34 @@ describe('LayerToggles — panel colapsable', () => {
 })
 
 /**
- * Interruptor de lluvia.
+ * Frontera con el controlador de referencia.
  *
- * El test que más importa es el del estado vacío. Una comuna ausente del GeoJSON
- * significa "comuna seca", así que una colección vacía es una respuesta CORRECTA
- * y, en verano, la respuesta normal durante semanas. Si alguien tratara ese caso
- * como un fallo, la app pasaría media temporada diciendo "sin datos" sobre un
- * backend que responde perfecto.
+ * Las capas de amenaza y lluvia se mudaron a `ReferenceDock`. Este bloque
+ * impide que vuelvan por descuido: convivir en el mismo panel era lo que
+ * obligaba a un modelo probabilístico a parecerse a un incidente en curso.
  */
-describe('LayerToggles — lluvia pronosticada', () => {
-  const findSwitch = () => screen.getByRole('switch', { name: /lluvia pronosticada/i })
-
-  it('arranca apagado: la llamada a la API no ocurre sin un gesto del usuario', () => {
+describe('LayerToggles — sólo capas de emergencia', () => {
+  it('no queda ningún interruptor de capa de referencia', () => {
     renderPanel()
-    expect(findSwitch()).toHaveAttribute('aria-checked', 'false')
+
+    // Las capas de emergencia son CASILLAS; las de referencia, interruptores.
+    // Cero interruptores es la forma más directa de comprobar la separación.
+    expect(screen.queryAllByRole('switch')).toHaveLength(0)
+    expect(screen.queryByText(/amenaza sísmica/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/lluvia pronosticada/i)).not.toBeInTheDocument()
   })
 
-  it('avisa al encenderse, que es lo que dispara la carga diferida', async () => {
-    const user = userEvent.setup()
-    const { onRainToggle } = renderPanel()
+  it('conserva las cinco capas de emergencia', () => {
+    renderPanel()
 
-    await user.click(findSwitch())
-    expect(onRainToggle).toHaveBeenCalledTimes(1)
-  })
-
-  it('el estado vacío dice "sin lluvia", nunca "sin datos"', () => {
-    renderPanel({ enabled: true, status: 'empty', count: 0, riskCount: 0 })
-
-    expect(screen.getByText(/sin lluvia pronosticada/i)).toBeInTheDocument()
-    expect(screen.queryByText(/sin datos/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/no se pudo cargar/i)).not.toBeInTheDocument()
-    // Y no ofrece reintentar: no hay nada que reintentar.
-    expect(screen.queryByRole('button', { name: /reintentar/i })).not.toBeInTheDocument()
-  })
-
-  it('distingue el error del estado seco', () => {
-    renderPanel({ enabled: true, status: 'error' })
-
-    expect(screen.getByText(/no se pudo cargar/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /reintentar/i })).toBeInTheDocument()
-  })
-
-  it('cuenta las comunas en riesgo cuando las hay', () => {
-    renderPanel({ enabled: true, status: 'ready', count: 5, riskCount: 2 })
-    expect(screen.getByText(/5 comunas · 2 con riesgo/i)).toBeInTheDocument()
-  })
-
-  it('nunca llama "inundación" a un pronóstico', () => {
-    renderPanel({ enabled: true, status: 'ready', count: 3, riskCount: 1 })
-
-    // El hand-off del backend es explícito: `riesgo_inundacion: true` es un
-    // umbral cruzado por un modelo, no una inundación, y tampoco una alerta
-    // oficial — esas las declara SENAPRED y llegan por otra vía.
-    expect(screen.getByText(/SENAPRED/)).toBeInTheDocument()
-    expect(screen.getByTitle(/riesgo de inundación pronosticado/i)).toBeInTheDocument()
-    // Nada en el panel afirma que HAY una inundación.
-    expect(screen.queryByText(/^\s*inundaci[óo]n\s*$/i)).not.toBeInTheDocument()
+    for (const name of [
+      /incendios/i,
+      /accidentes viales/i,
+      /cortes de suministro/i,
+      /otras emergencias/i,
+      /sismos/i,
+    ]) {
+      expect(screen.getByRole('checkbox', { name })).toBeInTheDocument()
+    }
   })
 })

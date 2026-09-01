@@ -32,14 +32,22 @@ const rem = (units: number) => units * 0.25
 
 function tailwindUnits(pattern: RegExp, label: string): number {
   const match = pattern.exec(SOURCE)
-  if (!match) throw new Error(`no se encontró ${label} en LayerToggles.tsx`)
+  if (!match) throw new Error(`no se encontró ${label} en Sheet.tsx`)
   return Number(match[1])
 }
 
 describe('geometría del panel colapsable', () => {
   const panelWidth = rem(tailwindUnits(/SHEET_WIDTH = 'w-(\d+)'/, 'el ancho del panel'))
+  /*
+   * Sólo el inset HORIZONTAL. La versión anterior de esta expresión exigía
+   * además un `top-[8.5rem]` literal, y eso ataba un test de aritmética
+   * horizontal a una decisión vertical que no tiene nada que ver: al acortarse
+   * la cabecera en el rediseño, el `top` bajó y este archivo entero dejó de
+   * cargar con un «no se encontró». Lo que aquí importa es que `right-N` y el
+   * desplazamiento de cierre digan el mismo número.
+   */
   const containerInset = rem(
-    tailwindUnits(/absolute right-(\d+) top-\[8\.5rem\]/, 'el inset del contenedor'),
+    tailwindUnits(/absolute right-(\d+) top-\[/, 'el inset del contenedor'),
   )
   const tabWidth = rem(tailwindUnits(/right-full top-3 grid h-12 w-(\d+)/, 'el ancho de la pestaña'))
 

@@ -44,4 +44,17 @@ export const queryKeys = {
     all: ['rain'] as const,
     geojson: (params: unknown) => ['rain', 'geojson', params] as const,
   },
+  /**
+   * Capa de amenaza sísmica: un archivo estático servido en `/static`, no una
+   * ruta de la API. Vive en el mismo cliente igualmente, porque lo que se busca
+   * de react-query acá no es la caché sino la CANCELACIÓN y el ciclo de vida:
+   * una promesa que resuelve o rechaza una sola vez, en vez de una máquina de
+   * estados alimentada por eventos de MapLibre. Ver `hooks/useSeismicHazard.ts`.
+   *
+   * Sin parámetros: hay un único artefacto por despliegue.
+   */
+  hazard: {
+    all: ['hazard'] as const,
+    grid: () => ['hazard', 'grid'] as const,
+  },
 } as const

@@ -43,13 +43,28 @@
      en un único `rounded-lg` produciría justo el aspecto improvisado que se
      quiere quitar. La regla es: contenedor flotante, control, o píldora. */
   --radius-control: 0.5rem;
-  --radius-surface: 0.875rem;
+  --radius-surface: 0.75rem;
 
   /* Desenfoque de los contenedores sobre el mapa. Un solo valor, bajo.
      `backdrop-filter` obliga al compositor a remuestrear el fondo en cada
-     cuadro, y debajo hay un mapa que repinta al desplazarse. 8 px alcanza para
+     cuadro, y debajo hay un mapa que repinta al desplazarse. 10 px alcanza para
      separar el panel del terreno; 24 px cuesta el triple y no se nota. */
-  --blur-panel: 8px;
+  --blur-panel: 10px;
+
+  /* La saturación es lo que convierte un desenfoque en CRISTAL.
+     Un `blur` a secas promedia los píxeles del fondo y el resultado tiende al
+     gris: se lee como niebla. Subir la saturación del fondo remuestreado
+     devuelve el color que el promediado se comió, y entonces el panel se lee
+     como vidrio con algo detrás. Cuesta una multiplicación por píxel en el
+     mismo paso del compositor que ya hace el desenfoque: es gratis comparado
+     con subir el radio. */
+  --blur-saturate: 1.6;
+
+  /* Curva de las micro-interacciones.
+     Sale más rápido de lo que entra, con un final largo. Es lo que hace que un
+     panel se sienta "colocado" en vez de "aparecido": el ojo lee la
+     desaceleración como masa. `ease-out` a secas es correcto pero genérico. */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
 
   /*
    * Pila de interfaz. El orden importa:
@@ -70,29 +85,58 @@
 }
 
 /* --- Semántica: lo que consumen los componentes ---------------------------- */
+/* ---------------------------------------------------------------------------
+ * La revisión de la paleta: de `slate` a un neutro sin temperatura
+ * ---------------------------------------------------------------------------
+ *
+ * El cromo era `slate`, que es un gris con azul dentro. Sobre un mapa —que ya
+ * trae verdes, azules de agua y ocres de terreno— ese azul latente compite: los
+ * paneles parecían teñidos y la interfaz se leía "de plantilla".
+ *
+ * Ahora el cromo es **neutro puro** (la familia `zinc`, con una pizca de púrpura
+ * imperceptible que evita el gris de televisor). Dos consecuencias que son todo
+ * el rediseño:
+ *
+ *   1. Los colores de DATO —el naranja del incendio, el violeta de la amenaza,
+ *      el cian de la lluvia— son ahora lo único cromático de la pantalla. No
+ *      compiten con nada, así que se pueden bajar de saturación y siguen
+ *      leyéndose. Un mapa de emergencias tiene que dirigir la mirada, y no se
+ *      dirige nada cuando todo tiene color.
+ *   2. El acento de interfaz pasó de azul a **índigo**. El azul chocaba de
+ *      frente con el cian de la lluvia y con el agua del basemap; el índigo se
+ *      distingue de los dos y no invade el violeta de la amenaza, que vive
+ *      siempre translúcido y sobre el terreno.
+ *
+ * La otra mitad del salto no es de color sino de LUZ: los bordes ya no son
+ * líneas sino anillos de un píxel a muy baja opacidad dentro de la sombra, y
+ * las sombras pasaron de una mancha a tres capas —contacto, elevación y
+ * difusión—. Es lo que separa una tarjeta de un rectángulo con `box-shadow`.
+ */
 :root {
   color-scheme: light;
 
   /* Superficies, de más al fondo a más al frente. */
-  --surface-app: #f1f5f9;
-  --surface-panel: rgb(255 255 255 / 0.92);
+  --surface-app: #fafafa;
+  /* Más translúcido que antes: con la saturación del cristal, 0,82 deja ver el
+     terreno lo justo para que el panel flote en vez de tapar. */
+  --surface-panel: rgb(255 255 255 / 0.82);
   --surface-raised: #ffffff;
-  --surface-sunken: #f1f5f9;
-  --surface-hover: rgb(15 23 42 / 0.05);
+  --surface-sunken: #f4f4f5;
+  --surface-hover: rgb(9 9 11 / 0.045);
 
-  --line: rgb(15 23 42 / 0.1);
-  --line-strong: rgb(15 23 42 / 0.18);
+  --line: rgb(9 9 11 / 0.08);
+  --line-strong: rgb(9 9 11 / 0.14);
 
-  --ink: #0f172a;
-  --ink-muted: #475569;
-  --ink-faint: #94a3b8;
+  --ink: #09090b;
+  --ink-muted: #52525b;
+  --ink-faint: #a1a1aa;
 
   /* Acento de INTERFAZ: foco, selección, estado activo de un control.
-     No es un color de dato. Deliberadamente neutro para no competir con la
-     paleta de emergencias, que es la que debe llamar la atención. */
-  --accent: #2563eb;
+     No es un color de dato. Índigo y no azul: el azul chocaba con el cian de la
+     lluvia y con el agua del mapa base. */
+  --accent: #4f46e5;
   --accent-ink: #ffffff;
-  --accent-soft: rgb(37 99 235 / 0.12);
+  --accent-soft: rgb(79 70 229 / 0.1);
 
   /* Acción destructiva/urgente: el único rojo del cromo. */
   --urgent: #dc2626;
@@ -104,21 +148,26 @@
      porque un aviso vive en una tarjeta y un dato vive en el mapa. */
   /* Barra superior: oscura en LOS DOS temas, por diseño. Es el cromo de la
      aplicación, no una superficie de contenido, y mantenerla constante da el
-     anclaje que se espera de una app nativa. */
-  --surface-chrome: #0f172a;
-  --ink-on-chrome: #f1f5f9;
-  --surface-chrome-raised: #1e293b;
+     anclaje que se espera de una app nativa. Ahora es casi negra en vez de
+     azul pizarra: con el mapa claro debajo, el contraste de la barra es lo que
+     fija el borde superior de la pantalla. */
+  --surface-chrome: #09090b;
+  --ink-on-chrome: #fafafa;
+  --surface-chrome-raised: rgb(255 255 255 / 0.07);
+  /* Línea inferior de la barra: un hilo claro, no una sombra. Es lo que la
+     separa del mapa sin ensuciar los primeros píxeles de la cartografía. */
+  --chrome-edge: rgb(255 255 255 / 0.08);
 
   /* Velo del modal. Oscurece el mapa sin teñirlo. */
-  --scrim: rgb(15 23 42 / 0.6);
+  --scrim: rgb(9 9 11 / 0.6);
 
   --warn-bg: #fffbeb;
   --warn-ink: #78350f;
   --warn-line: rgb(180 83 9 / 0.25);
 
-  --info-bg: #eff6ff;
-  --info-ink: #1e3a8a;
-  --info-line: rgb(37 99 235 / 0.22);
+  --info-bg: #eef2ff;
+  --info-ink: #312e81;
+  --info-line: rgb(79 70 229 / 0.2);
 
   --danger-bg: #fef2f2;
   --danger-ink: #991b1b;
@@ -128,31 +177,66 @@
   --success-ink: #065f46;
   --success-line: rgb(16 185 129 / 0.25);
 
-  --shadow-panel: 0 4px 16px rgb(15 23 42 / 0.12), 0 1px 3px rgb(15 23 42 / 0.08);
-  --shadow-raised: 0 8px 24px rgb(15 23 42 / 0.18);
+  /*
+   * Sombras en tres capas. El anillo va DENTRO del token, no aparte.
+   *
+   *   1. `0 0 0 1px`  — el contacto. Un anillo de un píxel a opacidad muy baja
+   *                     dibuja el borde de la tarjeta sin que haya un `border`
+   *                     que ocupe layout ni recorte el `backdrop-filter`.
+   *   2. `0 1px 2px`  — el asiento. Muy corta y muy cerca: es la sombra que el
+   *                     objeto proyecta sobre lo que toca.
+   *   3. `0 Npx …`    — la difusión. Larga, muy transparente y con radio
+   *                     NEGATIVO de expansión, para que no se derrame por los
+   *                     costados y sólo dé profundidad hacia abajo.
+   *
+   * Una sola sombra difusa —lo que había— da bulto pero no da borde, y ese es
+   * exactamente el aspecto que se quería quitar.
+   */
+  --shadow-panel:
+    0 0 0 1px rgb(9 9 11 / 0.06),
+    0 1px 2px rgb(9 9 11 / 0.04),
+    0 8px 24px -8px rgb(9 9 11 / 0.14);
+  --shadow-raised:
+    0 0 0 1px rgb(9 9 11 / 0.07),
+    0 2px 4px rgb(9 9 11 / 0.05),
+    0 16px 40px -12px rgb(9 9 11 / 0.2);
 }
 
+/*
+ * # El modo oscuro
+ *
+ * La regla que lo ordena: **en oscuro la jerarquía no la da la sombra, la da la
+ * luz**. Una sombra negra sobre un fondo casi negro no se ve, así que apilar
+ * sombras más grandes —lo que había— sólo emborrona. Lo que separa una
+ * superficie de la siguiente es que sea un punto MÁS CLARA y que su anillo
+ * superior tenga algo de brillo.
+ *
+ * De ahí que las superficies suban en pasos muy cortos (#09090b → #131316 →
+ * #1c1c20) y que la sombra del panel lleve un anillo blanco al 8 %: ese hilo es
+ * lo que dibuja el canto de la tarjeta cuando la sombra ya no puede.
+ */
 html.dark {
   color-scheme: dark;
 
-  /* Obsidiana, no negro puro: sobre el mapa oscuro un #000 se funde con el
-     terreno y el panel pierde su borde. */
-  --surface-app: #020617;
-  --surface-panel: rgb(15 23 42 / 0.92);
-  --surface-raised: #1e293b;
-  --surface-sunken: rgb(255 255 255 / 0.04);
+  /* Casi negro con una pizca de púrpura, no negro puro ni azul pizarra. El
+     #000 se funde con el mapa oscuro y el panel pierde su canto; el azul
+     pizarra competía con el agua del basemap. */
+  --surface-app: #09090b;
+  --surface-panel: rgb(19 19 22 / 0.82);
+  --surface-raised: #1c1c20;
+  --surface-sunken: rgb(255 255 255 / 0.045);
   --surface-hover: rgb(255 255 255 / 0.07);
 
-  --line: rgb(255 255 255 / 0.1);
-  --line-strong: rgb(255 255 255 / 0.18);
+  --line: rgb(255 255 255 / 0.09);
+  --line-strong: rgb(255 255 255 / 0.16);
 
-  --ink: #f1f5f9;
-  --ink-muted: #94a3b8;
-  --ink-faint: #64748b;
+  --ink: #fafafa;
+  --ink-muted: #a1a1aa;
+  --ink-faint: #71717a;
 
-  --accent: #60a5fa;
-  --accent-ink: #0f172a;
-  --accent-soft: rgb(96 165 250 / 0.16);
+  --accent: #818cf8;
+  --accent-ink: #09090b;
+  --accent-soft: rgb(129 140 248 / 0.16);
 
   --urgent: #ef4444;
   --urgent-hover: #dc2626;
@@ -160,18 +244,19 @@ html.dark {
 
   /* Sobre fondo oscuro el aviso no puede ser un rectángulo claro: deslumbra.
      Se invierte a un tinte apagado del mismo matiz con tinta clara. */
-  --surface-chrome: #020617;
-  --ink-on-chrome: #f1f5f9;
-  --surface-chrome-raised: #1e293b;
-  --scrim: rgb(2 6 23 / 0.72);
+  --surface-chrome: #09090b;
+  --ink-on-chrome: #fafafa;
+  --surface-chrome-raised: rgb(255 255 255 / 0.07);
+  --chrome-edge: rgb(255 255 255 / 0.07);
+  --scrim: rgb(0 0 0 / 0.72);
 
   --warn-bg: rgb(120 53 15 / 0.28);
   --warn-ink: #fcd34d;
   --warn-line: rgb(217 119 6 / 0.35);
 
-  --info-bg: rgb(30 58 138 / 0.32);
-  --info-ink: #93c5fd;
-  --info-line: rgb(59 130 246 / 0.35);
+  --info-bg: rgb(49 46 129 / 0.34);
+  --info-ink: #a5b4fc;
+  --info-line: rgb(99 102 241 / 0.35);
 
   --danger-bg: rgb(127 29 29 / 0.3);
   --danger-ink: #fca5a5;
@@ -181,8 +266,16 @@ html.dark {
   --success-ink: #6ee7b7;
   --success-line: rgb(16 185 129 / 0.35);
 
-  --shadow-panel: 0 4px 16px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
-  --shadow-raised: 0 8px 28px rgb(0 0 0 / 0.6);
+  /* El anillo pasa a ser lo primero y lo más importante: es el canto de la
+     tarjeta. La difusión se alarga porque en oscuro se percibe menos. */
+  --shadow-panel:
+    0 0 0 1px rgb(255 255 255 / 0.08),
+    0 1px 2px rgb(0 0 0 / 0.5),
+    0 12px 32px -10px rgb(0 0 0 / 0.7);
+  --shadow-raised:
+    0 0 0 1px rgb(255 255 255 / 0.1),
+    0 2px 6px rgb(0 0 0 / 0.55),
+    0 20px 48px -14px rgb(0 0 0 / 0.8);
 }
 
 /* `inline` es lo que hace que la utilidad emita `var(--token)` en vez del valor
@@ -216,6 +309,7 @@ html.dark {
 
   --color-chrome: var(--surface-chrome);
   --color-chrome-raised: var(--surface-chrome-raised);
+  --color-chrome-edge: var(--chrome-edge);
   --color-ink-on-chrome: var(--ink-on-chrome);
   --color-scrim: var(--scrim);
 
@@ -241,15 +335,22 @@ html.dark {
    panel nuevo no vuelva a inventar su propia mezcla de fondo, borde y sombra,
    que es exactamente cómo se llegó a doce tonos de slate distintos. */
 @layer components {
+  /*
+   * Superficie flotante sobre el mapa.
+   *
+   * El anillo de contacto ya viaja DENTRO de `--shadow-panel`, así que acá no
+   * se vuelve a añadir un `inset`: duplicarlo daba un canto de dos píxeles que
+   * en oscuro se veía como un borde dibujado a mano.
+   *
+   * `saturate` acompaña al `blur` en el mismo `backdrop-filter`. Ver la nota de
+   * `--blur-saturate`: es lo que convierte la niebla en cristal.
+   */
   .surface-floating {
     background-color: var(--surface-panel);
     border-radius: var(--radius-surface);
     box-shadow: var(--shadow-panel);
-    box-shadow:
-      var(--shadow-panel),
-      inset 0 0 0 1px var(--line);
-    backdrop-filter: blur(var(--blur-panel));
-    -webkit-backdrop-filter: blur(var(--blur-panel));
+    backdrop-filter: blur(var(--blur-panel)) saturate(var(--blur-saturate));
+    -webkit-backdrop-filter: blur(var(--blur-panel)) saturate(var(--blur-saturate));
   }
 
   /* Fila de control en interfaz densa: alto fijo para que una lista de capas
@@ -326,6 +427,112 @@ html.dark {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
+
+  /* =========================================================================
+   * Micro-interacciones
+   *
+   * # Las tres reglas que las mantienen baratas
+   *
+   *   1. **Sólo `opacity`, `translate` y `scale`.** Son las tres propiedades
+   *      que el navegador resuelve en el hilo del compositor. Debajo de todo
+   *      esto hay un mapa WebGL repintando teselas al desplazarse; una
+   *      animación que dispare layout compite con él y se ve a tirones.
+   *   2. **Duraciones cortas y desplazamientos cortos.** 6 px y 300 ms. Una
+   *      interfaz de emergencia no puede hacer esperar a nadie por una
+   *      animación, y un desplazamiento largo se lee como lentitud, no como
+   *      elegancia.
+   *   3. **`animation-fill-mode: both`.** Sin él, un elemento con retardo se
+   *      dibuja en su estado final durante el retardo y luego salta al inicial:
+   *      el parpadeo clásico de las entradas escalonadas.
+   *
+   * La regla global de `prefers-reduced-motion` del final del archivo las anula
+   * todas a 0,01 ms, así que no hay que repetir la comprobación en cada una.
+   * ========================================================================= */
+
+  /* Entrada de un panel: sube y aparece. */
+  .animate-rise {
+    animation: rise 340ms var(--ease-out-soft) both;
+  }
+
+  /* Entrada lateral: para las superficies ancladas a un borde. El signo lo
+     pone quien la usa, con `--slide-from`. */
+  .animate-slide-in {
+    animation: slide-in 380ms var(--ease-out-soft) both;
+  }
+
+  .animate-fade {
+    animation: fade 240ms var(--ease-out-soft) both;
+  }
+
+  /* Escalonado. Tres pasos bastan: más allá, la última pieza llega tan tarde
+     que se lee como un fallo de carga. */
+  .stagger-1 {
+    animation-delay: 60ms;
+  }
+  .stagger-2 {
+    animation-delay: 120ms;
+  }
+  .stagger-3 {
+    animation-delay: 180ms;
+  }
+
+  /*
+   * Barrido de carga.
+   *
+   * Reemplaza al «Cargando…» estático. Es un degradado que cruza el elemento;
+   * `background-position` sobre un fondo de 200 % no dispara layout ni pintura
+   * del árbol, sólo del propio elemento.
+   */
+  .shimmer {
+    background-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      var(--surface-hover) 50%,
+      transparent 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.4s linear infinite;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    translate: var(--slide-from, -8px) 0;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
 }
 
 
@@ -358,7 +565,7 @@ body,
 
 body {
   margin: 0;
-  background-color: #f1f5f9;
+  background-color: #fafafa;
   font-family: var(--font-ui);
 
   /*
@@ -405,40 +612,65 @@ html.dark body {
 }
 
 html.dark body {
-  background-color: #020617;
+  background-color: #09090b;
+}
+
+/* ===========================================================================
+ * Controles de MapLibre: alinearlos con el resto del cromo
+ *
+ * MapLibre inyecta su propio CSS con colores fijos, radios de 4 px y una sombra
+ * plana. Al lado de los paneles de la aplicación —cristal, anillo de contacto,
+ * radio de 8 px— se veían como piezas de otra librería pegadas encima, que es
+ * literalmente lo que son. Se reescriben acá, que es el único sitio donde se
+ * puede, para que compartan superficie, radio y sombra con todo lo demás.
+ * =========================================================================== */
+
+.maplibregl-ctrl-group {
+  background: var(--surface-panel) !important;
+  border-radius: var(--radius-control) !important;
+  box-shadow: var(--shadow-panel) !important;
+  backdrop-filter: blur(var(--blur-panel)) saturate(var(--blur-saturate));
+  -webkit-backdrop-filter: blur(var(--blur-panel)) saturate(var(--blur-saturate));
+  overflow: hidden;
 }
 
 /* Los controles de MapLibre son chicos para un dedo. */
 .maplibregl-ctrl-group button {
   width: 36px;
   height: 36px;
+  background: transparent;
+  transition: background-color 150ms var(--ease-out-soft);
+}
+
+.maplibregl-ctrl-group button:hover {
+  background-color: var(--surface-hover);
+}
+
+.maplibregl-ctrl-group button + button {
+  border-top-color: var(--line);
 }
 
 /**
- * Controles y atribución de MapLibre en modo oscuro.
+ * Iconografía y atribución en modo oscuro.
  *
- * MapLibre inyecta su propio CSS con colores fijos, fuera del alcance de las
- * clases de Tailwind. Sobre un mapa oscuro quedan como parches blancos, así que
- * se sobrescriben acá, que es el único lugar donde se puede.
+ * Los iconos de MapLibre son SVG con relleno negro fijo. Sobre el panel oscuro
+ * quedan invisibles; `invert` los pasa a claro sin tener que reemplazarlos uno
+ * a uno. El `hue-rotate` compensa el giro de matiz que introduce el `invert`
+ * en el único icono que no es puramente gris.
  */
-html.dark .maplibregl-ctrl-group {
-  background: #1e293b;
-}
-html.dark .maplibregl-ctrl-group button + button {
-  border-top-color: #334155;
-}
 html.dark .maplibregl-ctrl-icon {
   filter: invert(1) hue-rotate(180deg);
 }
-html.dark .maplibregl-ctrl-attrib,
-html.dark .maplibregl-ctrl-attrib a {
-  background: rgba(15, 23, 42, 0.8);
-  color: #cbd5e1;
+.maplibregl-ctrl-attrib,
+.maplibregl-ctrl-attrib a {
+  background: var(--surface-panel);
+  color: var(--ink-faint);
 }
-html.dark .maplibregl-ctrl-scale {
-  background: rgba(15, 23, 42, 0.7);
-  border-color: #64748b;
-  color: #cbd5e1;
+.maplibregl-ctrl-scale {
+  background: var(--surface-panel);
+  border-color: var(--line-strong);
+  color: var(--ink-muted);
+  border-radius: 0 0 var(--radius-control) 0;
 }
 
 /* ===========================================================================

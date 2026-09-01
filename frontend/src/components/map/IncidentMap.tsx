@@ -249,13 +249,7 @@ export function IncidentMap({
         apagarla vuelve a ser un cambio de `visibility`, no una descarga.
       */}
       {hazard.hasMounted && (
-        <SeismicHazardLayer
-          visible={hazard.enabled}
-          theme={theme}
-          attempt={hazard.attempt}
-          onLoaded={hazard.onLoaded}
-          onError={hazard.onError}
-        />
+        <SeismicHazardLayer grid={hazard.grid} visible={hazard.enabled} theme={theme} />
       )}
 
       {/*

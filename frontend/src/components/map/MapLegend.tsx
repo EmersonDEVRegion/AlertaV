@@ -9,6 +9,7 @@ import {
   MAGNITUDE_ORDER,
   legendRadius,
 } from '@/domain/seismicSymbology'
+import { cn } from '@/lib/cn'
 
 /**
  * Leyenda de la política de confianza v2.0.0.
@@ -22,21 +23,46 @@ export function MapLegend() {
   const [open, setOpen] = useState(false)
 
   return (
-    <div className="pointer-events-auto absolute left-3 top-3 z-10 max-w-[18.5rem]">
+    /*
+     * Sin posicionamiento propio: vive dentro del riel izquierdo que arma
+     * `App`, debajo del controlador de capas de referencia. Antes se anclaba
+     * sola a `left-3 top-3`, que es exactamente donde ahora va el dock, y dos
+     * elementos absolutos peleando por la misma esquina es la clase de colisión
+     * que sólo se ve en la pantalla de alguien más.
+     */
+    <div className="pointer-events-auto">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
-        className="flex items-center gap-2 rounded-full bg-panel px-3 py-2 text-xs font-semibold text-ink-muted shadow-lg ring-1 ring-line backdrop-blur"
+        className={cn(
+          'surface-floating flex w-full items-center gap-2 px-3 py-2',
+          'text-[11px] font-semibold text-ink-muted',
+          'transition-[color,scale] duration-150 hover:text-ink active:scale-[0.99]',
+          'focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent',
+        )}
       >
-        <span aria-hidden className="text-sm leading-none">
-          {open ? '✕' : 'ⓘ'}
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+          className={cn('size-3.5 shrink-0 transition-transform duration-300', open && 'rotate-45')}
+        >
+          {/* La misma «+» girada 45° es la «×» de cerrar: una sola forma que
+              rota, en vez de dos nodos intercambiados que saltarían. */}
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+        <span className="min-w-0 flex-1 truncate text-left">
+          {open ? 'Cerrar leyenda' : 'Qué significan los colores'}
         </span>
-        {open ? 'Cerrar leyenda' : 'Qué significan los colores'}
       </button>
 
       {open && (
-        <div className="mt-2 max-h-[70dvh] overflow-y-auto rounded-surface bg-panel p-3 text-xs shadow-xl ring-1 ring-line backdrop-blur">
+        <div className="animate-rise surface-floating mt-2 max-h-[60dvh] overflow-y-auto overscroll-contain p-3 text-xs">
           <p className="font-semibold text-ink">Color: tipo y confianza</p>
           <p className="mb-2 text-[11px] leading-snug text-ink-muted">
             La familia decide la paleta; el tono dentro de ella, cuánta evidencia

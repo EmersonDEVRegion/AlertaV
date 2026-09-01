@@ -33,6 +33,7 @@ import { useSeismicHazard } from '@/hooks/useSeismicHazard'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { CitizenReportControl } from '@/components/report/CitizenReportControl'
 import { AppHeader } from '@/components/ui/AppHeader'
+import { ReferenceDock } from '@/components/ui/ReferenceDock'
 import { MapOverlayState } from '@/components/ui/MapOverlayState'
 import { StalenessBanner } from '@/components/ui/StalenessBanner'
 import { levelOf } from '@/domain/symbology'
@@ -241,7 +242,7 @@ export default function App() {
   const withAlert = list.filter((incident) => incident.alert_level !== null).length
 
   return (
-    <div className="flex h-[100dvh] flex-col overflow-hidden bg-slate-100 dark:bg-slate-950">
+    <div className="flex h-[100dvh] flex-col overflow-hidden bg-app">
       <AppHeader
         total={list.length}
         byLevel={byLevel}
@@ -279,7 +280,44 @@ export default function App() {
           onSelectSeismic={setSelectedUsgsId}
         />
 
-        <MapLegend />
+        {/*
+          Riel izquierdo. Dos superficies apiladas en una sola columna, y el
+          orden dice para qué sirve cada una:
+
+            1. **Capas de referencia** — qué se está mostrando. Es un control.
+            2. **Leyenda** — qué significa lo que se muestra. Es documentación.
+
+          Antes la leyenda se anclaba sola a esta esquina y las capas de
+          referencia vivían al final del panel derecho. Juntarlas acá deja el
+          panel derecho dedicado a una sola cosa —las emergencias— y agrupa a
+          este lado todo lo que responde «qué estoy viendo».
+
+          `pointer-events-none` en el contenedor y `auto` en cada hijo: el
+          hueco entre ambas superficies tiene que dejar pasar el arrastre del
+          mapa, o el riel se convierte en una franja muerta de 250 px.
+        */}
+        <div className="pointer-events-none absolute left-3 top-3 z-10 flex w-[15.5rem] flex-col gap-2">
+          <div className="animate-slide-in">
+            <ReferenceDock
+              hazardEnabled={hazard.enabled}
+              hazardStatus={hazard.status}
+              hazardError={hazard.errorMessage}
+              onHazardToggle={hazard.toggle}
+              onHazardRetry={hazard.retry}
+              rainEnabled={rain.enabled}
+              rainStatus={rain.status}
+              rainCount={rain.count}
+              rainRiskCount={rain.riskCount}
+              onRainToggle={rain.toggle}
+              onRainRetry={rain.retry}
+              theme={theme}
+            />
+          </div>
+
+          <div className="animate-slide-in stagger-1">
+            <MapLegend />
+          </div>
+        </div>
 
         <SidePanel
           visibility={visibility}
@@ -295,17 +333,6 @@ export default function App() {
           onSeismicFilterChange={setSeismicFilter}
           providers={providers}
           onProvidersChange={setProviders}
-          hazardEnabled={hazard.enabled}
-          hazardStatus={hazard.status}
-          onHazardToggle={hazard.toggle}
-          onHazardRetry={hazard.retry}
-          rainEnabled={rain.enabled}
-          rainStatus={rain.status}
-          rainCount={rain.count}
-          rainRiskCount={rain.riskCount}
-          onRainToggle={rain.toggle}
-          onRainRetry={rain.retry}
-          theme={theme}
         />
 
         {/*
@@ -318,6 +345,7 @@ export default function App() {
 
         {isPending && (
           <MapOverlayState
+            busy
             title="Cargando incidentes"
             detail="Consultando el motor de correlación…"
           />

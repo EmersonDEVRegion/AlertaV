@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 import { Layer, Source, useMap } from 'react-map-gl/maplibre'
 import type { RainCollection } from '@/api/rainTypes'
 import type { Theme } from '@/hooks/useTheme'
@@ -8,10 +8,12 @@ import {
   RAIN_SOURCE_ID,
   rainCoreLayer,
   rainHaloLayer,
+  rainHeatLayer,
   rainNucleusLayer,
   rainRiskRingLayer,
   rainTextLayer,
 } from './rainLayers'
+import { useLayerReanchor } from './useLayerReanchor'
 
 /**
  * Capa de lluvia pronosticada.
@@ -38,6 +40,16 @@ interface RainLayerProps {
   theme: Theme
 }
 
+/**
+ * Ancla única: el cono de viento.
+ *
+ * A diferencia de la amenaza sísmica, la lluvia no tiene nada por encima entre
+ * las capas de referencia, así que la lista tiene un solo elemento. Sigue
+ * siendo una lista porque `useLayerReanchor` la comparte con la amenaza y una
+ * firma distinta por capa invitaría a que cada una reimplementara lo suyo.
+ */
+const RAIN_ANCHORS = [RAIN_BEFORE_ID] as const
+
 export function RainLayer({ data, visible, theme }: RainLayerProps) {
   const { current: map } = useMap()
   const instance = map?.getMap() ?? null
@@ -51,37 +63,17 @@ export function RainLayer({ data, visible, theme }: RainLayerProps) {
    * del cono en `IncidentMap`, para que su ancla ya exista cuando le toque.
    *
    * Aun así, el orden de reconstrucción de MapLibre no es un contrato público, y
-   * el precio de equivocarse es que la lluvia tape los pines de emergencia: la
-   * jerarquía invertida, en silencio y sólo después de tocar el tema. Esta
-   * comprobación cuesta un `indexOf` sobre un arreglo de identificadores y
-   * corrige el caso si llega a darse.
+   * el precio de equivocarse es que la lluvia tape los pines de emergencia. La
+   * mecánica está extraída en `useLayerReanchor`, que ahora comparten esta capa
+   * y la de amenaza sísmica.
    */
-  useEffect(() => {
-    if (!instance) return
-
-    const reanchor = () => {
-      const order = instance.getLayersOrder()
-      const anchor = order.indexOf(RAIN_BEFORE_ID)
-      if (anchor === -1) return
-
-      for (const id of RAIN_LAYER_IDS) {
-        const position = order.indexOf(id)
-        // Sólo si quedó POR ENCIMA del ancla. Mover una capa que ya está en su
-        // sitio marcaría el estilo como sucio y forzaría un repintado inútil.
-        if (position !== -1 && position > anchor) instance.moveLayer(id, RAIN_BEFORE_ID)
-      }
-    }
-
-    instance.on('styledata', reanchor)
-    return () => {
-      instance.off('styledata', reanchor)
-    }
-  }, [instance])
+  useLayerReanchor(instance, RAIN_LAYER_IDS, RAIN_ANCHORS)
 
   // Las especificaciones sólo cambian con el tema o con el encendido. react-map-gl
   // compara propiedad por propiedad, así que un objeto nuevo con los mismos
   // valores no produce escrituras — pero memorizarlas evita incluso esa
   // comparación en cada repintado del árbol.
+  const heat = useMemo(() => rainHeatLayer(theme, visible), [theme, visible])
   const halo = useMemo(() => rainHaloLayer(theme, visible), [theme, visible])
   const core = useMemo(() => rainCoreLayer(theme, visible), [theme, visible])
   const nucleus = useMemo(() => rainNucleusLayer(theme, visible), [theme, visible])
@@ -95,8 +87,14 @@ export function RainLayer({ data, visible, theme }: RainLayerProps) {
      * contexto, y el contexto no se toca.
      */
     <Source id={RAIN_SOURCE_ID} type="geojson" data={data}>
-      {/* Los cinco con el mismo `beforeId`: cada uno se inserta justo antes del
-          ancla, así que el orden de inserción es el orden de dibujo. */}
+      {/* Los seis con el mismo `beforeId`: cada uno se inserta justo antes del
+          ancla, así que el orden de inserción es el orden de dibujo.
+
+          El campo de calor va el PRIMERO —el más abajo—. Es la misma fuente que
+          los discos, sin `promoteId` ni filtro: lo único que cambia es que se
+          alimenta del punto en vez del radio, que es justo lo que permite que
+          el relevo por zoom no descargue nada nuevo. */}
+      <Layer beforeId={RAIN_BEFORE_ID} {...heat} />
       <Layer beforeId={RAIN_BEFORE_ID} {...halo} />
       <Layer beforeId={RAIN_BEFORE_ID} {...core} />
       <Layer beforeId={RAIN_BEFORE_ID} {...nucleus} />

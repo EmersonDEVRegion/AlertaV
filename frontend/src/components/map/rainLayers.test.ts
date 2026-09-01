@@ -22,12 +22,14 @@ import {
   RAIN_BEFORE_ID,
   RAIN_CORE_LAYER_ID,
   RAIN_HALO_LAYER_ID,
+  RAIN_HEAT_LAYER_ID,
   RAIN_LAYER_IDS,
   RAIN_NUCLEUS_LAYER_ID,
   RAIN_RISK_RING_LAYER_ID,
   RAIN_TEXT_LAYER_ID,
   rainCoreLayer,
   rainHaloLayer,
+  rainHeatLayer,
   rainNucleusLayer,
   rainRiskRingLayer,
   rainTextLayer,
@@ -35,9 +37,13 @@ import {
 import { coneFillLayer } from './overlayLayers'
 import { alertHaloLayer, coreLayer } from './incidentLayers'
 import {
+  RAIN_CIRCLE_MAX_ZOOM,
+  RAIN_HEAT,
+  RAIN_HEAT_MIN_ZOOM,
   RAIN_MM_MAX,
   RAIN_MM_MIN,
   RAIN_PALETTE,
+  RAIN_SWAP,
   RAIN_TEXT,
   RAIN_TEXT_FADE,
   RAIN_TEXT_MIN_ZOOM,
@@ -66,16 +72,26 @@ describe('jerarquía de dibujo', () => {
     expect(RAIN_LAYER_IDS).not.toContain(RAIN_BEFORE_ID)
   })
 
-  it('declara sus cinco capas en orden de dibujo', () => {
-    // Orden de dibujo, de fuera hacia dentro: halo difuso, cuerpo, núcleo, el
-    // anillo de riesgo, y el texto encima de todas ellas.
+  it('declara sus seis capas en orden de dibujo', () => {
+    // El campo de calor abajo del todo; luego, de fuera hacia dentro: halo
+    // difuso, cuerpo, núcleo, el anillo de riesgo, y el texto encima de todas.
     expect([...RAIN_LAYER_IDS]).toEqual([
+      RAIN_HEAT_LAYER_ID,
       RAIN_HALO_LAYER_ID,
       RAIN_CORE_LAYER_ID,
       RAIN_NUCLEUS_LAYER_ID,
       RAIN_RISK_RING_LAYER_ID,
       RAIN_TEXT_LAYER_ID,
     ])
+  })
+
+  it('el campo de calor va debajo de los discos', () => {
+    // Durante el solape las dos representaciones conviven. Con el calor encima,
+    // el núcleo de una comuna en riesgo quedaría lavado justo en la ventana de
+    // zoom en la que más importa leerlo.
+    expect(RAIN_LAYER_IDS.indexOf(RAIN_HEAT_LAYER_ID)).toBeLessThan(
+      RAIN_LAYER_IDS.indexOf(RAIN_HALO_LAYER_ID),
+    )
   })
 
   it('el texto va el último: encima de sus manchas, debajo del ancla', () => {
@@ -192,8 +208,24 @@ describe('visibilidad y coste', () => {
     // La transición en 0 existía sólo para que el pulso no encolara una
     // interpolación por escritura. Sin pulso, sobra.
     expect(paint?.['circle-stroke-opacity-transition']).toBeUndefined()
-    // Y la opacidad es un número fijo, no algo que alguien sobrescriba.
-    expect(typeof paint?.['circle-stroke-opacity']).toBe('number')
+
+    /*
+     * La opacidad pasó de escalar a interpolación sobre el ZOOM, y eso no
+     * contradice la nota original: lo que se prohibió fue el trabajo POR FRAME.
+     * Una interpolación de zoom se compila una vez por nivel entero; lo que
+     * costaba caro era una expresión data-driven, que obliga a reconstruir el
+     * búfer de vértices de pintura. El bloque de abajo comprueba justamente eso.
+     */
+    const opacity = paint?.['circle-stroke-opacity'] as unknown[]
+    expect(opacity[0]).toBe('interpolate')
+    expect(opacity[2]).toEqual(['zoom'])
+  })
+
+  it('el desvanecido del anillo no introduce una expresión por feature', () => {
+    const opacity = JSON.stringify(rainRiskRingLayer('dark', true).paint?.['circle-stroke-opacity'])
+    // Ni `get` ni `case`: los topes son escalares y viajan como uniform.
+    expect(opacity).not.toContain('"get"')
+    expect(opacity).not.toContain('"case"')
   })
 
   it('compensa la falta de movimiento con un trazo que crece con el zoom', () => {
@@ -213,11 +245,166 @@ describe('visibilidad y coste', () => {
     expect(core?.['circle-blur'] as number).toBeGreaterThan(nucleus?.['circle-blur'] as number)
   })
 
-  it('anima una propiedad constante, no una expresión por feature', () => {
-    // Un valor data-driven obligaría a reconstruir el búfer de vértices de
-    // pintura en cada escritura; un escalar viaja como uniform del shader.
-    const value = rainRiskRingLayer('dark', true).paint?.['circle-stroke-opacity']
-    expect(typeof value).toBe('number')
+})
+
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Relevo por zoom.
+ *
+ * Es el bloque que impide el modo de falla más caro de esta función: un rango
+ * de zoom en el que los discos ya se fueron y el campo de calor todavía no
+ * llegó. Ahí la lluvia simplemente no se ve, y quien mira concluye que la capa
+ * se apagó sola.
+ */
+describe('relevo por zoom: de la mancha comunal al campo local', () => {
+  const [swapFrom, swapTo] = RAIN_SWAP
+
+  /** Evalúa una interpolación lineal de topes escalares en un zoom dado. */
+  function atZoom(expression: unknown, zoom: number): number {
+    const stops = (expression as unknown[]).slice(3)
+    let result = stops[1] as number
+
+    for (let i = 0; i < stops.length; i += 2) {
+      const z = stops[i] as number
+      const value = stops[i + 1] as number
+      if (zoom >= z) result = value
+      else {
+        const prevZ = stops[i - 2] as number
+        const prevValue = stops[i - 1] as number
+        const t = (zoom - prevZ) / (z - prevZ)
+        return prevValue + (value - prevValue) * t
+      }
+    }
+    return result
+  }
+
+  it('la ventana avanza: los discos mandan lejos y el calor cerca', () => {
+    expect(swapFrom).toBeLessThan(swapTo)
+  })
+
+  it('los cortes duros caen FUERA de la ventana del desvanecido', () => {
+    // Si `maxzoom` cayera dentro de la rampa, los discos desaparecerían de
+    // golpe a media opacidad; si `minzoom` cayera después de que empieza el
+    // desvanecido del calor, el calor arrancaría ya a medias.
+    expect(RAIN_CIRCLE_MAX_ZOOM).toBeGreaterThan(swapTo)
+    expect(RAIN_HEAT_MIN_ZOOM).toBeLessThan(swapFrom)
+  })
+
+  it('los cuatro discos se cortan al mismo zoom', () => {
+    // Uno que sobreviva a los otros dejaría un disco huérfano flotando sobre el
+    // campo de calor.
+    for (const factory of ALL) {
+      expect(factory('dark', true).maxzoom).toBe(RAIN_CIRCLE_MAX_ZOOM)
+    }
+  })
+
+  it('el calor entra donde los discos se van', () => {
+    const heat = rainHeatLayer('dark', true).paint?.['heatmap-opacity']
+    const core = rainCoreLayer('dark', true).paint?.['circle-opacity']
+
+    expect(atZoom(heat, swapFrom)).toBe(0)
+    expect(atZoom(heat, swapTo)).toBeGreaterThan(0)
+    expect(atZoom(core, swapTo)).toBe(0)
+  })
+
+  it('a mitad de camino se ve algo de las dos', () => {
+    const mid = (swapFrom + swapTo) / 2
+    const heat = rainHeatLayer('dark', true).paint?.['heatmap-opacity']
+    const halo = rainHaloLayer('dark', true).paint?.['circle-opacity']
+
+    expect(atZoom(heat, mid)).toBeGreaterThan(0)
+    expect(atZoom(halo, mid)).toBeGreaterThan(0)
+  })
+
+  it('el texto sobrevive al relevo: la cifra exacta no se pierde', () => {
+    // Al perder el borde del disco, el bloque de texto es lo único que sigue
+    // diciendo el dato por comuna. Cortarlo con los discos dejaría el campo de
+    // calor sin ninguna cifra.
+    expect(rainTextLayer('dark', true).maxzoom).toBeUndefined()
+    expect(RAIN_TEXT_MIN_ZOOM).toBeLessThanOrEqual(swapFrom)
+  })
+
+  it('el desvanecido de los discos mantiene el zoom como raíz', () => {
+    for (const factory of ALL) {
+      const layer = factory('dark', true)
+      const opacity = (layer.paint?.['circle-opacity'] ??
+        layer.paint?.['circle-stroke-opacity']) as unknown[]
+
+      expect(opacity[0]).toBe('interpolate')
+      expect(opacity[2]).toEqual(['zoom'])
+    }
+  })
+})
+
+describe('campo de precipitación', () => {
+  const heat = rainHeatLayer('dark', true)
+
+  it('es de tipo heatmap y comparte la fuente de los discos', () => {
+    // Una fuente distinta obligaría a una segunda descarga para ver lo mismo
+    // desde más cerca, que es justo lo contrario de lo que se buscaba.
+    expect(heat.type).toBe('heatmap')
+    expect(heat.id).toBe(RAIN_HEAT_LAYER_ID)
+  })
+
+  it('pesa por intensidad, no por densidad de comunas', () => {
+    const weight = JSON.stringify(heat.paint?.['heatmap-weight'])
+    expect(weight).toContain('mm_hora_max')
+    expect(weight).toContain(String(RAIN_MM_MIN))
+    expect(weight).toContain(String(RAIN_MM_MAX))
+  })
+
+  it('la comuna más leve pesa más que cero', () => {
+    // Una comuna en el mínimo de emisión está lloviendo. Con peso 0 sería un
+    // hueco entre dos comunas con lluvia, y eso se leería como un claro que el
+    // modelo no afirma.
+    const weight = heat.paint?.['heatmap-weight'] as unknown[]
+    expect(weight[weight.length - 3] as number).toBeGreaterThan(0)
+  })
+
+  it('NO codifica el riesgo de inundación', () => {
+    /*
+     * La decisión más importante de esta capa. Un heatmap interpola entre
+     * puntos vecinos: el color a mitad de camino entre dos comunas no pertenece
+     * a ninguna. Si el riesgo tiñera la rampa, ese píxel afirmaría un riesgo
+     * sobre territorio para el que el backend nunca lo calculó — y
+     * `riesgo_inundacion` es un umbral evaluado POR COMUNA.
+     */
+    const serialized = JSON.stringify(heat.paint)
+    expect(serialized).not.toContain('riesgo_inundacion')
+    expect(heat.filter).toBeUndefined()
+  })
+
+  it('arranca la rampa en transparente', () => {
+    for (const theme of ['light', 'dark'] as const) {
+      const [density, color] = RAIN_HEAT[theme].stops[0]!
+      expect(density).toBe(0)
+      expect(color).toMatch(/,\s*0\)$/)
+    }
+  })
+
+  it('el color de la densidad no depende del zoom', () => {
+    // MapLibre rechaza `["zoom"]` dentro de `heatmap-color` y el estilo entero
+    // dejaría de compilar.
+    const serialized = JSON.stringify(heat.paint?.['heatmap-color'])
+    expect(serialized).not.toContain('"zoom"')
+    expect(serialized).toContain('heatmap-density')
+  })
+
+  it('se apaga por `visibility`, igual que sus discos', () => {
+    expect(rainHeatLayer('dark', false).layout?.visibility).toBe('none')
+    expect(rainHeatLayer('dark', true).layout?.visibility).toBe('visible')
+  })
+
+  it('sigue siendo azul: no invade la paleta cálida de las emergencias', () => {
+    for (const theme of ['light', 'dark'] as const) {
+      const hottest = RAIN_HEAT[theme].stops[RAIN_HEAT[theme].stops.length - 1]![1]
+      const [r, , b] = /rgba?\((\d+),\s*(\d+),\s*(\d+)/
+        .exec(hottest)!
+        .slice(1, 4)
+        .map(Number) as [number, number, number]
+      expect(b).toBeGreaterThanOrEqual(r)
+    }
   })
 })
 
@@ -281,13 +468,22 @@ describe('estilo: contexto, no emergencia', () => {
     expect(luminance(RAIN_PALETTE.light.nucleus)).toBeLessThan(luminance(RAIN_PALETTE.light.rain))
   })
 
-  it('el reposo del pulso es el extremo VISIBLE, no el transparente', () => {
+  it('el reposo del anillo es el extremo VISIBLE, no el transparente', () => {
     for (const theme of ['light', 'dark'] as const) {
       const [min, max] = RAIN_PALETTE[theme].ringOpacity
       expect(max).toBeGreaterThan(min)
-      // Con `prefers-reduced-motion` el anillo se queda en `max`: una capa que
-      // sólo se entiende cuando se mueve está mal diseñada.
-      expect(rainRiskRingLayer(theme, true).paint?.['circle-stroke-opacity']).toBe(max)
+
+      /*
+       * El anillo ya no es un escalar: se desvanece al entrar en el dominio del
+       * campo de calor. Pero en SU rango —el regional, que es donde el anillo
+       * significa algo— sigue reposando en el extremo visible de la paleta. Una
+       * capa que sólo se entiende cuando se mueve está mal diseñada, y una que
+       * arranca a media opacidad tampoco se lee.
+       */
+      const opacity = rainRiskRingLayer(theme, true).paint?.['circle-stroke-opacity'] as unknown[]
+      // [ 'interpolate', ['linear'], ['zoom'], zFrom, max, zTo, 0 ]
+      expect(opacity[4]).toBe(max)
+      expect(opacity[6]).toBe(0)
     }
   })
 })

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 import { Panel } from './Panel'
 
@@ -72,11 +72,20 @@ export function Sheet({ children, label = 'filtros del mapa' }: SheetProps) {
   const [collapsed, setCollapsed] = useState(false)
 
   return (
-    <div className="pointer-events-none absolute right-3 top-[8.5rem] z-10 md:top-[9.5rem]">
+    /*
+      La entrada llega desde el borde derecho —de ahí el `--slide-from`
+      positivo—, en espejo del riel izquierdo. Va en el CONTENEDOR y no en el
+      deslizador: el deslizador ya anima `translate` para plegarse, y dos
+      animaciones escribiendo la misma propiedad se pisan.
+    */
+    <div
+      className="animate-slide-in pointer-events-none absolute right-3 top-[7.5rem] z-10 md:top-[8.5rem]"
+      style={{ '--slide-from': '10px' } as CSSProperties}
+    >
       <div
         className={cn(
-          'pointer-events-auto relative transition-transform duration-300 ease-out',
-          'will-change-transform',
+          'pointer-events-auto relative transition-transform duration-300',
+          'ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform',
           collapsed ? 'translate-x-[calc(100%+0.75rem)]' : 'translate-x-0',
         )}
       >

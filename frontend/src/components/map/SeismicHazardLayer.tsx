@@ -1,121 +1,98 @@
-import { useCallback, useEffect } from 'react'
+import { useMemo } from 'react'
 import { Layer, Source, useMap } from 'react-map-gl/maplibre'
-// Los tipos de evento salen de maplibre-gl: el listener se registra sobre la
-// instancia nativa del mapa, no sobre el envoltorio de react-map-gl.
-import type { ErrorEvent, MapSourceDataEvent } from 'maplibre-gl'
-import { HAZARD_SOURCE_URL } from '@/config/map'
+import type { HazardGrid } from '@/api/hazardTypes'
 import type { Theme } from '@/hooks/useTheme'
+import { RAIN_HEAT_LAYER_ID } from './rainLayers'
 import {
   HAZARD_BEFORE_ID,
-  HAZARD_SOURCE_ID,
+  HAZARD_CELL_SOURCE_ID,
+  HAZARD_LAYER_IDS,
+  HAZARD_NODE_SOURCE_ID,
   hazardFillLayer,
+  hazardHeatLayer,
   hazardLineLayer,
 } from './hazardLayers'
+import { useLayerReanchor } from './useLayerReanchor'
 
 /**
  * Capa de amenaza sísmica.
  *
- * # Por qué se le pasa la URL al mapa en vez de hacer `fetch` acá
+ * # Qué se fue de este archivo, y por qué eso ES el arreglo
  *
- * `<Source data="/static/...">` con una cadena hace que MapLibre descargue y
- * parsee el archivo **en su web worker**. Un `fetch` + `JSON.parse` en el hook
- * bloquearía el hilo principal durante el parseo de una grilla de miles de
- * celdas, justo en el momento en que el usuario acaba de tocar el interruptor y
- * está mirando el mapa. El resultado es idéntico; el costo, no.
+ * Antes vivía acá una máquina de estados alimentada por eventos de MapLibre:
+ * un `useEffect` que enganchaba `sourcedata` y `error`, los filtraba por
+ * identificador de fuente, y —porque con el archivo en caché la fuente podía
+ * quedar cargada antes de que el escucha existiera— consultaba además
+ * `isSourceLoaded()` al montar, dentro de un `try/catch`, para cerrar esa
+ * ventana.
  *
- * Efecto secundario útil: la respuesta pasa por la caché HTTP del navegador y
- * por el service worker, así que en visitas siguientes ni siquiera viaja.
+ * Todo eso desapareció. El estado de carga ahora sale de una promesa en
+ * `hooks/useSeismicHazard.ts`, que resuelve o rechaza exactamente una vez. No
+ * hay ventana que cerrar porque no hay dos relojes que sincronizar. El detalle
+ * completo del bug —el interruptor que rebotaba al terminar la carga— está
+ * documentado en ese hook.
+ *
+ * Lo que queda acá es sólo lo que un componente de mapa debe hacer: declarar
+ * fuentes y capas.
+ *
+ * # Dos fuentes del MISMO archivo
+ *
+ * `heatmap` sólo se alimenta de geometrías `Point`; las celdas del modelo son
+ * polígonos. El artefacto del CSN conserva el nodo original de la grilla dentro
+ * de cada celda, así que `api/hazard.ts` deriva los puntos en el mismo parseo:
+ * una descarga, un `JSON.parse`, dos representaciones. Ver `api/hazardTypes.ts`.
  */
 
 interface SeismicHazardLayerProps {
+  grid: HazardGrid
+  /** Encendida o apagada. Nunca desmonta: alterna `visibility`. */
   visible: boolean
   theme: Theme
-  attempt: number
-  onLoaded: () => void
-  onError: () => void
 }
 
-export function SeismicHazardLayer({
-  visible,
-  theme,
-  attempt,
-  onLoaded,
-  onError,
-}: SeismicHazardLayerProps) {
+/**
+ * Anclas en orden de preferencia.
+ *
+ * La amenaza tiene que quedar **debajo de TODA la lluvia**, pero la lluvia puede
+ * no estar montada —es otra capa diferida—. Si está, la referencia es su capa
+ * más baja, que es el campo de calor; si no, el cono de viento, la única capa
+ * propia que existe siempre.
+ *
+ * Anclar al halo en vez de al calor dejaría la amenaza intercalada entre las dos
+ * capas de la lluvia: no rompe nada, pero pone un modelo estático encima de un
+ * pronóstico, que es al revés de lo que la jerarquía afirma.
+ */
+const HAZARD_ANCHORS = [RAIN_HEAT_LAYER_ID, HAZARD_BEFORE_ID] as const
+
+export function SeismicHazardLayer({ grid, visible, theme }: SeismicHazardLayerProps) {
   const { current: map } = useMap()
+  const instance = map?.getMap() ?? null
 
-  /*
-   * `<Source>` de react-map-gl no expone callbacks de carga, así que el estado
-   * se deriva de los eventos del mapa filtrados por identificador de fuente.
-   * `sourcedata` se dispara muchas veces; sólo interesa cuando la fuente ya
-   * tiene sus datos cargados.
-   */
-  const handleSourceData = useCallback(
-    (event: MapSourceDataEvent) => {
-      if (event.sourceId === HAZARD_SOURCE_ID && event.isSourceLoaded) onLoaded()
-    },
-    [onLoaded],
-  )
+  useLayerReanchor(instance, HAZARD_LAYER_IDS, HAZARD_ANCHORS)
 
-  /*
-   * El evento `error` de MapLibre lleva `sourceId` cuando el fallo viene de una
-   * fuente —un 404 del archivo, por ejemplo—, pero su tipo no lo declara porque
-   * también se emite para errores sin fuente asociada. El ensanchamiento es
-   * deliberado y acotado a la lectura de ese campo.
-   */
-  const handleError = useCallback(
-    (event: ErrorEvent) => {
-      const sourceId = (event as ErrorEvent & { sourceId?: string }).sourceId
-      if (sourceId === HAZARD_SOURCE_ID) onError()
-    },
-    [onError],
-  )
-
-  useEffect(() => {
-    if (!map) return
-    const instance = map.getMap()
-
-    /*
-     * Carrera al montar.
-     *
-     * El `<Source>` se añade al mapa en el mismo commit que registra estos
-     * escuchas. Con el archivo en la caché del navegador —o servido por el
-     * service worker— puede quedar cargado ANTES de que `on('sourcedata')`
-     * llegue a engancharse, y entonces el evento no se pierde: nunca se emite
-     * para nosotros. El resultado era una capa dibujada correctamente con el
-     * interruptor atascado en «Descargando modelo…».
-     *
-     * Preguntar por el estado actual antes de escuchar cierra esa ventana. Va
-     * dentro de un try/catch porque `isSourceLoaded` lanza si la fuente todavía
-     * no existe, que es el caso normal y no un error.
-     */
-    try {
-      if (instance.getSource(HAZARD_SOURCE_ID) && instance.isSourceLoaded(HAZARD_SOURCE_ID)) {
-        onLoaded()
-      }
-    } catch {
-      /* la fuente aún no está registrada: se resolverá por evento */
-    }
-
-    instance.on('sourcedata', handleSourceData)
-    instance.on('error', handleError)
-    return () => {
-      instance.off('sourcedata', handleSourceData)
-      instance.off('error', handleError)
-    }
-  }, [map, handleSourceData, handleError, onLoaded])
+  // Sólo cambian con el tema o con el encendido. react-map-gl compara propiedad
+  // por propiedad, así que un objeto nuevo con los mismos valores no produce
+  // escrituras — pero memorizarlas evita incluso esa comparación.
+  const heat = useMemo(() => hazardHeatLayer(theme, visible), [theme, visible])
+  const fill = useMemo(() => hazardFillLayer(theme, visible), [theme, visible])
+  const line = useMemo(() => hazardLineLayer(theme, visible), [theme, visible])
 
   return (
-    <Source
-      // Remontar sólo al reintentar tras un error; en el uso normal `attempt`
-      // no cambia y la fuente vive toda la sesión.
-      key={attempt}
-      id={HAZARD_SOURCE_ID}
-      type="geojson"
-      data={HAZARD_SOURCE_URL}
-    >
-      <Layer beforeId={HAZARD_BEFORE_ID} {...hazardFillLayer(theme, visible)} />
-      <Layer beforeId={HAZARD_BEFORE_ID} {...hazardLineLayer(theme, visible)} />
-    </Source>
+    <>
+      {/*
+        El mapa de calor va PRIMERO en el árbol: los dos bloques se insertan
+        antes del mismo ancla, así que el orden de montaje es el orden de
+        dibujo. El calor debajo, las celdas encima — que es el orden en el que
+        se relevan al hacer zoom.
+      */}
+      <Source id={HAZARD_NODE_SOURCE_ID} type="geojson" data={grid.nodes}>
+        <Layer beforeId={HAZARD_BEFORE_ID} {...heat} />
+      </Source>
+
+      <Source id={HAZARD_CELL_SOURCE_ID} type="geojson" data={grid.cells}>
+        <Layer beforeId={HAZARD_BEFORE_ID} {...fill} />
+        <Layer beforeId={HAZARD_BEFORE_ID} {...line} />
+      </Source>
+    </>
   )
 }
