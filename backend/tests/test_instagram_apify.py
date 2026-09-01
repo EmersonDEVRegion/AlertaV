@@ -16,6 +16,7 @@ import httpx
 import pytest
 import respx
 
+from app.collectors.geoservices import normalise_text
 from app.collectors.social import apify_client
 from app.collectors.social.apify_client import (
     ApifyRun,
@@ -24,12 +25,18 @@ from app.collectors.social.apify_client import (
     run_looks_stale,
 )
 from app.collectors.social.instagram_apify_worker import (
+    AGENCY_TERMS,
+    CRITICAL_TERMS,
+    FIRE_TERMS,
+    OPERATIONAL_TERMS,
+    TRAFFIC_TERMS,
     InstagramApifyCollector,
     InstagramPost,
     ResolvedPost,
     classify_event_type,
     clean_caption,
     external_id_for,
+    is_emergency,
     is_fresh,
     looks_like_digest,
     parse_post,
@@ -128,6 +135,178 @@ def test_looks_like_digest_marca_los_recopilatorios() -> None:
 )
 def test_classify_event_type(texto: str, esperado: EventType | None) -> None:
     assert classify_event_type(texto) is esperado
+
+
+# --- Pre-filtro de relevancia ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "caption",
+    [
+        # Tránsito
+        "Colisión múltiple en Ruta 68 a la altura de Placilla",
+        "Volcamiento de camión en la Ruta Las Palmas",
+        "Atropello de un peatón en Av. Pedro Montt",
+        "Desbarrancamiento de un vehículo en la Subida Santos Ossa",
+        "Accidente de tránsito con lesionados en Quilpué",
+        "Tránsito suspendido por accidente de alta energía",
+        # Incendios
+        "Incendio forestal en el sector de Placilla",
+        "Emanación de gas obliga a evacuar un edificio",
+        "Primera alarma de incendio estructural en calle Serrano",
+        "Quema de pastizales en Villa Alemana",
+        # Claves radiales
+        "10-0 en calle Serrano, se despachan carros",
+        "Bomberos despacha 10-4 en Ruta 68",
+        "Alerta de 10-2 en el sector alto",
+        "Se solicita 10-3 en el acantilado",
+        # Entidad + contexto operativo
+        "Bomberos concurre a una emergencia en el cerro Barón",
+        "SAMU trasladó a dos lesionados hasta el Hospital Van Buren",
+    ],
+)
+def test_is_emergency_reconoce_la_jerga(caption: str) -> None:
+    assert is_emergency(caption) is True
+
+
+@pytest.mark.parametrize(
+    "caption",
+    [
+        "El alcalde inauguró la nueva plaza del cerro Alegre",
+        "Así se vio el atardecer desde Playa Ancha 🌅",
+        "Wanderers gana y sueña con el ascenso",
+        "Concurso: te regalamos dos entradas para el festival",
+        "Cortes de agua programados para el martes en Viña",
+    ],
+)
+def test_is_emergency_descarta_lo_que_no_es_emergencia(caption: str) -> None:
+    assert is_emergency(caption) is False
+
+
+@pytest.mark.parametrize(
+    "caption",
+    [
+        # La entidad sola NO basta: es el ruido más frecuente de estas cuentas.
+        "Bomberos de Valparaíso celebró su aniversario junto al alcalde",
+        "Carabineros lanza campaña de seguridad escolar",
+        "SENAPRED capacita a dirigentes vecinales de la comuna",
+    ],
+)
+def test_la_entidad_sola_no_dispara(caption: str) -> None:
+    """Una entidad dice QUIÉN podría estar involucrado, nunca QUÉ pasó."""
+    assert is_emergency(caption) is False
+
+
+@pytest.mark.parametrize(
+    "caption",
+    [
+        # El post más replicado del año en estas cuentas.
+        "Espectacular show de fuegos artificiales en Año Nuevo en el Mar",
+        "Simulacro de incendio en el colegio municipal",
+        "Se cumplen 10 años del incendio de 2014",
+        "Campaña de prevención de incendios forestales de CONAF",
+    ],
+)
+def test_el_ruido_con_forma_de_emergencia_se_excinde(caption: str) -> None:
+    assert is_emergency(caption) is False
+
+
+def test_el_ruido_se_excinde_de_la_frase_mas_larga_a_la_mas_corta() -> None:
+    """Si "prevencion de incendios" se borrara antes que su forma larga,
+    quedaría suelto un "forestales" —término crítico por sí mismo— y la campaña
+    de CONAF pasaría igual."""
+    assert is_emergency("Campaña de prevención de incendios forestales") is False
+    # Y sigue reconociendo el incendio forestal de verdad.
+    assert is_emergency("Incendio forestal activo en Placilla") is True
+
+
+def test_la_excision_es_quirurgica_y_no_veta_el_post_entero() -> None:
+    """Borrar la frase de ruido no puede llevarse por delante la emergencia real
+    que venga en el mismo caption."""
+    assert is_emergency(
+        "Tras el show de fuegos artificiales se registró un choque en Av. España"
+    )
+
+
+def test_las_fechas_no_se_confunden_con_claves_radiales() -> None:
+    """`10-12-2026` es una fecha, no un despacho de apoyo. Lo resuelve
+    `normalise_code`, reutilizado del worker de Bomberos."""
+    assert is_emergency("Nos vemos el 10-12-2026 en la plaza") is False
+    assert is_emergency("Actividad el 10-4-2026 en el muelle") is False
+    # 10-40 es otra clave por completo: no puede responder a 10-4.
+    assert is_emergency("Radio 10-40 transmite desde el puerto") is False
+
+
+def test_el_apoyo_10_12_necesita_compania() -> None:
+    """Un apoyo no describe una emergencia nueva: es un despacho adicional a una
+    que ya está en curso. Y `10-12` colisiona con una fecha corta."""
+    assert is_emergency("Programación del 10-12 en el teatro") is False
+    assert is_emergency("Bomberos solicita 10-12 de urgencia al lugar") is True
+
+
+def test_los_terminos_estan_normalizados() -> None:
+    """Un término con tilde no coincidiría NUNCA y el fallo sería mudo.
+
+    El diccionario se compara contra texto pasado por `normalise_text`
+    (unicodedata NFD → sin marcas combinantes → minúsculas), así que cada
+    término tiene que ser ya su propia forma normalizada.
+    """
+    todos = (
+        CRITICAL_TERMS | AGENCY_TERMS | OPERATIONAL_TERMS | TRAFFIC_TERMS | FIRE_TERMS
+    )
+    for termino in todos:
+        assert normalise_text(termino) == termino, f"término sin normalizar: {termino!r}"
+
+
+def test_el_prefiltro_es_sincronico() -> None:
+    """El requisito es cero latencia de red: `_is_emergency` no puede ser una
+    corrutina ni devolver una."""
+    assert not asyncio.iscoroutinefunction(InstagramApifyCollector._is_emergency)
+    assert not asyncio.iscoroutine(InstagramApifyCollector._is_emergency("choque"))
+
+
+@pytest.mark.parametrize(
+    "caption",
+    [
+        "Choque en Av. España",
+        "Bomberos concurre a una emergencia",
+        "10-12 solicitado por Bomberos",
+        "El alcalde inauguró la plaza",
+        "",
+        "Incendio forestal en Placilla",
+    ],
+)
+def test_el_prefiltro_y_el_clasificador_no_se_contradicen(caption: str) -> None:
+    """Invariante: `classify_event_type` devuelve None si y sólo si el
+    pre-filtro dijo que no.
+
+    Si se rompiera, habría posts que pagan su llamada al modelo y desaparecen
+    después en el `if event_type is not None` de `fetch()`: se gasta y no se
+    guarda, que es la peor de las dos combinaciones.
+    """
+    assert (classify_event_type(caption) is None) == (not is_emergency(caption))
+
+
+@pytest.mark.parametrize(
+    ("caption", "esperado"),
+    [
+        ("10-0 en calle Serrano", EventType.STRUCTURAL_FIRE),
+        ("Despacho 10-2 al sector alto", EventType.WILDFIRE),
+        ("Solicitan 10-3 en el acantilado", EventType.RESCUE),
+        ("10-4 en Ruta 68", EventType.ACCIDENT),
+        # Subtipo: 10-4-1 es rescate vehicular con víctima atrapada, el mismo
+        # despacho. La comparación por prefijo lo deja pasar.
+        ("Confirman 10-4-1 en la Ruta 68", EventType.ACCIDENT),
+        # El separador de familia colapsa: 10-0-4 ES un 10-4.
+        ("Clave 10-0-4 en Av. Argentina", EventType.ACCIDENT),
+    ],
+)
+def test_la_clave_radial_manda_sobre_el_vocabulario(
+    caption: str, esperado: EventType
+) -> None:
+    """Es la central diciendo qué despachó: más específico que cualquier
+    sinónimo que traiga el caption."""
+    assert classify_event_type(caption) is esperado
 
 
 def test_incendio_generico_no_se_funde_con_los_incendios_de_conaf() -> None:

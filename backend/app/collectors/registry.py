@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.collectors.base import BaseCollector
 from app.collectors.conaf.collector import ConafCollector
 from app.collectors.firms.collector import FirmsCollector
+from app.collectors.news.local_news_worker import LocalNewsCollector
 from app.collectors.power.cge_worker import CgeCollector
 from app.collectors.power.chilquinta_worker import ChilquintaCollector
 from app.collectors.seismic.sismologia_worker import SismologiaCollector
@@ -104,6 +105,28 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     # detiene, este collector no falla — avisa (`datos rancios`) y queda
     # `partial`. Ver `app/collectors/social/apify_client.py`.
     InstagramApifyCollector.name: InstagramApifyCollector,
+    # -- Prensa local ---------------------------------------------------------
+    # Sitio del Suceso y Pura Noticia, raspados de forma nativa y sin
+    # intermediario: son portales abiertos, uno con RSS estándar y el otro con
+    # HTML público. Cero costo por corrida, a diferencia de la capa de Instagram.
+    #
+    # Emite `MEDIA` (0.60), una banda entera por encima de `SOCIAL_MEDIA` (0.35),
+    # y la diferencia no es de simpatía: estos dos tienen firma, editor y
+    # rectificaciones. Lo que NO tienen es a alguien en el lugar, así que no son
+    # `confirming` y una sola nota no lleva un incidente a certeza.
+    #
+    # Los dos portales entran como señales INDEPENDIENTES entre sí —el
+    # `external_id` lleva el slug del medio— para que dos coberturas del mismo
+    # choque se corroboren en el motor en vez de colapsar en una sola fila.
+    #
+    # Es la fuente más lenta de la capa de siniestros y eso está asumido: llega
+    # después que el MTT y después que las cuentas hiperlocales. Su valor no es
+    # la velocidad, es que alguien la escribió después de llamar por teléfono.
+    #
+    # Vigilar en la primera corrida: `collector_runs` de `prensa_local`. Un
+    # portal caído deja la corrida `partial` con el nombre del medio en el aviso;
+    # sólo si caen los dos queda `failed`.
+    LocalNewsCollector.name: LocalNewsCollector,
     # Próximos hitos:
     #   BroadcastifyCollector.name: BroadcastifyCollector,  # STT → evento
 }

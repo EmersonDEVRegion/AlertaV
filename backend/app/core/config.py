@@ -378,6 +378,73 @@ class Settings(BaseSettings):
     #: le llega por mensaje directo, sin verificar.
     INSTAGRAM_CONFIDENCE: float = Field(default=0.35, ge=0.0, le=1.0)
 
+    # -- Prensa local: Sitio del Suceso y Pura Noticia -----------------------
+    #: Portales de la V Región, raspados de forma nativa y a costo cero. Formato
+    #: `slug|nombre|feed_url|portada_url`, separando varios con `;` — el mismo
+    #: idioma que `FIRMS_SOURCES` y `OPENMETEO_COMUNAS`. Vacío = collector
+    #: apagado (el constructor lanza y la corrida queda `failed` a la vista).
+    #:
+    #: Las dos URL son opcionales por separado, y los valores por defecto usan
+    #: esa asimetría porque los dos portales son distintos de verdad. Verificado
+    #: el 31 de agosto de 2026:
+    #:
+    #: * **Sitio del Suceso** es WordPress 7.1 y `/feed/` devuelve RSS 2.0 con
+    #:   `<guid>` estable, `<pubDate>` con hora y —lo mejor— `<category>` con la
+    #:   comuna. Se declara feed Y portada: la segunda es el respaldo si el feed
+    #:   cae o llega vacío.
+    #: * **Pura Noticia** redirige `www.puranoticia.cl` a `puranoticia.pnt.cl`,
+    #:   que NO es WordPress y **no publica RSS**: el documento no trae
+    #:   `<link rel="alternate">` y `/rss`, `/rss.xml` y `/feed` devuelven cuerpo
+    #:   vacío. Su campo de feed va en blanco a propósito — apuntarlo a un feed
+    #:   inexistente costaría una petición fallida y una advertencia por corrida,
+    #:   para siempre. Se lee su sección regional por HTML.
+    #:
+    #: Ojo con la portada de Pura Noticia: es `/region-valparaiso` y no la raíz.
+    #: La raíz mezcla nacional, internacional y deportes, y ese filtro por
+    #: sección es lo único que acota geográficamente a un medio que no lo es.
+    LOCAL_NEWS_SOURCES: str = (
+        "sitiodelsuceso|Sitio del Suceso|https://www.sitiodelsuceso.cl/feed/|"
+        "https://www.sitiodelsuceso.cl/;"
+        "puranoticia|Pura Noticia||https://puranoticia.pnt.cl/region-valparaiso"
+    )
+    #: Cabeceras de navegador. El `User-Agent` por defecto de httpx
+    #: (`python-httpx/0.28.1`) es lo primero que mira una regla básica de
+    #: Cloudflare o un plugin de seguridad de WordPress, y la respuesta es un 403
+    #: —o un desafío servido con HTTP 200, que es peor porque parece una página—.
+    #:
+    #: No confundir con `NOMINATIM_USER_AGENT`: ese servicio exige lo contrario,
+    #: un agente identificable con contacto real, y rechaza a los anónimos. Dos
+    #: contratos opuestos, dos clientes, dos cabeceras.
+    #:
+    #: Esto NO resuelve un desafío JavaScript de verdad, y no pretende hacerlo:
+    #: si alguno de los portales lo activa, lo correcto es dejar de raspar y
+    #: pedir acceso, no perseguirlo.
+    LOCAL_NEWS_USER_AGENT: str = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    )
+    LOCAL_NEWS_TIMEOUT_SECONDS: float = 30.0
+    #: Cadencia. 15 minutos: un medio redacta y publica, no transmite. Consultar
+    #: cada cinco devolvería tres veces la misma portada y golpearía a un
+    #: servidor ajeno sin ganar nada.
+    LOCAL_NEWS_POLL_INTERVAL_SECONDS: int = 900  # 15 min
+    #: Noticias a mirar por portal y por corrida, de la más nueva a la más vieja.
+    LOCAL_NEWS_MAX_ITEMS_PER_PORTAL: int = Field(default=40, ge=1, le=200)
+    #: Antigüedad máxima para considerar que la nota describe el presente. Cuatro
+    #: horas, más holgado que las tres de Instagram: un medio publica después de
+    #: confirmar, y esa demora editorial es justamente lo que lo hace valer 0.60.
+    LOCAL_NEWS_MAX_AGE_MINUTES: int = Field(default=240, ge=5, le=1440)
+    #: Tope de geocodificaciones por corrida. El más bajo de las tres capas que
+    #: comparten el limitador global de Nominatim (MTT 20, Instagram 15, prensa
+    #: 10): una noticia llega después que el aviso oficial y que el post de la
+    #: cuenta hiperlocal, así que si hay que recortar algo, que sea esto.
+    LOCAL_NEWS_MAX_GEOCODES: int = Field(default=10, ge=1, le=200)
+    #: Confianza de una señal de prensa. 0.60 es el techo de la banda de `MEDIA`
+    #: en `confidence.py` (`max_weight`), aunque `SOURCE_BASE_CONFIDENCE[MEDIA]`
+    #: diga 0.70: el motor recorta a 0.60 igual, y emitir el número que el motor
+    #: va a usar evita archivar en `raw_events` una confianza que nadie respeta.
+    LOCAL_NEWS_CONFIDENCE: float = Field(default=0.60, ge=0.0, le=1.0)
+
     # -- Meteorología: lluvia y riesgo de inundación -------------------------
     #: API de pronóstico de Open-Meteo. Sin credencial y sin registro en su nivel
     #: abierto (10.000 llamadas/día, uso no comercial, atribución CC BY 4.0).
