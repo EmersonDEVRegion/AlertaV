@@ -431,6 +431,88 @@ def test_extraccion_sigue_cortando_en_el_fin_de_frase_real():
     assert resultado["street_1"] == "Ruta 68"
 
 
+@pytest.mark.parametrize(
+    ("aviso", "calle", "referencia"),
+    [
+        (
+            "Un accidente de tránsito se ha registrado en Av. España, a la altura "
+            "del nudo Barón. Dos vehículos menores colisionaron.",
+            "Av. España",
+            "nudo Barón",
+        ),
+        (
+            "Accidente vehicular en Ruta 68, a la altura del kilómetro 32.",
+            "Ruta 68",
+            "kilómetro 32",
+        ),
+        (
+            "Choque en Vía Las Palmas, cerca del túnel, Viña del Mar.",
+            "Vía Las Palmas",
+            "túnel",
+        ),
+    ],
+)
+def test_el_punto_de_referencia_no_contamina_la_calle(aviso, calle, referencia):
+    """El defecto que dejó mudo el accidente de Av. España del 2026-09-02.
+
+    «A la altura de», «frente a», «cerca de» son puntos de referencia, no
+    intersecciones, y así escribe la prensa chilena y las cuentas locales: es la
+    mitad del corpus, no un caso de borde.
+
+    Antes, la frase entera terminaba en `street_1` y producía consultas como
+    «Av. España, a la altura del nudo Barón, Región de Valparaíso», que Nominatim
+    no resuelve. El evento entraba sin coordenadas y —porque
+    `cluster_unassigned_events` filtra por `geom IS NOT NULL`— no llegaba nunca
+    al mapa. Quedaba guardado y mudo en `raw_events`.
+    """
+    resultado = extract_streets_heuristic(aviso)
+
+    assert resultado is not None
+    assert resultado["street_1"] == calle
+    assert resultado["reference"] == referencia
+
+
+def test_la_referencia_no_entra_en_la_consulta_a_nominatim():
+    """Un punto de referencia no es una calle.
+
+    Meterlo en `street_2` haría que `build_query` pidiera la intersección de
+    «Av. España» con «nudo Barón», que no existe y no devuelve nada. Se conserva
+    aparte para poder auditar el Paso A, pero fuera de la consulta.
+    """
+    from app.collectors.nominatim import build_query
+
+    streets = extract_streets_heuristic(
+        "Accidente en Av. España, a la altura del nudo Barón, Valparaíso."
+    )
+    consulta = build_query(streets)
+
+    assert consulta is not None
+    assert "nudo" not in consulta.lower()
+    assert consulta.startswith("Av. España")
+
+
+def test_la_direccion_de_circulacion_no_es_un_lugar():
+    """«Ruta 68, sentido a Santiago» geocodificaría a 100 km del hecho."""
+    resultado = extract_streets_heuristic(
+        "Accidente en Ruta 68, sentido a Santiago, a la altura de Curacaví."
+    )
+
+    assert resultado["street_1"] == "Ruta 68"
+    assert "santiago" not in str(resultado).lower()
+
+
+def test_una_interseccion_de_verdad_sigue_saliendo_como_interseccion():
+    """Sin regresión: el caso mayoritario del MTT no se toca."""
+    resultado = extract_streets_heuristic(
+        "Colisión en Av. Argentina con Pedro Montt, Valparaíso."
+    )
+
+    assert resultado["street_1"] == "Av. Argentina"
+    assert resultado["street_2"] == "Pedro Montt"
+    assert resultado["city"] == "Valparaíso"
+    assert resultado["reference"] is None
+
+
 def test_extraccion_distingue_avisos_que_no_son_siniestros():
     """El MTT publica cortes programados y desvíos: no son accidentes.
 
@@ -439,6 +521,60 @@ def test_extraccion_distingue_avisos_que_no_son_siniestros():
     """
     assert looks_like_accident("Corte programado en Av. Alemania por obras.") is False
     assert looks_like_accident("Accidente vehicular en Av. Alemania.") is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "respuesta_del_modelo",
+    [
+        {},
+        {"street_1": None, "street_2": None, "city": None},
+        {"street_1": "   ", "city": "Valparaíso"},
+    ],
+)
+async def test_una_respuesta_vacia_del_modelo_no_tapa_la_heuristica(
+    monkeypatch, respuesta_del_modelo
+):
+    """El modelo tiene TRES desenlaces, y el código contemplaba dos.
+
+    Resuelve, revienta, o **responde bien y no encuentra calle**. El tercero se
+    colaba por el primero: como el diccionario no era `None`, se devolvía tal
+    cual y la heurística no llegaba a correr. Aguas abajo eso es un evento sin
+    coordenadas, y un evento sin coordenadas no existe para el mapa.
+
+    Es el mismo patrón que `feed_is_broken` en Bomberos: dos categorías donde
+    hacían falta tres, y la tercera entrando por la puerta equivocada.
+    """
+    from app.collectors.traffic import transporteinforma_worker as worker
+
+    async def modelo_vacio(_texto):
+        return respuesta_del_modelo
+
+    monkeypatch.setattr(worker.gemini, "is_configured", lambda: True)
+    monkeypatch.setattr(worker.gemini, "extract_streets", modelo_vacio)
+
+    resultado = await worker.extract_streets_via_llm(
+        "Accidente en Av. Argentina con Pedro Montt, Valparaíso."
+    )
+
+    assert resultado is not None
+    assert resultado["street_1"] == "Av. Argentina", "debió caer a la heurística"
+
+
+@pytest.mark.asyncio
+async def test_una_respuesta_util_del_modelo_gana_a_la_heuristica(monkeypatch):
+    """El respaldo es respaldo: si el modelo resuelve, manda él."""
+    from app.collectors.traffic import transporteinforma_worker as worker
+
+    async def modelo_bueno(_texto):
+        return {"street_1": "Camino Internacional", "street_2": None, "city": "Con Cón"}
+
+    monkeypatch.setattr(worker.gemini, "is_configured", lambda: True)
+    monkeypatch.setattr(worker.gemini, "extract_streets", modelo_bueno)
+
+    resultado = await worker.extract_streets_via_llm("Accidente en algún lugar raro.")
+
+    assert resultado["street_1"] == "Camino Internacional"
 
 
 def test_extraccion_prefiere_none_antes_que_adivinar():
@@ -459,8 +595,18 @@ def test_extraccion_nunca_devuelve_coordenadas():
 
 
 def test_extraccion_respeta_el_contrato_de_claves():
-    """Las tres claves exactas, ni una más: es lo que `build_query` consume."""
-    esperadas = {"street_1", "street_2", "city"}
+    """Las cuatro claves exactas, ni una más.
+
+    Tres las consume `build_query`; `reference` NO —un punto de referencia no es
+    una calle y meterlo en la consulta pide una intersección inexistente— pero
+    viaja igual, a `raw_data._extraction`, porque el día que un punto esté mal
+    es lo que distingue «leímos mal la calle» de «Nominatim la resolvió a otra
+    cuadra».
+
+    Si alguien agrega una clave, que este test falle es lo correcto: los dos
+    caminos de extracción tienen que seguir produciendo la misma forma.
+    """
+    esperadas = {"street_1", "street_2", "city", "reference"}
     assert set(extract_streets_heuristic("Accidente en Ruta 68.")) == esperadas
 
 

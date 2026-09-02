@@ -172,13 +172,40 @@ _INTERSECTION_SPLIT = re.compile(
 
 #: Preposición que introduce el lugar dentro de la oración.
 _PLACE_LEAD = re.compile(
-    r"\b(?:en|sobre|a la altura de|frente a)\s+(?P<place>.+)", re.IGNORECASE
+    r"\b(?:en|sobre|a la altura del?|frente a[l]?|cerca de[l]?)\s+(?P<place>.+)",
+    re.IGNORECASE,
+)
+
+#: Conectores de PUNTO DE REFERENCIA, que no son lo mismo que una intersección.
+#:
+#: «Av. España **con** Pedro Montt» nombra dos calles que se cruzan y Nominatim
+#: resuelve el cruce. «Av. España **a la altura del** nudo Barón» nombra una
+#: calle y un punto de referencia, y son cosas distintas: el nudo Barón no es
+#: una calle y buscar su intersección con Av. España no devuelve nada.
+#:
+#: Sin esta distinción el extractor metía la frase entera en `street_1` y
+#: producía consultas como «Av. España, a la altura del nudo Barón, Región de
+#: Valparaíso», que Nominatim no resuelve. El evento entraba sin coordenadas y
+#: —porque `cluster_unassigned_events` filtra por `geom IS NOT NULL`— nunca
+#: llegaba al mapa. Así se perdió el accidente de Av. España del 2026-09-02, que
+#: quedó guardado y mudo en `raw_events`.
+#:
+#: Es la forma en que escribe la prensa chilena y las cuentas locales, así que
+#: no es un caso de borde: es la mitad del corpus.
+_REFERENCE_SPLIT = re.compile(
+    r",?\s+(?:a la altura del?|frente a[l]?|cerca de[l]?|"
+    r"en el sector del?|sector del?)\s+",
+    re.IGNORECASE,
 )
 
 #: Corta el lugar cuando empieza la parte narrativa del aviso.
+#:
+#: `sentido` entra porque «Ruta 68, sentido a Santiago» es una dirección de
+#: circulación, no un lugar: dejarla dentro ensucia la consulta a Nominatim con
+#: un nombre de ciudad que está a 100 km del hecho.
 _PLACE_STOP = re.compile(
     r"\s*[.;]|\s+(?:transito|tránsito|se recomienda|precaucion|precaución|"
-    r"personal|carabineros|equipos)\b",
+    r"personal|carabineros|equipos|sentido)\b",
     re.IGNORECASE,
 )
 
@@ -325,8 +352,28 @@ async def extract_streets_via_llm(text: str) -> dict[str, Any] | None:
 
     if gemini.is_configured():
         streets = await gemini.extract_streets(payload)
-        if streets is not None:
-            return streets
+        # La condición mira `street_1`, NO `is not None`, y esa diferencia costó
+        # un accidente.
+        #
+        # El modelo tiene tres desenlaces, no dos: resuelve, revienta, o
+        # **responde bien y no encuentra calle** —un `{}` o un `street_1` vacío,
+        # que es una respuesta válida—. El tercero se colaba por el primero: como
+        # el diccionario no era `None`, se devolvía tal cual y la heurística no
+        # llegaba a correr nunca. Aguas abajo, `geocode_text` ve que no hay
+        # `street_1`, devuelve `({}, None)`, y el evento entra sin coordenadas
+        # para no volver a salir: `cluster_unassigned_events` filtra por
+        # `geom IS NOT NULL`.
+        #
+        # Es el mismo patrón del `feed_is_broken` de Bomberos: dos categorías
+        # donde había tres, y la tercera colándose por la que no le corresponde.
+        if streets and str(streets.get("street_1") or "").strip():
+            # Se normaliza la forma, no el contenido. Los dos caminos tienen que
+            # entregar las MISMAS claves o el consumidor acabaría preguntando
+            # cuál corrió, que es justo lo que este adaptador existe para
+            # evitar. `reference` la produce sólo la heurística —el esquema que
+            # se le pide al modelo no la contempla— así que se rellena en nulo
+            # en vez de faltar.
+            return {**streets, "reference": streets.get("reference")}
         logger.debug("Gemini no resolvió el aviso; se intenta con la heurística")
 
     return extract_streets_heuristic(payload)
@@ -372,6 +419,15 @@ def extract_streets_heuristic(text: str) -> dict[str, Any] | None:
     if not street_part:
         return None
 
+    # El punto de referencia se separa ANTES que la intersección: «Av. España, a
+    # la altura del nudo Barón y Pedro Montt» tiene las dos formas, y la
+    # referencia es la que delimita dónde termina la calle principal.
+    reference: str | None = None
+    ref_pieces = [p.strip(" ,.") for p in _REFERENCE_SPLIT.split(street_part, 1)]
+    if len(ref_pieces) > 1:
+        street_part = ref_pieces[0]
+        reference = ref_pieces[1] or None
+
     pieces = [piece.strip(" ,.") for piece in _INTERSECTION_SPLIT.split(street_part, 1)]
     street = pieces[0] or None
     cross = pieces[1] if len(pieces) > 1 and pieces[1] else None
@@ -387,10 +443,25 @@ def extract_streets_heuristic(text: str) -> dict[str, Any] | None:
     if not street_1:
         return None
 
+    if city is None and reference:
+        reference, city = _split_trailing_city(reference)
+
     return {
         "street_1": street_1,
         "street_2": _restore_abbreviations(cross),
         "city": _restore_abbreviations(city),
+        # `reference` va SEPARADA de `street_2` y `build_query` no la usa.
+        #
+        # Un punto de referencia no es una calle, así que meterlo en la consulta
+        # como si lo fuera —«Av. España y nudo Barón»— hace que Nominatim busque
+        # una intersección inexistente y no devuelva nada. Sin él, «Av. España,
+        # Valparaíso» resuelve limpio.
+        #
+        # Se conserva igual porque es lo que la fuente dijo y porque el día que
+        # un punto esté mal, esto es lo que permite distinguir «leímos mal la
+        # calle» de «Nominatim la resolvió a otra cuadra». Va a
+        # `raw_data._extraction`, junto al resto del Paso A.
+        "reference": _restore_abbreviations(reference),
     }
 
 

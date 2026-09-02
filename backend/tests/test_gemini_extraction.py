@@ -365,7 +365,12 @@ def test_ambos_caminos_producen_el_mismo_contrato(monkeypatch):
     monkeypatch.setattr(gemini.settings, "GEMINI_API_KEY", "")
     con_reglas = asyncio.run(extract_streets_via_llm(aviso))
 
-    assert set(con_modelo) == set(con_reglas) == {"street_1", "street_2", "city"}
+    # `reference` la produce sólo la heurística —el esquema que se le pide al
+    # modelo no la contempla— pero el camino del modelo la rellena en nulo para
+    # que las dos formas sean idénticas. El consumidor no debe poder deducir
+    # cuál corrió mirando las claves.
+    esperadas = {"street_1", "street_2", "city", "reference"}
+    assert set(con_modelo) == set(con_reglas) == esperadas
 
 
 # =============================================================================
