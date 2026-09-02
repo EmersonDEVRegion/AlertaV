@@ -143,6 +143,44 @@ class EventRepository:
             collapsed=collapsed,
         )
 
+    async def list_ungeocoded(
+        self, *, since: datetime, limit: int, types: Sequence[EventType] | None = None
+    ) -> list[RawEvent]:
+        """Eventos con texto y SIN coordenadas: los que existen y no se ven.
+
+        Es una población que el sistema produce sola y en silencio. Cuando la
+        extracción de calles falla —el modelo no reconoce la vía, el texto usa
+        un giro que el extractor no conoce— el evento se guarda igual, porque
+        perder el hecho por no saber dónde sería peor. Pero
+        `cluster_unassigned_events` filtra por `geom IS NOT NULL`, así que ese
+        evento nunca llega a ser un incidente: queda consultable en `/events` y
+        ausente del mapa.
+
+        Mientras el extractor no cambie, esa fila está condenada: `unseen`
+        descarta el post por `external_id` en cada corrida siguiente, y con
+        razón —reprocesarlo costaría una llamada al modelo por post y por
+        corrida—. El precio de esa economía es que **arreglar el extractor no
+        rescata lo ya guardado**, y de ahí este método.
+
+        Se exige `external_id` porque el rescate reingresa por el upsert normal,
+        que empareja por `(source, external_id)`. Sin él no habría cómo
+        actualizar la fila y se insertaría una segunda.
+        """
+        stmt = (
+            select(RawEvent)
+            .where(
+                RawEvent.geom.is_(None),
+                RawEvent.text.is_not(None),
+                RawEvent.external_id.is_not(None),
+                RawEvent.timestamp >= since,
+            )
+            .order_by(RawEvent.timestamp.desc())
+            .limit(limit)
+        )
+        if types:
+            stmt = stmt.where(RawEvent.type.in_(list(types)))
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def ids_by_external_id(
         self, source: EventSource, external_ids: Sequence[str]
     ) -> dict[str, int]:

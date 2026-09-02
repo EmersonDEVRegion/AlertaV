@@ -16,6 +16,7 @@ from sqlalchemy import desc, select
 from app.api.deps import IngestServiceDep, SessionDep
 from app.collectors.registry import available_collectors, get_collector
 from app.models.event import CollectorRun
+from app.services.backfill import backfill_geocoding
 from app.services.collector_health import build_health
 
 router = APIRouter(prefix="/collectors", tags=["collectors"])
@@ -67,6 +68,44 @@ class HealthRead(BaseModel):
 @router.get("", summary="Collectors disponibles")
 async def list_collectors() -> dict[str, list[str]]:
     return {"collectors": available_collectors()}
+
+
+class BackfillRead(BaseModel):
+    examined: int
+    geocoded: int
+    updated: int
+    unresolved: int
+    errors: list[str]
+
+
+@router.post(
+    "/backfill-geocoding",
+    response_model=BackfillRead,
+    summary="Reintenta geocodificar los eventos que quedaron sin coordenadas",
+    description=(
+        "Los collectors sólo miran hacia adelante: cuando la extracción de "
+        "calles falla, el evento se guarda sin coordenadas y "
+        "`cluster_unassigned_events` lo ignora para siempre, porque el filtro "
+        "delta lo descarta en cada corrida siguiente. Arreglar el extractor no "
+        "rescata lo ya guardado; esto sí.\n\n"
+        "Reingresa por el upsert normal, así que actualiza filas existentes en "
+        "vez de crear otras. `limit` es un presupuesto real: Nominatim admite "
+        "1 req/s, de modo que 25 eventos son 25 segundos."
+    ),
+)
+async def backfill_geocoding_endpoint(
+    session: SessionDep,
+    hours: Annotated[int, Query(ge=1, le=168)] = 48,
+    limit: Annotated[int, Query(ge=1, le=100)] = 25,
+) -> BackfillRead:
+    resultado = await backfill_geocoding(session, hours=hours, limit=limit)
+    return BackfillRead(
+        examined=resultado.examined,
+        geocoded=resultado.geocoded,
+        updated=resultado.updated,
+        unresolved=resultado.unresolved,
+        errors=resultado.errors[:20],
+    )
 
 
 @router.get(
