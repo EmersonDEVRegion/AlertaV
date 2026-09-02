@@ -17,13 +17,16 @@ import pytest
 
 from app.collectors import vocabulary
 from app.collectors.traffic import gemini
+from app.collectors.traffic.bomberos_10_4_worker import Dispatch, dispatches_to_events
 from app.collectors.vocabulary import (
     CLAVE_MEANINGS,
+    CODE_TYPES,
     clave_label,
     clave_meaning,
     find_claves,
     resolve_clave,
 )
+from app.models.enums import EventType, family_of_event
 
 FUENTE = "@CGI_CBV"
 
@@ -470,3 +473,97 @@ def test_el_default_de_la_configuracion_es_parseable_entero():
 
     for clave in settings.BOMBEROS_ACCIDENT_KEYS:
         assert vocabulary.parse_key(clave) is not None, clave
+
+
+# =============================================================================
+#  La clave decide el tipo de la señal
+# =============================================================================
+#
+# Acá vivía un `EventType.ACCIDENT` fijo, correcto mientras
+# `BOMBEROS_ACCIDENT_KEYS` sólo aceptaba `10-4`. Cuando la ingesta se abrió a la
+# familia 10 entera, el literal se quedó y pasó a mentir: un incendio
+# estructural entraba al sistema declarándose choque.
+#
+# El daño no era cosmético. El motor particiona por familia ANTES de agrupar, así
+# que ese incendio quedaba en `traffic` y no podía corroborar ninguna señal de
+# fuego del mismo lugar y minuto —ni FIRMS, ni CONAF, ni un reporte ciudadano—.
+# Y en la interfaz sumaba a "Accidentes viales" y nunca a "Incendios", que es
+# donde alguien lo iba a buscar.
+
+
+@pytest.mark.parametrize(
+    ("despacho", "esperado"),
+    [
+        ("81 * DIEGO COOK / GUACOLDA * 10-4", EventType.ACCIDENT),
+        # `10-4-1` es un subtipo del mismo despacho: comparación por prefijo.
+        ("21 * RUTA 68 KM 42 * 10-4-1", EventType.ACCIDENT),
+        ("B2 * ALDUNATE 1200 * 10-1", EventType.STRUCTURAL_FIRE),
+        ("11 * SUBIDA CARVALLO * 10-0", EventType.STRUCTURAL_FIRE),
+        ("M5 * CAMINO LA POLVORA * 10-2", EventType.WILDFIRE),
+        ("31 * QUEBRADA VERDE * 10-3", EventType.RESCUE),
+    ],
+)
+def test_cada_clave_produce_su_tipo(despacho, esperado):
+    assert vocabulary.dispatch_event_type(despacho) is esperado
+
+
+def test_una_clave_de_apoyo_no_es_un_accidente():
+    """"CLAVE 12" es un llamado a servicio especial: puede ser cualquier cosa.
+
+    `OTHER` cae en la familia `other` —"Otras emergencias" en el mapa— que es
+    exactamente lo que el sistema sabe. `ACCIDENT` afirmaría que hubo un choque.
+    """
+    assert vocabulary.dispatch_event_type(DESPACHO_REAL) is EventType.OTHER
+
+
+def test_la_clave_de_familia_10_gana_a_la_peticion_de_recursos():
+    """Un `3-2` pide ambulancia: describe un recurso, no el siniestro.
+
+    La central abre el despacho con lo que ocurrió y después pide apoyo, así que
+    la primera clave manda. Es el mismo criterio que `resolve_clave`.
+    """
+    assert (
+        vocabulary.dispatch_event_type("81 * AV ARGENTINA * 10-1, se solicita 3-2")
+        is EventType.STRUCTURAL_FIRE
+    )
+
+
+def test_un_despacho_sin_clave_no_afirma_nada():
+    assert vocabulary.dispatch_event_type("Gracias a la comunidad") is EventType.OTHER
+    assert vocabulary.DISPATCH_DEFAULT_TYPE is EventType.OTHER
+
+
+def test_10_1_esta_en_las_dos_tablas():
+    """El desfase que motivó el arreglo, fijado para que no vuelva.
+
+    `10-1` estaba en `CLAVE_MEANINGS` —o sea, el resumen la nombraba— pero no en
+    `CODE_TYPES`, así que nombraba sin clasificar. Y `BOMBEROS_ACCIDENT_KEYS` la
+    incluye: el despacho entraba y caía al tipo por defecto.
+    """
+    for code in CLAVE_MEANINGS:
+        if code[:1] != (10,) or code in {(10, 12)}:
+            continue
+        assert code in CODE_TYPES, (
+            f"{clave_label(code)} tiene significado pero no tipo: se nombra en el "
+            f"resumen y no se clasifica en el mapa"
+        )
+
+
+def test_el_evento_de_un_incendio_estructural_cae_en_la_familia_fire():
+    """La propiedad que de verdad importa, medida donde importa.
+
+    Es la que decidía si un incendio de Bomberos podía corroborar una detección
+    de FIRMS del mismo cerro. Con el literal viejo, no podía.
+    """
+    despacho = Dispatch(
+        key="10-1",
+        address="ALDUNATE 1200",
+        occurred_at=None,
+        commune=None,
+        raw_text="B2 * ALDUNATE 1200 * 10-1",
+    )
+    eventos, _ = dispatches_to_events([despacho], collector="test")
+
+    assert eventos[0].type is EventType.STRUCTURAL_FIRE
+    assert family_of_event(eventos[0].type) == "fire"
+    assert family_of_event(EventType.ACCIDENT) == "traffic", "eran familias distintas"

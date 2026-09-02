@@ -124,3 +124,42 @@ describe('conteo de rutas cortadas', () => {
     expect(countCutRoutes(parsed)).toBe(0)
   })
 })
+
+/* ---------------------------------------------------------------------------
+ * La URL: el bug que dejaba la capa entera en "No se pudo cargar"
+ * ------------------------------------------------------------------------ */
+
+describe('la ruta va relativa a la base de la API', () => {
+  /**
+   * `env.apiBaseUrl` YA termina en `/api/v1` —es su valor por defecto y es lo
+   * que se configura en Vercel—, así que todos los clientes escriben la ruta
+   * relativa: `/events/weather/geojson`, `/incidents`, `/events/seismic`.
+   *
+   * Este módulo la escribía absoluta. El resultado era
+   * `/api/v1/api/v1/events/road-closures/geojson`: un 404 limpio, que
+   * `useRoadClosures` traduce a `status: 'error'` y el panel muestra como «No
+   * se pudo cargar». Nada en el backend estaba mal, y por eso costó verlo.
+   *
+   * El test mira la URL que llega a `fetch`, no la constante: es lo único que
+   * distingue el bug de su arreglo.
+   */
+  it('no repite el prefijo /api/v1', async () => {
+    const pedidas: string[] = []
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      pedidas.push(String(input))
+      return new Response(JSON.stringify({ type: 'FeatureCollection', features: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+
+    const { fetchRoadClosuresGeojson } = await import('./roadClosures')
+    await fetchRoadClosuresGeojson()
+
+    expect(pedidas).toHaveLength(1)
+    expect(pedidas[0]).not.toContain('/api/v1/api/v1')
+    expect(pedidas[0]).toContain('/events/road-closures/geojson')
+
+    vi.unstubAllGlobals()
+  })
+})

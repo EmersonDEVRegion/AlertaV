@@ -43,18 +43,35 @@ Lo que NO cambió al cambiar de puerta, y es lo que importa:
   distinción dejaba pasar la peor de las tres: un feed **válido y vacío**. Ver
   `EstadoFeed`. El equivalente en el webhook es `run_looks_stale` del cliente de
   Apify: un dataset servido por una corrida de anteayer.
-* **No se geocodifica.** Ver el apartado siguiente.
+* **La clave decide el tipo.** Ver el apartado siguiente.
 
-Por qué este worker no entrega coordenadas
--------------------------------------------
-Geocodificar cada despacho metería una llamada de red por aviso dentro del rate
-limit de 1 req/s de Nominatim, y una 10-4 vale por su certeza sobre el hecho, no
-por la precisión del punto.
+Qué tipo de señal produce un despacho
+--------------------------------------
+El que diga su clave, resuelto por `vocabulary.dispatch_event_type`:
+`10-0`/`10-1` estructural, `10-2` pastizales, `10-3` rescate, `10-4` accidente,
+y `OTHER` para todo lo demás.
 
-Consecuencia, escrita para que nadie la descubra depurando: una señal sin
-`lat`/`lon` **no entra al Paso A** —el motor sólo agrupa lo que tiene geometría—
-pero sí queda registrada, consultable y contabilizada. El emparejamiento por
-texto con los accidentes de Waze, si se necesita, corresponde al Paso B.
+Acá hubo durante un tiempo un `EventType.ACCIDENT` **fijo**, y era correcto
+mientras `BOMBEROS_ACCIDENT_KEYS` sólo aceptaba `10-4`. Cuando la ingesta se
+abrió a la familia 10 entera, ese literal se quedó y pasó a mentir: un incendio
+estructural entraba al sistema declarándose choque. El daño no era cosmético —el
+motor particiona por familia antes de agrupar, así que ese incendio quedaba en
+`traffic` y no podía corroborar ninguna señal de fuego del mismo lugar y minuto.
+
+Geocodificación: presupuestada, y por qué existe
+-------------------------------------------------
+`geocode_dispatches` resuelve a punto las calles que aisló el decodificador,
+con un tope por entrega (`BOMBEROS_MAX_GEOCODES`) y sin poder tumbar el lote.
+
+Este paso no existía, con un argumento razonable: una 10-4 vale por su certeza
+sobre el hecho, no por la precisión del punto, y Nominatim admite 1 req/s. Lo
+que faltaba medir era la consecuencia: una señal sin `lat`/`lon` **no entra al
+Paso A** —el motor sólo agrupa lo que tiene geometría— y el Paso B únicamente
+adosa alertas de SENAPRED a incidentes ya abiertos. O sea que la fuente de
+confianza 1.00 del catálogo no producía **ningún** incidente: quedaba
+consultable en `/events` y ausente del mapa.
+
+Lo que no se resuelve entra igual, sin coordenadas, como antes.
 
 Idempotencia
 ------------
@@ -78,8 +95,10 @@ from typing import Any
 import feedparser
 import httpx
 
+from app.collectors import vocabulary
 from app.collectors.base import BaseCollector
 from app.collectors.geoservices import parse_timestamp, request_text
+from app.collectors.nominatim import GeocodeResult, build_client, geocode
 from app.collectors.traffic import gemini
 from app.collectors.vocabulary import find_codes, matches_key, normalise_code
 from app.core.config import settings
@@ -135,6 +154,11 @@ class Dispatch:
     #: `build_text`. None significa "no se decodificó", y entonces el texto del
     #: evento cae a la forma de siempre.
     decoded: dict[str, Any] | None = None
+    #: Punto resuelto por Nominatim desde las calles que aisló el decodificador.
+    #: Lo rellena `geocode_dispatches`, que es la única parte con red de este
+    #: camino. None es un resultado frecuente y legítimo: la central nombra
+    #: esquinas que OpenStreetMap no conoce.
+    point: GeocodeResult | None = None
 
 
 def strip_html(fragment: str) -> str:
@@ -422,6 +446,116 @@ async def decode_dispatches(
     return (decodificados, por_reglas)
 
 
+async def geocode_dispatches(
+    dispatches: Sequence[Dispatch], *, max_geocodes: int
+) -> tuple[list[Dispatch], int]:
+    """Resuelve a punto las calles que aisló el decodificador.
+
+    Devuelve `(despachos, resueltos)`. **Nunca lanza**: un fallo de Nominatim
+    deja el despacho sin coordenadas, que es el estado en el que estaban todos
+    antes de que este paso existiera.
+
+    # Por qué ahora sí se geocodifica
+
+    El módulo declaraba que no hacía falta, con dos argumentos que eran ciertos
+    cuando se escribieron: una 10-4 vale por su certeza sobre el hecho y no por
+    la precisión del punto, y geocodificar metía una llamada por aviso dentro
+    del límite de 1 req/s de Nominatim.
+
+    Lo que cambió es la consecuencia, que estaba escrita en el propio docstring
+    y resultó ser más cara de lo que parecía: **una señal sin `lat`/`lon` no
+    entra al Paso A** —`cluster_unassigned_events` filtra por `geom IS NOT
+    NULL`— y el Paso B sólo adosa alertas de SENAPRED a incidentes que ya
+    existen. O sea que la fuente de confianza 1.00 del catálogo, la única que
+    lleva un incidente a certeza por sí sola, **no podía producir ni un solo
+    incidente**: quedaba consultable en `/events` y ausente del mapa. Los
+    contadores de Incendios, Accidentes y Otras emergencias no la veían nunca.
+
+    Los dos argumentos originales siguen valiendo y por eso el paso es
+    presupuestado igual que en el MTT (`max_geocodes`) y falla hacia el silencio:
+    lo que no se resuelve entra sin punto, exactamente como antes.
+
+    # Por qué no cuesta una llamada por despacho
+
+    Porque el decodificador ya corrió. `decode_dispatches` produce
+    `{street_1, street_2, city}` con el mismo vocabulario que consume
+    `nominatim.build_query`, así que acá no hay extracción: sólo la consulta. Y
+    los despachos sin vía reconocible —los que `build_query` resuelve a None— ni
+    siquiera la gastan.
+    """
+    if not dispatches or max_geocodes <= 0:
+        return (list(dispatches), 0)
+
+    salida: list[Dispatch] = []
+    resueltos = 0
+    gastados = 0
+
+    async with build_client() as client:
+        for dispatch in dispatches:
+            calles = dispatch.decoded or {}
+            # Sin vía principal no hay nada que buscar. Preguntar sólo por la
+            # comuna devolvería el centroide comunal, que como ubicación de una
+            # emergencia es peor que no tener ninguna: parece un dato y no lo es.
+            if not calles.get("street_1") or gastados >= max_geocodes:
+                salida.append(dispatch)
+                continue
+
+            punto: GeocodeResult | None = None
+            try:
+                punto = await geocode(client, dict(calles))
+            except Exception as exc:
+                # Se atrapa `Exception` y no `CollectorError` a propósito: una
+                # esquina que hace reventar a Nominatim no puede costarle el
+                # punto a los demás despachos del lote, y menos aún el lote.
+                logger.warning(
+                    "Nominatim falló para un despacho; entra sin coordenadas",
+                    extra={"error": f"{type(exc).__name__}: {exc}"},
+                )
+            # El presupuesto avanza igual: un servicio que falla consumió su
+            # segundo de rate limit lo mismo que uno que responde.
+            gastados += 1
+
+            if punto is not None:
+                resueltos += 1
+            salida.append(replace(dispatch, point=punto))
+
+    logger.info(
+        "despachos geocodificados",
+        extra={"resueltos": resueltos, "intentos": gastados, "tope": max_geocodes},
+    )
+    return (salida, resueltos)
+
+
+def dispatch_type(dispatch: Dispatch) -> EventType:
+    """Naturaleza de la señal de UN despacho, según su clave.
+
+    Se prueba primero la clave que aisló el decodificador (`decoded["clave"]`) y
+    después el aviso completo. El orden importa: el campo aislado es la clave
+    que motivó el despacho, mientras que el texto entero puede traer además una
+    petición de recursos (`3-2`, ambulancia) que no describe el siniestro.
+
+    Ver `vocabulary.dispatch_event_type` para el porqué de todo esto — en corto,
+    acá había un `EventType.ACCIDENT` fijo desde que la fuente sólo entregaba
+    `10-4`, y desde que la ingesta se abrió a la familia 10 entera ese literal
+    estaba metiendo incendios estructurales en la familia `traffic`.
+    """
+    clave = (dispatch.decoded or {}).get("clave")
+    if isinstance(clave, str) and clave.strip():
+        tipo = vocabulary.dispatch_event_type(clave)
+        if tipo is not vocabulary.DISPATCH_DEFAULT_TYPE:
+            return tipo
+
+    # `dispatch.key` es la clave configurada que hizo pasar el filtro de
+    # ingesta: es el respaldo natural cuando el decodificador no aisló ninguna.
+    for texto in (dispatch.key, dispatch.raw_text):
+        if texto:
+            tipo = vocabulary.dispatch_event_type(texto)
+            if tipo is not vocabulary.DISPATCH_DEFAULT_TYPE:
+                return tipo
+
+    return vocabulary.DISPATCH_DEFAULT_TYPE
+
+
 def dispatches_to_events(
     dispatches: Sequence[Dispatch], *, collector: str
 ) -> tuple[list[EventCreate], int]:
@@ -431,6 +565,11 @@ def dispatches_to_events(
     fila diga por qué puerta entró —webhook o feed— sin cambiar nada más del
     evento: el `external_id`, el texto y la confianza son idénticos por los dos
     caminos, que es lo que hace que la idempotencia funcione entre ellos.
+
+    Las coordenadas, si las hay, las puso `geocode_dispatches` antes. Un
+    despacho sin punto entra igual —perder una 10-4 por una esquina que
+    OpenStreetMap no conoce sería el peor intercambio posible—, sabiendo que no
+    entra al Paso A del motor.
     """
     now = datetime.now(UTC)
     events: list[EventCreate] = []
@@ -445,12 +584,16 @@ def dispatches_to_events(
         if timestamp > now:
             timestamp = now
 
+        punto = dispatch.point
+
         events.append(
             EventCreate(
                 timestamp=timestamp,
                 source=EventSource.BOMBEROS,
-                type=EventType.ACCIDENT,
-                # Sin lat/lon: ver el docstring del módulo.
+                # Derivado de la clave, no fijo. Ver `dispatch_type`.
+                type=dispatch_type(dispatch),
+                lat=punto.lat if punto else None,
+                lon=punto.lon if punto else None,
                 text=build_text(dispatch)[:10_000],
                 external_id=build_external_id(dispatch),
                 confidence=BOMBEROS_CONFIDENCE,
@@ -484,6 +627,12 @@ def dispatches_to_events(
                         "city": (dispatch.decoded or {}).get("city"),
                         "resumen": (dispatch.decoded or {}).get("resumen"),
                     },
+                    # Separado de `_extraction`, igual que en el MTT: qué leyó
+                    # el decodificador y qué resolvió el geocodificador son dos
+                    # pasos distintos, y si mañana un punto está mal esto dice
+                    # cuál de los dos falló. `importance` baja suele significar
+                    # que Nominatim resolvió la comuna entera y no la esquina.
+                    "_geocoding": punto.as_dict() if punto else None,
                 },
             )
         )
@@ -655,11 +804,13 @@ __all__ = [
     "build_external_id",
     "build_text",
     "decode_dispatches",
+    "dispatch_type",
     "dispatches_to_events",
     "entry_text",
     "entry_timestamp",
     "feed_is_broken",
     "find_codes",
+    "geocode_dispatches",
     "matches_key",
     "normalise_code",
     "parse_dispatches",

@@ -366,3 +366,116 @@ def test_ambos_caminos_producen_el_mismo_contrato(monkeypatch):
     con_reglas = asyncio.run(extract_streets_via_llm(aviso))
 
     assert set(con_modelo) == set(con_reglas) == {"street_1", "street_2", "city"}
+
+
+# =============================================================================
+#  Partes que no son texto: el warning que ensuciaba cada corrida
+# =============================================================================
+#
+# Los modelos con razonamiento devuelven la respuesta repartida en varias
+# `Part`: una con el JSON y otras con el rastro del pensamiento
+# (`thought_signature`, y a veces un resumen marcado con `thought=True`).
+# `response.text` está definido para el caso de una sola parte de texto, así que
+# ante esa mezcla emitía en CADA llamada:
+#
+#     Warning: there are non-text parts in the response: ['thought_signature']
+#
+# El aviso era correcto y el dato también —nunca se perdió un despacho por
+# esto—, pero un warning que se repite en cada corrida es lo que entrena a un
+# equipo a ignorar el log. Estos tests fijan que `response_text` extrae el JSON
+# sin tocar el accesor del SDK, y que el resumen del razonamiento NO se cuela:
+# concatenado al JSON lo volvería imparseable, que sería cambiar ruido por una
+# extracción perdida.
+
+
+class ParteFalsa:
+    """Una `Part` del SDK. `text` es None en las partes que no son texto."""
+
+    def __init__(self, text=None, *, thought: bool = False, signature=None) -> None:
+        self.text = text
+        self.thought = thought
+        self.thought_signature = signature
+
+
+class RespuestaConPartes:
+    """Respuesta con `candidates`, como la que devuelve un modelo que razona.
+
+    `text` lanza a propósito: es la garantía de que `response_text` **no** usa
+    el accesor del SDK cuando hay partes utilizables. Si alguien lo reintrodujera
+    aguas abajo, estos tests fallan en vez de volver el warning en silencio.
+    """
+
+    def __init__(self, partes) -> None:
+        contenido = type("Content", (), {"parts": partes})()
+        self.candidates = [type("Candidate", (), {"content": contenido})()]
+        self.prompt_feedback = ""
+
+    @property
+    def text(self):
+        raise AssertionError("response_text no debe caer en el accesor del SDK")
+
+
+JSON_VIA = '{"street_1": "Av. España", "street_2": null, "city": "Valparaíso"}'
+
+
+def test_ignora_la_firma_de_pensamiento_y_devuelve_el_json():
+    respuesta = RespuestaConPartes(
+        [
+            ParteFalsa(signature=b"\x0a\x1b firma binaria"),
+            ParteFalsa(JSON_VIA),
+        ]
+    )
+    assert gemini.response_text(respuesta) == JSON_VIA
+
+
+def test_descarta_el_resumen_del_razonamiento():
+    """`thought=True` es texto de verdad, y por eso hay que excluirlo aparte.
+
+    Si se colara, `json.loads` recibiría prosa antes del objeto y la extracción
+    se perdería entera: el ruido del log se habría cambiado por un despacho sin
+    ubicación.
+    """
+    respuesta = RespuestaConPartes(
+        [
+            ParteFalsa("El usuario pide las calles del aviso. Voy a…", thought=True),
+            ParteFalsa(JSON_VIA),
+        ]
+    )
+    assert gemini.response_text(respuesta) == JSON_VIA
+    assert gemini.parse_response(gemini.response_text(respuesta))["street_1"] == "Av. España"
+
+
+def test_concatena_varias_partes_de_texto():
+    """El JSON puede llegar partido en dos. Unirlas es el trabajo del accesor."""
+    respuesta = RespuestaConPartes(
+        [ParteFalsa('{"street_1": "Av. Argentina", '), ParteFalsa('"street_2": null, "city": null}')]
+    )
+    assert gemini.parse_response(gemini.response_text(respuesta))["street_1"] == "Av. Argentina"
+
+
+def test_sin_candidatos_cae_al_accesor_del_sdk():
+    """Bloqueo de seguridad o una forma que este código no previó."""
+    assert gemini.response_text(RespuestaFalsa("hola")) == "hola"
+    assert gemini.response_text(RespuestaFalsa(None)) == ""
+
+
+def test_una_respuesta_solo_con_partes_no_textuales_se_trata_como_vacia():
+    class SinTexto(RespuestaConPartes):
+        @property
+        def text(self):
+            return None
+
+    vacia = SinTexto([ParteFalsa(signature=b"firma")])
+    assert gemini.response_text(vacia) == ""
+
+
+def test_el_extractor_completo_atraviesa_las_partes(monkeypatch):
+    """De punta a punta: el modelo razona y la extracción llega igual."""
+    montar_gemini(
+        monkeypatch,
+        respuesta=RespuestaConPartes(
+            [ParteFalsa(signature=b"firma"), ParteFalsa(JSON_VIA)]
+        ),
+    )
+    resultado = asyncio.run(gemini.extract_streets("Choque en Av. España, Valparaíso"))
+    assert resultado == {"street_1": "Av. España", "street_2": None, "city": "Valparaíso"}

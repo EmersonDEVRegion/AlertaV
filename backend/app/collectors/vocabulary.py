@@ -533,6 +533,13 @@ OPERATIONAL_TERMS: frozenset[str] = frozenset(
 #: como `10-0-1`, hay que agregar `(10, 1)` acá.
 CODE_TYPES: dict[tuple[int, ...], EventType] = {
     (10, 0): EventType.STRUCTURAL_FIRE,  # incendio estructural
+    # `10-1` es la forma en que el Cuerpo de Valparaíso despacha el estructural,
+    # y estaba SÓLO en `CLAVE_MEANINGS`: nombraba sin clasificar. El desfase no
+    # era teórico — `BOMBEROS_ACCIDENT_KEYS` la incluye desde que la ingesta se
+    # abrió a la familia 10 entera, así que el despacho entraba y caía al tipo
+    # por defecto. Un incendio estructural de la fuente de confianza 1.00
+    # quedaba fuera de la familia `fire`, que es donde el mapa lo busca.
+    (10, 1): EventType.STRUCTURAL_FIRE,  # incendio estructural
     (10, 2): EventType.WILDFIRE,  # pastizales
     (10, 3): EventType.RESCUE,  # rescate de personas
     (10, 4): EventType.ACCIDENT,  # rescate vehicular
@@ -686,6 +693,58 @@ def clave_meaning(code: tuple[int, ...]) -> str | None:
         if meaning is not None:
             return meaning
     return None
+
+
+#: Tipo con el que entra un despacho cuya clave no clasifica nada.
+#:
+#: `OTHER` y no `ACCIDENT`, que es lo que hacía el worker antes. La diferencia
+#: importa porque `EVENT_TO_INCIDENT_TYPE` manda `ACCIDENT` a la familia
+#: `traffic`: una "CLAVE 12" —llamado a servicio especial, que puede ser
+#: cualquier cosa— entraba afirmando que hubo un choque. `OTHER` cae en la
+#: familia `other`, que en el mapa es "Otras emergencias" y es exactamente lo
+#: que el sistema sabe de ese despacho.
+DISPATCH_DEFAULT_TYPE = EventType.OTHER
+
+
+def dispatch_event_type(texto: str) -> EventType:
+    """Texto de un despacho → naturaleza de la señal, según su clave.
+
+    Es el reemplazo del `EventType.ACCIDENT` fijo que tenía
+    `bomberos_10_4_worker.dispatches_to_events`. Ese literal era correcto cuando
+    la ingesta sólo aceptaba `10-4`; hoy `BOMBEROS_ACCIDENT_KEYS` trae la
+    familia 10 entera, y con el literal en su sitio un incendio estructural de
+    Bomberos —la fuente de confianza 1.00 del catálogo— entraba al sistema
+    afirmando que era un choque. Consecuencias, en orden de gravedad:
+
+      * El motor particiona por familia antes de agrupar, así que ese incendio
+        quedaba en `traffic` y **no podía corroborar** ninguna señal de fuego
+        del mismo lugar y minuto: ni una detección de FIRMS, ni un reporte
+        ciudadano, ni un aviso de CONAF.
+      * En la interfaz sumaba al contador de "Accidentes viales" y nunca al de
+        "Incendios", que es donde alguien lo iba a buscar.
+
+    Se decide por la PRIMERA clave del aviso, igual que `resolve_clave`, y por
+    el mismo motivo: la central abre el despacho con lo que ocurrió y después
+    pide recursos, así que un `3-2` (ambulancia) escrito al final no puede
+    ganarle a la clave de familia 10 que lo motivó.
+
+    `SUPPORT_CODES` se consulta después de `CODE_TYPES` y no antes: `10-12` es
+    un apoyo a una emergencia en curso, y si el aviso trae también la clave de
+    lo que está pasando, esa es la que describe el hecho.
+
+    >>> dispatch_event_type("81 * DIEGO COOK / GUACOLDA * 10-4")
+    <EventType.ACCIDENT: 'accident'>
+    >>> dispatch_event_type("10-1 * ALDUNATE 1200")
+    <EventType.STRUCTURAL_FIRE: 'structural_fire'>
+    >>> dispatch_event_type("81 * DIEGO COOK / GUACOLDA * CLAVE 12")
+    <EventType.OTHER: 'other'>
+    """
+    for code in find_claves(texto):
+        for tabla in (CODE_TYPES, SUPPORT_CODES):
+            for wanted, event_type in tabla.items():
+                if code[: len(wanted)] == wanted:
+                    return event_type
+    return DISPATCH_DEFAULT_TYPE
 
 
 def resolve_clave(texto: str) -> tuple[str, str] | None:
@@ -1317,6 +1376,7 @@ __all__ = [
     "CLAVE_MEANINGS",
     "CODE_TYPES",
     "CRITICAL_TERMS",
+    "DISPATCH_DEFAULT_TYPE",
     "FIRE_TERMS",
     "FLOOD_TERMS",
     "HEADLINE_VERBS",
@@ -1333,6 +1393,7 @@ __all__ = [
     "classify_event_type",
     "clave_label",
     "clave_meaning",
+    "dispatch_event_type",
     "es_accidente_vial",
     "es_emergencia",
     "es_operacion_vial",

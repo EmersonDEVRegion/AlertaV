@@ -56,6 +56,7 @@ from app.collectors.traffic.bomberos_10_4_worker import (
     Dispatch,
     decode_dispatches,
     dispatches_to_events,
+    geocode_dispatches,
     strip_html,
 )
 from app.collectors.vocabulary import matches_key
@@ -295,7 +296,15 @@ async def _process(dataset_id: str, traza: str) -> None:
                 source_handle=settings.BOMBEROS_SOURCE_HANDLE,
                 max_llm_calls=settings.BOMBEROS_MAX_LLM_CALLS,
             )
-            events, undated = dispatches_to_events(decodificados, collector=COLLECTOR_NAME)
+            # Sin este paso los despachos entran sin `lat`/`lon` y el motor los
+            # ignora: `cluster_unassigned_events` filtra por `geom IS NOT NULL`
+            # y el Paso B sólo adosa alertas de SENAPRED a incidentes que ya
+            # existen. La fuente de confianza 1.00 quedaba consultable en
+            # `/events` y ausente del mapa. Ver `geocode_dispatches`.
+            ubicados, geocodificados = await geocode_dispatches(
+                decodificados, max_geocodes=settings.BOMBEROS_MAX_GEOCODES
+            )
+            events, undated = dispatches_to_events(ubicados, collector=COLLECTOR_NAME)
 
             resultado = await service.ingest_batch(events) if events else None
             inserted = resultado.inserted if resultado else 0
@@ -329,6 +338,11 @@ async def _process(dataset_id: str, traza: str) -> None:
                     "descartados_por_edad": descartados_por_edad,
                     "sin_fecha": undated,
                     "por_reglas": por_reglas,
+                    # Los que quedan sin punto no entran al Paso A del motor:
+                    # es la métrica que dice cuántos despachos se registran
+                    # pero no llegan al mapa.
+                    "geocodificados": geocodificados,
+                    "sin_punto": len(ubicados) - geocodificados,
                 },
             )
 

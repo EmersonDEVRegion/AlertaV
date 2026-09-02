@@ -390,6 +390,12 @@ class ServicioFalso:
 def servicio(monkeypatch):
     monkeypatch.setattr(svc, "AsyncSessionLocal", SesionFalsa)
     monkeypatch.setattr(svc, "IngestService", ServicioFalso)
+    # La geocodificación queda APAGADA por defecto en este archivo. No es
+    # desinterés: `geocode_dispatches` habla con Nominatim, que respeta 1 req/s,
+    # y dejarla encendida en cada test metería una espera real por despacho para
+    # verificar cosas que no tienen que ver con el punto. Los tests que sí la
+    # ejercitan la encienden y montan la respuesta (ver el bloque del final).
+    monkeypatch.setattr(settings, "BOMBEROS_MAX_GEOCODES", 0)
     return ServicioFalso
 
 
@@ -553,3 +559,200 @@ def test_el_mismo_despacho_produce_el_mismo_external_id_por_las_dos_puertas(serv
     )
 
     assert por_webhook == por_feed
+
+
+# =============================================================================
+#  El paso que faltaba: geocodificación
+# =============================================================================
+#
+# Sin coordenadas, un despacho **no llega al mapa**. No es una degradación
+# elegante, es un cero: `cluster_unassigned_events` filtra por
+# `geom IS NOT NULL` y el Paso B sólo adosa alertas de SENAPRED a incidentes
+# que ya existen. Durante todo ese tiempo la fuente de confianza 1.00 del
+# catálogo —la única que lleva un incidente a certeza por sí sola— quedaba
+# consultable en `/events` y ausente de los contadores de Incendios, Accidentes
+# y Otras emergencias.
+#
+# Los tests de abajo cubren las dos mitades: que el punto llega cuando Nominatim
+# responde, y que **nada se pierde** cuando no responde. La segunda importa más:
+# el paso se añadió para ganar el mapa, no para arriesgar la señal.
+
+NOMINATIM_URL = settings.NOMINATIM_URL
+
+
+def _nominatim(lat: str = "-33.045", lon: str = "-71.62"):
+    return httpx.Response(
+        200,
+        json=[
+            {
+                "lat": lat,
+                "lon": lon,
+                "display_name": "Diego Cook con Guacolda, Valparaíso",
+                "osm_type": "node",
+                "importance": 0.41,
+            }
+        ],
+    )
+
+
+@pytest.fixture
+def con_geocodificacion(monkeypatch):
+    """Enciende el presupuesto y quita la espera del rate limiter."""
+    from app.collectors import nominatim
+
+    monkeypatch.setattr(settings, "BOMBEROS_MAX_GEOCODES", 5)
+    monkeypatch.setattr(nominatim.settings, "NOMINATIM_MIN_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setattr(nominatim, "_LIMITER", nominatim.RateLimiter(0.0))
+
+
+@respx.mock
+def test_el_despacho_geocodificado_entra_con_coordenadas(servicio, con_geocodificacion):
+    respx.get(ITEMS_URL).mock(
+        return_value=httpx.Response(
+            200, json=[tuit("81 * DIEGO COOK / GUACOLDA * 10-4", id_="5")]
+        )
+    )
+    respx.get(url__startswith=NOMINATIM_URL).mock(return_value=_nominatim())
+    settings.BOMBEROS_ACCIDENT_KEYS = ["10-4"]
+
+    asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
+
+    evento = ServicioFalso.ultimo.eventos[0]
+    assert evento.lat == pytest.approx(-33.045)
+    assert evento.lon == pytest.approx(-71.62)
+    # El punto y lo que lo produjo van SEPARADOS: si mañana una coordenada está
+    # mal, esto dice si falló el decodificador o el geocodificador.
+    assert evento.raw_data["_geocoding"]["provider"] == "nominatim"
+    assert evento.raw_data["_extraction"]["street_1"]
+
+
+@respx.mock
+def test_si_nominatim_falla_el_despacho_entra_igual(servicio, con_geocodificacion):
+    """La propiedad que no se puede perder al ganar el punto.
+
+    Una 10-4 vale por su certeza sobre el hecho. Tirarla porque OpenStreetMap no
+    conoce una esquina sería cambiar un problema de cobertura por uno de datos.
+    """
+    respx.get(ITEMS_URL).mock(
+        return_value=httpx.Response(
+            200, json=[tuit("81 * CALLE INEXISTENTE / OTRA * 10-4", id_="6")]
+        )
+    )
+    respx.get(url__startswith=NOMINATIM_URL).mock(side_effect=httpx.ConnectError("sin red"))
+    settings.BOMBEROS_ACCIDENT_KEYS = ["10-4"]
+
+    asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
+
+    hecho = ServicioFalso.ultimo
+    assert hecho.status is CollectorStatus.SUCCESS, "un fallo de Nominatim no es un fallo de la corrida"
+    assert len(hecho.eventos) == 1
+    assert hecho.eventos[0].lat is None
+    assert hecho.eventos[0].raw_data["_geocoding"] is None
+
+
+@respx.mock
+def test_el_presupuesto_de_geocodificacion_se_respeta(servicio, monkeypatch):
+    """Con el tope en cero no se toca la red, y los despachos entran igual."""
+    monkeypatch.setattr(settings, "BOMBEROS_MAX_GEOCODES", 0)
+    respx.get(ITEMS_URL).mock(
+        return_value=httpx.Response(200, json=[tuit("81 * RUTA 68 * 10-4", id_="7")])
+    )
+    ruta = respx.get(url__startswith=NOMINATIM_URL).mock(return_value=_nominatim())
+    settings.BOMBEROS_ACCIDENT_KEYS = ["10-4"]
+
+    asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
+
+    assert not ruta.called
+    assert len(ServicioFalso.ultimo.eventos) == 1
+
+
+@respx.mock
+def test_un_incendio_estructural_no_entra_como_accidente(servicio):
+    """El literal `EventType.ACCIDENT` que la ingesta ampliada dejó obsoleto.
+
+    `BOMBEROS_ACCIDENT_KEYS` trae la familia 10 entera desde hace tiempo; el tipo
+    seguía fijo. Un 10-1 quedaba en la familia `traffic`, incapaz de corroborar
+    ninguna señal de fuego, y sumando al contador equivocado de la interfaz.
+    """
+    from app.models.enums import EventType
+
+    respx.get(ITEMS_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                tuit("B2 * ALDUNATE 1200 * 10-1", id_="10"),
+                tuit("M5 * CAMINO LA POLVORA * 10-2", id_="11"),
+                tuit("81 * DIEGO COOK / GUACOLDA * CLAVE 12", id_="12"),
+                tuit("21 * RUTA 68 KM 42 * 10-4", id_="13"),
+            ],
+        )
+    )
+    settings.BOMBEROS_ACCIDENT_KEYS = ["10-1", "10-2", "10-4", "12"]
+
+    asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
+
+    tipos = [evento.type for evento in ServicioFalso.ultimo.eventos]
+    assert tipos == [
+        EventType.STRUCTURAL_FIRE,
+        EventType.WILDFIRE,
+        EventType.OTHER,
+        EventType.ACCIDENT,
+    ]
+
+
+# =============================================================================
+#  El secreto: los dos fallos que producían "secreto inválido" sin explicarlo
+# =============================================================================
+
+
+def test_un_secreto_con_caracteres_no_ascii_se_compara_sin_reventar(monkeypatch):
+    """`secrets.compare_digest` con dos `str` **sólo acepta ASCII**.
+
+    No devuelve False ante un carácter fuera de ASCII: lanza `TypeError`. Eso
+    subía como 500, y un 500 lo lee Apify como fallo transitorio: reintenta once
+    veces y termina deshabilitando la integración, sin que el log diga jamás
+    "secreto inválido".
+
+    Se prueba contra `_authorised` y no por HTTP a propósito, porque el camino
+    real pasa por una capa que este test no puede reproducir con `TestClient`:
+    las cabeceras viajan como bytes y Starlette las decodifica con **latin-1**,
+    así que un secreto UTF-8 con `ñ` llega al endpoint convertido en `Ã±`. Esa
+    cadena —no la original— es la que entraba a `compare_digest` y la hacía
+    lanzar. `TestClient` rechaza antes el valor no-ASCII, de modo que por HTTP
+    el fallo es inalcanzable y la regresión pasaría inadvertida.
+    """
+    from app.api.v1.endpoints.apify import _authorised
+
+    monkeypatch.setattr(settings, "APIFY_WEBHOOK_SECRET", "contraseña-ñandú")
+
+    # Lo que de verdad llega tras el viaje UTF-8 → latin-1 de Starlette.
+    mojibake = "contraseña-ñandú".encode().decode("latin-1")
+
+    assert _authorised("contraseña-ñandú", None) is True
+    assert _authorised(mojibake, None) is False, "distinto es False, no TypeError"
+    assert _authorised("otra-cosa", None) is False
+
+
+def test_authorization_sin_el_esquema_bearer_tambien_sirve(cliente):
+    """El panel de Apify permite escribir el valor a secas.
+
+    Antes sólo se probaba el valor pelado del prefijo, así que un
+    `Authorization: <secreto>` —que es una configuración razonable— quedaba
+    fuera aunque el secreto fuera el correcto.
+    """
+    settings.APIFY_WEBHOOK_SECRET = "secreto-compartido"
+    respuesta = cliente.post(
+        WEBHOOK, json=payload_apify(), headers={"Authorization": "secreto-compartido"}
+    )
+    assert respuesta.status_code == 200
+
+
+def test_el_401_dice_que_cabecera_hay_que_poner(cliente):
+    """Depurar esto desde Apify es leer un 401 y adivinar. El cuerpo ayuda."""
+    settings.APIFY_WEBHOOK_SECRET = "secreto-compartido"
+    respuesta = cliente.post(WEBHOOK, json=payload_apify())
+
+    assert respuesta.status_code == 401
+    detalle = respuesta.json()["detail"]
+    assert "X-AlertaV-Apify-Secret" in detalle
+    assert "secreto-compartido" not in detalle, "el secreto no se devuelve nunca"

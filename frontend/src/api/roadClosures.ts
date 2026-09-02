@@ -144,8 +144,13 @@ export async function fetchRoadClosuresGeojson(
     source: params.source ? [...params.source] : undefined,
     limit: params.limit,
   })
+  // La ruta va RELATIVA a `env.apiBaseUrl`, que ya termina en `/api/v1`
+  // (igual que `/events/weather/geojson` en rain.ts o `/incidents` en
+  // incidents.ts). Escribirla absoluta —`/api/v1/events/...`— producía
+  // `/api/v1/api/v1/events/road-closures/geojson`, un 404 que la capa
+  // reportaba como «No se pudo cargar».
   const payload = await apiGet<RoadClosureCollection>(
-    `/api/v1/events/road-closures/geojson${query}`,
+    `/events/road-closures/geojson${query}`,
     signal,
   )
   return parseRoadClosures(payload)

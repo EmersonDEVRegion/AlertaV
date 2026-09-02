@@ -237,6 +237,19 @@ export const WEATHER_TEXT = {
   loading: 'Consultando el pronóstico…',
   layerToggle: 'Lluvia en el mapa',
   layerHint: 'Manchas de precipitación pronosticada por comuna',
+  /**
+   * Se muestra SÓLO con el interruptor encendido y `con_lluvia === 0`.
+   *
+   * La capa encendida sobre una región sin lluvia pronosticada dibuja un mapa
+   * vacío, y un mapa vacío es ambiguo: no distingue «no va a llover» de «la
+   * capa no cargó». Este texto resuelve esa ambigüedad y por eso va junto al
+   * interruptor y no en el mapa.
+   *
+   * **Nunca aparece con `observado_en: null`.** Ese es el otro cero —el
+   * collector caído— y afirmar ahí que no lloverá sería inventar un pronóstico
+   * que nadie emitió. Ver la nota de los tres estados en `WeatherWidget`.
+   */
+  layerEmpty: 'Sin precipitaciones pronosticadas para hoy',
   /** La aclaración que esta capa arrastra en todos sus textos. */
   caveat:
     'Pronóstico a escala comunal (celdas de 9-11 km). No es una alerta oficial: esas las declara SENAPRED.',

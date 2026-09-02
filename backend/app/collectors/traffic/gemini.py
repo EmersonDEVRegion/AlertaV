@@ -159,6 +159,68 @@ def _strip_fence(raw: str) -> str:
     return match.group("body") if match else raw.strip()
 
 
+def response_text(response: Any) -> str:
+    """Texto de una respuesta del SDK, ignorando las partes que no son texto.
+
+    Reemplaza a `response.text`, que es el accesor de conveniencia del SDK y el
+    origen de este aviso en cada corrida:
+
+        Warning: there are non-text parts in the response: ['thought_signature']
+
+    Qué está pasando, porque el aviso no lo dice: los modelos con razonamiento
+    —la familia Flash/Pro actual— devuelven la respuesta partida en varias
+    `Part`. Una lleva el JSON que pedimos; las otras llevan el rastro del
+    pensamiento (`thought_signature`, y a veces un resumen marcado con
+    `thought=True`). `response.text` está definido para el caso simple de una
+    sola parte de texto, así que ante esa mezcla concatena lo que puede y avisa
+    por `warnings` de todo lo que descartó.
+
+    **El aviso es correcto y la respuesta también**: nunca perdimos un despacho
+    por esto. Pero un `warning` que se repite en cada llamada es exactamente lo
+    que entrena a un equipo a ignorar los avisos del log, y el día que el modelo
+    devuelva algo raro de verdad, nadie lo va a ver entre estos.
+
+    Lo que se hace acá es recorrer las partes a mano y quedarse sólo con las de
+    texto real:
+
+      * `part.text` que no sea una cadena → no es texto (una firma de
+        pensamiento es `bytes`, una llamada a función es un objeto). Fuera.
+      * `part.thought` en `True` → es el resumen del razonamiento, no la
+        respuesta. Fuera: concatenarlo al JSON lo volvería imparseable.
+
+    El respaldo sigue siendo `response.text`, para una respuesta sin
+    `candidates` o de un SDK cuya forma cambie. Se lee dentro de
+    `catch_warnings` porque el punto de esta función es que el aviso deje de
+    aparecer, y el respaldo es justamente el camino que lo emite.
+    """
+    partes: list[str] = []
+
+    for candidate in getattr(response, "candidates", None) or ():
+        content = getattr(candidate, "content", None)
+        for part in getattr(content, "parts", None) or ():
+            # `thought=True` marca el resumen del razonamiento. Es texto de
+            # verdad, y por eso hay que descartarlo explícitamente: si se colara,
+            # el `json.loads` de aguas abajo recibiría prosa antes del objeto.
+            if getattr(part, "thought", False):
+                continue
+            texto = getattr(part, "text", None)
+            if isinstance(texto, str) and texto:
+                partes.append(texto)
+
+    if partes:
+        return "".join(partes)
+
+    # Sin candidatos utilizables: puede ser un bloqueo del filtro de seguridad
+    # (respuesta sin `content`) o una forma que este código no previó. El
+    # accesor del SDK es la mejor conjetura que queda.
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        texto = getattr(response, "text", None)
+    return texto if isinstance(texto, str) else ""
+
+
 def parse_response(raw: str) -> dict[str, Any] | None:
     """Texto crudo del modelo → dict validado. None si no sirve.
 
@@ -277,7 +339,10 @@ async def extract_streets(text: str) -> dict[str, Any] | None:
         )
         return None
 
-    raw = getattr(response, "text", None)
+    # `response_text` y no `response.text`: los modelos con razonamiento
+    # devuelven además la firma del pensamiento, y el accesor del SDK avisa por
+    # `warnings` en cada llamada. Ver el docstring de la función.
+    raw = response_text(response)
     if not raw:
         # Pasa cuando el filtro de seguridad bloquea la respuesta. Un aviso de
         # accidente con heridos puede activarlo, así que no es un caso teórico.
@@ -692,7 +757,7 @@ async def extract_dispatch(text: str, *, source_handle: str) -> dict[str, Any] |
         )
         return None
 
-    raw = getattr(response, "text", None)
+    raw = response_text(response)
     if not raw:
         logger.warning(
             "Gemini respondió sin texto al decodificar un despacho (¿filtro de seguridad?)",
@@ -843,4 +908,5 @@ __all__ = [
     "is_configured",
     "parse_dispatch_response",
     "parse_response",
+    "response_text",
 ]

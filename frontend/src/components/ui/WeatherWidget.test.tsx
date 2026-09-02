@@ -423,3 +423,55 @@ describe('accesibilidad', () => {
     }
   })
 })
+
+/* ---------------------------------------------------------------------------
+ * Capa encendida y cero milímetros
+ * ------------------------------------------------------------------------ */
+
+describe('la capa encendida sin lluvia pronosticada lo dice', () => {
+  /**
+   * El problema: encender el interruptor con 0 mm en toda la región no produce
+   * ningún cambio visible, y un mapa vacío admite dos lecturas opuestas —«no va
+   * a llover» y «la capa no cargó»—. El aviso resuelve esa ambigüedad, y va
+   * junto al interruptor porque es ahí donde está el gesto que la creó.
+   */
+  it('avisa cuando el pronóstico regional es cero', async () => {
+    const user = userEvent.setup()
+    await montar(CALMA) // con_lluvia: 0
+    await user.click(widget())
+
+    expect(screen.queryByText(/sin precipitaciones pronosticadas/i)).toBeNull()
+
+    await user.click(screen.getByRole('switch', { name: /lluvia en el mapa/i }))
+    expect(screen.getByText(/sin precipitaciones pronosticadas para hoy/i)).toBeInTheDocument()
+  })
+
+  it('no lo dice cuando sí hay comunas con lluvia', async () => {
+    const user = userEvent.setup()
+    await montar(REMOCION) // con_lluvia: 12
+    await user.click(widget())
+    await user.click(screen.getByRole('switch', { name: /lluvia en el mapa/i }))
+
+    expect(screen.queryByText(/sin precipitaciones pronosticadas/i)).toBeNull()
+  })
+
+  /**
+   * El test que más vale de este bloque, y es el mismo criterio que gobierna el
+   * widget entero: **los dos ceros no son el mismo cero.**
+   *
+   * `con_lluvia: 0` con una corrida reciente significa que se consultaron las
+   * 36 comunas y ninguna tiene lluvia. `observado_en: null` significa que no
+   * hay pronóstico ninguno. Afirmar «no va a llover» en el segundo caso sería
+   * inventar un dato que nadie emitió, en la interfaz de una aplicación que la
+   * gente mira para decidir si sale de casa.
+   */
+  it('con el collector caído NO afirma que no va a llover', async () => {
+    const user = userEvent.setup()
+    await montar(SIN_DATOS)
+    await user.click(widget())
+    await user.click(screen.getByRole('switch', { name: /lluvia en el mapa/i }))
+
+    expect(screen.queryByText(/sin precipitaciones pronosticadas/i)).toBeNull()
+    expect(screen.getByText(/no significa que esté todo tranquilo/i)).toBeInTheDocument()
+  })
+})

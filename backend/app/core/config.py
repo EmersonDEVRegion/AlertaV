@@ -344,6 +344,18 @@ class Settings(BaseSettings):
     BOMBEROS_ACCIDENT_KEYS: CsvList = Field(
         default_factory=lambda: ["10-0", "10-1", "10-2", "10-3", "10-4", "12"]
     )
+    #: Tope de consultas a Nominatim por entrega del webhook.
+    #:
+    #: Mismo mecanismo y mismo motivo que `TRANSPORTE_INFORMA_MAX_GEOCODES`: el
+    #: geocodificador respeta 1 req/s, así que un lote grande podría tener la
+    #: tarea de fondo ocupada durante minutos. Lo que exceda el tope entra sin
+    #: coordenadas, que es el estado en el que entraban todos los despachos
+    #: antes de que este paso existiera.
+    #:
+    #: 25 y no 100 (`APIFY_WEBHOOK_MAX_ITEMS`) porque una entrega real trae unos
+    #: pocos despachos: el resto de los items del dataset son tuits de la cuenta
+    #: que el filtro por clave ya descartó.
+    BOMBEROS_MAX_GEOCODES: int = Field(default=25, ge=0, le=200)
     BOMBEROS_TIMEOUT_SECONDS: float = 30.0
     BOMBEROS_POLL_INTERVAL_SECONDS: int = 180  # 3 min
     #: Cuenta de origen que se cita en el resumen de cada despacho ("Fuente:

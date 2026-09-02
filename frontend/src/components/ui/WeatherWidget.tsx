@@ -265,6 +265,29 @@ function Detail({ snapshot }: { snapshot: WeatherSnapshot }) {
         />
       </div>
 
+      {/*
+        Capa encendida y cero milímetros pronosticados en toda la región.
+
+        Sin este aviso, encender el interruptor no produce ningún cambio visible
+        y el mapa vacío admite dos lecturas opuestas —«no va a llover» y «la capa
+        no cargó»—. La condición es `con_lluvia === 0` y no una comparación de
+        milímetros porque el backend devuelve UNA FILA POR COMUNA CON LLUVIA:
+        cero comunas es exactamente el conjunto que la capa va a dibujar.
+
+        `known &&` es la mitad importante de la condición. Con `observado_en:
+        null` el collector está caído y no hay pronóstico ninguno; afirmar ahí
+        que no lloverá sería el error que la nota de los tres estados existe para
+        evitar. En ese caso el widget ya dice que no sabe, arriba.
+      */}
+      {known && snapshot.rainLayer && data.con_lluvia === 0 && (
+        <p
+          role="status"
+          className="mt-1.5 text-[10.5px] leading-snug text-ink-faint"
+        >
+          {WEATHER_TEXT.layerEmpty}
+        </p>
+      )}
+
       <p className="mt-2 text-[9.5px] leading-snug text-ink-faint">
         {WEATHER_TEXT.caveat}
         {status === 'error' && ' · No se pudo actualizar; el dato puede estar viejo.'}

@@ -66,28 +66,63 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/apify", tags=["apify"])
 
 
+#: Nombre exacto de la cabecera propia. Se declara acá para que el log del
+#: rechazo pueda citarlo: un "secreto inválido" a secas no dice si el problema
+#: es el valor o el nombre del campo, y el segundo es el error frecuente.
+SECRET_HEADER = "X-AlertaV-Apify-Secret"
+
+
+def _candidatos(secret_header: str | None, authorization: str | None) -> list[str]:
+    """Valores que podrían ser el secreto, de las dos cabeceras aceptadas.
+
+    `Authorization` se pela de su prefijo `Bearer` **y también se prueba
+    entera**: el panel de Apify permite escribir el valor a secas, y un
+    `Authorization: <secreto>` sin esquema es una configuración razonable que no
+    hay motivo para rechazar.
+    """
+    valores: list[str] = []
+
+    if secret_header and secret_header.strip():
+        valores.append(secret_header.strip())
+
+    if authorization and authorization.strip():
+        valor = authorization.strip()
+        prefijo = "bearer "
+        if valor.lower().startswith(prefijo):
+            valores.append(valor[len(prefijo) :].strip())
+        else:
+            valores.append(valor)
+
+    return [valor for valor in valores if valor]
+
+
 def _authorised(secret_header: str | None, authorization: str | None) -> bool:
     """¿Viene con el secreto correcto? True también cuando no hay secreto puesto.
 
     Se aceptan dos cabeceras porque el panel de Apify permite las dos y no hay
     motivo para obligar a una: `X-AlertaV-Apify-Secret: <valor>` o
     `Authorization: Bearer <valor>`.
+
+    La comparación va envuelta en `try/except TypeError` por un detalle de
+    `secrets.compare_digest` que muerde exactamente en este caso:
+    **con dos `str`, sólo acepta ASCII**. Un secreto generado con acentos, con
+    `±` o con cualquier carácter fuera de ASCII —o un valor pegado con un
+    espacio duro invisible, que es lo que ocurre copiando desde un panel web—
+    hace que la función lance `TypeError`, no que devuelva `False`. Sin la
+    captura eso sube como 500: Apify lo lee como fallo transitorio, reintenta
+    once veces y termina deshabilitando la integración, todo sin que el log
+    diga nunca «secreto inválido». Se codifica a UTF-8 antes de comparar, que
+    es la forma que sí admite cualquier byte y conserva el tiempo constante.
     """
     esperado = settings.APIFY_WEBHOOK_SECRET.strip()
     if not esperado:
         return True
 
-    candidatos: list[str] = []
-    if secret_header and secret_header.strip():
-        candidatos.append(secret_header.strip())
-    if authorization and authorization.strip():
-        valor = authorization.strip()
-        prefijo = "bearer "
-        if valor.lower().startswith(prefijo):
-            valor = valor[len(prefijo) :].strip()
-        candidatos.append(valor)
-
-    return any(secrets.compare_digest(candidato, esperado) for candidato in candidatos)
+    esperado_bytes = esperado.encode("utf-8")
+    return any(
+        secrets.compare_digest(candidato.encode("utf-8"), esperado_bytes)
+        for candidato in _candidatos(secret_header, authorization)
+    )
 
 
 @router.post(
@@ -120,10 +155,33 @@ async def apify_webhook(
     está en `extract_dataset_id`, y esa exigencia se verifica a mano.
     """
     if not _authorised(x_alertav_apify_secret, authorization):
-        logger.warning("webhook de Apify rechazado: secreto inválido")
+        # El aviso dice CUÁL de las dos cabeceras llegó y con qué longitud. Sin
+        # eso, "secreto inválido" cubre tres fallos distintos —no llegó ninguna
+        # cabecera, llegó con otro nombre, llegó con el valor equivocado— y
+        # depurarlo desde el panel de Apify, que sólo ve un 401, es adivinar.
+        #
+        # La longitud y no el valor: una diferencia de largo delata al instante
+        # el error más común (comillas o espacios pegados al copiar), y no
+        # revela el secreto. El valor entero jamás va al log — quedaría escrito
+        # en claro en el sistema de registro del proveedor.
+        recibidos = _candidatos(x_alertav_apify_secret, authorization)
+        logger.warning(
+            "webhook de Apify rechazado: secreto inválido",
+            extra={
+                "trae_cabecera_propia": x_alertav_apify_secret is not None,
+                "trae_authorization": authorization is not None,
+                "largos_recibidos": [len(valor) for valor in recibidos],
+                "largo_esperado": len(settings.APIFY_WEBHOOK_SECRET.strip()),
+                "cabecera_esperada": SECRET_HEADER,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="secreto de webhook inválido",
+            detail=(
+                f"secreto de webhook inválido. Configura en Apify la cabecera "
+                f"{SECRET_HEADER} con el valor de APIFY_WEBHOOK_SECRET, o "
+                f"Authorization: Bearer <valor>."
+            ),
         )
 
     if not settings.APIFY_WEBHOOK_SECRET.strip():
