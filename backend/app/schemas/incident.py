@@ -278,6 +278,23 @@ class IncidentEventLink(BaseModel):
     matched_commune: str | None = None
     note: str | None = None
 
+    source_url: str | None = Field(
+        default=None,
+        description=(
+            "Enlace público de la señal —la nota de prensa, el post— ya "
+            "validado: sólo llega si el esquema es http o https. `null` cuando "
+            "la fuente no publica enlaces o lo que hay no es una URL."
+        ),
+    )
+    source_label: str | None = Field(
+        default=None,
+        description=(
+            "Quién publicó la señal: «Pura Noticia», «@cuenta». `null` cuando "
+            "la fuente no tiene un nombre más específico que su propia banda, "
+            "y en ese caso el cliente debe mostrar la banda."
+        ),
+    )
+
 
 class IncidentDetail(IncidentRead):
     """Incidente con todas sus señales y la trazabilidad de cada vínculo."""

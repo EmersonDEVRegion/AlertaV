@@ -40,22 +40,42 @@ ITEMS_URL = f"https://api.apify.com/v2/datasets/{DATASET_ID}/items"
 AHORA = datetime.now(UTC)
 
 
-def payload_apify(dataset_id: str | None = DATASET_ID) -> dict:
+#: Id del Actor de X/Twitter, en la forma corta que manda el webhook de verdad.
+#: NO es `usuario~actor`: esa forma sirve para las rutas de la API, y confundir
+#: las dos es el error que `APIFY_BOMBEROS_ACTOR_IDS` tiene que hacer evidente.
+ACTOR_X = "nfp1fpt5gUlBwPcor"
+#: El otro Actor de la misma cuenta. Comparte el secreto —los webhooks de Apify
+#: lo tienen por cuenta, no por Actor— y por eso el secreto no lo distingue.
+ACTOR_INSTAGRAM = "shu8hvrXbJbY3Eb9W"
+
+
+def payload_apify(
+    dataset_id: str | None = DATASET_ID,
+    *,
+    act_id: str | None = ACTOR_X,
+    task_id: str | None = None,
+) -> dict:
     """El cuerpo que manda Apify en `ACTOR.RUN.SUCCEEDED`, recortado."""
     recurso: dict = {
         "id": "runIdDePrueba",
-        "actId": "apify~tweet-scraper",
         "status": "SUCCEEDED",
         "startedAt": "2026-09-01T12:00:00.000Z",
         "finishedAt": "2026-09-01T12:01:30.000Z",
     }
+    evento: dict = {"actorRunId": "runIdDePrueba"}
+    if act_id is not None:
+        recurso["actId"] = act_id
+        evento["actorId"] = act_id
+    if task_id is not None:
+        recurso["actorTaskId"] = task_id
+        evento["actorTaskId"] = task_id
     if dataset_id is not None:
         recurso["defaultDatasetId"] = dataset_id
     return {
         "userId": "usuarioDePrueba",
         "createdAt": "2026-09-01T12:01:31.000Z",
         "eventType": "ACTOR.RUN.SUCCEEDED",
-        "eventData": {"actorId": "apify~tweet-scraper", "actorRunId": "runIdDePrueba"},
+        "eventData": evento,
         "resource": recurso,
     }
 
@@ -108,6 +128,7 @@ def _config_de_prueba():
         for nombre in (
             "APIFY_TOKEN",
             "APIFY_WEBHOOK_SECRET",
+            "APIFY_BOMBEROS_ACTOR_IDS",
             "APIFY_WEBHOOK_MAX_ITEMS",
             "APIFY_WEBHOOK_MAX_AGE_MINUTES",
             "BOMBEROS_ACCIDENT_KEYS",
@@ -116,6 +137,9 @@ def _config_de_prueba():
     }
     settings.APIFY_TOKEN = "token-de-prueba"
     settings.APIFY_WEBHOOK_SECRET = ""
+    # Guard apagado por defecto, que es el estado de un despliegue que todavía
+    # no conoce el id de su Actor. Los tests que lo ejercitan lo encienden.
+    settings.APIFY_BOMBEROS_ACTOR_IDS = []
     # Sin llamadas al modelo: la decodificación cae a las reglas, que es el
     # camino de cualquier despliegue sin `GEMINI_API_KEY` y no necesita red.
     settings.BOMBEROS_MAX_LLM_CALLS = 0
@@ -232,7 +256,172 @@ def test_un_secreto_parecido_no_pasa(cliente):
     assert respuesta.status_code == 401
 
 
-# --- 3. Lectura del dataset: la URL y el token -------------------------------
+# --- 3. El Actor que entrega --------------------------------------------------
+#
+# El secreto responde "¿quién llama?"; esto responde "¿qué trae?". En Apify el
+# secreto de un webhook es de CUENTA: todos los del panel llevan el mismo, así
+# que un segundo Actor apuntado a esta URL pasa la autenticación entera.
+
+
+def test_sin_lista_configurada_cualquier_actor_entrega(cliente):
+    """La lista vacía deja la ruta como estaba, igual que el secreto vacío.
+
+    No es laxitud: el id corto del Actor sólo se conoce mirando una entrega
+    real, así que exigirlo desde el primer despliegue sería pedir un dato que
+    todavía no existe.
+    """
+    settings.APIFY_BOMBEROS_ACTOR_IDS = []
+
+    respuesta = cliente.post(WEBHOOK, json=payload_apify(act_id=ACTOR_INSTAGRAM))
+
+    assert respuesta.status_code == 200
+    assert respuesta.json()["status"] == "accepted"
+
+
+def test_el_actor_autorizado_entrega(cliente):
+    settings.APIFY_BOMBEROS_ACTOR_IDS = [ACTOR_X]
+
+    respuesta = cliente.post(WEBHOOK, json=payload_apify())
+
+    assert respuesta.status_code == 200
+    assert respuesta.json()["status"] == "accepted"
+
+
+def test_otro_actor_de_la_misma_cuenta_no_entrega(cliente, tarea):
+    """El caso que motivó todo esto: Instagram apuntado al webhook de Bomberos.
+
+    Con el secreto correcto —lo tiene, es de cuenta— y sin este guard, sus posts
+    entran por `parse_tweet`, no traen claves 10-x, y la corrida cierra en
+    `success` con 0 insertados. La fila verde que queda en `collector_runs` es la
+    señal que se mira para saber si el webhook de Bomberos está llegando, y así
+    miente: el dataset ni siquiera tiene que leerse para hacer el daño.
+    """
+    settings.APIFY_WEBHOOK_SECRET = "secreto-compartido"
+    settings.APIFY_BOMBEROS_ACTOR_IDS = [ACTOR_X]
+
+    respuesta = cliente.post(
+        WEBHOOK,
+        json=payload_apify(act_id=ACTOR_INSTAGRAM),
+        headers={"X-AlertaV-Apify-Secret": "secreto-compartido"},
+    )
+
+    assert respuesta.status_code == 200
+    assert respuesta.json()["status"] == "ignored"
+    assert tarea == [], "un Actor ajeno no puede hacer que se lea su dataset"
+
+
+def test_el_rechazo_no_es_un_4xx(cliente):
+    """Un 403 haría que Apify reintentara once veces y deshabilitara el webhook.
+
+    Deshabilitaría el del Actor equivocado —el que ya no queremos— pero el
+    operador vería «integración deshabilitada» y sospecharía del backend. Se
+    acusa recibo y se grita por el log, misma regla que el evento de prueba.
+    """
+    settings.APIFY_BOMBEROS_ACTOR_IDS = [ACTOR_X]
+
+    respuesta = cliente.post(WEBHOOK, json=payload_apify(act_id=ACTOR_INSTAGRAM))
+
+    assert respuesta.status_code == 200
+
+
+def test_el_rechazo_devuelve_los_ids_para_pegarlos_en_la_variable(cliente):
+    """El id que manda el webhook es el corto, no `usuario~actor`.
+
+    Sin este dato en la respuesta y en el log, autorizar un Actor legítimo es
+    adivinar cuál de los identificadores del panel es el que viaja.
+    """
+    settings.APIFY_BOMBEROS_ACTOR_IDS = [ACTOR_X]
+
+    cuerpo = cliente.post(WEBHOOK, json=payload_apify(act_id=ACTOR_INSTAGRAM)).json()
+
+    assert ACTOR_INSTAGRAM in cuerpo["actor_ids"]
+
+
+def test_la_entrega_aceptada_tambien_registra_el_id_del_actor(cliente, caplog):
+    """El id sale en el camino feliz, no sólo en el rechazo.
+
+    Con la lista apagada el rechazo no ocurre nunca, así que si el id sólo
+    apareciera ahí habría que romper una entrega a propósito para poder
+    autorizar al Actor legítimo. Este es el orden real: primero llega algo,
+    después se cierra la puerta detrás.
+    """
+    settings.APIFY_BOMBEROS_ACTOR_IDS = []
+
+    with caplog.at_level(logging.INFO, logger="app.api.v1.endpoints.apify"):
+        cliente.post(WEBHOOK, json=payload_apify())
+
+    aceptados = [r for r in caplog.records if "aceptado" in r.message]
+    assert aceptados, "la entrega buena tiene que dejar registro"
+    assert aceptados[-1].ids_actor == [ACTOR_X]
+    assert aceptados[-1].guard_actor_activo is False
+
+
+def test_autorizar_por_el_id_del_task_tambien_sirve(cliente):
+    """Un webhook colgado del Task manda `actorTaskId`; el del Actor, `actId`.
+
+    Son dos identidades de la misma corrida y el operador puede tener a mano
+    cualquiera. Exigir una concreta rechazaría media configuración legítima.
+    """
+    settings.APIFY_BOMBEROS_ACTOR_IDS = ["taskDeBomberos"]
+
+    respuesta = cliente.post(
+        WEBHOOK, json=payload_apify(act_id=ACTOR_X, task_id="taskDeBomberos")
+    )
+
+    assert respuesta.json()["status"] == "accepted"
+
+
+def test_un_cuerpo_sin_identidad_no_pasa_el_guard_encendido(cliente):
+    """Lo que no se puede verificar no pasa.
+
+    Dejarlo pasar volvería el guard decorativo: bastaría mandar
+    `{"defaultDatasetId": "…"}` a secas para saltárselo entero. Con la lista
+    apagada este mismo cuerpo sí entra, y hay un test que lo fija.
+    """
+    settings.APIFY_BOMBEROS_ACTOR_IDS = [ACTOR_X]
+
+    respuesta = cliente.post(WEBHOOK, json={"defaultDatasetId": "sueltoXYZ"})
+
+    assert respuesta.json()["status"] == "ignored"
+
+
+def test_el_secreto_no_alcanza_para_distinguir_actors(cliente, tarea):
+    """El invariante que justifica que este guard exista y no sobre.
+
+    Si el secreto bastara, la lista sería redundante. No basta: la MISMA
+    credencial que autoriza al Actor de X autoriza al de Instagram, porque en
+    Apify el secreto se escribe por webhook y todos llevan el de la cuenta.
+    """
+    settings.APIFY_WEBHOOK_SECRET = "secreto-compartido"
+    settings.APIFY_BOMBEROS_ACTOR_IDS = []
+    cabeceras = {"X-AlertaV-Apify-Secret": "secreto-compartido"}
+
+    for actor in (ACTOR_X, ACTOR_INSTAGRAM):
+        respuesta = cliente.post(
+            WEBHOOK, json=payload_apify(act_id=actor), headers=cabeceras
+        )
+        assert respuesta.status_code == 200, f"{actor} pasó la autenticación"
+
+    assert len(tarea) == 2
+
+
+def test_los_ids_se_leen_de_las_dos_secciones_del_cuerpo():
+    """`resource` y `eventData` traen lo mismo por caminos distintos.
+
+    Una plantilla personalizada puede dejar fuera cualquiera de las dos, y el
+    guard no puede depender de la que falte.
+    """
+    solo_recurso = {"resource": {"actId": "A1"}}
+    solo_evento = {"eventData": {"actorId": "A1"}}
+
+    assert svc.extract_actor_ids(solo_recurso) == ["A1"]
+    assert svc.extract_actor_ids(solo_evento) == ["A1"]
+    # Y cuando vienen las dos con el mismo valor, no se repite: este resultado
+    # se escribe en el log del rechazo y se pega a mano en la configuración.
+    assert svc.extract_actor_ids(payload_apify()) == [ACTOR_X]
+
+
+# --- 4. Lectura del dataset: la URL y el token -------------------------------
 
 
 def test_el_token_no_viaja_en_la_query():
@@ -272,7 +461,7 @@ def test_un_error_servido_con_http_200_se_convierte_en_fallo_con_nombre():
         asyncio.run(svc.fetch_dataset_items(DATASET_ID, limit=10))
 
 
-# --- 4. Del tuit al despacho -------------------------------------------------
+# --- 5. Del tuit al despacho -------------------------------------------------
 
 
 def test_solo_pasan_los_tuits_con_una_clave_configurada():
@@ -333,7 +522,7 @@ def test_un_despacho_viejo_se_descarta_y_uno_sin_fecha_pasa():
     assert svc.is_fresh(sin_fecha, now=AHORA, max_age_minutes=180) is True
 
 
-# --- 5. La tarea de fondo: no lanza nunca ------------------------------------
+# --- 6. La tarea de fondo: no lanza nunca ------------------------------------
 
 
 class SesionFalsa:

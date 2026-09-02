@@ -233,15 +233,57 @@ export function IncidentSheet({
                 className="rounded-control bg-raised p-2.5 text-xs ring-1 ring-line"
               >
                 <div className="flex items-baseline justify-between gap-2">
+                  {/* Quien publico, no la banda: el chip de «Fuentes» ya dice
+                      «Prensa», y repetirlo aca gasta la linea sin agregar nada.
+                      Cuando la fuente no tiene nombre propio —una distribuidora
+                      electrica no es «alguien»— se cae a la banda. */}
                   <span className="font-semibold text-ink">
-                    {sourceLabel(event.source)}
+                    {event.source_label ?? sourceLabel(event.source)}
                   </span>
                   <span className="shrink-0 text-ink-muted">
                     {formatRelative(event.timestamp)}
                   </span>
                 </div>
-                {event.text && (
-                  <p className="mt-1 line-clamp-3 text-ink-muted">{event.text}</p>
+                {event.text &&
+                  (event.source_url ? (
+                    /* El titular ES el enlace: es lo que la persona quiere
+                       tocar, y un «Ver mas» aparte obliga a leer dos veces.
+                       `rel="noopener noreferrer"` aunque el backend ya validó
+                       el esquema — son cosas distintas: ahi se decide que el
+                       destino sea http(s), aca que no pueda tocar
+                       `window.opener` ni recibir nuestro Referer. */
+                    <a
+                      href={event.source_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-1 block line-clamp-3 text-ink-muted underline
+                        decoration-line underline-offset-2 transition-colors
+                        hover:text-ink hover:decoration-ink-muted
+                        focus-visible:outline-none focus-visible:ring-2
+                        focus-visible:ring-accent"
+                    >
+                      {event.text}
+                      <span aria-hidden className="ml-1 text-ink-faint">
+                        ↗
+                      </span>
+                      <span className="sr-only"> (abre en una pestaña nueva)</span>
+                    </a>
+                  ) : (
+                    <p className="mt-1 line-clamp-3 text-ink-muted">{event.text}</p>
+                  ))}
+                {!event.text && event.source_url && (
+                  /* Sin texto, el enlace necesita su propia etiqueta o queda un
+                     `<a>` vacio: invisible para el mouse e ilegible para un
+                     lector de pantalla. */
+                  <a
+                    href={event.source_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1 inline-block text-ink-muted underline
+                      decoration-line underline-offset-2 hover:text-ink"
+                  >
+                    Ver publicación ↗
+                  </a>
                 )}
                 <p className="mt-1 text-[11px] text-ink-faint">
                   {LINK_METHOD_LABEL[event.link_method]}

@@ -9,6 +9,21 @@ Add webhook*, evento `ACTOR.RUN.SUCCEEDED`, URL
 payload por defecto ya trae `resource.defaultDatasetId`, que es lo único que
 esta ruta necesita: **no** hay que personalizar la plantilla.
 
+**Sólo el Actor de X/Twitter.** Esta ruta NO es genérica: ingiere como Bomberos,
+con `EventSource.BOMBEROS` y `parse_tweet` buscando claves 10-x. El Actor de
+Instagram no va acá — lo lee `InstagramApifyCollector` por su cuenta, cada cinco
+minutos, con `runs/last`. Apuntarlo a esta URL no da error: sus posts no traen
+claves, la corrida cierra en `success` con 0 insertados y la fila verde que deja
+en `collector_runs` hace parecer que el webhook de Bomberos está llegando cuando
+no llega nada. `APIFY_BOMBEROS_ACTOR_IDS` existe para que eso se anuncie en vez
+de ocurrir en silencio.
+
+**Y en un solo nivel.** Un webhook colgado del Actor dispara también para las
+corridas que lanza un Task suyo. Si está en los dos, cada corrida entrega dos
+veces: no duplica eventos —`external_id` es determinista— pero duplica llamadas
+al modelo y hace competir dos lecturas por el presupuesto de geocodificación,
+que es de `BOMBEROS_MAX_GEOCODES` a 1 req/s.
+
 Las tres decisiones de esta ruta
 --------------------------------
 **1. Responde antes de trabajar.** Apify espera unos segundos y reintenta con
@@ -69,7 +84,11 @@ from typing import Annotated, Any
 from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException, status
 
 from app.core.config import settings
-from app.services.apify_webhook_service import extract_dataset_id, process_dataset
+from app.services.apify_webhook_service import (
+    extract_actor_ids,
+    extract_dataset_id,
+    process_dataset,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +99,26 @@ router = APIRouter(prefix="/apify", tags=["apify"])
 #: rechazo pueda citarlo: un "secreto inválido" a secas no dice si el problema
 #: es el valor o el nombre del campo, y el segundo es el error frecuente.
 SECRET_HEADER = "X-AlertaV-Apify-Secret"
+
+
+def _actor_autorizado(ids_recibidos: list[str]) -> bool:
+    """¿La corrida viene de un Actor que puede entregar despachos de Bomberos?
+
+    True cuando `APIFY_BOMBEROS_ACTOR_IDS` está vacía: la lista apagada deja la
+    ruta como estaba, igual que el secreto vacío la deja abierta. Un despliegue
+    que todavía no sabe el id de su Actor tiene que poder arrancar, y el id sólo
+    se conoce después de la primera entrega — que es justamente la que este log
+    hace legible.
+
+    Un cuerpo que no dice de quién viene NO pasa con la lista puesta. La
+    alternativa —dejar pasar lo que no se puede verificar— convierte el guard en
+    decorativo: bastaría mandar `{"defaultDatasetId": "…"}` a secas para
+    saltárselo entero.
+    """
+    permitidos = [i.strip() for i in settings.APIFY_BOMBEROS_ACTOR_IDS if i.strip()]
+    if not permitidos:
+        return True
+    return any(recibido in permitidos for recibido in ids_recibidos)
 
 
 def _candidatos(secret_header: str | None, authorization: str | None) -> list[str]:
@@ -232,6 +271,64 @@ async def apify_webhook(
             detail="el cuerpo del webhook debe ser un objeto JSON",
         )
 
+    # El secreto ya dijo QUIÉN llama; esto dice QUÉ trae, y son dos preguntas
+    # distintas. El secreto de un webhook de Apify es de cuenta, no de Actor:
+    # todos los del panel llevan el mismo, así que un segundo Actor apuntado a
+    # esta URL pasa la autenticación entera y entrega sus items por la puerta de
+    # Bomberos, que ingiere con confianza 1.00.
+    #
+    # Y lo hace EN VERDE. Los items de otro Actor no traen claves 10-x, así que
+    # `_process` no encuentra despachos, no considera eso un aviso —a propósito:
+    # la central publica mucho que no es una clave— y cierra la corrida en
+    # `success` con 0 insertados. Queda una fila `bomberos_apify_webhook`
+    # impecable en `collector_runs`, que es exactamente donde se mira para
+    # responder "¿está llegando el webhook?". Un Actor ajeno disparando cada
+    # media hora falsifica esa respuesta: la tabla se ve viva mientras los
+    # despachos de X llevan días sin entrar. Es el mismo modo de fallo que el
+    # `partial` permanente del USGS, pero al revés — verde en vez de rojo, y por
+    # eso peor.
+    ids_actor = extract_actor_ids(payload)
+    if not _actor_autorizado(ids_actor):
+        # 200 y no 403, por la misma regla que el evento de prueba: un 4xx hace
+        # que Apify reintente once veces y termine deshabilitando la
+        # integración. Acá eso sería especialmente absurdo, porque la
+        # integración que se deshabilitaría es la del Actor equivocado — la que
+        # ya no queremos— pero el operador vería "webhook deshabilitado" y
+        # sospecharía del backend.
+        #
+        # `WARNING` y no `INFO`: esto llegó CON el secreto correcto, así que no
+        # es el barrido de fondo de una URL pública ni un webhook huérfano
+        # anónimo. Es una integración nuestra apuntando donde no debe, y hay
+        # alguien que puede arreglarla hoy. Misma frontera que separa el
+        # "secreto inválido" del "sin credencial" más arriba.
+        #
+        # Los ids recibidos van al log ENTEROS y ese es el punto del mensaje: el
+        # id que manda el webhook es el corto (`nfp1fpt5gUlBwPcor`), no la forma
+        # `usuario~actor` que se usa en las rutas de la API, y adivinarlo desde
+        # el panel es incómodo. Acá sale listo para pegar en la variable. No es
+        # un secreto: identifica un Actor, no autoriza nada por sí solo.
+        logger.warning(
+            "webhook de Apify ignorado: la corrida no viene de un Actor autorizado",
+            extra={
+                "ids_recibidos": ids_actor,
+                "ids_autorizados": list(settings.APIFY_BOMBEROS_ACTOR_IDS),
+                "evento": str(payload.get("eventType") or "?")[:80],
+                "remedio": (
+                    "si este Actor SÍ debe entregar despachos, agregá su id a "
+                    "APIFY_BOMBEROS_ACTOR_IDS; si no, quitá el webhook de ese "
+                    "Actor en el panel de Apify"
+                ),
+            },
+        )
+        return {
+            "status": "ignored",
+            "reason": (
+                "la corrida no viene de un Actor autorizado en "
+                "APIFY_BOMBEROS_ACTOR_IDS"
+            ),
+            "actor_ids": ids_actor,
+        }
+
     dataset_id = extract_dataset_id(payload)
     if dataset_id is None:
         # El caso normal acá es el evento de prueba que dispara el botón "Test"
@@ -254,6 +351,18 @@ async def apify_webhook(
         extra={
             "dataset_id": dataset_id,
             "evento": str(payload.get("eventType") or "?")[:80],
+            # También en el camino feliz, y no sólo en el rechazo. Con la lista
+            # apagada —el estado de cualquier despliegue nuevo— el rechazo no
+            # ocurre nunca, así que si el id sólo saliera ahí habría que romper
+            # una entrega a propósito para poder autorizar al Actor legítimo.
+            # Acá la PRIMERA entrega buena ya deja el valor listo para pegar en
+            # `APIFY_BOMBEROS_ACTOR_IDS`, que es el orden en que esto se
+            # configura de verdad: primero llega algo, después se cierra la
+            # puerta detrás.
+            "ids_actor": ids_actor,
+            "guard_actor_activo": bool(
+                [i for i in settings.APIFY_BOMBEROS_ACTOR_IDS if i.strip()]
+            ),
         },
     )
     return {"status": "accepted", "dataset_id": dataset_id}

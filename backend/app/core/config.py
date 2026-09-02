@@ -516,6 +516,31 @@ class Settings(BaseSettings):
     #: despliegue de prueba arranque, y el endpoint **avisa en cada llamada**
     #: mientras siga así.
     APIFY_WEBHOOK_SECRET: str = ""
+    #: Actors (o Tasks) autorizados a entregar por el webhook. Vacío = **cualquiera**.
+    #:
+    #: El secreto responde "¿quién llama?"; esto responde "¿qué trae?", y son dos
+    #: preguntas distintas. La ruta `/apify/webhook` no es genérica: está cableada
+    #: a Bomberos —`EventSource.BOMBEROS`, `parse_tweet` buscando claves 10-x— y
+    #: cualquier dataset que le llegue se ingiere como despachos, que es la
+    #: fuente de confianza 1.00 del sistema. Un secreto es un secreto de cuenta,
+    #: no de Actor: TODOS los webhooks del panel comparten el mismo, así que sin
+    #: esta lista basta apuntar un segundo Actor a la URL para que sus items
+    #: entren por la puerta de Bomberos.
+    #:
+    #: El daño real que evita no es la inyección, es el **silencio**. Un Actor
+    #: equivocado no revienta: sus items no tienen claves, así que la corrida
+    #: cierra en `success` con 0 insertados y deja una fila verde en
+    #: `collector_runs` etiquetada `bomberos_apify_webhook`. Esa fila es
+    #: exactamente la señal que se mira para responder "¿está llegando el
+    #: webhook?", y un Actor ajeno disparando cada media hora la falsifica: la
+    #: tabla se ve viva mientras los despachos de X llevan días sin entrar.
+    #:
+    #: **El valor NO es `usuario~actor`.** Esa forma sirve para la ruta de la API
+    #: (`APIFY_INSTAGRAM_ACTOR_ID`), pero el webhook manda el id corto
+    #: (`nfp1fpt5gUlBwPcor`). Se saca del rechazo: el log del `ignored` cita los
+    #: ids que llegaron, listos para pegar acá. Admite varios separados por coma
+    #: —el del Actor y el del Task son distintos— y se compara contra ambos.
+    APIFY_BOMBEROS_ACTOR_IDS: CsvList = Field(default_factory=list)
     #: Items a leer del dataset que anuncia el webhook. Independiente de
     #: `APIFY_MAX_ITEMS`: una corrida de X/Twitter trae muchos menos tuits que
     #: una de Instagram trae posts, y el webhook llega una vez por corrida en
@@ -869,6 +894,7 @@ class Settings(BaseSettings):
         "WAZE_ALERT_TYPES",
         "BOMBEROS_ACCIDENT_KEYS",
         "APIFY_INSTAGRAM_ACCOUNTS",
+        "APIFY_BOMBEROS_ACTOR_IDS",
         mode="before",
     )
     @classmethod

@@ -217,6 +217,27 @@ export interface IncidentEventLink {
   distance_m: number | null
   matched_commune: string | null
   note: string | null
+
+  /**
+   * Enlace publico de la senal: la nota de prensa, el post.
+   *
+   * **Ya viene validado por el backend** (`services/source_links.py`): solo
+   * llega si el esquema es http o https. Aun asi el `<a>` sale con
+   * `rel="noopener noreferrer"`, porque validar el esquema no impide que el
+   * destino manipule `window.opener`.
+   *
+   * `null` cuando la fuente no publica enlaces —Chilquinta informa un corte, no
+   * una pagina— o cuando lo que hay no es una URL: el `guid` de un despacho de
+   * Bomberos suele ser el id numerico del tuit.
+   */
+  source_url: string | null
+  /**
+   * Quien publico la senal: «Pura Noticia», «@cuenta».
+   *
+   * `null` cuando la fuente no tiene un nombre mas especifico que su propia
+   * banda, y en ese caso hay que mostrar la banda (`sourceLabel(source)`).
+   */
+  source_label: string | null
 }
 
 /** `IncidentDetail` — `GET /api/v1/incidents/{code}`. */

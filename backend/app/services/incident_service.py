@@ -37,6 +37,7 @@ from app.schemas.incident import (
     confidence_label,
 )
 from app.services.correlation.engine import CorrelationEngine, CorrelationPass
+from app.services.source_links import source_label_for, source_url_for
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,13 @@ class IncidentService:
                 distance_m=link.distance_m,
                 matched_commune=link.matched_commune,
                 note=link.note,
+                # `raw_data` entero NO se expone: guarda la traza de cada
+                # collector —consultas internas, respuestas del modelo, URL
+                # firmadas del CDN de Instagram que caducan— y publicarlo sería
+                # convertir un detalle de implementación en contrato público.
+                # Salen dos campos derivados y ya validados.
+                source_url=source_url_for(event.source, event.raw_data),
+                source_label=source_label_for(event.source, event.raw_data),
             )
             for link, event in pairs
         ]

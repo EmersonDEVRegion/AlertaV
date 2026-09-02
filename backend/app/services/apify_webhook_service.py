@@ -121,6 +121,53 @@ def extract_dataset_id(payload: Any) -> str | None:
     return None
 
 
+#: Dónde puede venir la identidad de quien produjo la corrida. Se miran las
+#: cuatro y no una: `resource` trae el objeto de la corrida y `eventData` el
+#: resumen del evento —la plantilla por defecto del panel manda los dos—, y
+#: dentro de cada uno el Actor y el Task son identificadores DISTINTOS para la
+#: misma corrida. Un webhook colgado del Task y otro colgado del Actor entregan
+#: cuerpos que no coinciden en un solo campo, así que exigir uno concreto
+#: rechazaría media configuración legítima.
+_ACTOR_ID_PATHS: tuple[tuple[str, str], ...] = (
+    ("resource", "actId"),
+    ("resource", "actorTaskId"),
+    ("eventData", "actorId"),
+    ("eventData", "actorTaskId"),
+)
+
+
+def extract_actor_ids(payload: Any) -> list[str]:
+    """Identificadores del Actor y del Task que produjeron esta corrida.
+
+    Lista y no un solo valor: son dos identidades para el mismo hecho y el
+    operador puede haber autorizado cualquiera de las dos. Sin duplicados y en
+    orden estable, porque este resultado se escribe en el log del rechazo y un
+    orden que baila hace irreproducible el mensaje que alguien va a pegar en la
+    configuración.
+
+    Vacía cuando el cuerpo no dice de quién viene. Eso NO es lo mismo que "viene
+    de un Actor no autorizado", y quien llame tiene que decidir qué hacer con la
+    diferencia: una plantilla personalizada que se dejó fuera `resource` es un
+    error de configuración nuestro, no una entrega ajena.
+    """
+    if not isinstance(payload, Mapping):
+        return []
+
+    encontrados: list[str] = []
+    for contenedor, campo in _ACTOR_ID_PATHS:
+        seccion = payload.get(contenedor)
+        if not isinstance(seccion, Mapping):
+            continue
+        valor = seccion.get(campo)
+        if not valor:
+            continue
+        texto = str(valor).strip()
+        if texto and texto not in encontrados:
+            encontrados.append(texto)
+
+    return encontrados
+
+
 def dataset_items_url(dataset_id: str) -> str:
     """URL de los items de un dataset. **Sin token**: va en la cabecera."""
     base = settings.APIFY_BASE_URL.rstrip("/")
