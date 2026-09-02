@@ -48,6 +48,16 @@ en este sistema y por eso el aviso es `warning` y no `info`.
 La comparación es en tiempo constante (`secrets.compare_digest`). Un `==` sobre
 cadenas corta en el primer byte distinto, y esa diferencia de microsegundos es
 suficiente para adivinar un secreto byte a byte con paciencia y una red estable.
+
+El rechazo es siempre 401; el nivel del log, no
+------------------------------------------------
+Una petición sin ninguna cabecera de autenticación se rechaza exactamente igual
+que una con el secreto equivocado —el 401 no distingue— pero se registra como
+`INFO` y no como `WARNING`. El motivo está en el cuerpo del endpoint: un secreto
+equivocado significa que una integración nuestra dejó de entregar despachos y
+alguien tiene que enterarse hoy; una petición sin credencial es un webhook
+huérfano en el panel de Apify o el barrido de fondo de cualquier URL pública, y
+levantar una alarma por cada una termina apagando la alarma entera.
 """
 
 from __future__ import annotations
@@ -165,8 +175,32 @@ async def apify_webhook(
         # revela el secreto. El valor entero jamás va al log — quedaría escrito
         # en claro en el sistema de registro del proveedor.
         recibidos = _candidatos(x_alertav_apify_secret, authorization)
-        logger.warning(
-            "webhook de Apify rechazado: secreto inválido",
+
+        # El NIVEL del registro depende de si venía alguna credencial, y la
+        # distinción no es cosmética.
+        #
+        # Un rechazo con cabecera presente es una integración **nuestra** mal
+        # configurada: alguien copió mal el secreto o lo rotó a medias, y
+        # mientras tanto hay despachos de Bomberos que no están entrando. Eso es
+        # un `WARNING` y tiene que encender la alarma.
+        #
+        # Un rechazo SIN ninguna cabecera no es eso. Son los webhooks heredados
+        # que quedaron colgando en el panel de Apify disparando peticiones vacías
+        # contra esta URL, más el barrido de fondo que recibe cualquier endpoint
+        # público. Se rechazan igual —el 401 de abajo no se toca— pero registrar
+        # cada uno como `WARNING` inunda el log de producción y, peor, entrena a
+        # quien mira el panel de Render a ignorar los avisos de esta ruta. Un
+        # canal que grita siempre deja de comunicar, que es la misma lección del
+        # `partial` permanente del USGS.
+        #
+        # `INFO` los conserva —siguen siendo auditables si alguna vez hay que
+        # investigar un intento dirigido— sin gastar el presupuesto de atención.
+        sin_credencial = not recibidos
+        nivel = logging.INFO if sin_credencial else logging.WARNING
+        logger.log(
+            nivel,
+            "webhook de Apify rechazado: %s",
+            "sin credencial" if sin_credencial else "secreto inválido",
             extra={
                 "trae_cabecera_propia": x_alertav_apify_secret is not None,
                 "trae_authorization": authorization is not None,

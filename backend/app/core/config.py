@@ -612,10 +612,11 @@ class Settings(BaseSettings):
     #: API de pronóstico de Open-Meteo. Sin credencial y sin registro en su nivel
     #: abierto (10.000 llamadas/día, uso no comercial, atribución CC BY 4.0).
     #:
-    #: Las 36 comunas viajan en UNA sola petición —`latitude` y `longitude`
-    #: aceptan listas separadas por coma— así que una corrida cuesta una llamada.
-    #: Ver `app/collectors/weather/openmeteo_client.py` para el emparejamiento
-    #: por posición, que es la parte delicada de ese ahorro.
+    #: Las comunas viajan en LOTES —`latitude` y `longitude` aceptan listas
+    #: separadas por coma— así que una corrida cuesta un puñado de llamadas y no
+    #: una por comuna. Ver `OPENMETEO_CHUNK_SIZE` para por qué dejaron de viajar
+    #: las 36 juntas, y `app/collectors/weather/openmeteo_client.py` para el
+    #: emparejamiento por posición, que es la parte delicada de ese ahorro.
     OPENMETEO_URL: str = "https://api.open-meteo.com/v1/forecast"
     #: Modelo. `best_match` deja que Open-Meteo elija por coordenada el de mayor
     #: resolución disponible, que para Chile central son los globales de 9-11 km.
@@ -644,6 +645,22 @@ class Settings(BaseSettings):
     #: `app/collectors/weather/comunas.py`. Formato `nombre|lat|lon`, separando
     #: varias con `;` — el mismo que `FIRMS_SOURCES` y compañía.
     OPENMETEO_COMUNAS: str = ""
+    #: Comunas por petición. **Doce, y no las 36 de una vez.**
+    #:
+    #: Las 36 juntas venían fallando en producción con
+    #: `JSONDecodeError: Expecting ',' delimiter` a mitad del cuerpo: 36 objetos
+    #: × 7 variables × 48 pasos es un JSON de cientos de kB que el nivel abierto
+    #: de Open-Meteo corta antes de terminar de escribirlo. Un cuerpo truncado no
+    #: es un error de la API —llega con 200 y sin `{"error": true}`— así que el
+    #: único síntoma es el decodificador reventando, y la corrida entera se
+    #: pierde por la comuna número treinta y tantos.
+    #:
+    #: Doce mantiene cada respuesta en decenas de kB y la URL muy por debajo de
+    #: los límites de longitud, a cambio de tres llamadas por corrida en vez de
+    #: una: 144 al día contra las 10.000 del nivel abierto. El ahorro que este
+    #: cliente cuida sigue intacto —lo caro era una llamada POR COMUNA, no tres
+    #: por corrida— y ahora un lote que falle no se lleva a los otros dos.
+    OPENMETEO_CHUNK_SIZE: int = Field(default=12, ge=1, le=100)
     #: Umbrales de `riesgo_inundacion`. Cualquiera de los tres levanta el flag.
     #: NO son umbrales oficiales de la DMC ni de SENAPRED: son una hipótesis
     #: calibrable, elegida por la geografía del caso (cerros con pendiente fuerte,

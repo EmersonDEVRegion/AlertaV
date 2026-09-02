@@ -22,15 +22,36 @@ Se evaluaron tres caminos:
   segunda capa para el valle del Aconcagua —Quillota, La Calera, Los Andes— y está
   fuera del alcance de este collector, que es de precipitación.
 
-Una sola petición para toda la región
---------------------------------------
+Pocas peticiones para toda la región, pero no una sola
+------------------------------------------------------
 
 `latitude` y `longitude` aceptan listas separadas por coma, y con más de una
-coordenada **la respuesta pasa de ser un objeto a ser una lista** de objetos. Las
-36 comunas caben en una única petición HTTP: es la diferencia entre 36 llamadas
-por corrida y una, y por eso el presupuesto del nivel abierto no es un problema
-ni siquiera consultando cada media hora (ver la nota de cadencia en
-`openmeteo_worker`).
+coordenada **la respuesta pasa de ser un objeto a ser una lista** de objetos. Eso
+convierte 36 llamadas por corrida en un puñado, y por eso el presupuesto del
+nivel abierto no es un problema ni siquiera consultando cada media hora (ver la
+nota de cadencia en `openmeteo_worker`).
+
+Durante un tiempo las 36 viajaron en **una** petición, y en producción eso se
+rompió con `JSONDecodeError: Expecting ',' delimiter: line 1 column 95490`. El
+cuerpo no venía mal formado por culpa nuestra ni por un error de la API: 36
+objetos × 7 variables × 48 pasos horarios es un JSON de cientos de kB que el
+nivel abierto corta a mitad de escritura. Ese modo de fallo es especialmente
+malo porque **llega con HTTP 200 y sin `{"error": true}`**: no hay nada que
+`raise_if_openmeteo_error` pueda ver, el único síntoma es el decodificador
+reventando, y se pierde la corrida entera —las 36 comunas— por no haber podido
+leer la última.
+
+Así que las comunas se consultan en **lotes secuenciales** de `chunk_size`
+(12 por defecto, ver `OPENMETEO_CHUNK_SIZE`) y las respuestas se concatenan.
+Tres llamadas por corrida en vez de una son 144 al día contra un presupuesto de
+10.000: el ahorro que este cliente persigue nunca fue "una sola llamada", fue
+"no una llamada por comuna". A cambio, cada respuesta baja a decenas de kB —muy
+lejos del punto de truncamiento— y la URL se mantiene corta, que es el otro
+límite que 36 pares de coordenadas rozaban.
+
+Secuenciales y no en paralelo, a propósito: tres peticiones simultáneas contra
+un servicio público gratuito es exactamente la forma de que empiece a
+responder 429, y la corrida no tiene ninguna prisa (cada media hora).
 
 El emparejamiento es por POSICIÓN, y eso hay que vigilarlo
 -----------------------------------------------------------
@@ -113,10 +134,13 @@ UV_KEY = "uv_index"
 #: `None` se propaga y la amenaza simplemente no se evalúa.
 #:
 #: El coste de una llamada en Open-Meteo crece con el número de variables, así
-#: que pasar de 2 a 7 multiplica por ~3,5 el peso de la respuesta: unas decenas
-#: de kB por corrida, 48 corridas al día. Sigue siendo despreciable frente al
-#: presupuesto de 10.000 llamadas del nivel abierto, que es lo que este cliente
-#: cuida de verdad (una llamada por corrida, no una por comuna).
+#: que pasar de 2 a 7 multiplica por ~3,5 el peso de la respuesta. Ese peso es
+#: justo lo que hizo estallar la petición única de 36 comunas (ver el
+#: encabezado del módulo) y lo que fija el tamaño del lote: siete variables por
+#: doce comunas caben holgadamente, siete por treinta y seis no. En llamadas
+#: siguen siendo tres por corrida, 144 al día, despreciable frente al
+#: presupuesto de 10.000 del nivel abierto, que es lo que este cliente cuida de
+#: verdad (unas pocas por corrida, no una por comuna).
 HOURLY_VARIABLES: tuple[str, ...] = (
     PRECIPITATION_KEY,
     PROBABILITY_KEY,
@@ -364,17 +388,20 @@ def parse_serie(item: Mapping[str, Any], comuna: Comuna, *, origin: str) -> Seri
     )
 
 
-def parse_payload(
+def parse_lote(
     payload: Any,
     comunas: Sequence[Comuna],
     *,
     origin: str,
     max_drift: float = 0.5,
 ) -> tuple[list[SerieComunal], list[str]]:
-    """Empareja la respuesta con las comunas pedidas. Función pura.
+    """Empareja la respuesta de UN lote con las comunas de ese lote.
 
-    Devuelve `(series, advertencias)`. Ver el encabezado del módulo para las dos
-    guardas del emparejamiento por posición.
+    Es `parse_payload` sin el chequeo de variables ausentes, que por definición
+    no se puede resolver mirando un lote: "no llegó en NINGUNA comuna" sólo se
+    sabe cuando están las 36. `fetch_forecast` llama a esta función por lote y
+    aplica `_faltantes_globales` una vez al final; `parse_payload` sigue siendo
+    la versión de una tacada para quien tenga la respuesta completa.
     """
     raise_if_openmeteo_error(payload, origin=origin)
     elementos = _como_lista(payload, origin=origin)
@@ -405,8 +432,43 @@ def parse_payload(
             )
         series.append(serie)
 
+    return series, advertencias
+
+
+def parse_payload(
+    payload: Any,
+    comunas: Sequence[Comuna],
+    *,
+    origin: str,
+    max_drift: float = 0.5,
+) -> tuple[list[SerieComunal], list[str]]:
+    """Empareja una respuesta completa con las comunas pedidas. Función pura.
+
+    Devuelve `(series, advertencias)`. Ver el encabezado del módulo para las dos
+    guardas del emparejamiento por posición.
+    """
+    series, advertencias = parse_lote(
+        payload, comunas, origin=origin, max_drift=max_drift
+    )
     advertencias.extend(_faltantes_globales(series))
     return series, advertencias
+
+
+def en_lotes(comunas: Sequence[Comuna], tamano: int) -> list[list[Comuna]]:
+    """Parte la lista de comunas en lotes de `tamano`, conservando el orden.
+
+    El orden es la única cosa que empareja cada pronóstico con su comuna (ver el
+    encabezado), así que se conserva dentro de cada lote y entre lotes: concatenar
+    los resultados en el mismo orden en que se pidieron los lotes reconstruye
+    exactamente la lista original.
+
+    `tamano` por debajo de 1 se trata como 1 en vez de reventar con un
+    `range(0)` infinito o una lista vacía silenciosa. La validación de verdad la
+    hace el `Field(ge=1)` de `settings`; esto es la red por si alguien construye
+    el cliente a mano.
+    """
+    paso = max(1, tamano)
+    return [list(comunas[inicio : inicio + paso]) for inicio in range(0, len(comunas), paso)]
 
 
 def _faltantes_globales(series: Sequence[SerieComunal]) -> list[str]:
@@ -464,7 +526,7 @@ def _deriva(serie: SerieComunal) -> float | None:
 
 
 class OpenMeteoClient:
-    """Descarga el pronóstico horario de todas las comunas en una petición."""
+    """Descarga el pronóstico horario de las comunas en lotes secuenciales."""
 
     def __init__(
         self,
@@ -475,6 +537,7 @@ class OpenMeteoClient:
         forecast_days: int | None = None,
         model: str | None = None,
         max_drift: float | None = None,
+        chunk_size: int | None = None,
     ) -> None:
         self.comunas: list[Comuna] = (
             list(comunas)
@@ -494,15 +557,35 @@ class OpenMeteoClient:
         self.max_drift = (
             max_drift if max_drift is not None else settings.OPENMETEO_MAX_DRIFT_DEGREES
         )
+        self.chunk_size = max(
+            1,
+            chunk_size if chunk_size is not None else settings.OPENMETEO_CHUNK_SIZE,
+        )
 
     @property
     def origin(self) -> str:
         return f"open-meteo:{self.url}"
 
-    def params(self) -> dict[str, str]:
-        """Parámetros de la consulta.
+    def lotes(self) -> list[list[Comuna]]:
+        """Las comunas repartidas en peticiones. Ver `en_lotes`."""
+        return en_lotes(self.comunas, self.chunk_size)
 
-        Dos decisiones que no son obvias:
+    def params(self, comunas: Sequence[Comuna] | None = None) -> dict[str, str]:
+        """Parámetros de la consulta de UN lote.
+
+        Sin argumento pide todas las comunas de golpe, que es lo que hacía antes
+        de existir los lotes: se conserva porque es la forma en que los tests
+        inspeccionan la consulta y porque con pocas comunas sigue siendo un solo
+        lote.
+
+        Tres decisiones que no son obvias:
+
+        * ``forecast_days=2`` — la ventana táctica máxima del sistema es de 24 h
+          móviles, así que a las 22:00 hacen falta las horas de mañana y ninguna
+          más. El defecto de la API son **siete días**, y esos cinco de más eran
+          la mayor parte del payload que se truncaba en producción (ver el
+          encabezado del módulo). Sale de `settings`, no está fijo acá, pero el
+          motivo por el que no se sube está escrito en `OPENMETEO_FORECAST_DAYS`.
 
         * ``timezone=UTC`` — las horas vuelven como ``2026-08-25T14:00`` sin
           desfase y `parse_timestamp` las ancla en UTC sin adivinar nada. Pedir
@@ -515,9 +598,10 @@ class OpenMeteoClient:
           Explícito y no por defecto porque la propia documentación de Open-Meteo
           se contradice sobre cuál es el valor por defecto de este parámetro.
         """
+        objetivo = list(self.comunas if comunas is None else comunas)
         return {
-            "latitude": ",".join(f"{comuna.lat:.4f}" for comuna in self.comunas),
-            "longitude": ",".join(f"{comuna.lon:.4f}" for comuna in self.comunas),
+            "latitude": ",".join(f"{comuna.lat:.4f}" for comuna in objetivo),
+            "longitude": ",".join(f"{comuna.lon:.4f}" for comuna in objetivo),
             "hourly": ",".join(HOURLY_VARIABLES),
             "forecast_days": str(self.forecast_days),
             "timezone": "UTC",
@@ -526,7 +610,7 @@ class OpenMeteoClient:
         }
 
     async def fetch_forecast(self) -> tuple[list[SerieComunal], list[str]]:
-        """Devuelve `(series, advertencias)`.
+        """Devuelve `(series, advertencias)`, consultando lote por lote.
 
         El transporte es `geoservices.request_json`, igual que en las capas
         institucionales: de ahí salen los reintentos con espera exponencial ante
@@ -535,24 +619,57 @@ class OpenMeteoClient:
         detección de HTML de portal caído y la conversión de cualquier excepción
         de httpx (timeout, DNS, TLS) en `CollectorError`. Escribir un manejo de
         red propio acá habría sido volver a resolver todo eso peor.
+
+        Los lotes comparten **un solo `AsyncClient`**: reusa la conexión TCP y el
+        handshake TLS, así que tres peticiones secuenciales cuestan poco más que
+        una en tiempo de pared. Y son secuenciales dentro del mismo `async with`,
+        no un `gather`, por lo que dice el encabezado del módulo.
+
+        Un lote que falle sube su `CollectorError` y corta la corrida entera. Es
+        deliberado: media región pronosticada y media en silencio se vería en el
+        widget exactamente igual que media región sin amenazas, y ése es el fallo
+        silencioso que este proyecto persigue. Lo que sí cambia respecto de la
+        petición única es que el mensaje ahora dice **qué lote** falló, que con 36
+        comunas en una sola llamada era imposible de acotar.
         """
+        lotes = self.lotes()
+        series: list[SerieComunal] = []
+        advertencias: list[str] = []
+
         async with httpx.AsyncClient(
             timeout=self.timeout,
             follow_redirects=True,
             headers={"User-Agent": USER_AGENT},
         ) as client:
-            payload = await request_json(
-                client, self.url, self.params(), origin=self.origin
-            )
+            for numero, lote in enumerate(lotes, start=1):
+                # El origen lleva el lote sólo cuando hay más de uno: con una
+                # sola petición, un "[lote 1/1]" pegado a cada mensaje de error
+                # es ruido que además rompería los mensajes que ya se leen en
+                # los tests y en los logs históricos.
+                origen = (
+                    self.origin
+                    if len(lotes) == 1
+                    else f"{self.origin} [lote {numero}/{len(lotes)}]"
+                )
+                payload = await request_json(
+                    client, self.url, self.params(lote), origin=origen
+                )
+                parciales, avisos = parse_lote(
+                    payload, lote, origin=origen, max_drift=self.max_drift
+                )
+                series.extend(parciales)
+                advertencias.extend(avisos)
 
-        series, advertencias = parse_payload(
-            payload, self.comunas, origin=self.origin, max_drift=self.max_drift
-        )
+        # Una vez, sobre las 36: ver `_faltantes_globales` para por qué el umbral
+        # es "en ninguna comuna" y por qué eso no se puede decidir por lote.
+        advertencias.extend(_faltantes_globales(series))
+
         logger.debug(
             "pronóstico leído",
             extra={
                 "origin": self.origin,
                 "comunas": len(series),
+                "lotes": len(lotes),
                 "advertencias": len(advertencias),
             },
         )

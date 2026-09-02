@@ -20,6 +20,7 @@ estos tests existen para sostener.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -756,3 +757,78 @@ def test_el_401_dice_que_cabecera_hay_que_poner(cliente):
     detalle = respuesta.json()["detail"]
     assert "X-AlertaV-Apify-Secret" in detalle
     assert "secreto-compartido" not in detalle, "el secreto no se devuelve nunca"
+
+
+# --- 8. El nivel del log del rechazo -----------------------------------------
+#
+# El 401 es el mismo en los dos casos; lo que cambia es a quién despierta. Ver
+# la sección "El rechazo es siempre 401; el nivel del log, no" del endpoint.
+
+
+def test_una_llamada_sin_credencial_se_registra_como_info(cliente, caplog):
+    """Los webhooks huérfanos de Apify no pueden encender la alarma de Render.
+
+    Disparan peticiones vacías contra esta URL a la par de las válidas. El
+    rechazo tiene que seguir siendo 401, pero registrarlo como `WARNING`
+    inundaba el log de producción y entrenaba a quien lo mira a ignorar los
+    avisos de esta ruta.
+    """
+    settings.APIFY_WEBHOOK_SECRET = "secreto-compartido"
+
+    with caplog.at_level(logging.INFO, logger="app.api.v1.endpoints.apify"):
+        respuesta = cliente.post(WEBHOOK, json=payload_apify())
+
+    assert respuesta.status_code == 401, "el rechazo no se relaja: sigue siendo 401"
+
+    rechazos = [
+        registro for registro in caplog.records if "rechazado" in registro.getMessage()
+    ]
+    assert len(rechazos) == 1
+    assert rechazos[0].levelno == logging.INFO
+    assert rechazos[0].trae_cabecera_propia is False
+
+
+def test_una_llamada_con_secreto_equivocado_sigue_siendo_warning(cliente, caplog):
+    """Esto sí es una integración nuestra rota, y hay que enterarse hoy.
+
+    Un secreto mal copiado o rotado a medias significa despachos de Bomberos que
+    no están entrando. Es justo el caso que el saneamiento de logs NO puede
+    silenciar.
+    """
+    settings.APIFY_WEBHOOK_SECRET = "secreto-compartido"
+
+    with caplog.at_level(logging.INFO, logger="app.api.v1.endpoints.apify"):
+        respuesta = cliente.post(
+            WEBHOOK,
+            json=payload_apify(),
+            headers={"X-AlertaV-Apify-Secret": "secreto-equivocado"},
+        )
+
+    assert respuesta.status_code == 401
+
+    rechazos = [
+        registro for registro in caplog.records if "rechazado" in registro.getMessage()
+    ]
+    assert len(rechazos) == 1
+    assert rechazos[0].levelno == logging.WARNING
+
+
+def test_una_authorization_vacia_cuenta_como_sin_credencial(cliente, caplog):
+    """Una cabecera presente pero vacía no es una integración mal configurada.
+
+    Lo que decide el nivel es si llegó algún VALOR utilizable, no si el nombre
+    de la cabecera venía en la petición: `Authorization: ` a secas es ruido, no
+    un secreto equivocado.
+    """
+    settings.APIFY_WEBHOOK_SECRET = "secreto-compartido"
+
+    with caplog.at_level(logging.INFO, logger="app.api.v1.endpoints.apify"):
+        respuesta = cliente.post(
+            WEBHOOK, json=payload_apify(), headers={"Authorization": "   "}
+        )
+
+    assert respuesta.status_code == 401
+    rechazos = [
+        registro for registro in caplog.records if "rechazado" in registro.getMessage()
+    ]
+    assert rechazos[0].levelno == logging.INFO

@@ -1037,8 +1037,12 @@ def test_un_timeout_no_escapa_como_excepcion():
 
 
 @respx.mock
-def test_la_consulta_pide_una_sola_peticion_para_todas_las_comunas():
-    """El ahorro que hace irrelevante el presupuesto del nivel abierto."""
+def test_las_comunas_de_un_lote_viajan_en_una_sola_peticion():
+    """El ahorro que hace irrelevante el presupuesto del nivel abierto.
+
+    Lo que se persigue nunca fue "una sola llamada por corrida" sino "no una
+    llamada por comuna": dos comunas caben en un lote y viajan juntas.
+    """
     ruta = respx.get(API_URL).mock(
         return_value=httpx.Response(
             200, json=payload_de(serie(VALPO, [1.0]), serie(QUILPUE, [1.0]))
@@ -1055,6 +1059,117 @@ def test_la_consulta_pide_una_sola_peticion_para_todas_las_comunas():
     # UTC para no reconstruir desfases, y `land` porque media región es costera.
     assert consulta["timezone"] == "UTC"
     assert consulta["cell_selection"] == "land"
+
+
+@respx.mock
+def test_la_consulta_no_pide_siete_dias_de_pronostico():
+    """El defecto de la API son 7 días y eran la mayor parte del payload roto.
+
+    La ventana táctica máxima del sistema es de 24 h móviles: con 2 días
+    siempre hay horas de mañana disponibles a las 22:00 y ni una más. Pedir el
+    defecto traía cinco días que nadie mira y engordaba la respuesta hasta el
+    punto en que Open-Meteo la cortaba a mitad (`JSONDecodeError` en
+    producción).
+    """
+    ruta = respx.get(API_URL).mock(
+        return_value=httpx.Response(
+            200, json=payload_de(serie(VALPO, [1.0]), serie(QUILPUE, [1.0]))
+        )
+    )
+
+    correr(collector())
+
+    assert ruta.calls[0].request.url.params["forecast_days"] == "2"
+
+
+# --- 6 bis. Los lotes --------------------------------------------------------
+#
+# Las 36 comunas en una petición devolvían un JSON de cientos de kB que el nivel
+# abierto truncaba: HTTP 200, sin `{"error": true}`, y el único síntoma un
+# `JSONDecodeError` que se llevaba la corrida entera. Ver el encabezado de
+# `openmeteo_client`.
+
+
+def comunas_de_prueba(cuantas: int) -> list[Comuna]:
+    """Comunas sintéticas separadas en longitud, para no depender de la tabla."""
+    return [
+        Comuna(f"Comuna {indice}", -33.0472, -71.6127 + indice * 0.01)
+        for indice in range(cuantas)
+    ]
+
+
+@respx.mock
+def test_las_comunas_se_reparten_en_lotes_del_tamano_configurado():
+    cinco = comunas_de_prueba(5)
+    ruta = respx.get(API_URL).mock(
+        side_effect=[
+            httpx.Response(200, json=payload_de(*(serie(c, [1.0]) for c in cinco[:2]))),
+            httpx.Response(200, json=payload_de(*(serie(c, [1.0]) for c in cinco[2:4]))),
+            httpx.Response(200, json=payload_de(serie(cinco[4], [1.0]))),
+        ]
+    )
+    cliente = OpenMeteoClient(comunas=cinco, url=API_URL, timeout=5.0, chunk_size=2)
+
+    series, _ = asyncio.run(cliente.fetch_forecast())
+
+    assert ruta.call_count == 3, "5 comunas en lotes de 2 son tres peticiones"
+    assert [len(llamada.request.url.params["latitude"].split(",")) for llamada in ruta.calls] == [
+        2,
+        2,
+        1,
+    ]
+    # Y el resultado es la lista completa, en el orden en que se pidió: el orden
+    # es lo ÚNICO que empareja cada pronóstico con su comuna.
+    assert [s.comuna.nombre for s in series] == [c.nombre for c in cinco]
+
+
+@respx.mock
+def test_el_error_de_un_lote_dice_cual_fue():
+    """Con 36 comunas en una llamada, "falló la petición" no se podía acotar."""
+    cinco = comunas_de_prueba(5)
+    ruta = respx.get(API_URL).mock(
+        side_effect=[
+            httpx.Response(200, json=payload_de(*(serie(c, [1.0]) for c in cinco[:2]))),
+            httpx.Response(400, json={"error": True, "reason": "Latitude must be in range"}),
+        ]
+    )
+    cliente = OpenMeteoClient(comunas=cinco, url=API_URL, timeout=5.0, chunk_size=2)
+
+    with pytest.raises(CollectorError) as fallo:
+        asyncio.run(cliente.fetch_forecast())
+
+    assert "lote 2/3" in str(fallo.value)
+    assert ruta.call_count == 2, "un lote roto corta la corrida, no sigue con el resto"
+
+
+@respx.mock
+def test_una_variable_ausente_en_todos_los_lotes_avisa_una_sola_vez():
+    """`_faltantes_globales` mira las 36, no cada lote por separado.
+
+    Si el chequeo corriera por lote, un modelo que dejara de publicar el índice
+    UV produciría una advertencia por cada petición —tres hoy, más si baja el
+    tamaño del lote— diciendo todas lo mismo. Y al revés: una variable presente
+    sólo en el primer lote no puede declararse ausente "en todas".
+    """
+    cuatro = comunas_de_prueba(4)
+    # `uv=[None]` y no `uv=None`: lo segundo cae al ambiente calmo por defecto.
+    sin_uv = [serie(comuna, [1.0], uv=[None]) for comuna in cuatro]
+
+    ruta = respx.get(API_URL).mock(
+        side_effect=[
+            httpx.Response(200, json=payload_de(*sin_uv[:2])),
+            httpx.Response(200, json=payload_de(*sin_uv[2:])),
+        ]
+    )
+    cliente = OpenMeteoClient(comunas=cuatro, url=API_URL, timeout=5.0, chunk_size=2)
+
+    _, advertencias = asyncio.run(cliente.fetch_forecast())
+
+    assert ruta.call_count == 2
+    globales = [aviso for aviso in advertencias if "ninguna de las" in aviso]
+    assert len(globales) == 1, "una advertencia por corrida, no una por lote"
+    assert "4 comunas" in globales[0], "el conteo es sobre el total, no sobre el lote"
+    assert "índice UV" in globales[0]
 
 
 # --- 7. La tabla de comunas --------------------------------------------------
