@@ -363,6 +363,15 @@ class IngestResult(BaseModel):
     inserted: int = Field(..., description="Eventos nuevos.")
     duplicated: int = Field(..., description="Eventos ya conocidos (mismo source + external_id).")
     rejected: int = Field(default=0, description="Eventos descartados por validación.")
+    collapsed: int = Field(
+        default=0,
+        description=(
+            "Eventos que traían un `external_id` ya presente EN EL MISMO LOTE y "
+            "se fundieron antes de insertar. Distinto de `duplicated`, que son "
+            "los que ya estaban en la base. `received` = `inserted` + "
+            "`duplicated` + `rejected` + `collapsed`."
+        ),
+    )
     errors: list[str] = Field(default_factory=list)
 
 

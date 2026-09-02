@@ -873,6 +873,22 @@ class TransporteInformaCollector(BaseCollector):
                 resolved.append((notice, tipo, streets, point))
 
         accidentes = sum(1 for _, tipo, _, _ in resolved if tipo is EventType.ACCIDENT)
+
+        # Qué descartó el pre-filtro, y no sólo cuántos.
+        #
+        # `avisos: 4 · retenidos: 0` es una línea ambigua: puede ser el MTT
+        # publicando cuatro faenas programadas —correcto, y el silencio es la
+        # respuesta correcta— o `clasificar_transito` habiéndose quedado corto de
+        # vocabulario. Las dos se ven idénticas en producción, y el portal ya se
+        # rediseñó una vez.
+        #
+        # Con una muestra del texto la pregunta se contesta leyendo el log en vez
+        # de reproduciendo el raspado. Va en INFO y no en WARNING a propósito:
+        # descartar avisos irrelevantes es el trabajo del filtro haciéndose bien,
+        # no una degradación. Lo que se busca es poder auditarlo, no que grite.
+        clasificados_ids = {id(notice) for notice, _ in clasificados}
+        descartados = [n for n in notices if id(n) not in clasificados_ids]
+
         logger.info(
             "avisos del MTT procesados",
             extra={
@@ -883,6 +899,13 @@ class TransporteInformaCollector(BaseCollector):
                 "cortes_de_via": len(resolved) - accidentes,
                 "extracciones_llm": llm_calls,
                 "geocodificados": geocoded,
+                "descartados": len(descartados),
+                # Recortada dos veces: cinco avisos y 120 caracteres cada uno. Es
+                # una muestra para decidir si el filtro está bien calibrado, no
+                # un volcado del portal en el log de producción.
+                "descartados_muestra": [
+                    " ".join(n.text.split())[:120] for n in descartados[:5]
+                ],
                 "modo": gemini.MODE_GEMINI
                 if gemini.is_configured()
                 else gemini.MODE_HEURISTIC,

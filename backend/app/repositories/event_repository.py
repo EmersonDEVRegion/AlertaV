@@ -7,6 +7,7 @@ servicio, y sólo el servicio habla con este repositorio.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -31,16 +32,54 @@ _GEOGRAPHY = Geography(geometry_type="POINT", srid=4326)
 _UPSERT_UPDATE_COLUMNS = ("type", "lat", "lon", "text", "confidence", "raw_data")
 
 
-def _dedupe_batch(events: Sequence[EventCreate]) -> list[EventCreate]:
-    """Colapsa duplicados dentro del mismo lote.
+@dataclass(frozen=True, slots=True)
+class UpsertOutcome:
+    """Qué pasó con un lote. Las tres cifras cuentan cosas distintas.
+
+    * `inserted` — filas nuevas en la base.
+    * `duplicated` — filas que YA estaban y se actualizaron.
+    * `collapsed` — `external_id` que venían repetidos **dentro del lote** y se
+      fundieron antes del INSERT. No llegaron a la base como filas propias.
+
+    `inserted + duplicated + len(collapsed)` tiene que dar el tamaño del lote
+    original. Que esa suma no cuadrara es lo que escondía la pérdida.
+    """
+
+    inserted: int
+    duplicated: int
+    collapsed: list[str]
+
+    @property
+    def collapsed_count(self) -> int:
+        return len(self.collapsed)
+
+
+def _dedupe_batch(
+    events: Sequence[EventCreate],
+) -> tuple[list[EventCreate], list[str]]:
+    """Colapsa duplicados dentro del mismo lote. Devuelve `(lote, colapsados)`.
 
     Postgres aborta con "ON CONFLICT DO UPDATE cannot affect row a second time"
     si un único INSERT trae dos filas con la misma clave de conflicto. FIRMS
     puede devolver la misma detección repetida entre sensores solapados, así que
     esto no es teórico. Gana la última ocurrencia.
+
+    **Los `external_id` colapsados salen también**, y no como un número: durante
+    meses este colapso fue invisible y se llevó por delante un corte de
+    Chilquinta en cada corrida sin que ninguna cuenta lo delatara. `received` en
+    `IngestResult` contaba la lista original y `inserted + duplicated` el lote ya
+    colapsado, así que la resta nunca cuadraba y nadie tenía por qué mirarla.
+
+    La lista importa más que el conteo porque decide entre dos diagnósticos
+    opuestos: si el mismo `external_id` aparece una vez por corrida es la fuente
+    repitiendo una fila y no hay nada que hacer; si son ids distintos cada vez,
+    son **hechos distintos chocando en la construcción del id** —dos cortes que
+    comparten centroide y minuto de inicio, y por tanto su hash— y ahí se está
+    perdiendo un evento real todos los días.
     """
     seen: dict[tuple[EventSource, str], int] = {}
     result: list[EventCreate] = []
+    collapsed: list[str] = []
     for event in events:
         if event.external_id is None:
             result.append(event)
@@ -48,10 +87,11 @@ def _dedupe_batch(events: Sequence[EventCreate]) -> list[EventCreate]:
         key = (event.source, event.external_id)
         if key in seen:
             result[seen[key]] = event
+            collapsed.append(event.external_id)
         else:
             seen[key] = len(result)
             result.append(event)
-    return result
+    return result, collapsed
 
 
 class EventRepository:
@@ -60,8 +100,8 @@ class EventRepository:
 
     # -- Escritura -----------------------------------------------------------
 
-    async def upsert_many(self, events: Sequence[EventCreate]) -> tuple[int, int]:
-        """Inserta un lote de forma idempotente. Devuelve `(insertados, duplicados)`.
+    async def upsert_many(self, events: Sequence[EventCreate]) -> UpsertOutcome:
+        """Inserta un lote de forma idempotente.
 
         La idempotencia se apoya en el índice único parcial
         `uq_raw_events_source_external_id`. Los eventos sin `external_id`
@@ -72,10 +112,15 @@ class EventRepository:
 
         `xmax = 0` distingue fila insertada de fila actualizada: en una fila
         recién insertada el id de transacción de borrado es 0.
+
+        Devuelve un `UpsertOutcome` y no una tupla porque son tres números que
+        se confunden con facilidad, y confundirlos fue exactamente el problema:
+        `collapsed` no es «duplicado» —esos son filas que ya estaban en la base—
+        sino filas del MISMO lote que traían la misma clave.
         """
-        deduped = _dedupe_batch(events)
+        deduped, collapsed = _dedupe_batch(events)
         if not deduped:
-            return (0, 0)
+            return UpsertOutcome(inserted=0, duplicated=0, collapsed=collapsed)
 
         rows = [event.to_orm_kwargs() for event in deduped]
 
@@ -92,7 +137,11 @@ class EventRepository:
         result = await self.session.execute(stmt)
         flags = [bool(row.inserted) for row in result]
         inserted = sum(flags)
-        return (inserted, len(flags) - inserted)
+        return UpsertOutcome(
+            inserted=inserted,
+            duplicated=len(flags) - inserted,
+            collapsed=collapsed,
+        )
 
     async def ids_by_external_id(
         self, source: EventSource, external_ids: Sequence[str]

@@ -34,19 +34,48 @@ class IngestService:
 
     async def ingest_batch(self, events: Sequence[EventCreate]) -> IngestResult:
         """Ingesta idempotente de un lote ya validado."""
-        inserted, duplicated = await self.repo.upsert_many(events)
+        outcome = await self.repo.upsert_many(events)
         await self.session.commit()
 
         logger.info(
             "batch ingerido",
             extra={
                 "received": len(events),
-                "inserted": inserted,
-                "duplicated": duplicated,
+                "inserted": outcome.inserted,
+                "duplicated": outcome.duplicated,
+                # Sin esto la resta no cuadraba y nadie tenía por qué mirarla:
+                # `received` cuenta la lista original y las otras dos el lote ya
+                # colapsado. Un corte de Chilquinta se perdía así en cada
+                # corrida, en silencio y sin una sola línea roja.
+                "collapsed": outcome.collapsed_count,
             },
         )
+
+        if outcome.collapsed:
+            # WARNING y no INFO: esto es la fuente entregando dos veces la misma
+            # identidad en una sola lectura, y sólo hay dos explicaciones. O
+            # repite una fila —benigno— o dos hechos distintos están chocando en
+            # la construcción del `external_id`, y entonces se está perdiendo un
+            # evento real por corrida. Los ids van en el mensaje porque son lo
+            # que separa un diagnóstico del otro: repetidos entre corridas es lo
+            # primero, distintos cada vez es lo segundo.
+            #
+            # Se recortan a diez para que una fuente que un día devuelva basura
+            # no escriba un log de megabytes.
+            logger.warning(
+                "el lote traía identidades repetidas; se fundieron antes de insertar",
+                extra={
+                    "collapsed": outcome.collapsed_count,
+                    "external_ids": sorted(set(outcome.collapsed))[:10],
+                    "received": len(events),
+                },
+            )
+
         return IngestResult(
-            received=len(events), inserted=inserted, duplicated=duplicated
+            received=len(events),
+            inserted=outcome.inserted,
+            duplicated=outcome.duplicated,
+            collapsed=outcome.collapsed_count,
         )
 
     async def ingest_raw(self, payloads: Sequence[dict[str, Any]]) -> IngestResult:

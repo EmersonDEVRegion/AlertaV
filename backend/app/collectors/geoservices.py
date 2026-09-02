@@ -679,25 +679,63 @@ async def request_json(
     method: str = "GET",
     headers: Mapping[str, str] | None = None,
     json_body: Any = None,
+    decode_retries: int = 1,
 ) -> Any:
     """Petición que devuelve JSON o falla con un mensaje diagnosticable.
 
     `method`, `headers` y `json_body` se pasan tal cual a `request_response`;
     ver allí por qué existen. Con los valores por defecto sigue siendo el GET
     de siempre.
+
+    ## Por qué hay un segundo bucle acá
+
+    `request_response` reintenta los fallos de RED. Un cuerpo truncado no es uno
+    de ésos: llega dentro de un 200, con sus cabeceras en orden, y su bucle lo
+    da por bueno. El fallo aparece un nivel más arriba, al decodificar, y ahí ya
+    no había reintento — la corrida moría con el lote entero perdido.
+
+    Sólo se repite el caso truncado. HTML en vez de JSON, un cuerpo vacío o algo
+    que no empieza como JSON siguen siendo fatales al primer intento: eso es el
+    endpoint cambiado o un portal de error delante, y reintentarlo no arregla
+    nada, sólo retrasa el diagnóstico. Es la misma línea que ya separa al 5xx
+    del 4xx en `request_response`.
+
+    `decode_retries` es 1 y no `retries`: un reintento extra convierte un corte
+    transitorio en una lectura buena, y si el segundo también llega cortado el
+    problema no es el azar y hay que verlo.
     """
-    response = await request_response(
-        client,
-        url,
-        params,
-        origin=origin,
-        retries=retries,
-        backoff=backoff,
-        method=method,
-        headers=headers,
-        json_body=json_body,
-    )
-    return _decode_json(response, origin=origin)
+    for intento in range(decode_retries + 1):
+        response = await request_response(
+            client,
+            url,
+            params,
+            origin=origin,
+            retries=retries,
+            backoff=backoff,
+            method=method,
+            headers=headers,
+            json_body=json_body,
+        )
+        try:
+            return _decode_json(response, origin=origin)
+        except _CuerpoTruncadoError as exc:
+            if intento >= decode_retries:
+                raise
+            logger.warning(
+                "cuerpo truncado; se vuelve a pedir",
+                extra={
+                    "origin": origin,
+                    "url": url,
+                    "intento": intento + 1,
+                    "bytes_recibidos": len(response.content),
+                    "error": str(exc)[:200],
+                },
+            )
+            await asyncio.sleep(backoff)
+
+    # Inalcanzable: el bucle o devuelve o relanza. Está por el verificador de
+    # tipos, que no puede saberlo.
+    raise AssertionError("request_json terminó el bucle sin devolver ni lanzar")
 
 
 async def request_text(
@@ -743,6 +781,16 @@ async def request_text(
     return body
 
 
+class _CuerpoTruncadoError(CollectorError):
+    """JSON que empieza bien y se corta a mitad.
+
+    Subclase de `CollectorError` a propósito: si algún camino la deja escapar
+    sin reintentar, se comporta como el error que ya era y la corrida queda
+    `failed` con su mensaje. La subclase sólo agrega la posibilidad de
+    distinguirla, nunca la obligación.
+    """
+
+
 def _decode_json(response: httpx.Response, *, origin: str) -> Any:
     body = response.text
     stripped = body.lstrip()[:200].lower()
@@ -755,6 +803,26 @@ def _decode_json(response: httpx.Response, *, origin: str) -> Any:
     try:
         return response.json()
     except (ValueError, json.JSONDecodeError) as exc:
+        # Un cuerpo que EMPIEZA como JSON y se rompe a mitad no es un contrato
+        # roto: es un cuerpo truncado, o sea un síntoma de transporte. Se
+        # distingue para que `request_json` pueda reintentarlo, porque llegó
+        # dentro de un 2xx y el bucle de reintentos de `request_response` ni se
+        # entera.
+        #
+        # Open-Meteo lo produjo en producción: el lote 3/3 llegó cortado en el
+        # carácter 18497, la corrida entera murió y el pronóstico se perdió
+        # media hora. El cuerpo empezaba impecable:
+        # '[{"latitude":-32.794376,"longitude":-70.96576,...'
+        #
+        # La distinción es por el PRIMER carácter y no por el mensaje del
+        # decodificador: los textos de `json` cambian entre versiones de Python
+        # y no son un contrato del que colgar una decisión.
+        if body.lstrip()[:1] in ("{", "["):
+            raise _CuerpoTruncadoError(
+                f"{origin}: JSON incompleto ({exc}). "
+                f"Inicio del cuerpo: {body[:200]!r}",
+                detail={"url": str(response.request.url)},
+            ) from exc
         raise CollectorError(
             f"{origin}: respuesta no es JSON válido ({exc}). "
             f"Inicio del cuerpo: {body[:200]!r}",

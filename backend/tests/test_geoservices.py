@@ -213,6 +213,75 @@ class TestRequestJson:
             with pytest.raises(CollectorError, match="JSON"):
                 await request_json(client, "https://x.test/q", {}, origin="t", retries=0)
 
+    async def test_un_cuerpo_truncado_se_vuelve_a_pedir(self) -> None:
+        """El fallo real de Open-Meteo del 2026-09-02.
+
+        El lote 3/3 llegó cortado en el carácter 18497 dentro de un HTTP 200. El
+        bucle de `request_response` no se entera —la red funcionó— y el fallo
+        aparece un nivel más arriba, al decodificar. Sin este reintento, la
+        corrida moría y el pronóstico se perdía media hora.
+        """
+        cortado = '[{"latitude":-32.794376,"longitude":-70.96576,"hourly_units":{"time":"iso'
+        route = respx.get("https://x.test/q").mock(
+            side_effect=[
+                httpx.Response(200, text=cortado),
+                httpx.Response(200, json=[{"latitude": -32.794376}]),
+            ]
+        )
+        async with httpx.AsyncClient() as client:
+            data = await request_json(
+                client, "https://x.test/q", {}, origin="t", retries=0, backoff=0
+            )
+
+        assert data == [{"latitude": -32.794376}]
+        assert route.call_count == 2
+
+    async def test_un_truncamiento_persistente_sí_falla(self) -> None:
+        """Un reintento, no insistencia.
+
+        Si el segundo intento también llega cortado, el problema no es el azar y
+        alguien tiene que verlo.
+        """
+        route = respx.get("https://x.test/q").mock(
+            return_value=httpx.Response(200, text='{"a": [1, 2')
+        )
+        async with httpx.AsyncClient() as client:
+            with pytest.raises(CollectorError, match="incompleto"):
+                await request_json(
+                    client, "https://x.test/q", {}, origin="t", retries=0, backoff=0
+                )
+
+        assert route.call_count == 2, "un reintento extra, no más"
+
+    async def test_el_html_no_se_reintenta(self) -> None:
+        """Esto es el endpoint cambiado o un portal delante, no mala suerte.
+
+        Reintentarlo no arregla nada y sólo retrasa el diagnóstico: la misma
+        línea que separa el 5xx del 4xx un nivel más abajo.
+        """
+        route = respx.get("https://x.test/q").mock(
+            return_value=httpx.Response(200, text="<!DOCTYPE html><html>502</html>")
+        )
+        async with httpx.AsyncClient() as client:
+            with pytest.raises(CollectorError, match="HTML"):
+                await request_json(
+                    client, "https://x.test/q", {}, origin="t", retries=0, backoff=0
+                )
+
+        assert route.call_count == 1
+
+    async def test_lo_que_no_empieza_como_json_tampoco_se_reintenta(self) -> None:
+        route = respx.get("https://x.test/q").mock(
+            return_value=httpx.Response(200, text="ERROR: quota exceeded")
+        )
+        async with httpx.AsyncClient() as client:
+            with pytest.raises(CollectorError, match="no es JSON válido"):
+                await request_json(
+                    client, "https://x.test/q", {}, origin="t", retries=0, backoff=0
+                )
+
+        assert route.call_count == 1
+
     async def test_reintenta_ante_5xx(self) -> None:
         route = respx.get("https://x.test/q").mock(
             side_effect=[
