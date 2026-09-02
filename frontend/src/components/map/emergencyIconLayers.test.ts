@@ -81,6 +81,39 @@ describe('el diccionario y el `match` no se desincronizan', () => {
     }
   })
 
+  it('todo sub-trazo cierra: el rasterizador rellena, no traza', () => {
+    /*
+     * El modo de fallo que esto ataja no da error en ninguna parte.
+     *
+     * `iconRaster` hace `ctx.fill()`, y un camino que sólo describe segmentos
+     * —`M12 9v4`, la forma de los iconos de lucide— no encierra área: se
+     * rellena a nada. El glifo sale invisible, MapLibre dibuja un símbolo vacío
+     * y la consola queda limpia. Copiar un path de lucide es exactamente la
+     * forma en que alguien va a tropezar con esto.
+     *
+     * Exigir la `z` no prueba que el dibujo sea bonito, pero sí que haya
+     * superficie que rellenar, que es la condición que el pipeline impone.
+     */
+    for (const id of ICON_IDS) {
+      for (const d of ICON_GLYPHS[id].paths) {
+        expect(d, `${id}: sub-trazo sin cerrar → se rellenaría vacío`).toMatch(/[zZ]/)
+      }
+    }
+  })
+
+  it('ningún glifo excede el lienzo de 24, que es lo que asume el rasterizador', () => {
+    // `iconRaster` escala por `inner / VIEWBOX` con VIEWBOX = 24. Una coordenada
+    // fuera de rango no se recorta con un error: se come el margen reservado
+    // para el SDF y el halo aparece cortado en seco contra el borde.
+    for (const id of ICON_IDS) {
+      for (const d of ICON_GLYPHS[id].paths) {
+        for (const n of d.match(/-?\d+(\.\d+)?/g) ?? []) {
+          expect(Math.abs(Number(n)), `${id}: coordenada ${n} fuera del lienzo`).toBeLessThanOrEqual(24)
+        }
+      }
+    }
+  })
+
   it('el `match` se genera desde el diccionario, no a mano', () => {
     const expr = JSON.stringify(incidentIconLayer('dark').layout?.['icon-image'])
     // Cada tipo del diccionario tiene que aparecer en la expresión.

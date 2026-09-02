@@ -1,4 +1,4 @@
-import { ICON_GLYPHS, type IconId } from '@/domain/emergencyIcons'
+import { ICON_GLYPHS, type IconGlyph, type IconId } from '@/domain/emergencyIcons'
 import { SDF_RADIUS, alphaToSdf, sdfToImageData } from './sdf'
 
 /**
@@ -12,20 +12,34 @@ import { SDF_RADIUS, alphaToSdf, sdfToImageData } from './sdf'
  * lienzo llegara antes, la transformada mediría contra un recorte inexistente y
  * el halo aparecería cortado en seco justo en los bordes de la imagen.
  *
- * # Por qué se traza y no se rellena
+ * # Por qué se rellena y no se traza
  *
- * Los glifos de lucide son contornos abiertos con `stroke`, no siluetas
- * cerradas. Un `fill()` sobre `M12 9v4` no dibuja nada —un segmento no encierra
- * área—, así que el icono saldría vacío. Se trazan con extremos y uniones
- * redondeadas, que es lo que les da su forma característica.
+ * Antes se trazaba, porque los glifos venían de lucide y son contornos abiertos.
+ * A los tamaños reales de este mapa eso no funciona: con `icon-size` entre 0.3 y
+ * 0.6 sobre un lienzo de 64, el glifo mide entre 14 y 29 px en pantalla, y un
+ * trazo de 2 unidades sobre un lienzo de 24 queda ahí en poco más de un píxel.
+ * Todo detalle interior se cierra. La `flame` de lucide lo demostró: su rizo
+ * interior colapsaba y el icono se leía como una espiral.
+ *
+ * Ahora los siete glifos son siluetas cerradas y se rellenan. Si algún día hace
+ * falta uno intrínsecamente lineal habrá que reponer el modo de trazo —un
+ * `fill()` sobre `M12 9v4` no dibuja nada, un segmento no encierra área—, pero
+ * mientras no exista ese glifo la rama no se agrega: sería código que nada
+ * ejercita.
+ *
+ * # `evenodd` y no `nonzero`
+ *
+ * Los recortes —el signo del triángulo de contingencia, el núcleo de la llama—
+ * se declaran como sub-caminos dentro del mismo `d`. Con `nonzero` un sub-camino
+ * interior sólo agujerea si va en sentido contrario al exterior, que es una
+ * trampa invisible: el icono sale macizo y nadie sabe por qué. Con `evenodd`
+ * agujerea siempre, y el sentido en que se escribió el camino deja de importar.
  */
 
 /** Lado del lienzo, en píxeles. */
 export const ICON_CANVAS = 64
-/** Lienzo de lucide. */
+/** Lienzo en el que están dibujados los glifos. */
 const VIEWBOX = 24
-/** Grosor del trazo en unidades de lucide. */
-const STROKE = 2
 
 export interface RasterIcon {
   id: IconId
@@ -39,7 +53,7 @@ export interface RasterIcon {
  * rasterización necesita un canvas y sólo corre en el navegador, mientras que
  * la transformada de distancia es aritmética pura y se prueba en Node.
  */
-function rasterize(paths: readonly string[]): Float64Array | null {
+function rasterize(glyph: IconGlyph): Float64Array | null {
   const canvas = document.createElement('canvas')
   canvas.width = ICON_CANVAS
   canvas.height = ICON_CANVAS
@@ -52,15 +66,9 @@ function rasterize(paths: readonly string[]): Float64Array | null {
   ctx.clearRect(0, 0, ICON_CANVAS, ICON_CANVAS)
   ctx.translate(SDF_RADIUS, SDF_RADIUS)
   ctx.scale(scale, scale)
-  ctx.strokeStyle = '#fff'
-  ctx.lineWidth = STROKE
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  // El trazo se ensancha al escalar; `miterLimit` alto evita que las uniones
-  // agudas del vehículo se recorten en pico.
-  ctx.miterLimit = 4
+  ctx.fillStyle = '#fff'
 
-  for (const d of paths) ctx.stroke(new Path2D(d))
+  for (const d of glyph.paths) ctx.fill(new Path2D(d), 'evenodd')
 
   const { data } = ctx.getImageData(0, 0, ICON_CANVAS, ICON_CANVAS)
   const alpha = new Float64Array(ICON_CANVAS * ICON_CANVAS)
@@ -71,7 +79,7 @@ function rasterize(paths: readonly string[]): Float64Array | null {
 /** Construye la imagen SDF de un glifo. `null` si no hay canvas disponible. */
 export function buildIcon(id: IconId): RasterIcon | null {
   const glyph = ICON_GLYPHS[id]
-  const alpha = rasterize(glyph.paths)
+  const alpha = rasterize(glyph)
   if (!alpha) return null
 
   const sdf = alphaToSdf(alpha, ICON_CANVAS, ICON_CANVAS)
