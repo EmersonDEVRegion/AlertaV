@@ -150,6 +150,28 @@ export const env = {
    * foto seis veces.
    */
   rainPollIntervalMs: num(import.meta.env.VITE_RAIN_POLL_INTERVAL_MS, 600_000),
+  /**
+   * Cadencia del estado meteorológico táctico de la barra superior.
+   *
+   * La misma que la lluvia y por la misma razón —lo escribe el mismo collector,
+   * cada 30 min— pero con su propia variable a propósito: son dos consumidores
+   * con vidas distintas. La capa de lluvia sólo consulta cuando alguien la
+   * enciende; el widget consulta desde que arranca la aplicación y no se apaga
+   * nunca, porque su trabajo es estar ahí. Atarlos a un solo número obligaría a
+   * elegir entre encarecer el arranque o volver perezoso el widget.
+   */
+  weatherPollIntervalMs: num(import.meta.env.VITE_WEATHER_POLL_INTERVAL_MS, 600_000),
+  /**
+   * Cadencia de la capa de cortes de ruta. La más lenta de todas, y con mucho.
+   *
+   * El collector del MOP corre cada hora y el propio servicio se actualiza los
+   * lunes; el del MTT publica intervenciones programadas, que no cambian de un
+   * momento a otro. Pedirlo cada minuto traería la misma foto sesenta veces.
+   */
+  roadClosurePollIntervalMs: num(
+    import.meta.env.VITE_ROAD_CLOSURE_POLL_INTERVAL_MS,
+    900_000,
+  ),
   /** A partir de aquí la UI avisa que el dato puede no describir el presente. */
   staleAfterMs: num(import.meta.env.VITE_STALE_AFTER_MS, 180_000),
   mapStyle: url(

@@ -6,9 +6,17 @@ import {
   HAZARD_RAMP,
   HAZARD_RETICULE,
 } from '@/domain/hazardSymbology'
-import { RAIN_LEGEND, RAIN_PALETTE, RAIN_SWAP } from '@/domain/rainSymbology'
+// Sólo la zona de relevo, para `REFERENCE_SWAP_ZOOMS`: la capa de lluvia sigue
+// existiendo en el mapa aunque su tarjeta se haya ido al widget, y el test de
+// coherencia entre estilo e interfaz sigue leyendo ese número desde acá.
+import { RAIN_SWAP } from '@/domain/rainSymbology'
+import {
+  ROAD_CLOSURE_LEGEND,
+  ROAD_CLOSURE_LEGEND_TEXT,
+  ROAD_CLOSURE_PALETTE,
+} from '@/domain/roadClosureSymbology'
 import type { HazardStatus } from '@/hooks/useSeismicHazard'
-import type { RainStatus } from '@/hooks/useRainLayer'
+import type { RoadClosureStatus } from '@/hooks/useRoadClosures'
 import type { Theme } from '@/hooks/useTheme'
 import { cn } from '@/lib/cn'
 
@@ -19,7 +27,7 @@ import { cn } from '@/lib/cn'
  *
  * Vivía al final del `SidePanel`, bajo una línea divisoria, después de cinco
  * filas de emergencias y de sus sublistas desplegables. Esa posición decía algo
- * que no es cierto: que estas dos capas son un apéndice de las otras.
+ * que no es cierto: que estas capas son un apéndice de las otras.
  *
  * No lo son. Son de otra naturaleza:
  *
@@ -48,12 +56,14 @@ export interface ReferenceDockProps {
   hazardError: string | null
   onHazardToggle: () => void
   onHazardRetry: () => void
-  rainEnabled: boolean
-  rainStatus: RainStatus
-  rainCount: number
-  rainRiskCount: number
-  onRainToggle: () => void
-  onRainRetry: () => void
+  // Sin nada de lluvia: ese control se fue al widget de la barra superior. Ver
+  // la nota dentro de `ReferenceLayers`.
+  closureEnabled: boolean
+  closureStatus: RoadClosureStatus
+  closureCount: number
+  closureCutCount: number
+  onClosureToggle: () => void
+  onClosureRetry: () => void
   theme: Theme
 }
 
@@ -86,7 +96,7 @@ function WaveIcon() {
   )
 }
 
-function RainIcon() {
+function RoadIcon() {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -98,10 +108,14 @@ function RainIcon() {
       aria-hidden
       className="size-4"
     >
-      <path d="M17.5 17a4.5 4.5 0 0 0 .5-8.97A6 6 0 0 0 6.3 8.5 3.75 3.75 0 0 0 6.5 16" />
-      <path d="M9 18.5 8 21" />
-      <path d="M13 18.5 12 21" />
-      <path d="M17 18.5 16 21" />
+      {/* Una calzada en perspectiva con la línea central discontinua: el
+          símbolo universal de «vía», y la discontinuidad ya insinúa la
+          interrupción sin necesidad de un aspa. */}
+      <path d="M4 21 7 3" />
+      <path d="M20 21 17 3" />
+      <path d="M12 5v2" />
+      <path d="M12 11v2" />
+      <path d="M12 17v2" />
     </svg>
   )
 }
@@ -165,9 +179,9 @@ function LayerCard({
       <div className="flex items-center gap-2.5">
         {/*
           El azulejo del ícono se tiñe con el color de la capa a baja opacidad.
-          Es lo que hace que las dos tarjetas se distingan de un vistazo sin
-          repetir el nombre: violeta es amenaza, cian es lluvia, y el mismo
-          color es el que aparece en el mapa.
+          Es lo que hace que las tarjetas se distingan de un vistazo sin repetir
+          el nombre: violeta es amenaza sísmica, ámbar son cortes de ruta, y el
+          mismo color es el que aparece en el mapa.
         */}
         <span
           aria-hidden
@@ -249,20 +263,32 @@ function LayerCard({
 /* Textos de estado                                                           */
 /* ------------------------------------------------------------------------- */
 
-function rainDescription(status: RainStatus, count: number, riskCount: number): string {
+/**
+ * Subtítulo de la tarjeta de cortes.
+ *
+ * El caso `ready` antepone los cortes EFECTIVOS al total, y ese orden es la
+ * decisión de la función: de todo lo que esta capa dibuja, lo único accionable
+ * es cuántas rutas no se pueden pasar. Un «14 vigentes» a secas mezcla una
+ * repavimentación programada con un puente caído.
+ */
+function closureDescription(
+  status: RoadClosureStatus,
+  count: number,
+  cutCount: number,
+): string {
   switch (status) {
     case 'loading':
-      return 'Consultando el pronóstico…'
+      return 'Consultando Vialidad y el MTT…'
     case 'error':
       return 'No se pudo cargar'
     case 'empty':
-      return RAIN_LEGEND.empty
+      return ROAD_CLOSURE_LEGEND_TEXT.empty
     case 'ready':
-      return riskCount > 0
-        ? `${count} comuna${count === 1 ? '' : 's'} · ${riskCount} con riesgo`
-        : `${count} comuna${count === 1 ? '' : 's'} · sin riesgo`
+      return cutCount > 0
+        ? `${cutCount} ruta${cutCount === 1 ? '' : 's'} cortada${cutCount === 1 ? '' : 's'} · ${count} vigente${count === 1 ? '' : 's'}`
+        : `${count} vigente${count === 1 ? '' : 's'} · ninguna cortada`
     default:
-      return RAIN_LEGEND.subtitle
+      return ROAD_CLOSURE_LEGEND_TEXT.subtitle
   }
 }
 
@@ -277,29 +303,6 @@ function hazardDescription(status: HazardStatus, error: string | null): string {
     default:
       return HAZARD_LEGEND.subtitle
   }
-}
-
-/** Marca de escala: qué representación manda al zoom actual. */
-function ScaleNote({ regional, local }: { regional: string; local: string }) {
-  return (
-    <p className="mt-1.5 flex items-center gap-1.5 text-[9.5px] text-ink-faint">
-      <span>{regional}</span>
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={2.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden
-        className="size-2.5 shrink-0"
-      >
-        <path d="M5 12h14" />
-        <path d="m13 6 6 6-6 6" />
-      </svg>
-      <span>{local}</span>
-    </p>
-  )
 }
 
 /* ------------------------------------------------------------------------- */
@@ -319,16 +322,25 @@ export function ReferenceLayers({
   hazardError,
   onHazardToggle,
   onHazardRetry,
-  rainEnabled,
-  rainStatus,
-  rainCount,
-  rainRiskCount,
-  onRainToggle,
-  onRainRetry,
+  closureEnabled,
+  closureStatus,
+  closureCount,
+  closureCutCount,
+  onClosureToggle,
+  onClosureRetry,
   theme,
 }: ReferenceDockProps) {
   const hazardAccent = HAZARD_RAMP[theme].stops[2]![1]
-  const rainAccent = RAIN_PALETTE[theme].risk
+  /*
+   * El acento de la tarjeta es el ÁMBAR, no el rojo del extremo de la rampa.
+   *
+   * En las otras dos tarjetas el acento es el color más alarmante de su paleta
+   * porque ése es el estado que la capa existe para mostrar. Acá no: el estado
+   * normal de esta capa son faenas y desvíos, y teñir el azulejo de rojo diría
+   * «hay rutas cortadas» incluso cuando no hay ninguna. El rojo aparece en la
+   * leyenda y en el mapa, que es donde significa algo.
+   */
+  const closureAccent = ROAD_CLOSURE_PALETTE[theme].low
 
   return (
     <div className="space-y-0.5">
@@ -376,57 +388,83 @@ export function ReferenceLayers({
         </div>
       </LayerCard>
 
-      {/* --- Lluvia pronosticada -------------------------------------- */}
+      {/*
+        --- La tarjeta de lluvia ya NO vive acá -------------------------
+
+        Se fusionó en el widget meteorológico de la barra superior
+        (`components/ui/WeatherWidget.tsx`), y conviene dejar escrito el porqué
+        para que nadie la reponga por simetría.
+
+        Tenía título, subtítulo de estado, muestra de color, nota de escala y
+        advertencia legal para decir lo que el widget dice en 180 px — y encima
+        lo decía sólo cuando alguien la encendía. Una capa apagada por defecto
+        no puede ser el sitio donde se anuncia un temporal: en teléfono había
+        que abrir la ficha «Referencia» para enterarse de que llovía.
+
+        Al widget se fue todo: el estado, la explicación y el interruptor de la
+        capa del mapa, que ahora está dentro de su detalle desplegable. La capa
+        de MapLibre no cambió ni una línea; lo que cambió es quién la enciende.
+
+        Las otras dos tarjetas se quedan porque no son lo mismo: la amenaza
+        sísmica describe el terreno —no tiene estado que vigilar— y los cortes
+        de ruta son un listado que se consulta, no una condición ambiental que
+        se mira de reojo.
+      */}
+
+      {/* --- Cortes de ruta ------------------------------------------- */}
       <LayerCard
-        label={RAIN_LEGEND.title}
-        description={rainDescription(rainStatus, rainCount, rainRiskCount)}
-        icon={<RainIcon />}
-        checked={rainEnabled}
-        accentHex={rainAccent}
-        failed={rainStatus === 'error'}
-        busy={rainStatus === 'loading'}
-        onToggle={onRainToggle}
-        {...(rainStatus === 'error' ? { onRetry: onRainRetry } : {})}
+        label={ROAD_CLOSURE_LEGEND_TEXT.title}
+        description={closureDescription(closureStatus, closureCount, closureCutCount)}
+        icon={<RoadIcon />}
+        checked={closureEnabled}
+        accentHex={closureAccent}
+        failed={closureStatus === 'error'}
+        busy={closureStatus === 'loading'}
+        onToggle={onClosureToggle}
+        {...(closureStatus === 'error' ? { onRetry: onClosureRetry } : {})}
       >
         <div className="px-0.5 pb-0.5 pt-2">
-          {rainStatus === 'empty' ? (
+          {closureStatus === 'empty' ? (
             <p className="text-[9.5px] leading-tight text-ink-faint">
-              Ninguna comuna supera el umbral de emisión del pronóstico. La capa
-              está encendida y al día.
+              Ni Vialidad ni el MTT informan intervenciones vigentes en la
+              región. La capa está encendida y al día.
             </p>
           ) : (
             <>
-              <div className="flex items-center gap-3 text-[9.5px] text-ink-muted">
-                <span className="flex items-center gap-1">
-                  <span
-                    aria-hidden
-                    className="size-2.5 shrink-0 rounded-full"
-                    style={{
-                      backgroundColor: RAIN_PALETTE[theme].rain,
-                      opacity: 0.7,
-                    }}
-                  />
-                  {RAIN_LEGEND.rain}
-                </span>
-                {rainRiskCount > 0 && (
-                  <span className="flex items-center gap-1" title={RAIN_LEGEND.risk}>
+              {/*
+                Las cuatro filas en columna y no en línea como las de lluvia:
+                acá son cuatro y no dos, y sobre todo cada una necesita su
+                explicación. «Transitable» y «Tránsito restringido» son
+                indistinguibles sin la frase que las acompaña, y esa frase es
+                justo lo que el usuario necesita para decidir si sale.
+
+                El color lo pide cada fila a la MISMA paleta que pinta el mapa
+                (ver `ROAD_CLOSURE_LEGEND`): un hex escrito acá se
+                desincronizaría del estilo el día que alguien ajuste la rampa.
+              */}
+              <ul className="space-y-1">
+                {ROAD_CLOSURE_LEGEND.map((row) => (
+                  <li key={row.label} className="flex items-start gap-1.5">
                     <span
                       aria-hidden
-                      className="size-2.5 shrink-0 rounded-full"
-                      style={{
-                        backgroundColor: RAIN_PALETTE[theme].risk,
-                        boxShadow: `0 0 0 1.5px ${RAIN_PALETTE[theme].ring}`,
-                      }}
+                      className="mt-[3px] size-2.5 shrink-0 rotate-45 rounded-[2px]"
+                      style={{ backgroundColor: row.color(theme) }}
                     />
-                    Riesgo
-                  </span>
-                )}
-              </div>
-              <ScaleNote regional={RAIN_LEGEND.regional} local={RAIN_LEGEND.local} />
-              {/* No es negociable: la interfaz dice «riesgo pronosticado»
-                  y nunca «inundación» a secas. */}
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[9.5px] font-medium leading-tight text-ink-muted">
+                        {row.label}
+                      </span>
+                      <span className="block text-[9px] leading-tight text-ink-faint">
+                        {row.meaning}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {/* No es negociable: un corte de ruta no es un siniestro, y una
+                  emergencia del MOP arrastra semanas de vigencia. */}
               <p className="mt-1.5 text-[9.5px] leading-tight text-ink-faint">
-                {RAIN_LEGEND.caveat}
+                {ROAD_CLOSURE_LEGEND_TEXT.caveat}
               </p>
             </>
           )}
@@ -442,7 +480,8 @@ export function ReferenceLayers({
  */
 export function ReferenceDock(props: ReferenceDockProps) {
   const [open, setOpen] = useState(true)
-  const activeCount = Number(props.hazardEnabled) + Number(props.rainEnabled)
+  // Dos y no tres: la lluvia se cuenta sola en el widget de la barra superior.
+  const activeCount = Number(props.hazardEnabled) + Number(props.closureEnabled)
 
   return (
     <Panel className="pointer-events-auto w-full overflow-hidden p-1.5">

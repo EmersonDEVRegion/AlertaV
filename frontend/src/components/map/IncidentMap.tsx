@@ -31,9 +31,18 @@ import type { Theme } from '@/hooks/useTheme'
 import type { ConeCollection, ReachCollection } from '@/lib/overlayGeojson'
 import { toFeatureCollection } from '@/lib/geojson'
 import { OutagePinLayer } from './OutagePinLayer'
+import {
+  incidentIconLayer,
+  seismicIconLayer,
+} from './emergencyIconLayers'
+import { useEmergencyIcons } from '@/hooks/useEmergencyIcons'
+import { MAGNITUDE_COLOR_EXPRESSION } from '@/domain/seismicSymbology'
+import type { ExpressionSpecification, Map as MapLibreMap } from 'maplibre-gl'
 import { RainLayer } from './RainLayer'
+import { RoadClosureLayer } from './RoadClosureLayer'
 import { SeismicHazardLayer } from './SeismicHazardLayer'
 import type { RainLayerState } from '@/hooks/useRainLayer'
+import type { RoadClosureState } from '@/hooks/useRoadClosures'
 import type { SeismicHazardState } from '@/hooks/useSeismicHazard'
 import { toSeismicFeatureCollection } from '@/lib/seismicGeojson'
 import { attachMapDiagnostics } from '@/lib/mapDiagnostics'
@@ -94,6 +103,14 @@ interface IncidentMapProps {
   hazard: SeismicHazardState
   /** Lluvia pronosticada. También diferida: no se pide hasta el primer encendido. */
   rain: RainLayerState
+  /**
+   * Cortes e intervenciones de la vía (MOP + MTT). Diferida como las otras dos.
+   *
+   * Es capa de CONTEXTO: no entra en `interactiveLayerIds` y no abre ficha.
+   * `road_closure` está fuera de `CORRELATABLE_EVENT_TYPES` y entra con
+   * confianza 0,0 — no es un siniestro y no puede robarle el clic a uno.
+   */
+  closures: RoadClosureState
 }
 
 export function IncidentMap({
@@ -112,8 +129,27 @@ export function IncidentMap({
   cone,
   hazard,
   rain,
+  closures,
 }: IncidentMapProps) {
   const [hovering, setHovering] = useState(false)
+
+  /*
+   * La instancia nativa, en ESTADO y no leída del ref durante el render.
+   *
+   * `mapRef.current` es `null` en el primer render y asignarlo no dispara uno
+   * nuevo: un hook alimentado desde el ref se quedaría con `null` para siempre.
+   * `onLoad` sí provoca un render, y es además el momento correcto — antes de
+   * `load` el estilo todavía no acepta `addImage`.
+   */
+  const [instance, setInstance] = useState<MapLibreMap | null>(null)
+
+  /*
+   * Registro de los iconos SDF. Devuelve `true` cuando hay al menos uno
+   * instalado; hasta entonces las capas `symbol` no se montan, porque un
+   * `icon-image` que apunta a una imagen inexistente hace que MapLibre emita un
+   * error por cada punto y no dibuje nada.
+   */
+  const iconsReady = useEmergencyIcons(instance)
   const [dragging, setDragging] = useState(false)
 
   // Se recalcula solo cuando cambia el arreglo de incidentes, no en cada
@@ -206,6 +242,7 @@ export function IncidentMap({
       style={{ position: 'absolute', inset: 0 }}
       interactiveLayerIds={interactiveLayers}
       onClick={handleClick}
+      onLoad={(event) => setInstance(event.target)}
       onError={handleError}
       onMouseEnter={() => setHovering(true)}
       onMouseLeave={() => setHovering(false)}
@@ -287,11 +324,38 @@ export function IncidentMap({
         />
       )}
 
+      {/*
+        Cortes de ruta. Después del cono y por el mismo motivo que la lluvia:
+        se anclan con `beforeId` a `wind-cone-fill` —la única capa propia que
+        está montada siempre— y react-map-gl vuelve a añadir las capas en orden
+        de montaje cuando un cambio de tema reconstruye el estilo. Si este
+        bloque fuera antes, su ancla todavía no existiría y MapLibre
+        descartaría las capas en silencio.
+
+        Va DESPUÉS de la lluvia porque un corte es un hecho de la vía y la
+        lluvia es condición ambiental: si se solapan, el corte tiene que quedar
+        encima. Sigue por debajo de sismos e incidentes, que son el sujeto.
+
+        Como las otras dos: el `<Source>` sólo entra al árbol cuando el usuario
+        la enciende por primera vez, y a partir de ahí se queda.
+      */}
+      {closures.hasMounted && (
+        <RoadClosureLayer data={closures.data} visible={closures.enabled} theme={theme} />
+      )}
+
       {/* Los sismos van debajo: son contexto, no el sujeto del mapa. */}
       {showSeismic && (
         <Source id={SEISMIC_SOURCE_ID} type="geojson" data={seismicData}>
           <Layer {...seismicRingLayer} />
           <Layer {...seismicCoreLayer} />
+          {iconsReady && (
+            <Layer
+              {...seismicIconLayer(
+                theme,
+                MAGNITUDE_COLOR_EXPRESSION as unknown as ExpressionSpecification,
+              )}
+            />
+          )}
           <Layer {...seismicSelectedLayer(selectedUsgsId)} />
           <Layer {...seismicHitLayer} />
         </Source>
@@ -320,7 +384,14 @@ export function IncidentMap({
       >
         <Layer {...alertHaloLayer} />
         <Layer {...casingLayer} />
-        <Layer {...coreLayer} />
+        {/*
+          El disco sólo se dibuja mientras los iconos no estén listos. Es el
+          estado de un puñado de milisegundos entre el primer cuadro del mapa y
+          el registro de las imágenes: sin él, los incidentes parpadearían
+          apareciendo de la nada en vez de afinarse.
+        */}
+        {!iconsReady && <Layer {...coreLayer} />}
+        {iconsReady && <Layer {...incidentIconLayer(theme)} />}
         <Layer {...closedRingLayer} />
         <Layer {...unverifiedLayer} />
         <Layer {...selectedLayer(selectedCode)} />

@@ -16,12 +16,20 @@
  */
 
 import type { FeatureCollection, Point } from 'geojson'
-import type { ConfidenceLevel, Incident } from '@/api/types'
+import type { ConfidenceLevel, Incident, IncidentType } from '@/api/types'
 import { type IncidentLayerKey, layerOf } from '@/domain/families'
 import { isClosed, levelOf, needsVerificationCaveat } from '@/domain/symbology'
 
 export interface IncidentFeatureProps {
   code: string
+  /**
+   * Tipo del incidente, tal cual lo entrega el backend.
+   *
+   * Se agrega para que la capa `symbol` pueda elegir icono con un `match`. Es
+   * más fino que `layer`: dentro de la familia `other` conviven un rescate y
+   * una contingencia sin clasificar, y merecen glifos distintos.
+   */
+  type: IncidentType
   /**
    * Capa a la que pertenece el incidente: decide con qué paleta se pinta y qué
    * casilla lo enciende. Se precalcula acá porque la API no manda `family` y
@@ -55,6 +63,7 @@ export function toFeatureCollection(
       geometry: { type: 'Point', coordinates: [incident.lon, incident.lat] },
       properties: {
         code: incident.code,
+        type: incident.type,
         layer: layerOf(incident.type),
         confidence_level: levelOf(incident),
         is_closed: isClosed(incident.status),

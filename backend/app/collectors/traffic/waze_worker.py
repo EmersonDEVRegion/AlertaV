@@ -1,5 +1,62 @@
 """Waze CCP — reportes de accidentes de la comunidad de conductores.
 
+Estado: **implementado, fuera del registro, a la espera del feed CCP**
+----------------------------------------------------------------------
+Este collector está completo y probado, y **no corre**. `WAZE_FEED_URL` es el
+endpoint que Waze entrega a los socios del programa *Waze for Cities* (antes
+Connected Citizens Program), y la solicitud de AlertaV no fue aprobada. Sin esa
+URL el constructor lanza `CollectorError`, así que mientras estuvo registrado
+dejó una corrida `failed` y una traza **cada cinco minutos** por una causa ya
+conocida y que nadie podía accionar desde el código.
+
+Está fuera de `COLLECTORS` por eso y no por desconfianza en el módulo. La
+distinción importa y es la misma que se aplicó a CGE en su momento: una fuente
+registrada que falla se deja a la vista porque su fallo es información —cambió
+el formato, se movió el archivo, hay algo que mirar—. Acá no hay nada que
+mirar; falta una credencial que depende de un trámite. Un error repetido e
+inaccionable enseña a ignorar el rojo del log, y esa costumbre es la que después
+se traga el error de verdad de otra fuente.
+
+Por qué no se raspa el mapa en vivo
+------------------------------------
+Existe la ruta obvia: el visor de `waze.com/live-map` consulta un endpoint
+interno que devuelve las mismas alertas, y basta con imitar las cabeceras de un
+navegador para que deje de responder 403. **Se decidió no hacerlo**, y conviene
+dejar escrito por qué, porque este repositorio raspa CSN, Chilquinta, CGE y el
+MTT sin problema y la contradicción es sólo aparente.
+
+Esas cuatro fuentes publican sus datos abiertamente para que cualquiera los vea
+en su propio visor: no hay control de acceso que sortear, y leer el mismo
+archivo que lee su página web es usar un dato público por otro camino. Waze es
+el caso contrario. Hubo una solicitud formal, hubo una negativa, y el 403 del
+endpoint interno **es esa negativa aplicada técnicamente**. Falsear
+`User-Agent` y `Referer` para esquivarlo no es raspar un dato público: es
+eludir un control de acceso para obtener lo que el titular ya denegó, contra
+sus términos de servicio.
+
+A lo que se suma lo práctico: sería la dependencia más frágil del sistema
+—cae cuando Waze ajuste su WAF, probablemente durante una emergencia, que es
+cuando su tráfico sube— y la más cara de explicar en la primera conversación
+con un municipio o con el GORE. Para una plataforma pública de emergencias que
+va a pedir convenios, eso no es un detalle.
+
+Cómo se reactiva
+----------------
+Nada en este archivo cambia. Fue escrito contra el esquema del feed CCP —el que
+se documenta más abajo—, que es exactamente lo que llega con el convenio:
+
+1. Obtener el feed vía Waze for Cities, con patrocinio de un organismo público
+   (GORE Valparaíso, SENAPRED o un municipio). El programa está dirigido a
+   entidades públicas y una postulación a título particular no prospera.
+2. Poner la URL en `WAZE_FEED_URL`.
+3. Restaurar en `app/collectors/registry.py` el import y la entrada
+   `WazeCollector.name: WazeCollector` bajo «Accidentes viales».
+
+Mientras tanto, la capa de siniestros viales se sostiene sobre Transporte
+Informa (MTT, 0.80) y la clave 10-4 de Bomberos (1.00). Lo que falta con Waze
+fuera es volumen y coordenada exacta en origen, no certeza: era la fuente menos
+verificada de las tres.
+
 Qué es un reporte de Waze dentro de este sistema
 ------------------------------------------------
 Un botón pulsado por alguien que iba manejando. Eso es todo, y conviene tenerlo
@@ -205,9 +262,18 @@ class WazeCollector(BaseCollector):
             # Falla en la construcción, no en silencio. `run_collector` del runner
             # atrapa esto y escribe una fila `failed` en `collector_runs`: un
             # collector mal configurado tiene que ser visible, no invisible.
+            #
+            # Con el collector fuera de `COLLECTORS` esto ya no se dispara solo.
+            # Si aparece, alguien lo volvió a registrar o lo disparó a mano, y el
+            # mensaje tiene que decir qué falta y de quién depende — no repetir
+            # el nombre de la variable, que ya está en la traza.
             raise CollectorError(
-                "WAZE_FEED_URL no está configurada. El feed de Waze CCP es un "
-                "endpoint privado por convenio: no hay URL pública por defecto."
+                "WAZE_FEED_URL no está configurada, y no hay URL pública que "
+                "poner: el feed CCP lo entrega Waze for Cities al firmar el "
+                "convenio, y la solicitud de AlertaV no fue aprobada. Este "
+                "collector está fuera de COLLECTORS por eso; si llegaste acá es "
+                "que se lo registró de nuevo o se lo disparó a mano. Ver el "
+                "encabezado de este módulo."
             )
         self.feed_url = settings.WAZE_FEED_URL.strip()
         self.wanted_types = {

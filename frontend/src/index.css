@@ -477,6 +477,32 @@ html.dark {
   }
 
   /*
+   * Latido de una condición crítica sostenida.
+   *
+   * # Por qué no sirve el `animate-pulse` de Tailwind
+   *
+   * Ese baja hasta `opacity: 0.5`, que sobre la barra oscura hace desaparecer
+   * a medias el número de la alerta dos veces por segundo. Un dato que
+   * parpadea es un dato que cuesta leer, y acá lo que late es justamente lo
+   * que hay que leer.
+   *
+   * Éste se mueve entre 1 y 0,82 en cuatro segundos: suficiente para que el
+   * ojo periférico registre movimiento en una barra que se mira de reojo, y
+   * poco para que la cifra siga siendo legible en todo momento.
+   *
+   * **Sólo opacidad.** Ni `scale` ni `translate`: los dos disparan layout de
+   * los hermanos en una fila flex, y en Tailwind v4 además ya no pasan por
+   * `transform`, así que un `scale` acá se pelearía con las transiciones del
+   * propio widget. La opacidad la resuelve el compositor sin tocar nada más.
+   *
+   * La regla global de `prefers-reduced-motion` del final del archivo la anula,
+   * y el color ámbar o rojo carga la señal por sí solo cuando eso ocurre.
+   */
+  .animate-pulse-soft {
+    animation: pulse-soft 4s ease-in-out infinite;
+  }
+
+  /*
    * Barrido de carga.
    *
    * Reemplaza al «Cargando…» estático. Es un degradado que cruza el elemento;
@@ -532,6 +558,16 @@ html.dark {
   }
   to {
     background-position: -200% 0;
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.82;
   }
 }
 

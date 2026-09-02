@@ -30,6 +30,7 @@ import { useCurrentWind } from '@/hooks/useCurrentWind'
 import { useIsCompact } from '@/hooks/useMediaQuery'
 import { useTheme } from '@/hooks/useTheme'
 import { useRainLayer } from '@/hooks/useRainLayer'
+import { useRoadClosures } from '@/hooks/useRoadClosures'
 import { useSeismicHazard } from '@/hooks/useSeismicHazard'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { CitizenReportControl } from '@/components/report/CitizenReportControl'
@@ -68,8 +69,16 @@ export default function App() {
    * que la capa no cuesta nada mientras nadie la mire. No confundir con
    * `useCurrentWind`, que consulta Open-Meteo directo para el cono de un
    * incendio seleccionado — otro dato, otro origen y otra cadencia.
+   *
+   * El interruptor ya no está en el riel de referencia sino dentro del widget
+   * meteorológico de `AppHeader`, y la intención viaja por el store externo
+   * (`lib/tacticalWeatherStore`). Por eso este hook sigue sin recibir
+   * parámetros y `App` sigue sin tener estado de lluvia: la capa se enciende
+   * desde otra rama del árbol sin pasar por acá, que es exactamente lo que
+   * evita repintar los 500 incidentes al tocar un interruptor de contexto.
    */
   const rain = useRainLayer()
+  const closures = useRoadClosures()
 
   const [selectedCode, setSelectedCode] = useState<string | null>(null)
   const [selectedUsgsId, setSelectedUsgsId] = useState<string | null>(null)
@@ -284,12 +293,12 @@ export default function App() {
     hazardError: hazard.errorMessage,
     onHazardToggle: hazard.toggle,
     onHazardRetry: hazard.retry,
-    rainEnabled: rain.enabled,
-    rainStatus: rain.status,
-    rainCount: rain.count,
-    rainRiskCount: rain.riskCount,
-    onRainToggle: rain.toggle,
-    onRainRetry: rain.retry,
+    closureEnabled: closures.enabled,
+    closureStatus: closures.status,
+    closureCount: closures.count,
+    closureCutCount: closures.cutCount,
+    onClosureToggle: closures.toggle,
+    onClosureRetry: closures.retry,
     theme,
   }
 
@@ -321,6 +330,7 @@ export default function App() {
           cone={coneCollection}
           hazard={hazard}
           rain={rain}
+          closures={closures}
           incidents={regular}
           outages={outages}
           seismic={seismicList}

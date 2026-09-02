@@ -50,6 +50,61 @@ Si falta `GEMINI_API_KEY`, o si el modelo falla o alucina, se cae a
 ninguna, y sirve de línea base para medir al modelo sobre datos reales. Qué
 camino produjo cada señal queda en `raw_data._extraction.mode`.
 
+Dos capas, no una
+-----------------
+El portal publica dos clases de aviso y este collector emite las dos, con tipos
+distintos:
+
+* **`ACCIDENT`** — el siniestro. Correlacionable, familia `traffic`, se une con
+  Waze y con los despachos de Bomberos.
+* **`ROAD_CLOSURE`** — la capa táctica: desvíos, faenas, cortes y restricciones.
+  **NO correlacionable.** No genera incidentes, no mueve confianzas y no se
+  agrupa con nada; existe para superponerse en el mapa.
+
+La separación es la pieza que hace segura la ampliación, y el motivo está en la
+escala: el radio del Paso A son 1500 m, que es exactamente la distancia a la que
+una faena programada y un choque conviven en la misma avenida sin tener nada que
+ver. Si lo táctico entrara como `ACCIDENT`, el MTT se estaría corroborando a sí
+mismo y un choque subiría de confianza porque hay obras a tres cuadras. Ver
+`EventType.ROAD_CLOSURE` en `app/models/enums.py`.
+
+Quién decide cuál es cuál: `vocabulary.clasificar_transito`, con reglas
+deterministas y consultando el accidente primero — casi todo choque produce un
+desvío, así que el orden inverso archivaría siniestros como faenas.
+
+Cadencia y trato con la fuente
+------------------------------
+**Una tarea propia dentro del proceso de workers, cada 600 s.** No es un cronjob
+aparte y no va acoplado al ciclo de la prensa local; el porqué de las tres
+opciones está en el docstring de `app/collectors/runner.py`.
+
+Sobre el riesgo de bloqueo, que es la pregunta real detrás de la cadencia: la
+carga que este collector pone sobre el MTT es **un GET por ciclo**, 144 al día
+—menos que una persona revisando el portal en el almuerzo—, y ampliarlo a la
+capa táctica no la cambió en nada, porque lo que creció es lo que se hace con el
+HTML *después* de traerlo. Bajar la frecuencia habría pagado con lo único que
+esta fuente aporta —ser el canal oficial más rápido— a cambio de reducir un
+volumen que ya era despreciable.
+
+Lo que sí expone a un bloqueo, y es donde se trabajó:
+
+* **El patrón.** Una petición cada 600 s exactos es una firma de bot más
+  reconocible que cualquier volumen. La dispersa `COLLECTOR_JITTER_RATIO` en el
+  runner, que además desalinea a este collector de la prensa local (600 y 900
+  comparten período 1800: coincidían cada media hora).
+* **El 429.** Se trataba como un 4xx cualquiera: fallaba al instante y el ciclo
+  siguiente volvía a pedir como si nada. Es el comportamiento que convierte un
+  aviso recuperable en una IP vetada. Hoy `geoservices.request_response` respeta
+  `Retry-After`.
+* **La identidad.** UA propio con el nombre del proyecto y un contacto, en vez
+  del de Nominatim que usaba antes. A un scraper identificado le piden bajar el
+  ritmo; a uno anónimo le bloquean la IP.
+
+El cuello de botella real de la corrida no es el MTT sino **Nominatim**, que es
+el servicio genuinamente limitado (1 req/s global, compartido con la prensa
+local). Por eso el presupuesto de geocodificación se gasta con los accidentes
+primero: ver el bloque de prioridad en `fetch()`.
+
 Confianza
 ---------
 0.80: un organismo del Estado informando por su canal oficial. Ese número
@@ -57,6 +112,11 @@ califica **el hecho**, no el punto. El error de la geocodificación es un eje
 aparte y queda en `raw_data._geocoding` (`importance`, `display_name`, consulta
 usada) para que un operador pueda mirar el punto y desconfiar de él sin
 desconfiar del aviso.
+
+La capa táctica lleva **el mismo 0.80**: el MTT es tan autoridad sobre un corte
+que él decretó como sobre un choque que le reportaron. Lo que aísla esa capa es
+el tipo de evento, no una confianza rebajada — bajarle el número para conseguir
+el mismo efecto habría sido decir algo falso sobre la fuente.
 """
 
 from __future__ import annotations
@@ -76,6 +136,13 @@ from app.collectors.base import BaseCollector
 from app.collectors.geoservices import normalise_text, parse_timestamp, request_text
 from app.collectors.nominatim import GeocodeResult, build_client, geocode
 from app.collectors.traffic import gemini
+from app.collectors.vocabulary import (
+    ACCIDENT_TERMS,
+    ROAD_OPS_TERMS,
+    clasificar_transito,
+    es_accidente_vial,
+    es_operacion_vial,
+)
 from app.core.config import settings
 from app.core.exceptions import CollectorError
 from app.models.enums import EventSource, EventType
@@ -86,16 +153,17 @@ logger = logging.getLogger(__name__)
 #: Canal oficial del MTT. Ver el docstring: califica el hecho, no el punto.
 TRANSPORTE_INFORMA_CONFIDENCE = 0.80
 
-
-#: Palabras que denotan un siniestro vial. Se comparan sin tildes.
-_ACCIDENT_MARKERS: tuple[str, ...] = (
-    "accidente",
-    "colision",
-    "choque",
-    "volcamiento",
-    "atropello",
-    "siniestro",
-)
+#: Confianza de la capa táctica. **El mismo 0.80 que un accidente, y no es un
+#: descuido.** La confianza mide cuánto vale la palabra de la fuente sobre el
+#: hecho que informa, y el MTT es tan autoridad sobre un corte de calzada que él
+#: mismo decretó como sobre un choque que le reportaron — más, en rigor.
+#:
+#: Que un corte de vía no pese en ningún incidente no se resuelve bajándole la
+#: confianza: se resuelve manteniéndolo fuera de `CORRELATABLE_EVENT_TYPES`, que
+#: es donde ya está. Rebajar el número para conseguir el mismo efecto habría
+#: sido decir algo falso sobre la fuente para obtener un comportamiento que el
+#: tipo de evento ya garantiza.
+ROAD_CLOSURE_CONFIDENCE = 0.80
 
 #: Conectores de intersección tal como los escribe el MTT.
 _INTERSECTION_SPLIT = re.compile(
@@ -189,30 +257,50 @@ class TrafficNotice:
     raw: Mapping[str, Any] = field(default_factory=dict)
 
 
+#: Lo que `fetch()` entrega a `normalize()`: el aviso, su tipo ya decidido, lo
+#: que el extractor leyó y lo que el geocodificador resolvió.
+#:
+#: El **tipo viaja en la tupla** en vez de recalcularse en `normalize()`, y esa
+#: es una decisión con consecuencia. `fetch()` ya clasificó cada aviso para
+#: ordenar la cola de presupuesto; volver a clasificarlo al normalizar
+#: significaría correr el mismo léxico dos veces y —lo que importa— dejar abierta
+#: la posibilidad de que las dos pasadas discrepen. Un aviso que compitió por el
+#: cupo como accidente y se guarda como corte de vía sería un defecto invisible:
+#: nada falla, sólo aparece en la capa equivocada.
+ResolvedNotice = tuple[
+    TrafficNotice, EventType, dict[str, Any], "GeocodeResult | None"
+]
+
+
 # --- Paso A: extracción del lugar -------------------------------------------
 
 
 def looks_like_accident(text: str) -> bool:
     """¿El aviso describe un siniestro vial?
 
-    **Esta decisión NO la toma el modelo, y es deliberado.** El contrato de
-    salida de Gemini son tres campos —dos calles y una ciudad— sin ningún juicio
-    sobre la naturaleza del hecho. La clasificación se queda acá, en reglas
-    deterministas y auditables.
+    Delega en `vocabulary.es_accidente_vial`. Vivió acá, con su propia lista de
+    marcadores, hasta que el vocabulario central creció lo suficiente para
+    cubrirla: mantener dos listas de palabras de siniestro que se editan por
+    separado es exactamente la deuda que `app/collectors/vocabulary.py` existe
+    para pagar. La versión local ignoraba "desbarrancamiento" y "vuelco", que la
+    compartida sí tiene — y esa divergencia es la forma en que estos defectos se
+    manifiestan: no como un error, como avisos que dejan de verse.
 
-    El motivo es la asimetría del daño. Si el modelo se equivoca extrayendo una
-    calle, el resultado es una geocodificación fallida o un punto discutible:
-    visible, marcado en `raw_data._geocoding`, corregible. Si se le permitiera
-    decidir "esto es un accidente", podría inventar un siniestro que nadie
-    reportó, y eso llegaría al mapa como un hecho con la confianza 0.80 de una
-    fuente oficial detrás. Se le da al modelo la tarea donde sus errores son
-    baratos.
-
-    Es también el filtro que separa las palabras clave del scraper —que incluyen
-    "Restricción" y "Tránsito suspendido", avisos de tránsito que NO son
-    siniestros— de lo que entra a la capa de accidentes.
+    Se conserva el nombre porque es el que usan los tests y porque nombra bien lo
+    que hace desde la perspectiva de este collector. La decisión de fondo —que la
+    clasificación es determinista y NO la toma el modelo— está documentada en
+    `vocabulary.es_accidente_vial`.
     """
-    return any(marker in normalise_text(text or "") for marker in _ACCIDENT_MARKERS)
+    return es_accidente_vial(text or "")
+
+
+def looks_like_road_ops(text: str) -> bool:
+    """¿El aviso informa una intervención de la vía (desvío, faena, corte)?
+
+    La contraparte táctica de `looks_like_accident`. Ver
+    `vocabulary.es_operacion_vial`.
+    """
+    return es_operacion_vial(text or "")
 
 
 async def extract_streets_via_llm(text: str) -> dict[str, Any] | None:
@@ -418,26 +506,37 @@ _BLOCK_SELECTORS: tuple[str, ...] = (
 #: hubiera escrito.
 _ICON_CLASS_PREFIX = "material-"
 
+#: Marcadores propios de la MAQUETA del portal, no del idioma.
+#:
+#: El portal nuevo **etiqueta** cada tarjeta con `Categoría: Incidentes` o
+#: `Categoría: Trabajos`: es la propia fuente diciendo de qué habla, y eso vale
+#: más que adivinar por vocabulario. Entran en singular porque la comparación es
+#: por subcadena y así cubren las dos formas.
+#:
+#: Viven acá y NO en `vocabulary.py` por la regla de ese archivo: allá va lo que
+#: significan las palabras, acá lo que sabe este portal. "Categoría: Trabajos"
+#: no quiere decir nada en un titular de diario.
+_PORTAL_MARKERS: tuple[str, ...] = (
+    "incidente",
+    "trabajos",
+    "precaucion",
+)
+
 #: Palabras que delatan un aviso de tránsito. Se comparan sin tildes y en
 #: minúsculas, así que "Precaución" y "PRECAUCION" entran igual.
-TRAFFIC_KEYWORDS: tuple[str, ...] = (
-    "precaucion",
-    "accidente",
-    "colision",
-    "restriccion",
-    "transito suspendido",
-    "volcamiento",
-    "atropello",
-    # El portal nuevo **etiqueta** cada tarjeta con `Categoría: Incidentes` o
-    # `Categoría: Trabajos`. Es la propia fuente diciendo de qué habla, y eso
-    # vale más que adivinar por vocabulario: entra en singular porque la
-    # comparación es por subcadena y así cubre las dos formas.
-    #
-    # No convierte esto en un filtro de siniestros —un "incidente" puede ser un
-    # paso fronterizo habilitado— y no pretende serlo: sigue siendo la etapa 2,
-    # la que separa un aviso de tránsito del menú de navegación. Quien decide si
-    # es un accidente es `is_accident`, más adelante.
-    "incidente",
+#:
+#: Es la **red gruesa**: separa un aviso de tránsito del menú de navegación y del
+#: pie de página. NO decide si hay un siniestro ni si hay un corte — de eso se
+#: encarga `clasificar_transito` más adelante, y por eso acá conviene pasarse de
+#: ancho antes que quedarse corto.
+#:
+#: Se deriva del vocabulario compartido en vez de escribirse a mano. Antes era
+#: una tupla literal de siete palabras y le faltaban la mitad de los términos de
+#: cierre que el propio worker necesitaba reconocer: sin "desvío" ni "faena" en
+#: la red gruesa, un aviso de desvío no llegaba siquiera a ser un bloque
+#: candidato, así que ninguna clasificación posterior podía rescatarlo.
+TRAFFIC_KEYWORDS: tuple[str, ...] = tuple(
+    sorted(set(ACCIDENT_TERMS) | set(ROAD_OPS_TERMS) | set(_PORTAL_MARKERS))
 )
 
 #: Un bloque más corto que esto es una etiqueta suelta ("Accidente") sin
@@ -637,10 +736,10 @@ class TransporteInformaCollector(BaseCollector):
             "nominatim_min_interval_s": settings.NOMINATIM_MIN_INTERVAL_SECONDS,
         }
 
-    async def fetch(self) -> Sequence[tuple[TrafficNotice, dict[str, Any], Any]]:
-        """Trae los avisos, extrae el lugar y geocodifica los que son accidentes.
+    async def fetch(self) -> Sequence[ResolvedNotice]:
+        """Trae los avisos, los clasifica, extrae el lugar y geocodifica.
 
-        Devuelve tripletas `(aviso, extracción, geocodificación|None)`.
+        Devuelve cuádruplas `(aviso, tipo, extracción, geocodificación|None)`.
 
         Todo fallo sale de acá como `CollectorError` y de ninguna otra forma:
         `request_text` ya traduce timeouts, 5xx, DNS y TLS, y los `except
@@ -652,7 +751,11 @@ class TransporteInformaCollector(BaseCollector):
             async with httpx.AsyncClient(
                 timeout=settings.TRANSPORTE_INFORMA_TIMEOUT_SECONDS,
                 follow_redirects=True,
-                headers={"User-Agent": settings.NOMINATIM_USER_AGENT},
+                # UA propio, no el de Nominatim. El anterior estaba a mano y era
+                # falso: le decía al portal del Ministerio que quien lo visitaba
+                # era el cliente de OpenStreetMap. Ver
+                # `TRANSPORTE_INFORMA_USER_AGENT` en `core/config.py`.
+                headers={"User-Agent": settings.TRANSPORTE_INFORMA_USER_AGENT},
             ) as client:
                 html = await request_text(
                     client, self.url, origin="transporte_informa"
@@ -683,22 +786,46 @@ class TransporteInformaCollector(BaseCollector):
             # convocarla antes de que pasen semanas.
             self.warn(f"la estructura del portal cambió: {reason}")
 
-        resolved: list[tuple[TrafficNotice, dict[str, Any], GeocodeResult | None]] = []
+        resolved: list[ResolvedNotice] = []
         geocoded = 0
         llm_calls = 0
+
+        # -- Clasificación y orden de prioridad -------------------------------
+        #
+        # El filtro va ANTES del modelo, no después. Dos razones: el portal
+        # publica bastante que no es ni siniestro ni intervención —recorridos de
+        # micros, horarios de terminal, pasos fronterizos habilitados— y cada
+        # llamada al LLM se paga. Filtrar primero evita gastar tokens en avisos
+        # que se van a descartar igual.
+        #
+        # El **orden** es la pieza nueva y la que hay que entender. Los dos
+        # presupuestos de la corrida son escasos y compartidos:
+        # `GEMINI_MAX_CALLS_PER_RUN` y `TRANSPORTE_INFORMA_MAX_GEOCODES`. Antes
+        # sólo competían accidentes entre sí; ahora los avisos tácticos
+        # compiten por los mismos cupos, y en un día de temporal —cuando más
+        # importa— hay muchos más cortes que choques.
+        #
+        # Recorrer los avisos en el orden del DOM dejaría que catorce faenas
+        # programadas se comieran el presupuesto y que el único accidente de la
+        # página quedara sin coordenadas. Sería la peor forma de gastarlo: un
+        # corte sin punto pierde una capa de contexto; un accidente sin punto no
+        # entra al Paso A del motor y deja de poder corroborarse con Waze o con
+        # Bomberos, que es la razón entera por la que esta fuente existe.
+        #
+        # `sort` estable: dentro de cada clase se conserva el orden del portal,
+        # que es cronológico descendente.
+        clasificados: list[tuple[TrafficNotice, EventType]] = [
+            (notice, tipo)
+            for notice in notices
+            if (tipo := clasificar_transito(notice.text)) is not None
+        ]
+        clasificados.sort(key=lambda par: par[1] is not EventType.ACCIDENT)
 
         # Un solo cliente para todas las llamadas a Nominatim: reutiliza la
         # conexión TLS y, sobre todo, mantiene un único User-Agent identificable,
         # que es parte del contrato de uso del servicio.
         async with build_client() as geo_client:
-            for notice in notices:
-                # El filtro de siniestro va ANTES del modelo, no después. Dos
-                # razones: el MTT publica cortes programados y desvíos que no
-                # son accidentes, y cada llamada al LLM se paga — filtrar
-                # primero evita gastar tokens en avisos que se van a descartar.
-                if not looks_like_accident(notice.text):
-                    continue
-
+            for notice, tipo in clasificados:
                 if llm_calls >= self.max_llm_calls:
                     self.warn(
                         f"se alcanzó el tope de {self.max_llm_calls} llamadas al "
@@ -711,10 +838,10 @@ class TransporteInformaCollector(BaseCollector):
 
                 if streets is None:
                     # Ni el modelo ni la heurística reconocieron una vía. El
-                    # aviso entra igual, sin coordenadas: es un accidente que el
-                    # MTT informó y descartarlo por no saber dónde sería perder
-                    # el hecho por no tener el punto.
-                    resolved.append((notice, {}, None))
+                    # aviso entra igual, sin coordenadas: es un hecho que el MTT
+                    # informó y descartarlo por no saber dónde sería perder el
+                    # hecho por no tener el punto.
+                    resolved.append((notice, tipo, {}, None))
                     continue
 
                 point: GeocodeResult | None = None
@@ -743,14 +870,17 @@ class TransporteInformaCollector(BaseCollector):
                         f"por corrida; el resto queda sin coordenadas"
                     )
 
-                resolved.append((notice, streets, point))
+                resolved.append((notice, tipo, streets, point))
 
+        accidentes = sum(1 for _, tipo, _, _ in resolved if tipo is EventType.ACCIDENT)
         logger.info(
             "avisos del MTT procesados",
             extra={
                 "collector": self.name,
                 "avisos": len(notices),
-                "accidentes": len(resolved),
+                "retenidos": len(resolved),
+                "accidentes": accidentes,
+                "cortes_de_via": len(resolved) - accidentes,
                 "extracciones_llm": llm_calls,
                 "geocodificados": geocoded,
                 "modo": gemini.MODE_GEMINI
@@ -760,30 +890,53 @@ class TransporteInformaCollector(BaseCollector):
         )
         return resolved
 
-    def normalize(
-        self, records: Sequence[tuple[TrafficNotice, dict[str, Any], Any]]
-    ) -> list[EventCreate]:
+    def normalize(self, records: Sequence[ResolvedNotice]) -> list[EventCreate]:
         now = datetime.now(UTC)
         events: list[EventCreate] = []
         sin_punto = 0
 
-        for notice, streets, point in records:
+        for notice, tipo, streets, point in records:
             timestamp = notice.published_at or now
             if timestamp > now:
                 timestamp = now
-            if point is None:
+            # Sólo se cuentan los accidentes sin punto. Un corte de vía sin
+            # coordenadas no pierde nada: no entra al motor de ninguna manera,
+            # porque `road_closure` está fuera de `CORRELATABLE_EVENT_TYPES`.
+            # Contarlo inflaría un aviso que describe un problema que no tiene.
+            if point is None and tipo is EventType.ACCIDENT:
                 sin_punto += 1
 
             events.append(
                 EventCreate(
                     timestamp=timestamp,
                     source=EventSource.TRANSPORTE_INFORMA,
-                    type=EventType.ACCIDENT,
+                    type=tipo,
                     lat=point.lat if point else None,
                     lon=point.lon if point else None,
                     text=notice.text[:10_000],
-                    external_id=f"mtt:{notice.notice_id}",
-                    confidence=TRANSPORTE_INFORMA_CONFIDENCE,
+                    # **El prefijo de los accidentes NO cambia, y eso no es
+                    # pereza.** `external_id` es la clave de idempotencia: la
+                    # tentación obvia acá era uniformar a `mtt:<tipo>:<hash>`,
+                    # que se lee mejor y habría reinsertado en la primera corrida
+                    # tras el despliegue **todos** los accidentes que el sistema
+                    # ya conocía, con identificador nuevo. Duplicados que además
+                    # se corroboran entre sí en el motor, porque son idénticos en
+                    # texto, tiempo y lugar: un choque con la confianza inflada
+                    # por su propio fantasma.
+                    #
+                    # La capa táctica es nueva y no tiene historia que preservar,
+                    # así que lleva su prefijo propio. La asimetría es el precio
+                    # de no romper lo que ya está escrito en la base.
+                    external_id=(
+                        f"mtt:{notice.notice_id}"
+                        if tipo is EventType.ACCIDENT
+                        else f"mtt:closure:{notice.notice_id}"
+                    ),
+                    confidence=(
+                        TRANSPORTE_INFORMA_CONFIDENCE
+                        if tipo is EventType.ACCIDENT
+                        else ROAD_CLOSURE_CONFIDENCE
+                    ),
                     raw_data={
                         **dict(notice.raw),
                         "comuna": streets.get("city"),
@@ -806,20 +959,23 @@ class TransporteInformaCollector(BaseCollector):
 
         if sin_punto:
             self.warn(
-                f"{sin_punto} avisos quedaron sin coordenadas; no entran al Paso A "
-                f"del motor pero sí quedan registrados"
+                f"{sin_punto} accidentes quedaron sin coordenadas; no entran al "
+                f"Paso A del motor pero sí quedan registrados"
             )
         return events
 
 
 __all__ = [
+    "ROAD_CLOSURE_CONFIDENCE",
     "TRAFFIC_KEYWORDS",
     "TRANSPORTE_INFORMA_CONFIDENCE",
+    "ResolvedNotice",
     "TrafficNotice",
     "TransporteInformaCollector",
     "extract_streets_heuristic",
     "extract_streets_via_llm",
     "looks_like_accident",
+    "looks_like_road_ops",
     "page_looks_broken",
     "parse_notice",
     "parse_notices",

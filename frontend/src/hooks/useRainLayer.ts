@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { EMPTY_RAIN, countFloodRisk, fetchRainGeojson } from '@/api/rain'
 import type { RainCollection, RainQuery } from '@/api/rainTypes'
 import { env } from '@/config/env'
 import { queryKeys } from '@/lib/queryClient'
+import { toggleRainLayer, useRainLayerEnabled } from '@/lib/tacticalWeatherStore'
 
 /**
  * Estado de la capa de lluvia pronosticada.
@@ -65,8 +66,52 @@ export interface RainLayerState {
 const RAIN_PARAMS: RainQuery = {}
 
 export function useRainLayer(): RainLayerState {
-  const [enabled, setEnabled] = useState(false)
+  /*
+   * `enabled` ya no vive acá: lo posee el store del widget meteorológico.
+   *
+   * # Por qué se movió
+   *
+   * El interruptor de esta capa estaba en la tarjeta de lluvia del riel de
+   * referencia, que se fusionó en el widget de la barra superior. El widget y
+   * el `<Source>` del mapa son HERMANOS en el árbol, así que un `useState` acá
+   * obligaría a subir la intención hasta `App` —el componente que sostiene los
+   * 500 incidentes y sus cuatro particiones memorizadas— para bajarla por las
+   * dos ramas. El store la reparte sin repintar nada de eso.
+   *
+   * # Lo que NO se movió
+   *
+   * La consulta. El store guarda una intención —un booleano— y este hook sigue
+   * siendo el dueño de la carga diferida, la caché, los reintentos y la
+   * cancelación de react-query. Meter la petición en el store habría sido
+   * reimplementar peor lo que ya está resuelto, y además habría duplicado la
+   * caché: `IncidentMap` y el panel leerían dos copias del mismo GeoJSON.
+   *
+   * # Se lee SÓLO el booleano, y eso importa
+   *
+   * `useRainLayerEnabled` devuelve un primitivo en vez del instantáneo completo.
+   * Este hook se llama desde `App`, así que suscribirse al objeto entero
+   * repintaría los 500 incidentes y sus cuatro particiones memorizadas cada diez
+   * minutos, al llegar una temperatura nueva que `App` ni siquiera muestra — el
+   * mismo coste que el store existe para evitar, por la puerta de atrás.
+   */
+  const enabled = useRainLayerEnabled()
   const [hasMounted, setHasMounted] = useState(false)
+
+  /*
+   * `hasMounted` es monótono y se enciende con el primer `enabled`. Va en un
+   * efecto y no en el `toggle` porque el `toggle` ya no está acá: la intención
+   * puede cambiar desde el widget sin que este hook se entere de otra forma.
+   *
+   * El `ref` evita el `setState` redundante en cada repintado posterior — una
+   * vez montado, la comparación se resuelve sin tocar el estado de React.
+   */
+  const mounted = useRef(false)
+  useEffect(() => {
+    if (enabled && !mounted.current) {
+      mounted.current = true
+      setHasMounted(true)
+    }
+  }, [enabled])
 
   const query = useQuery({
     queryKey: queryKeys.rain.geojson(RAIN_PARAMS),
@@ -78,19 +123,17 @@ export function useRainLayer(): RainLayerState {
     refetchInterval: env.rainPollIntervalMs,
   })
 
-  const toggle = useCallback(() => {
-    setEnabled((current) => {
-      if (!current) setHasMounted(true)
-      return !current
-    })
-  }, [])
+  // Se conserva en la interfaz —lo consumen el mapa y los tests— pero delega en
+  // el store, que es quien posee la intención del usuario desde que el control
+  // se mudó al widget.
+  const toggle = useCallback(() => toggleRainLayer(), [])
 
   const refetch = query.refetch
   const retry = useCallback(() => {
-    setEnabled(true)
+    if (!enabled) toggleRainLayer()
     setHasMounted(true)
     void refetch()
-  }, [refetch])
+  }, [enabled, refetch])
 
   const data = query.data ?? EMPTY_RAIN
   const riskCount = useMemo(() => countFloodRisk(data), [data])

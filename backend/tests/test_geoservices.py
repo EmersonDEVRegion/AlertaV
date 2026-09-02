@@ -26,6 +26,7 @@ from app.collectors.geoservices import (
     parse_source_specs,
     parse_timestamp,
     request_json,
+    request_text,
     resolve_coordinates,
 )
 from app.core.exceptions import CollectorError
@@ -458,3 +459,90 @@ class TestFailoverFetcher:
     async def test_sin_fuentes_declaradas(self) -> None:
         with pytest.raises(CollectorError, match="no hay fuentes"):
             await FailoverFetcher([]).fetch()
+
+
+# --- 429: la única excepción a «los 4xx no se reintentan» --------------------
+
+
+@respx.mock
+async def test_el_429_sigue_sin_reintentarse() -> None:
+    """La decisión de fondo NO cambió, y conviene que un test la sostenga.
+
+    Insistir contra un servidor que acaba de pedir bajar el ritmo es lo que
+    escala un aviso recuperable a un bloqueo por IP. Para un collector que vuelve
+    a pasar en minutos, su propio ciclo ya es un backoff más largo que cualquier
+    reintento dentro de la corrida.
+    """
+    ruta = respx.get("https://portal.test/saturado").mock(
+        return_value=httpx.Response(429, headers={"Retry-After": "120"})
+    )
+
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(CollectorError):
+            await request_text(client, "https://portal.test/saturado", origin="prueba")
+
+    assert ruta.call_count == 1, "un 429 no debe reintentarse"
+
+
+@respx.mock
+async def test_el_429_se_distingue_de_los_demas_4xx_en_la_traza() -> None:
+    """Lo que sí cambió: el 429 dejó de ser un 4xx indistinguible.
+
+    Desde `collector_runs`, «nos están limitando el ritmo» y «la URL cambió»
+    piden acciones opuestas —bajar la cadencia contra editar la configuración— y
+    el mensaje anterior, "HTTP 429 — <cuerpo>", no ayudaba a elegir entre las
+    dos sin ir a leer logs.
+    """
+    respx.get("https://portal.test/saturado").mock(
+        return_value=httpx.Response(429, headers={"Retry-After": "120"})
+    )
+
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(CollectorError, match="rate limit") as excinfo:
+            await request_text(client, "https://portal.test/saturado", origin="prueba")
+
+    assert "Retry-After: 120s" in str(excinfo.value)
+    assert excinfo.value.detail["retry_after_s"] == pytest.approx(120.0)
+
+
+@respx.mock
+async def test_un_429_sin_retry_after_lo_dice_en_vez_de_callarlo() -> None:
+    """La cabecera es una cortesía, no parte del contrato: puede no venir."""
+    respx.get("https://portal.test/mudo").mock(return_value=httpx.Response(429))
+
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(CollectorError, match="no indicó Retry-After"):
+            await request_text(client, "https://portal.test/mudo", origin="prueba")
+
+
+@respx.mock
+async def test_los_demas_4xx_conservan_su_mensaje_de_siempre() -> None:
+    """La rama nueva no puede haberse tragado el diagnóstico de los otros 4xx."""
+    ruta = respx.get("https://portal.test/ausente").mock(
+        return_value=httpx.Response(404, text="gone")
+    )
+
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(CollectorError, match="HTTP 404 — gone"):
+            await request_text(client, "https://portal.test/ausente", origin="prueba")
+
+    assert ruta.call_count == 1
+
+
+def test_retry_after_acepta_los_dos_formatos_del_rfc() -> None:
+    """Segundos o fecha HTTP. Lo que no se entienda cae al backoff, no revienta."""
+    from app.collectors.geoservices import _retry_after_seconds
+
+    def respuesta(valor: str | None) -> httpx.Response:
+        cabeceras = {"Retry-After": valor} if valor is not None else {}
+        return httpx.Response(429, headers=cabeceras)
+
+    assert _retry_after_seconds(respuesta("120")) == pytest.approx(120.0)
+    assert _retry_after_seconds(respuesta(None)) is None
+    # Sin tildes: una cabecera HTTP se codifica en latin-1 y httpx rechaza el
+    # valor antes de que la función bajo prueba llegue a verlo.
+    assert _retry_after_seconds(respuesta("cuando se pueda")) is None
+    # Una fecha ya pasada no puede producir una espera negativa.
+    assert _retry_after_seconds(
+        respuesta("Wed, 21 Oct 2020 07:28:00 GMT")
+    ) == pytest.approx(0.0)

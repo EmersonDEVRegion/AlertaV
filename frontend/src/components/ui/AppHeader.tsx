@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { LEVEL, LEVEL_ORDER } from '@/domain/symbology'
+import { WeatherWidget } from '@/components/ui/WeatherWidget'
 import { cn } from '@/lib/cn'
 
 /**
@@ -163,6 +164,21 @@ export function AppHeader({
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
+        {/*
+          El widget meteorológico va ANTES del filtro y del tema, y ese orden no
+          es casual: es lo único de esta zona que puede cambiar solo. Los otros
+          dos son controles —hacen lo que el usuario les pidió la última vez— y
+          éste es un indicador. Ponerlo al principio del grupo lo deja pegado a
+          la telemetría, que es la otra cosa de la barra que se mueve sola,
+          mientras los controles quedan agrupados en el extremo donde la mano
+          los busca.
+
+          Fuera de la franja con `overflow-x-auto` a propósito: la telemetría se
+          desliza cuando no cabe, y una alerta meteorológica que haya que
+          desplazar para ver no es una alerta.
+        */}
+        <WeatherWidget />
+
         <label
           className={cn(
             'flex cursor-pointer select-none items-center gap-2 rounded-full px-2.5 py-1.5',

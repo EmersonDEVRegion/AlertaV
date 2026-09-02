@@ -52,11 +52,20 @@ from app.collectors.weather.openmeteo_worker import (
     OpenMeteoCollector,
     build_external_id,
 )
+from app.collectors.weather.region import consolidar
 from app.collectors.weather.umbrales import (
+    AMENAZA_CALOR,
+    AMENAZA_INCENDIO,
+    AMENAZA_REMOCION,
+    AMENAZA_UV,
+    AMENAZA_VIENTO,
     NIVEL_LLUVIA,
     NIVEL_RIESGO,
     NIVEL_RIESGO_ALTO,
     NIVEL_SECO,
+    SEVERIDAD_AVISO,
+    SEVERIDAD_CRITICA,
+    SEVERIDAD_NINGUNA,
     PuntoHorario,
     Umbrales,
     acumulado_maximo,
@@ -134,13 +143,62 @@ def collector(
     return instancia
 
 
-def serie(comuna: Comuna, mms, *, probabilidad=None, desde=AHORA) -> SerieComunal:
+#: Ambiente por defecto de las series de prueba: **una tarde en que no pasa
+#: nada**. 15 °C, 70 % de humedad, 8 km/h de viento con ráfagas de 15 y un
+#: índice UV de 2.
+#:
+#: No es relleno. Los tests de la política de lluvia tienen que poder disparar
+#: SÓLO su regla, y desde la v2 una serie sin variables tácticas dispararía otra
+#: cosa: si `humedad` llegara ausente en las 36 comunas, `_faltantes_globales`
+#: levantaría una advertencia y dejaría la corrida en `partial`, rompiendo tests
+#: que no hablan de eso. Un ambiente explícito y benigno mantiene cada test
+#: probando una cosa.
+AMBIENTE_CALMO = {
+    "temp": 15.0,
+    "humedad": 70.0,
+    "viento": 8.0,
+    "rafaga": 15.0,
+    "uv": 2.0,
+}
+
+
+def _por_hora(valor, largo: int) -> list:
+    """Acepta un escalar (constante en la serie) o una lista ya por hora."""
+    if isinstance(valor, list | tuple):
+        return list(valor) + [None] * (largo - len(valor))
+    return [valor] * largo
+
+
+def serie(
+    comuna: Comuna,
+    mms,
+    *,
+    probabilidad=None,
+    desde=AHORA,
+    temp=None,
+    humedad=None,
+    viento=None,
+    rafaga=None,
+    uv=None,
+) -> SerieComunal:
     inicio = piso_horario(desde)
+    largo = len(mms)
+    temps = _por_hora(AMBIENTE_CALMO["temp"] if temp is None else temp, largo)
+    humedades = _por_hora(AMBIENTE_CALMO["humedad"] if humedad is None else humedad, largo)
+    vientos = _por_hora(AMBIENTE_CALMO["viento"] if viento is None else viento, largo)
+    rafagas = _por_hora(AMBIENTE_CALMO["rafaga"] if rafaga is None else rafaga, largo)
+    uvs = _por_hora(AMBIENTE_CALMO["uv"] if uv is None else uv, largo)
+
     puntos = tuple(
         PuntoHorario(
             momento=inicio + timedelta(hours=indice),
             mm=mm,
             probabilidad=probabilidad,
+            temp_c=temps[indice],
+            humedad=humedades[indice],
+            viento_kmh=vientos[indice],
+            rafaga_kmh=rafagas[indice],
+            uv=uvs[indice],
         )
         for indice, mm in enumerate(mms)
     )
@@ -166,7 +224,13 @@ def serie_viva(comuna: Comuna, mms) -> SerieComunal:
 
 
 def payload_de(*series: SerieComunal) -> list[dict]:
-    """Reconstruye la forma en que Open-Meteo publica varias ubicaciones."""
+    """Reconstruye la forma en que Open-Meteo publica varias ubicaciones.
+
+    Emite las siete variables de `HOURLY_VARIABLES`, no sólo las dos de la v1:
+    el fixture tiene que parecerse a lo que la API devuelve ahora que se le
+    piden siete, o los tests de integración estarían probando un contrato que ya
+    no se pide.
+    """
     return [
         {
             "latitude": item.lat_grilla,
@@ -174,17 +238,56 @@ def payload_de(*series: SerieComunal) -> list[dict]:
             "generationtime_ms": 0.4,
             "utc_offset_seconds": 0,
             "timezone": "GMT",
-            "hourly_units": {"precipitation": "mm", "precipitation_probability": "%"},
+            "hourly_units": {
+                "precipitation": "mm",
+                "precipitation_probability": "%",
+                "temperature_2m": "°C",
+                "relative_humidity_2m": "%",
+                "wind_speed_10m": "km/h",
+                "wind_gusts_10m": "km/h",
+                "uv_index": "",
+            },
             "hourly": {
                 "time": [f"{punto.momento:%Y-%m-%dT%H:%M}" for punto in item.puntos],
                 "precipitation": [punto.mm for punto in item.puntos],
                 "precipitation_probability": [
                     punto.probabilidad for punto in item.puntos
                 ],
+                "temperature_2m": [punto.temp_c for punto in item.puntos],
+                "relative_humidity_2m": [punto.humedad for punto in item.puntos],
+                "wind_speed_10m": [punto.viento_kmh for punto in item.puntos],
+                "wind_gusts_10m": [punto.rafaga_kmh for punto in item.puntos],
+                "uv_index": [punto.uv for punto in item.puntos],
             },
         }
         for item in series
     ]
+
+
+def eventos_comunales(instancia) -> list:
+    """Los eventos de comuna que ingirió una corrida, sin el agregado regional.
+
+    Casi todos los tests de `run()` hablan de comunas. La fila regional se emite
+    siempre —es lo que mantiene vivo el widget en un día tranquilo— y contarla
+    como una comuna más convertiría cada aserción de conteo en una trampa.
+    """
+    return [
+        evento
+        for evento in instancia.service.eventos
+        if evento.raw_data.get(WEATHER_KEY, {}).get("ambito") != "region"
+    ]
+
+
+def evento_regional(instancia):
+    """El agregado de la corrida, o `None`."""
+    return next(
+        (
+            evento
+            for evento in instancia.service.eventos
+            if evento.raw_data.get(WEATHER_KEY, {}).get("ambito") == "region"
+        ),
+        None,
+    )
 
 
 def correr(instancia):
@@ -308,8 +411,12 @@ def test_una_intensidad_extrema_sola_ya_es_riesgo_alto():
     """
     pronostico = evaluar(VALPO, serie(VALPO, [12.0, 0.0, 0.0]).puntos, ahora=AHORA)
 
-    assert pronostico.motivos == ("intensidad 12.0 mm/h ≥ 5.0 mm/h",)
+    # El motivo nombra el umbral MÁS ALTO que se cruzó, no el primero. 12 mm/h
+    # está por encima del tramo crítico (10 mm/h), y decir "≥ 5.0" dejaría a
+    # alguien preguntándose por qué el widget está en rojo con un umbral de 5.
+    assert pronostico.motivos == ("intensidad 12.0 mm/h ≥ 10.0 mm/h",)
     assert pronostico.nivel == NIVEL_RIESGO_ALTO
+    assert pronostico.severidad == SEVERIDAD_CRITICA
 
 
 def test_la_probabilidad_no_veta_el_flag():
@@ -465,6 +572,261 @@ def test_el_texto_no_se_disfraza_de_alerta_oficial():
     assert "Comuna: Valparaíso." in texto
 
 
+# --- 4 bis. La política táctica: incendio, viento, calor y UV ----------------
+#
+# Una regla por test y una sola. Con seis amenazas y dos severidades, un test que
+# construya "un día feo" y compruebe que sale rojo no distingue cuál de las seis
+# reglas funcionó — que es exactamente el agujero por el que un umbral mal
+# escrito sobrevive a la suite.
+
+
+def pronostico(comuna=VALPO, mms=None, **ambiente):
+    """Evalúa una serie con el ambiente indicado, anclada en `AHORA`."""
+    return evaluar(comuna, serie(comuna, mms or [0.0] * 4, **ambiente).puntos, ahora=AHORA)
+
+
+def disparo_de(resultado, amenaza):
+    return next((item for item in resultado.disparos if item.amenaza == amenaza), None)
+
+
+def test_el_30_30_30_exige_las_tres_condiciones_en_la_misma_hora():
+    """El test que justifica cómo está implementada la regla.
+
+    Éste es el escenario de la implementación perezosa: 31 °C a mediodía, 25 %
+    de humedad por la tarde y una ráfaga de 40 km/h de madrugada, cuando hacía
+    11 °C y había rocío. Comparando máximos independientes, el 30-30-30 se
+    cumpliría. En el terreno no se cumplió nunca: los tres números no coincidieron
+    ni una hora.
+    """
+    resultado = pronostico(
+        temp=[11.0, 31.0, 20.0, 14.0],
+        humedad=[95.0, 60.0, 25.0, 90.0],
+        rafaga=[40.0, 10.0, 8.0, 12.0],
+    )
+
+    assert disparo_de(resultado, AMENAZA_INCENDIO) is None
+    assert resultado.severidad == SEVERIDAD_NINGUNA
+
+
+def test_el_30_30_30_dispara_critico_cuando_las_tres_coinciden():
+    resultado = pronostico(
+        temp=[20.0, 32.0, 20.0, 14.0],
+        humedad=[60.0, 22.0, 60.0, 90.0],
+        rafaga=[10.0, 38.0, 10.0, 12.0],
+    )
+
+    disparo = disparo_de(resultado, AMENAZA_INCENDIO)
+    assert disparo is not None
+    assert disparo.severidad == SEVERIDAD_CRITICA
+    assert disparo.valor == 32.0
+    # La hora importa: es lo que una brigada necesita para planificar el turno.
+    assert disparo.momento == piso_horario(AHORA) + timedelta(hours=1)
+
+
+def test_el_tramo_costero_cubre_el_regimen_en_que_esta_region_se_quema():
+    """25/40/25 no cumple el 30-30-30 y sigue siendo una tarde de riesgo.
+
+    Es la corrección explícita al Factor 30-30-30: en la costa de Valparaíso casi
+    nunca se cumple y los incendios ocurren igual. El tramo de aviso existe para
+    eso y por eso es ámbar y no rojo.
+    """
+    resultado = pronostico(temp=27.0, humedad=35.0, rafaga=28.0)
+
+    disparo = disparo_de(resultado, AMENAZA_INCENDIO)
+    assert disparo is not None
+    assert disparo.severidad == SEVERIDAD_AVISO
+
+
+def test_una_tarde_calurosa_y_humeda_no_es_condicion_de_propagacion():
+    """30 °C con 65 % de humedad es un domingo de enero, no un escenario."""
+    resultado = pronostico(temp=31.0, humedad=65.0, rafaga=35.0)
+
+    assert disparo_de(resultado, AMENAZA_INCENDIO) is None
+
+
+def test_el_viento_dispara_solo_sin_pedirle_nada_al_termometro():
+    """Un temporal invernal de 70 km/h y 12 °C importa igual.
+
+    A 60 km/h se suspende el combate aéreo y empiezan a caer ramas sobre el
+    tendido — la capa de cortes de luz de este mismo sistema.
+    """
+    resultado = pronostico(temp=12.0, humedad=90.0, rafaga=70.0)
+
+    disparo = disparo_de(resultado, AMENAZA_VIENTO)
+    assert disparo is not None
+    assert disparo.severidad == SEVERIDAD_AVISO
+    assert disparo_de(resultado, AMENAZA_INCENDIO) is None
+
+
+def test_una_rafaga_de_85_es_critica():
+    resultado = pronostico(temp=12.0, humedad=90.0, rafaga=85.0)
+
+    assert disparo_de(resultado, AMENAZA_VIENTO).severidad == SEVERIDAD_CRITICA
+
+
+#: Un día con noche. Las series de este bloque necesitan una mínima real, o la
+#: regla de noche tropical se cumple sola: con una temperatura constante, el
+#: mínimo de la ventana es igual al máximo.
+def dia_con_noche(maxima: float, minima: float = 14.0) -> list[float]:
+    return [maxima, maxima - 3.0, minima + 2.0, minima]
+
+
+def test_el_calor_tiene_dos_tramos():
+    aviso = pronostico(temp=dia_con_noche(33.0))
+    critico = pronostico(temp=dia_con_noche(37.0))
+    templado = pronostico(temp=dia_con_noche(30.0))
+
+    assert disparo_de(aviso, AMENAZA_CALOR).severidad == SEVERIDAD_AVISO
+    assert disparo_de(critico, AMENAZA_CALOR).severidad == SEVERIDAD_CRITICA
+    assert disparo_de(templado, AMENAZA_CALOR) is None
+
+
+def test_la_noche_tropical_agrava_pero_no_dispara_sola():
+    """La carga del calor la produce la falta de alivio nocturno, no el pico.
+
+    Dos comprobaciones en una: 33 °C con una mínima de 22 °C sube a crítico, y
+    una mínima de 22 °C con una máxima templada no dispara nada — no hay un
+    disparo de "noche tropical" compitiendo por el sitio del widget.
+    """
+    con_alivio = pronostico(temp=[33.0, 28.0, 18.0, 15.0])
+    sin_alivio = pronostico(temp=[33.0, 28.0, 24.0, 22.0])
+
+    assert disparo_de(con_alivio, AMENAZA_CALOR).severidad == SEVERIDAD_AVISO
+    assert disparo_de(sin_alivio, AMENAZA_CALOR).severidad == SEVERIDAD_CRITICA
+
+    templado = pronostico(temp=[24.0, 23.0, 22.0, 21.0])
+    assert disparo_de(templado, AMENAZA_CALOR) is None
+
+
+def test_el_uv_usa_las_bandas_de_la_oms():
+    """8 es «muy alto» y 11 es «extremo». Son las únicas cifras no negociables."""
+    assert disparo_de(pronostico(uv=9.0), AMENAZA_UV).severidad == SEVERIDAD_AVISO
+    assert disparo_de(pronostico(uv=12.0), AMENAZA_UV).severidad == SEVERIDAD_CRITICA
+    assert "extremo" in disparo_de(pronostico(uv=12.0), AMENAZA_UV).texto
+    assert disparo_de(pronostico(uv=6.0), AMENAZA_UV) is None
+
+
+def test_la_ventana_del_uv_es_de_seis_horas_y_eso_se_nota():
+    """Un UV de 12 a veinte horas vista no puede encender el widget de noche.
+
+    Es toda la razón de ser de las ventanas por amenaza: el UV describe lo que
+    le pasa a la piel de alguien que está afuera *ahora*, no mañana al mediodía.
+    """
+    manana = [2.0] * 20 + [12.0, 12.0, 4.0, 1.0]
+    resultado = pronostico(mms=[0.0] * 24, uv=manana)
+
+    assert disparo_de(resultado, AMENAZA_UV) is None
+    assert resultado.severidad == SEVERIDAD_NINGUNA
+
+
+def test_una_variable_ausente_nunca_dispara():
+    """`None` es "no sabemos", y con un "no sabemos" no se decide nada.
+
+    El modo de fallo que esto previene es concreto y caro: una humedad ausente
+    leída como 0 % pondría la región entera en 30-30-30 crítico para siempre.
+    """
+    resultado = pronostico(temp=35.0, humedad=[None] * 4, rafaga=45.0)
+
+    assert disparo_de(resultado, AMENAZA_INCENDIO) is None
+    # El calor sí dispara: no depende de la humedad. Una variable rota degrada
+    # una amenaza, no las cuatro.
+    assert disparo_de(resultado, AMENAZA_CALOR) is not None
+
+
+def test_una_comuna_seca_con_uv_extremo_genera_evento():
+    """El caso que la v1 no habría guardado: 0,0 mm y todo lo demás en rojo.
+
+    Es la razón por la que `hay_senal` reemplazó a `hay_lluvia` como criterio de
+    emisión. Una tarde de febrero en Petorca no tiene una gota de agua y es
+    exactamente lo que esta capa existe para describir.
+    """
+    resultado = pronostico(mms=[0.0] * 4, temp=38.0, humedad=18.0, rafaga=45.0, uv=12.0)
+
+    assert resultado.hay_lluvia is False
+    assert resultado.hay_senal is True
+    assert resultado.severidad == SEVERIDAD_CRITICA
+
+
+def test_el_desempate_entre_amenazas_es_estable_y_no_alfabetico():
+    """Con dos amenazas críticas, manda la que mata gente en esta región.
+
+    Sin `PRIORIDAD_AMENAZA`, la métrica que el widget expande dependería del
+    orden en que se evaluaron las reglas — que es un detalle de implementación,
+    no una decisión de producto.
+    """
+    resultado = pronostico(mms=[30.0, 30.0, 5.0, 0.0], uv=12.0)
+
+    assert resultado.severidad == SEVERIDAD_CRITICA
+    assert resultado.amenaza == AMENAZA_REMOCION
+    assert resultado.disparo_principal.amenaza == AMENAZA_REMOCION
+
+
+def test_el_estado_tactico_no_contamina_el_contrato_de_lluvia():
+    """`riesgo_inundacion` y `nivel` siguen hablando SÓLO de agua.
+
+    Es lo que mantiene viva la capa de MapLibre sin tocarla: un día de calor
+    extremo no puede encender el anillo azul de riesgo de inundación.
+    """
+    resultado = pronostico(mms=[0.0] * 4, temp=38.0, uv=12.0)
+
+    assert resultado.severidad == SEVERIDAD_CRITICA
+    assert resultado.riesgo_inundacion is False
+    assert resultado.nivel == NIVEL_SECO
+    assert resultado.motivos == ()
+
+
+def test_el_texto_nombra_la_amenaza_sin_declarar_una_alerta():
+    """Ninguno de los rótulos nuevos puede sonar a un decreto de SENAPRED."""
+    texto = describir(pronostico(mms=[0.0] * 4, temp=38.0, humedad=18.0, rafaga=45.0))
+
+    assert "CALOR EXTREMO" in texto
+    assert "ola de calor" not in texto.lower(), "es un término con definición oficial"
+    assert "no es una alerta oficial" in texto
+    assert "SENAPRED" in texto
+
+
+# --- 4 ter. La consolidación regional ----------------------------------------
+
+
+def test_la_region_toma_el_peor_caso_y_no_el_promedio():
+    """Promediar 38 °C con 17 °C da 26 °C: un número que no describe a nadie."""
+    caluroso = evaluar(
+        VALPO, serie(VALPO, [0.0] * 4, temp=38.0).puntos, ahora=AHORA
+    )
+    templado = evaluar(
+        QUILPUE, serie(QUILPUE, [0.0] * 4, temp=17.0).puntos, ahora=AHORA
+    )
+
+    estado = consolidar(
+        [templado, caluroso], inicio=caluroso.inicio, fin=caluroso.fin
+    )
+
+    assert estado.severidad == SEVERIDAD_CRITICA
+    assert estado.amenaza == AMENAZA_CALOR
+    assert estado.comuna_origen == "Valparaíso"
+    assert estado.temp_max_c == 38.0
+    # Y en el ambiente, la mediana: 27,5 y no 38. Es lo que ve el widget cuando
+    # alguien lo mira sin que haya nada encendido.
+    assert estado.temp_c == 27.5
+
+
+def test_una_region_en_calma_no_es_una_region_sin_datos():
+    """Los dos ceros que el widget no puede pintar igual."""
+    tranquilas = [
+        evaluar(comuna, serie(comuna, [0.0] * 4).puntos, ahora=AHORA)
+        for comuna in (VALPO, QUILPUE)
+    ]
+    estado = consolidar(tranquilas, inicio=AHORA, fin=AHORA + timedelta(hours=24))
+
+    assert estado.severidad == SEVERIDAD_NINGUNA
+    assert estado.comunas == 2
+    assert estado.disparo is None
+
+    # Y sin comunas no hay estado: emitir "todo tranquilo" con cero comunas
+    # detrás sería el fallo silencioso de siempre, pintado de verde.
+    assert consolidar([], inicio=AHORA, fin=AHORA) is None
+
+
 # --- 5. Emparejamiento por posición y forma de la respuesta ------------------
 
 
@@ -554,11 +916,11 @@ def test_el_error_de_la_api_conserva_el_motivo():
 
 
 @respx.mock
-def test_una_corrida_normal_ingiere_solo_las_comunas_con_lluvia():
-    """34 comunas secas no son 34 rechazos: son un día de verano.
+def test_una_corrida_normal_ingiere_solo_las_comunas_con_senal():
+    """34 comunas tranquilas no son 34 rechazos: son un día de verano.
 
     Si el filtro viviera en `normalize()`, `BaseCollector` contaría cada comuna
-    seca como rechazo y la corrida quedaría en `partial` para siempre.
+    tranquila como rechazo y la corrida quedaría en `partial` para siempre.
     """
     respx.get(API_URL).mock(
         return_value=httpx.Response(
@@ -574,16 +936,24 @@ def test_una_corrida_normal_ingiere_solo_las_comunas_con_lluvia():
     resultado = correr(instancia)
 
     assert resultado.status is CollectorStatus.SUCCESS
-    assert resultado.fetched == 1, "sólo Valparaíso tenía lluvia"
     assert resultado.rejected == 0
-    assert [evento.raw_data["comuna"] for evento in instancia.service.eventos] == [
+    assert [evento.raw_data["comuna"] for evento in eventos_comunales(instancia)] == [
         "Valparaíso"
-    ]
+    ], "sólo Valparaíso tenía señal"
+    # Valparaíso + el agregado regional. El agregado se emite SIEMPRE: es lo que
+    # distingue "se consultó y no pasaba nada" de "la fuente está caída".
+    assert resultado.fetched == 2
 
 
 @respx.mock
-def test_ninguna_comuna_con_lluvia_es_un_exito_con_cero():
-    """El estado normal de un verano. No es una degradación."""
+def test_un_dia_sin_nada_igual_deja_la_fila_regional():
+    """El estado normal de un verano. No es una degradación, y no es silencio.
+
+    Antes de la v2 esta corrida terminaba con cero filas, indistinguible de una
+    fuente muerta. Ahora deja el agregado, que dice con hora y con datos que se
+    consultaron dos comunas y ninguna cruzó nada. Es lo que mantiene encendido
+    el widget el 95 % de los días del año.
+    """
     respx.get(API_URL).mock(
         return_value=httpx.Response(
             200,
@@ -591,10 +961,21 @@ def test_ninguna_comuna_con_lluvia_es_un_exito_con_cero():
         )
     )
 
-    resultado = correr(collector())
+    instancia = collector()
+    resultado = correr(instancia)
 
     assert resultado.status is CollectorStatus.SUCCESS
-    assert resultado.fetched == 0
+    assert eventos_comunales(instancia) == []
+
+    regional = evento_regional(instancia)
+    assert regional is not None
+    payload = regional.raw_data[WEATHER_KEY]
+    assert payload["severidad"] == "ninguna"
+    assert payload["comunas"] == 2
+    assert payload["disparo_principal"] is None
+    # Y NO lleva el alias `comuna` al nivel de arriba: no pertenece a ninguna, y
+    # ese alias es lo que `communes.extract_commune` usa para atribuir señales.
+    assert "comuna" not in regional.raw_data
 
 
 @respx.mock

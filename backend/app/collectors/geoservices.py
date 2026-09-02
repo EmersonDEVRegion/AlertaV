@@ -21,6 +21,7 @@ import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any, Literal
 
 import httpx
@@ -480,6 +481,43 @@ def raise_if_service_error(payload: Mapping[str, Any], *, origin: str) -> None:
 # --- Transporte HTTP ---------------------------------------------------------
 
 
+#: Techo de la espera que un `Retry-After` puede imponernos, en segundos.
+#:
+#: Un servidor puede pedir una hora y hay que poder no dársela: la corrida vive
+#: dentro de una tarea del runner, y dormir ahí bloquea la cadencia entera de esa
+#: fuente. Cinco minutos son suficientes para respetar la intención del portal y
+#: poco para que la corrida siga cabiendo dentro de su propio ciclo.
+_MAX_RETRY_AFTER_SECONDS = 300.0
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    """Lee `Retry-After`. Devuelve None si no viene o no se entiende.
+
+    La cabecera admite dos formatos por RFC 9110: segundos ("120") o una fecha
+    HTTP ("Wed, 21 Oct 2026 07:28:00 GMT"). Se aceptan los dos porque quien los
+    manda no elige pensando en nosotros, y un formato no reconocido se trata
+    como ausencia —se cae al backoff exponencial— en vez de como error: la
+    cabecera es una cortesía, no parte del contrato.
+    """
+    raw = response.headers.get("Retry-After")
+    if not raw:
+        return None
+
+    try:
+        return max(0.0, float(raw.strip()))
+    except ValueError:
+        pass
+
+    try:
+        momento = parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        return None
+
+    if momento.tzinfo is None:
+        momento = momento.replace(tzinfo=UTC)
+    return max(0.0, (momento - datetime.now(UTC)).total_seconds())
+
+
 async def request_response(
     client: httpx.AsyncClient,
     url: str,
@@ -497,6 +535,12 @@ async def request_response(
     Reintenta ante errores de red y 5xx, que en portales institucionales son
     frecuentes y transitorios. No reintenta ante 4xx: eso es un contrato roto y
     reintentarlo sólo retrasa el diagnóstico.
+
+    El **429 tampoco se reintenta** —insistir contra quien pidió bajar el ritmo
+    es lo que escala un aviso a un bloqueo por IP— pero sí se distingue: sale con
+    un mensaje propio y con el `Retry-After` que la fuente haya indicado, para
+    que en `collector_runs` se pueda separar «nos están limitando» de «la URL
+    cambió». Ver el comentario en el cuerpo.
 
     Toda excepción de httpx —timeout, DNS, TLS, conexión rechazada— sale de acá
     convertida en `CollectorError`. Es lo que permite que los collectors declaren
@@ -564,6 +608,47 @@ async def request_response(
         except httpx.HTTPStatusError as exc:
             status_code = exc.response.status_code
             if status_code < 500:
+                # El 429 NO se reintenta —igual que cualquier otro 4xx— y esa
+                # decisión es anterior a este comentario: está fijada en
+                # `test_bomberos_un_429_queda_registrado_sin_reintentar` con un
+                # argumento que se sostiene. Insistir contra un servidor que
+                # acaba de decir «vienes demasiado seguido» es lo que convierte
+                # un aviso en un veto, y para un collector que vuelve a pasar en
+                # minutos, el propio ciclo ya es un backoff mucho más largo que
+                # cualquier reintento dentro de la corrida.
+                #
+                # Lo que sí cambió es que ahora se DISTINGUE. Antes un 429 salía
+                # como "HTTP 429 — <cuerpo>", indistinguible de un 404 o un 403
+                # salvo por el número: un operador mirando `collector_runs` no
+                # podía separar «nos están limitando el ritmo» —que se responde
+                # bajando la cadencia— de «la URL cambió» —que se responde
+                # editando la configuración—. Son dos acciones opuestas y el
+                # mensaje no ayudaba a elegir.
+                if status_code == 429:
+                    espera_pedida = _retry_after_seconds(exc.response)
+                    logger.warning(
+                        "la fuente pidió bajar el ritmo",
+                        extra={
+                            "origin": origin,
+                            "url": url,
+                            "retry_after_s": espera_pedida,
+                        },
+                    )
+                    raise CollectorError(
+                        f"{origin}: HTTP 429 (rate limit) — la fuente pide bajar "
+                        f"la cadencia"
+                        + (
+                            f"; Retry-After: {espera_pedida:.0f}s"
+                            if espera_pedida is not None
+                            else " y no indicó Retry-After"
+                        ),
+                        detail={
+                            "url": url,
+                            "status": status_code,
+                            "retry_after_s": espera_pedida,
+                        },
+                    ) from exc
+
                 raise CollectorError(
                     f"{origin}: HTTP {status_code} — {exc.response.text[:200]}",
                     detail={"url": url, "status": status_code},

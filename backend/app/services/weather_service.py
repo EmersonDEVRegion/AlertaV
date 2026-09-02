@@ -50,7 +50,11 @@ from app.core.config import settings
 from app.models.enums import EventSource, EventType
 from app.repositories.event_repository import EventRepository
 from app.schemas.event import GeoJSONFeature, GeoJSONFeatureCollection
-from app.schemas.weather import WeatherForecastRead, WeatherStats
+from app.schemas.weather import (
+    TacticalWeatherRead,
+    WeatherForecastRead,
+    WeatherStats,
+)
 
 
 class WeatherService:
@@ -95,6 +99,11 @@ class WeatherService:
 
         # `list_events` ordena por timestamp descendente, así que la primera
         # aparición de cada comuna es su ventana más reciente.
+        #
+        # La fila regional cae acá también —comparte fuente, tipo y ventana— y
+        # `from_event` la devuelve como `None`. No es un descarte defensivo: es
+        # el filtro que impide que el agregado aparezca como una comuna fantasma
+        # en el centro de la región, con su propia mancha de lluvia.
         ultima_por_comuna: dict[str, WeatherForecastRead] = {}
         for row in rows:
             lectura = WeatherForecastRead.from_event(row)
@@ -111,6 +120,48 @@ class WeatherService:
         # capa sísmica.
         pronosticos.sort(key=lambda item: item.mm_total, reverse=True)
         return pronosticos
+
+    async def tactical(self, *, hours: int = 3) -> TacticalWeatherRead:
+        """El estado táctico de la región. Lo que alimenta el widget.
+
+        # Por qué esto es una consulta propia y no un `stats` sobre la lista
+
+        Porque tiene que responder **también cuando la lista está vacía**, que es
+        el estado más frecuente del año. Un resumen calculado sobre las comunas
+        con señal diría "sin datos" en un día tranquilo, y el widget se apagaría
+        justo en el 95 % de los días en que su única misión es decir la
+        temperatura. El agregado regional lo escribe el collector en cada
+        corrida, exista o no una sola comuna con señal.
+
+        # Los dos ceros que no se pueden confundir
+
+        `severidad: "ninguna"` con `comunas: 36` significa «se consultaron 36
+        comunas y ninguna cruzó un umbral». `observado_en: null` significa «no
+        hay ninguna corrida reciente»: el collector está caído, el worker no
+        arrancó o la API dejó de responder. El widget los dibuja distinto —gris
+        vivo contra gris apagado— y por eso el schema los distingue en vez de
+        devolver un `severidad: "ninguna"` para los dos.
+
+        `hours` es la misma holgura que en `list_current`, y acá importa más: si
+        se estirara, el widget podría mostrar como "ahora" una temperatura de
+        hace medio día. Tres horas cubren una corrida que llegó tarde y nada más.
+        """
+        rows = await self.repo.list_events(
+            since=datetime.now(UTC) - timedelta(hours=hours),
+            sources=[EventSource.WEATHER],
+            types=[EventType.WEATHER_OBSERVATION],
+            bbox=self.weather_bbox(),
+            limit=500,
+        )
+
+        # Ordenadas por timestamp descendente: la primera regional que aparezca
+        # es la más reciente y no hay que seguir mirando.
+        for row in rows:
+            estado = TacticalWeatherRead.from_event(row)
+            if estado is not None:
+                return estado
+
+        return TacticalWeatherRead.sin_datos()
 
     @staticmethod
     def to_geojson(
@@ -146,6 +197,20 @@ class WeatherService:
                     "riesgo_inundacion": item.riesgo_inundacion,
                     "nivel": item.nivel,
                     "motivos": "; ".join(item.motivos),
+                    # Estado táctico, aplanado a escalares por la misma
+                    # restricción de MapLibre que obligó a unir `motivos`. La
+                    # capa de lluvia no los usa hoy —dibuja agua— pero están
+                    # para que una capa de amenaza por comuna no tenga que
+                    # inventarse otra ruta.
+                    "severidad": item.severidad,
+                    "amenaza": item.amenaza,
+                    "temp_max_c": item.temp_max_c,
+                    "humedad_min": item.humedad_min,
+                    "rafaga_max_kmh": item.rafaga_max_kmh,
+                    "uv_max": item.uv_max,
+                    "disparo_texto": (
+                        item.disparo_principal.texto if item.disparo_principal else None
+                    ),
                     "modelo": item.modelo,
                     # Los dos recordatorios que esta capa necesita: es futuro y
                     # no es una emergencia declarada.

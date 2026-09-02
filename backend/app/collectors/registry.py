@@ -13,15 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.collectors.base import BaseCollector
 from app.collectors.conaf.collector import ConafCollector
 from app.collectors.firms.collector import FirmsCollector
+from app.collectors.mop.vialidad_worker import MopVialidadCollector
 from app.collectors.news.local_news_worker import LocalNewsCollector
 from app.collectors.power.cge_worker import CgeCollector
 from app.collectors.power.chilquinta_worker import ChilquintaCollector
 from app.collectors.seismic.sismologia_worker import SismologiaCollector
 from app.collectors.senapred.collector import SenapredCollector
 from app.collectors.social.instagram_apify_worker import InstagramApifyCollector
-from app.collectors.traffic.bomberos_10_4_worker import Bomberos104Collector
 from app.collectors.traffic.transporteinforma_worker import TransporteInformaCollector
-from app.collectors.traffic.waze_worker import WazeCollector
 from app.collectors.usgs.collector import UsgsCollector
 from app.collectors.weather.openmeteo_worker import OpenMeteoCollector
 
@@ -74,12 +73,54 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     ChilquintaCollector.name: ChilquintaCollector,
     CgeCollector.name: CgeCollector,
     # -- Accidentes viales ----------------------------------------------------
-    # Los tres emiten `type=accident` y quedan aislados de la familia `fire` por
+    # Los dos emiten `type=accident` y quedan aislados de la familia `fire` por
     # la partición del motor. Ninguno arranca sin su URL configurada: si falta,
     # el constructor lanza y el runner deja una corrida `failed` visible en
     # `collector_runs` en vez de fallar en silencio.
-    WazeCollector.name: WazeCollector,
-    Bomberos104Collector.name: Bomberos104Collector,
+    #
+    # WAZE: FUERA DE ROTACIÓN, a la espera del convenio.
+    #
+    # `WazeCollector` está implementado y con tests (`tests/test_traffic_workers.py`),
+    # pero `WAZE_FEED_URL` sólo la entrega Waze for Cities y la solicitud no fue
+    # aprobada. Registrado con la variable vacía, su constructor lanzaba
+    # `CollectorError` en CADA corrida: una fila `failed` y una traza cada cinco
+    # minutos por una causa ya conocida y sin acción posible.
+    #
+    # Esa es exactamente la diferencia con CGE. Un collector registrado que falla
+    # se mantiene a la vista porque el fallo es información —el formato cambió,
+    # el archivo se movió, algo hay que mirar—. Acá no hay nada que mirar: falta
+    # una credencial que depende de un trámite externo. Un error repetido que
+    # nadie puede accionar entrena al equipo a ignorar el rojo del log, y esa
+    # costumbre es la que después se traga el error nuevo de otra fuente.
+    #
+    # Reactivarlo son dos líneas —el import de arriba y la entrada de acá— más
+    # `WAZE_FEED_URL` en el entorno. El módulo no necesita ningún cambio: fue
+    # escrito contra el esquema del feed CCP, que es el que llega con el convenio.
+    # Ver el encabezado de `app/collectors/traffic/waze_worker.py`.
+    #
+    # BOMBEROS: FUERA DE ROTACIÓN — cambió de puerta, no de estado.
+    #
+    # Es el tercer módulo de esta sección fuera del CRON y el único que NO está
+    # esperando nada: los despachos **entran igual**, por
+    # `POST /api/v1/apify/webhook`, y con menos latencia que antes. Lo que se
+    # apagó es la forma de traerlos, no la fuente.
+    #
+    # `Bomberos104Collector` leía la cuenta de la central a través de un puente
+    # RSSHub, y ese puente está muerto sin reemplazo: la ruta de Twitter de
+    # RSSHub desapareció con la API de X y el espejo de xcancel tampoco
+    # responde. Registrarlo hoy sería pedirle a cada corrida que fallara contra
+    # un 404 — el mismo ruido inaccionable que sacó a Waze de acá.
+    #
+    # Ojo con la diferencia de mecánica, que es lo que hay que entender para
+    # operar esta capa: los demás collectors **preguntan** cada N minutos; el
+    # webhook **espera** a que Apify avise. Un despacho perdido acá no se
+    # recupera en la corrida siguiente, porque no hay corrida siguiente. Por eso
+    # el endpoint escribe en `collector_runs` igual que un collector: es el
+    # único lugar donde se ve si el webhook está llegando.
+    #
+    # Su decodificación —claves, resumen canónico, construcción del evento— no
+    # se movió: vive en las funciones libres de
+    # `app/collectors/traffic/bomberos_10_4_worker.py` y la usan las dos puertas.
     TransporteInformaCollector.name: TransporteInformaCollector,
     # -- Meteorología ---------------------------------------------------------
     # La única capa que habla del futuro: emite `weather_observation`, que está
@@ -93,6 +134,20 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     # inundación en comunas donde no se ha inundado nada. Mismo criterio que
     # `thermal_anomaly` con los incendios. El flag de riesgo va en el payload.
     OpenMeteoCollector.name: OpenMeteoCollector,
+    # -- Infraestructura vial dañada ------------------------------------------
+    # Dirección de Vialidad (MOP): socavaciones, derrumbes, puentes con paso
+    # restringido. NO son siniestros, y la diferencia no es semántica.
+    #
+    # Emite `road_closure`, que igual que `weather_observation` está FUERA de
+    # `CORRELATABLE_EVENT_TYPES`, y entra con confianza 0.0. No crea incidentes
+    # ni mueve la confianza de ninguno. La migración 0009 explica el daño que
+    # eso evita: estas emergencias siguen vigentes durante SEMANAS, así que una
+    # que aportara peso a la familia `traffic` le regalaría corroboración a cada
+    # choque ocurrido en esa cuesta durante todo ese tiempo.
+    #
+    # Cadencia horaria y no de cinco minutos: el propio servicio declara que se
+    # actualiza los lunes ~15:00, y a diario sólo durante eventos de emergencia.
+    MopVialidadCollector.name: MopVialidadCollector,
     # -- Redes sociales -------------------------------------------------------
     # Cuentas hiperlocales de Instagram, leídas a través de Apify porque el WAF
     # de Meta bloquea cualquier intento directo. Emite `SOCIAL_MEDIA`, la banda

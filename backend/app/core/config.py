@@ -108,6 +108,34 @@ class Settings(BaseSettings):
     # dataset esté calibrado.
     REJECT_OUTSIDE_REGION: bool = False
 
+    # -- Cadencia de los collectors ------------------------------------------
+    #: Dispersión aleatoria aplicada a CADA espera del bucle, como fracción del
+    #: intervalo. 0 = metrónomo exacto.
+    #:
+    #: El runner ya dispersaba el PRIMER disparo (`_STARTUP_JITTER`) para que un
+    #: reinicio no lanzara doce collectors en el mismo segundo. Eso resolvía el
+    #: pico del arranque y dejaba intacto el problema de régimen: pasada esa
+    #: primera espera, cada collector queda golpeando su fuente en un ciclo
+    #: perfectamente regular durante semanas.
+    #:
+    #: Dos consecuencias, y la segunda es la que motiva esta variable:
+    #:
+    #: * **Sincronización.** Dos cadencias con un divisor común vuelven a
+    #:   coincidir sin remedio: 600 s (Transporte Informa) y 900 s (prensa
+    #:   local) comparten período 1800, así que cada media hora exacta los dos
+    #:   scrapers salían a la red juntos. El arranque escalonado no lo impide,
+    #:   sólo elige en qué segundo del ciclo ocurre.
+    #: * **Huella.** Una petición cada 600 s exactos desde una IP de datacenter
+    #:   es la firma más fácil de reconocer que puede dejar un cliente. Ningún
+    #:   navegador hace eso. Es lo que un WAF clasifica como bot antes de mirar
+    #:   el volumen — que en nuestro caso es de 144 peticiones diarias, es decir,
+    #:   menos que una persona leyendo el portal en el almuerzo.
+    #:
+    #: ±10 % sobre 600 s son ±60 s: suficiente para que el patrón deje de ser
+    #: reconocible y para que dos collectors no vuelvan a alinearse, y demasiado
+    #: poco para mover la latencia de una capa que se mide en minutos.
+    COLLECTOR_JITTER_RATIO: float = Field(default=0.10, ge=0.0, le=0.5)
+
     # -- NASA FIRMS ----------------------------------------------------------
     FIRMS_MAP_KEY: str = ""
     FIRMS_BASE_URL: str = "https://firms.modaps.eosdis.nasa.gov"
@@ -183,8 +211,7 @@ class Settings(BaseSettings):
     # `significant_week`. Mismo formato de declaración que CONAF/SENAPRED, con
     # cadena de respaldos: `geojson|url`, separadas por ';'.
     USGS_SOURCES: str = (
-        "geojson|https://earthquake.usgs.gov/earthquakes/feed/v1.0/"
-        "summary/2.5_day.geojson"
+        "geojson|https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson"
     )
     #: Caja de la zona central de Chile. **No** es `region_bbox`: un sismo a 200 km
     #: de Valparaíso se siente en Valparaíso, así que el recorte útil para sismos
@@ -227,9 +254,7 @@ class Settings(BaseSettings):
     #: Hubo seis intentos apuntando esta variable a `…/obtieneImage`, una ruta
     #: que devuelve 401 y que el visor nunca llama. Si alguien la encuentra en un
     #: log viejo y quiere "restaurarla", que lea antes el módulo del collector.
-    CHILQUINTA_API_URL: str = (
-        "https://mapainterrupciones.chilquinta.cl/dt/results_006.js"
-    )
+    CHILQUINTA_API_URL: str = "https://mapainterrupciones.chilquinta.cl/dt/results_006.js"
     #: Archivo de afectaciones de CGE. **No es un endpoint JSON**: es un KMZ
     #: —un ZIP con un KML dentro— que la plataforma de CGE regenera cada pocos
     #: minutos y sirve como estático. Es el archivo sobre el que se dibuja su
@@ -289,20 +314,48 @@ class Settings(BaseSettings):
     WAZE_MAX_AGE_MINUTES: int = Field(default=120, ge=5, le=1440)
 
     # -- Accidentes viales: despachos de Bomberos ----------------------------
-    #: Feed RSS de la central. Se lee a través de un puente tipo RSSHub porque la
-    #: central publica en una red social y no expone API.
+    #
+    # `BOMBEROS_DISPATCH_URL` fue eliminada. Apuntaba a un puente tipo RSSHub
+    # sobre la cuenta de la central, y ese camino está **muerto**, no degradado:
+    # la ruta de Twitter de RSSHub dejó de existir cuando X cerró su API, y el
+    # espejo de xcancel que la reemplazaba tampoco responde. Un ajuste que no
+    # puede tomar ningún valor que funcione no es configuración: es una trampa
+    # para el próximo que despliegue, que la rellena, ve el collector arrancar y
+    # tarda días en descubrir que la fuente no existe.
+    #
+    # Los despachos entran hoy por `POST /api/v1/apify/webhook`, que Apify llama
+    # al terminar cada corrida del Actor de X/Twitter. Ver
+    # `app/api/v1/endpoints/apify.py`. Las claves, el handle y el tope de
+    # llamadas al modelo siguen acá porque los usan los dos caminos.
+    #
+    #: Claves radiales que se ingieren como despacho. Se comparan por prefijo de
+    #: tupla tras normalizar, de modo que `10-4` también captura `10-0-4` y
+    #: `10-4-1`. Ver `vocabulary.matches_key` y `vocabulary.parse_key`.
     #:
-    #: `rsshub.app` es una instancia pública, compartida y sin SLA: devuelve 429
-    #: y 503 con frecuencia. Sirve para calibrar, pero para operar conviene
-    #: apuntar a una instancia propia (`docker run diygod/rsshub`) y cambiar sólo
-    #: esta variable. Vacío = collector apagado.
-    BOMBEROS_DISPATCH_URL: str = "https://rsshub.app/twitter/user/CentralCBV"
-    #: Claves radiales que denotan rescate vehicular. Se comparan por prefijo tras
-    #: normalizar, de modo que `10-4` también captura `10-0-4` y `10-4-1`. Ver
-    #: `bomberos_10_4_worker.matches_key`.
-    BOMBEROS_ACCIDENT_KEYS: CsvList = Field(default_factory=lambda: ["10-4"])
+    #: La familia entera y no sólo el rescate vehicular: la 10-0/10-1
+    #: (estructural), la 10-2 (pastizales) y la 10-3 (rescate) describen
+    #: emergencias que el resto del sistema ya sabe clasificar —están en
+    #: `CODE_TYPES`— y dejarlas fuera desperdiciaba la fuente de mayor confianza
+    #: del catálogo para todo lo que no fuera un choque.
+    #:
+    #: `12` es la forma literal "CLAVE 12" que publica el Cuerpo de Valparaíso,
+    #: sin familia por delante. Necesita `parse_key` para ser reconocida: hasta
+    #: ese cambio, configurarla no producía error **ni coincidencia**.
+    BOMBEROS_ACCIDENT_KEYS: CsvList = Field(
+        default_factory=lambda: ["10-0", "10-1", "10-2", "10-3", "10-4", "12"]
+    )
     BOMBEROS_TIMEOUT_SECONDS: float = 30.0
     BOMBEROS_POLL_INTERVAL_SECONDS: int = 180  # 3 min
+    #: Cuenta de origen que se cita en el resumen de cada despacho ("Fuente:
+    #: @CGI_CBV"). Es un ajuste y no una constante porque la atribución tiene
+    #: que seguir a la fuente: el día que se lea otra central —o la misma por
+    #: otra cuenta— el resumen ya publicado no puede seguir citando a ésta.
+    BOMBEROS_SOURCE_HANDLE: str = "@CGI_CBV"
+    #: Tope de decodificaciones por corrida. Un despacho es una llamada al
+    #: modelo; una noche de temporal con 200 avisos no puede convertirse en 200
+    #: llamadas facturadas. Lo que exceda el tope cae a las reglas, que no
+    #: cuestan nada, y queda anotado en `raw_data._extraction.mode`.
+    BOMBEROS_MAX_LLM_CALLS: int = Field(default=25, ge=0, le=500)
 
     # -- Accidentes viales: Transporte Informa -------------------------------
     #: Portal del MTT para la Región de Valparaíso. Es HTML (WordPress), no una
@@ -317,16 +370,84 @@ class Settings(BaseSettings):
     #:
     #: Se buscaron salidas mejores que raspar y las dos están cerradas: la REST
     #: API de WordPress responde `401 Rest API disabled` y el feed RSS da error.
-    TRANSPORTE_INFORMA_URL: str = (
-        "https://valparaiso.transporteinforma.cl/estado-de-la-movilidad/"
-    )
-    TRANSPORTE_INFORMA_TIMEOUT_SECONDS: float = 30.0
+    TRANSPORTE_INFORMA_URL: str = "https://valparaiso.transporteinforma.cl/estado-de-la-movilidad/"
+    #: 15 s, más corto que los 30 del resto de las fuentes. No es una
+    #: preferencia: es el único collector cuyo ciclo completo tiene un techo
+    #: duro. Tras el GET vienen hasta `MAX_GEOCODES` llamadas a Nominatim a 1 s
+    #: cada una, y con el intervalo en 600 s la corrida tiene que caber holgada
+    #: dentro de su propia cadencia. Un portal que tarda 30 s en responder no
+    #: está lento, está caído; esperarlo el doble no mejora el resultado y sí
+    #: retrasa las geocodificaciones que vienen detrás.
+    TRANSPORTE_INFORMA_TIMEOUT_SECONDS: float = 15.0
+    #: 10 min. **Se mantiene, y la decisión está razonada en el docstring de
+    #: `app/collectors/traffic/transporteinforma_worker.py`.**
+    #:
+    #: En resumen: la carga sobre el MTT es de UN GET por ciclo —144 al día— y
+    #: ampliar la capa táctica no la cambió en absoluto, porque lo que creció es
+    #: lo que se hace con el HTML después de traerlo. Lo que expone a un bloqueo
+    #: no es ese volumen sino el PATRÓN: una petición cada 600 s exactos desde
+    #: una IP de datacenter. Eso se ataca con `COLLECTOR_JITTER_RATIO` y con el
+    #: respeto al 429, no bajando una frecuencia que es justamente el valor de
+    #: esta fuente.
     TRANSPORTE_INFORMA_POLL_INTERVAL_SECONDS: int = 600  # 10 min
+    #: User-Agent propio del scraper del MTT.
+    #:
+    #: Antes usaba `NOMINATIM_USER_AGENT`, que estaba a mano y era falso: le
+    #: decía al portal del Ministerio que quien lo visitaba era el cliente de
+    #: OpenStreetMap. Un operador del MTT mirando su log no tenía forma de saber
+    #: quién le pegaba ni a quién escribirle.
+    #:
+    #: Lleva navegador y plataforma porque un WordPress detrás de un WAF trata
+    #: un UA sin ellos como bot y devuelve 403, y lleva **el nombre del proyecto
+    #: y una URL de contacto** porque esa es la parte que importa: la diferencia
+    #: entre un scraper que se identifica y uno que se esconde es que al primero
+    #: le piden bajar la frecuencia y al segundo le bloquean la IP.
+    #:
+    #: **Sin tildes, y no por estilo.** Las cabeceras HTTP se codifican en
+    #: latin-1 y httpx rechaza de plano un valor con caracteres fuera de ASCII:
+    #: la primera versión decía "V Región" y hacía que `AsyncClient` lanzara
+    #: `UnicodeEncodeError` antes de abrir la conexión. El collector no habría
+    #: fallado al raspar sino al construirse — cada corrida, sin llegar nunca a
+    #: la red, con un mensaje que no menciona la cabecera por ninguna parte.
+    TRANSPORTE_INFORMA_USER_AGENT: str = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 "
+        "AlertaV/1.0 (+https://github.com/alertav; monitoreo de siniestros "
+        "Region de Valparaiso)"
+    )
     #: Tope de geocodificaciones por corrida. A 1 s por llamada (ver
     #: NOMINATIM_MIN_INTERVAL_SECONDS), 20 avisos son 20 segundos de corrida.
     #: Sin tope, un día de temporal con 300 avisos dejaría al worker cinco
     #: minutos colgado del rate limit ajeno.
     TRANSPORTE_INFORMA_MAX_GEOCODES: int = Field(default=20, ge=1, le=200)
+
+    # -- Infraestructura vial dañada: MOP / Dirección de Vialidad ------------
+    #: Capa **0** del MapServer de emergencias viales. Es la que trae todas las
+    #: emergencias vigentes como punto —el propio MOP lleva las lineales a punto
+    #: de forma referencial—; la 1 son sólo las puntuales y la 2 las lineales.
+    #:
+    #: Apuntar a `/MapServer` a secas, sin el `/0`, devuelve los metadatos del
+    #: servicio y ninguna emergencia: el collector le añade `/query` a lo que
+    #: encuentre acá, así que la URL tiene que llevar ya el número de capa.
+    #:
+    #: Servicio abierto, sin credencial. Se consulta con `f=json` y NO con
+    #: `f=geojson`: este servidor declara `supportedQueryFormats: "JSON, AMF"` y
+    #: ante geojson responde con el cuerpo vacío en vez de con un error.
+    MOP_VIALIDAD_URL: str = (
+        "https://rest-sit.mop.gob.cl/arcgis/rest/services/VIALIDAD/Emergencias_Vialidad/MapServer/0"
+    )
+    MOP_VIALIDAD_TIMEOUT_SECONDS: float = 45.0
+    #: Una hora, y no los 300 s de las fuentes de siniestros.
+    #:
+    #: El servicio declara en su propia descripción que se actualiza **los lunes
+    #: alrededor de las 15:00**, y a diario sólo mientras dure un evento de
+    #: emergencia. A 5 minutos serían 2 016 peticiones por cada dato nuevo
+    #: contra un servidor público, para leer 30 filas idénticas.
+    #:
+    #: Una hora es el compromiso: durante un temporal —que es cuando el MOP sí
+    #: publica a diario— la capa se refresca con retraso máximo de una hora, que
+    #: para infraestructura dañada es de sobra.
+    MOP_VIALIDAD_POLL_INTERVAL_SECONDS: int = Field(default=3600, ge=300, le=86400)
 
     # -- Redes sociales: Instagram vía Apify ---------------------------------
     #: Token de la API de Apify. Viaja SIEMPRE en la cabecera `Authorization`,
@@ -348,9 +469,7 @@ class Settings(BaseSettings):
     #: entrada del Actor se configura en su Schedule, en el panel de Apify, que
     #: es también donde se paga. Acá están para que `collector_runs.params` diga
     #: de dónde se supone que vienen los datos que se leyeron.
-    APIFY_INSTAGRAM_ACCOUNTS: CsvList = Field(
-        default_factory=lambda: ["alertanoticiasvalparaiso"]
-    )
+    APIFY_INSTAGRAM_ACCOUNTS: CsvList = Field(default_factory=lambda: ["alertanoticiasvalparaiso"])
     APIFY_TIMEOUT_SECONDS: float = 30.0
     APIFY_POLL_INTERVAL_SECONDS: int = 300  # 5 min
     #: Items a leer del dataset por corrida, del más nuevo al más viejo. No es
@@ -363,6 +482,38 @@ class Settings(BaseSettings):
     #: collector reportaría `success` con 0 eventos para siempre. Debe ser
     #: holgadamente mayor que la cadencia del Schedule.
     APIFY_MAX_RUN_AGE_MINUTES: int = Field(default=45, ge=5, le=1440)
+
+    # -- Apify: webhook de entrada -------------------------------------------
+    #
+    # El collector de Instagram **pregunta** (CRON cada 5 min → `runs/last`). El
+    # webhook es al revés: Apify **avisa** al terminar una corrida y nosotros
+    # leemos el dataset que nos nombra. Los dos caminos coexisten a propósito —
+    # el pull tolera que se pierda un aviso, el push llega en segundos — y es la
+    # diferencia entre enterarse de una 10-4 a los 30 segundos o a los 5
+    # minutos.
+    #
+    #: Secreto compartido con Apify. Se compara con la cabecera
+    #: `X-AlertaV-Apify-Secret` (o `Authorization: Bearer …`) de cada llamada.
+    #:
+    #: Vacío = **sin verificar**, y eso es deliberado y peligroso a la vez. La
+    #: ruta es pública por naturaleza: Apify llama desde sus IPs, no desde la
+    #: nuestra. Sin secreto, cualquiera que descubra la URL puede hacer que este
+    #: backend lea un dataset ajeno y lo ingiera como despachos de Bomberos, que
+    #: es la fuente de confianza 1.00 del sistema — la que lleva un incidente a
+    #: certeza sin corroboración. Se deja vacío por defecto para que un
+    #: despliegue de prueba arranque, y el endpoint **avisa en cada llamada**
+    #: mientras siga así.
+    APIFY_WEBHOOK_SECRET: str = ""
+    #: Items a leer del dataset que anuncia el webhook. Independiente de
+    #: `APIFY_MAX_ITEMS`: una corrida de X/Twitter trae muchos menos tuits que
+    #: una de Instagram trae posts, y el webhook llega una vez por corrida en
+    #: vez de cada cinco minutos.
+    APIFY_WEBHOOK_MAX_ITEMS: int = Field(default=100, ge=1, le=1000)
+    #: Antigüedad máxima de un tuit para tomarlo como descripción del presente.
+    #: Una corrida del Actor puede arrastrar el timeline entero de la cuenta; sin
+    #: este corte, la primera llamada del webhook ingeriría meses de despachos
+    #: con la hora de hoy y llenaría el mapa de siniestros que ya se resolvieron.
+    APIFY_WEBHOOK_MAX_AGE_MINUTES: int = Field(default=180, ge=5, le=1440)
     #: Antigüedad máxima de un post para considerarlo descripción del presente.
     #: Estas cuentas publican recuerdos y resúmenes; tres horas es el corte.
     INSTAGRAM_MAX_AGE_MINUTES: int = Field(default=180, ge=5, le=1440)
@@ -487,13 +638,96 @@ class Settings(BaseSettings):
     #: quebradas canalizadas, drenaje urbano antiguo). La forma de fijarlos es
     #: cruzar esta capa con los avisos de vía cortada de Transporte Informa a lo
     #: largo de un invierno. Ver el encabezado de `weather/umbrales.py`.
+    #:
+    #: Cada regla tiene dos tramos desde la v2: `aviso` (ámbar en el widget) y
+    #: `critical` (rojo). La intensidad horaria describe el DRENAJE urbano
+    #: saturándose y se publica como amenaza `lluvia`; los acumulados en 3 y 24 h
+    #: describen el SUELO perdiendo infiltración y se publican como `remocion`.
+    #: Son dos mecanismos con dos respuestas distintas.
     OPENMETEO_INTENSITY_MM_H: float = Field(default=5.0, gt=0.0, le=200.0)
+    OPENMETEO_INTENSITY_CRITICAL_MM_H: float = Field(default=10.0, gt=0.0, le=400.0)
     OPENMETEO_ACCUM_3H_MM: float = Field(default=15.0, gt=0.0, le=500.0)
+    OPENMETEO_ACCUM_3H_CRITICAL_MM: float = Field(default=25.0, gt=0.0, le=800.0)
     OPENMETEO_ACCUM_24H_MM: float = Field(default=40.0, gt=0.0, le=1000.0)
+    OPENMETEO_ACCUM_24H_CRITICAL_MM: float = Field(default=60.0, gt=0.0, le=2000.0)
     #: Milímetros en la ventana por debajo de los cuales la comuna no genera
-    #: evento. Sin este piso, 36 comunas × 48 corridas al día llenarían
+    #: evento POR LLUVIA. Sin este piso, 36 comunas × 48 corridas al día llenarían
     #: `raw_events` de filas que dicen "no llovió".
+    #:
+    #: Desde la v2 ya no es el único motivo de emisión: una comuna con 0,0 mm y
+    #: un índice UV de 12 sí genera evento. Ver `Pronostico.hay_senal`.
     OPENMETEO_MIN_INGEST_MM: float = Field(default=0.2, ge=0.0, le=100.0)
+
+    # -- Meteorología: propagación de incendios (regla 30-30-30) -------------
+    #: El «Factor 30-30-30» que CONAF y la prensa usan para comunicar riesgo de
+    #: propagación: ≥30 °C, ≤30 % de humedad y ráfagas ≥30 km/h **en la misma
+    #: hora**. Es el tramo CRÍTICO.
+    #:
+    #: Su límite hay que decirlo: no es un índice validado —no lo respalda un
+    #: modelo de combustible— y la propia CONAF mostró en Laguna Verde,
+    #: Valparaíso, que con 18 °C, 48 % y 20 km/h un incendio puede ser igual de
+    #: devastador. En la costa de esta región el 30-30-30 casi nunca se cumple y
+    #: los incendios ocurren igual.
+    OPENMETEO_FIRE_TEMP_C: float = Field(default=30.0, gt=0.0, le=60.0)
+    OPENMETEO_FIRE_HUMIDITY_PCT: float = Field(default=30.0, gt=0.0, le=100.0)
+    OPENMETEO_FIRE_GUST_KMH: float = Field(default=30.0, gt=0.0, le=200.0)
+    #: Tramo de AVISO, y ésta sí es una decisión propia y no un estándar: cubre
+    #: el régimen costero en que esta región se quema de verdad. Queda por encima
+    #: de las cifras de Laguna Verde a propósito — bajar hasta ahí dejaría el
+    #: widget en ámbar todo el verano, que es la forma más rápida de que nadie
+    #: vuelva a mirarlo.
+    OPENMETEO_FIRE_WATCH_TEMP_C: float = Field(default=25.0, gt=0.0, le=60.0)
+    OPENMETEO_FIRE_WATCH_HUMIDITY_PCT: float = Field(default=40.0, gt=0.0, le=100.0)
+    OPENMETEO_FIRE_WATCH_GUST_KMH: float = Field(default=25.0, gt=0.0, le=200.0)
+    #: Ventana táctica del fuego y del viento. 12 h y no 24: es el horizonte de
+    #: un turno operativo. Anunciar a las 22:00 la condición de mañana a las
+    #: 16:00 no cambia ninguna decisión de esta noche.
+    OPENMETEO_FIRE_WINDOW_HOURS: int = Field(default=12, ge=1, le=48)
+
+    # -- Meteorología: viento por sí solo ------------------------------------
+    #: Independiente del 30-30-30 porque el mecanismo es otro: a 60 km/h se
+    #: suspende el combate aéreo y empiezan a caer ramas sobre el tendido —la
+    #: capa de cortes de luz de este mismo sistema— y a 80 km/h el daño
+    #: estructural es esperable con o sin fuego. Un temporal invernal de 70 km/h
+    #: y 12 °C no cumple ninguna condición de incendio y sigue importando.
+    OPENMETEO_GUST_WATCH_KMH: float = Field(default=60.0, gt=0.0, le=300.0)
+    OPENMETEO_GUST_CRITICAL_KMH: float = Field(default=80.0, gt=0.0, le=400.0)
+
+    # -- Meteorología: calor con riesgo a la salud ---------------------------
+    #: NO es una declaración de «ola de calor», y el vocabulario del código lo
+    #: refleja. La DMC define ola de calor por percentil 90 diario de la
+    #: climatología de cada estación durante tres días consecutivos: este
+    #: collector no tiene la serie 1991-2020 ni ve tres días, así que llamarlo
+    #: así sería mentir sobre el aval.
+    #:
+    #: Lo que sí se puede medir es el riesgo fisiológico, que es un número
+    #: absoluto: 32 °C es donde la DMC empieza a emitir avisos por altas
+    #: temperaturas para los valles interiores de esta región, y 36 °C es el
+    #: techo de los avisos que efectivamente emitió para Valparaíso en 2026.
+    OPENMETEO_HEAT_WATCH_C: float = Field(default=32.0, gt=0.0, le=60.0)
+    OPENMETEO_HEAT_CRITICAL_C: float = Field(default=36.0, gt=0.0, le=60.0)
+    #: Noche tropical. No dispara sola: AGRAVA un aviso de calor a crítico. La
+    #: carga epidemiológica del calor no la produce el pico de las 15:00 sino la
+    #: ausencia de alivio nocturno — si la mínima no baja de 20 °C, el cuerpo no
+    #: recupera entre exposiciones.
+    OPENMETEO_TROPICAL_NIGHT_C: float = Field(default=20.0, gt=0.0, le=40.0)
+    #: 24 h: la máxima de mañana sí cambia lo que alguien hace esta noche
+    #: (hidratación, horario de trabajo en terreno, adultos mayores).
+    OPENMETEO_HEAT_WINDOW_HOURS: int = Field(default=24, ge=1, le=48)
+
+    # -- Meteorología: índice UV ---------------------------------------------
+    #: Los ÚNICOS umbrales de esta capa que son un estándar internacional y no
+    #: una hipótesis: bandas «muy alto» (rojo, ≥8) y «extremo» (morado, ≥11) del
+    #: índice UV global de la OMS/OMM, idénticas en las escalas de la EPA y del
+    #: ICNIRP. No se mueven: cambiarlos sería inventar una escala nueva con el
+    #: nombre y los colores de una que la gente ya reconoce.
+    OPENMETEO_UV_WATCH: float = Field(default=8.0, gt=0.0, le=20.0)
+    OPENMETEO_UV_CRITICAL: float = Field(default=11.0, gt=0.0, le=20.0)
+    #: La ventana más corta del módulo, y ahí está la gracia. El UV sólo existe
+    #: de día y su bloque útil es el entorno del mediodía solar: 6 h encienden el
+    #: aviso la mañana del día peligroso y lo apagan al atardecer, en vez de
+    #: dejarlo prendido 24 h por algo que va a pasar mañana.
+    OPENMETEO_UV_WINDOW_HOURS: int = Field(default=6, ge=1, le=24)
     #: Desvío máximo, en grados, entre el punto pedido y el centro de la celda de
     #: grilla que devuelve la API. Por encima de eso se avisa: es la guarda contra
     #: que la respuesta llegue en otro orden que el pedido, que es lo único que
@@ -589,9 +823,7 @@ class Settings(BaseSettings):
     #: corroborar" para el descarte temprano. Coincide con
     #: `CITIZEN_INITIAL_CONFIDENCE`: en cuanto otra fuente aporta, la suma lo
     #: sube por encima y el incidente sale solo de esta regla.
-    CITIZEN_UNCORROBORATED_MAX_CONFIDENCE: float = Field(
-        default=0.40, ge=0.0, le=1.0
-    )
+    CITIZEN_UNCORROBORATED_MAX_CONFIDENCE: float = Field(default=0.40, ge=0.0, le=1.0)
 
     # -- Ingesta -------------------------------------------------------------
     INGEST_MAX_BATCH_SIZE: int = 1000
@@ -676,9 +908,7 @@ class Settings(BaseSettings):
                 f"DATABASE_URL usa el esquema '{parts.scheme}'; se esperaba uno de "
                 f"{sorted(_DSN_SCHEMES)}"
             )
-        return urlunsplit(
-            (scheme, parts.netloc, parts.path, parts.query if keep_query else "", "")
-        )
+        return urlunsplit((scheme, parts.netloc, parts.path, parts.query if keep_query else "", ""))
 
     @computed_field  # type: ignore[prop-decorator]
     @property

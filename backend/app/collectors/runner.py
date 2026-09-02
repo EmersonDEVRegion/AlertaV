@@ -28,6 +28,29 @@ En modo `--loop` cada collector corre en su propia tarea, con su propio
 intervalo. Un incendio de CONAF cambia de estado en minutos; una pasada de
 satélite de FIRMS ocurre unas pocas veces al día. Forzar una cadencia común
 significaría o malgastar cuota o llegar tarde.
+
+Una tarea por collector, no un cronjob por scraper
+--------------------------------------------------
+La pregunta reaparece cada vez que entra una fuente raspada —la última fue
+Transporte Informa—: ¿se acopla al ciclo de otro scraper, o se aísla en un
+proceso propio con su propia frecuencia? La respuesta de este módulo es una
+tercera, y conviene dejarla escrita para no rediscutirla por fuente:
+
+**Aislamiento lógico sin aislamiento de proceso.** Cada collector ya tiene su
+tarea, su cadencia, su traza en `collector_runs` y su propio `try` — si el
+portal del MTT devuelve HTML roto, el bucle de la prensa local no se entera.
+Eso es todo lo que un cronjob separado ofrecería en materia de aislamiento.
+
+Lo que un cronjob separado ofrecería *además* es un intérprete más, y ese es el
+argumento que lo descarta: `app/workers.py` documenta la medición —un proceso
+Python con httpx y SQLAlchemy cuesta ~53 MB de los 512 MB del plan gratuito,
+más un segundo pool contra Supabase—. Gastar un tercio del margen de memoria
+para separar UN GET cada diez minutos es un mal negocio, y encima el plan no
+tiene primitiva de cron: habría que inventarla en `start.sh`.
+
+Acoplar dos scrapers a un mismo ciclo es peor todavía y por el motivo opuesto:
+los sincronizaría a propósito, que es exactamente lo que `_STARTUP_JITTER` y
+`_next_delay` existen para deshacer.
 """
 
 from __future__ import annotations
@@ -62,6 +85,37 @@ logger = logging.getLogger("alertav.runner")
 #: intervalo. Evita que todos golpeen los servicios institucionales en el mismo
 #: segundo tras un reinicio.
 _STARTUP_JITTER = 0.25
+
+
+def _next_delay(interval: int) -> float:
+    """Espera hasta el próximo ciclo, con dispersión.
+
+    Existe porque el escalonado del arranque resolvía sólo la mitad del
+    problema. `_STARTUP_JITTER` reparte el primer disparo y evita el pico del
+    reinicio; a partir de ahí cada collector entraba en un ciclo exacto y se
+    quedaba ahí durante semanas, con dos efectos que ninguna cantidad de
+    escalonado inicial corrige:
+
+    * **Dos cadencias con divisor común vuelven a juntarse.** 600 s y 900 s
+      comparten período 1800, así que Transporte Informa y prensa local salían a
+      la red en el mismo segundo cada media hora, pasara lo que pasara en el
+      arranque. El desfase inicial sólo elige *cuál* segundo.
+    * **Un intervalo exacto es una firma.** Ningún navegador pide una página
+      cada 600 s con precisión de reloj. Es lo que un WAF reconoce como
+      automatización antes de contar peticiones, y contra un portal
+      institucional el bloqueo no llega como un 429 que se pueda reintentar:
+      llega como una IP vetada que hay que ir a pedir que desbloqueen.
+
+    La dispersión es simétrica —adelanta tanto como atrasa— para no arrastrar la
+    cadencia efectiva hacia arriba con el paso de los ciclos. Y va acotada
+    inferiormente a 5 s: con `COLLECTOR_JITTER_RATIO` alto y un intervalo corto,
+    la resta podría producir esperas ridículas o negativas.
+    """
+    ratio = max(0.0, min(0.5, settings.COLLECTOR_JITTER_RATIO))
+    if ratio == 0.0:
+        return float(interval)
+    spread = interval * ratio
+    return max(5.0, interval + random.uniform(-spread, spread))
 
 
 async def run_collector(name: str) -> CollectorResult:
@@ -148,7 +202,7 @@ async def _collector_loop(name: str, interval: int) -> None:
             # ejemplo). Se registra y se reintenta en el siguiente ciclo.
             logger.exception("ciclo del collector falló", extra={"collector": name})
 
-        if not await sleep_unless_stopped(interval):
+        if not await sleep_unless_stopped(_next_delay(interval)):
             break
     logger.info("collector detenido", extra={"collector": name})
 

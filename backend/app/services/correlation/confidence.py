@@ -252,6 +252,14 @@ RULES: dict[EventSource, SourceRule] = {
     # El CSN mide mejor que el USGS en Chile, y eso no cambia nada acá: la
     # calidad de la medición no convierte un epicentro en un siniestro.
     EventSource.CSN: SourceRule(0.0, 0.0, 0.0, 0.0),
+    # Vialidad es la autoridad sobre el estado de sus rutas y aun así vale 0.
+    # Igual que en USGS, la regla está escrita para un futuro que hoy no ocurre:
+    # `road_closure` no está en CORRELATABLE_EVENT_TYPES, así que esto no se
+    # ejecuta nunca. Existe para que, si alguien decide más adelante que el MOP
+    # emita algo correlacionable, el peso por defecto (0.15–0.30) no le regale
+    # corroboración: una socavación de hace tres semanas no confirma el choque
+    # que alguien está reportando hoy en esa misma cuesta.
+    EventSource.MOP: SourceRule(0.0, 0.0, 0.0, 0.0),
 }
 
 DEFAULT_RULE = SourceRule(0.15, 0.30, 0.5, 0.45)

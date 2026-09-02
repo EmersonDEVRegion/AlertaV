@@ -1,4 +1,4 @@
-"""Despachos de Bomberos — clave 10-4, rescate vehicular, vía feed RSS.
+"""Despachos de Bomberos — claves radiales de la central, y su decodificación.
 
 Qué es una clave 10-4 dentro de este sistema
 ---------------------------------------------
@@ -10,27 +10,39 @@ el hecho es real y comprometió recursos.
 Por eso `EventSource.BOMBEROS` es `confirming=True` con peso 1.00 en
 `confidence.py`, y una sola 10-4 lleva el incidente a certeza.
 
-De dónde sale el dato
----------------------
-De la cuenta pública de la central del Cuerpo de Bomberos, leída como RSS a
-través de un puente tipo RSSHub. No es una API: es el mismo texto que un
-bombero escribe para que lo lean personas, servido en XML. Las consecuencias
-están asumidas de frente:
+De dónde sale el dato — y por qué cambió la puerta
+---------------------------------------------------
+De la cuenta pública de la central del Cuerpo de Bomberos. No es una API: es el
+mismo texto que un bombero escribe para que lo lean personas.
 
-* **Es un intermediario, y se cae.** `rsshub.app` es una instancia pública,
-  compartida y sin SLA; devuelve 429 y 503 con frecuencia. Peor: la ruta de
-  Twitter de RSSHub **dejó de existir** cuando X cerró su API, y hoy el default
-  de `BOMBEROS_DISPATCH_URL` redirige a un 404 de Google. Cualquier despliegue
-  que dependa de ese puente necesita otro camino.
-* **Tres respuestas, no dos.** Este módulo empezó distinguiendo "feed válido sin
-  novedades" de "esto no es un feed", y esa distinción dejaba pasar la peor de
-  las tres: un feed **válido y vacío**. Es RSS de verdad, el XML está bien, y
-  produce cero despachos igual que una madrugada tranquila — así que la corrida
-  salía `success` mientras la fuente llevaba días muerta. Un tablero que declara
-  sana una fuente caída miente peor que uno que se rompe. Ver `EstadoFeed`.
+**El camino vivo es `POST /api/v1/apify/webhook`.** Apify raspa la cuenta según
+su propio Schedule y llama a este backend cuando termina; nosotros leemos el
+dataset que nos nombra. Ver `app/api/v1/endpoints/apify.py`.
+
+El camino anterior —un puente tipo RSSHub que servía la cuenta como XML— está
+**muerto, no degradado**: la ruta de Twitter de RSSHub desapareció cuando X
+cerró su API, y el espejo de xcancel que la reemplazó tampoco responde. El
+ajuste `BOMBEROS_DISPATCH_URL` fue eliminado por eso: un ajuste que no admite
+ningún valor que funcione no es configuración, es una trampa para el próximo que
+despliegue. `Bomberos104Collector` sigue acá, **fuera de `COLLECTORS`**, por si
+alguna vez se levanta un puente propio sobre otra central; hoy no recolecta
+nada y su URL hay que pasársela a mano.
+
+Lo que NO cambió al cambiar de puerta, y es lo que importa:
+
 * **El texto es prosa, no campos.** No hay `<address>` ni `<code>`: hay una
   frase. Lo que se guarda como dirección es el texto del aviso completo, en
   `raw_data`, sin fingir una precisión que no tiene.
+* **El evento resultante es idéntico por las dos puertas.** `decode_dispatches`
+  y `dispatches_to_events` son funciones libres justamente para eso: el mismo
+  despacho produce el mismo `external_id`, el mismo texto y la misma confianza
+  venga del webhook o del feed. Si cada puerta armara el suyo, la misma 10-4
+  aparecería dos veces en el mapa.
+* **Tres respuestas, no dos** (sólo en el camino RSS). Este módulo empezó
+  distinguiendo "feed válido sin novedades" de "esto no es un feed", y esa
+  distinción dejaba pasar la peor de las tres: un feed **válido y vacío**. Ver
+  `EstadoFeed`. El equivalente en el webhook es `run_looks_stale` del cliente de
+  Apify: un dataset servido por una corrida de anteayer.
 * **No se geocodifica.** Ver el apartado siguiente.
 
 Por qué este worker no entrega coordenadas
@@ -59,7 +71,7 @@ import html as html_module
 import logging
 import re
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -68,6 +80,7 @@ import httpx
 
 from app.collectors.base import BaseCollector
 from app.collectors.geoservices import parse_timestamp, request_text
+from app.collectors.traffic import gemini
 from app.collectors.vocabulary import find_codes, matches_key, normalise_code
 from app.core.config import settings
 from app.core.exceptions import CollectorError
@@ -117,6 +130,11 @@ class Dispatch:
     commune: str | None
     raw_text: str
     guid: str | None = None
+    #: Resumen canónico del despacho, si se pudo decodificar. Lo rellena
+    #: `fetch()` —no `parse_dispatches`, que es pura y sin red— y lo consume
+    #: `build_text`. None significa "no se decodificó", y entonces el texto del
+    #: evento cae a la forma de siempre.
+    decoded: dict[str, Any] | None = None
 
 
 def strip_html(fragment: str) -> str:
@@ -154,9 +172,7 @@ def entry_timestamp(entry: Any) -> datetime | None:
     `feedparser` ya resuelve `pubDate` a un `struct_time` en UTC. Se prefiere ese
     camino y se cae al texto crudo sólo si el parser no pudo.
     """
-    parsed = getattr(entry, "published_parsed", None) or getattr(
-        entry, "updated_parsed", None
-    )
+    parsed = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
     if parsed is not None:
         try:
             # Desempaquetado explícito y no `datetime(*parsed[:6], tzinfo=UTC)`:
@@ -265,9 +281,7 @@ def revisar_feed(feed_body: str) -> EstadoFeed:
     if not getattr(parsed, "version", ""):
         reason = getattr(parsed, "bozo_exception", None)
         detalle = f"{type(reason).__name__}: {reason}" if reason else "no es RSS ni Atom"
-        return EstadoFeed(
-            roto=True, motivo=f"la respuesta no es un feed ({detalle})", entradas=0
-        )
+        return EstadoFeed(roto=True, motivo=f"la respuesta no es un feed ({detalle})", entradas=0)
 
     if getattr(parsed, "bozo", 0):
         reason = getattr(parsed, "bozo_exception", None)
@@ -307,12 +321,182 @@ def build_external_id(dispatch: Dispatch) -> str:
 
 
 def build_text(dispatch: Dispatch) -> str:
+    """Texto del evento. El resumen decodificado si lo hay; si no, el de antes.
+
+    El formato canónico —`(Clave) (Significado) en (Ubicación) (Fuente: @cuenta)`—
+    lo fija `gemini.format_dispatch_summary`, no este módulo. Acá sólo se elige
+    entre él y el respaldo.
+
+    El respaldo dice "rescate vehicular" con la clave interpolada, y esa frase
+    es correcta **sólo** para la familia 10-4, que es la única que el collector
+    pedía cuando se escribió. Con `BOMBEROS_ACCIDENT_KEYS` configurable, un
+    despacho 10-2 saldría rotulado como rescate vehicular. Se conserva porque
+    perder el texto entero sería peor, pero el camino bueno es el decodificado.
+    """
+    if dispatch.decoded and dispatch.decoded.get("resumen"):
+        return str(dispatch.decoded["resumen"])
     cuerpo = dispatch.address or ""
     return f"Clave {dispatch.key} (rescate vehicular): {cuerpo}".strip()
 
 
+# =============================================================================
+#  Núcleo del dominio: decodificar un despacho y convertirlo en evento
+# =============================================================================
+#
+# Estas dos funciones son libres y no métodos, y esa forma es el punto. Hay dos
+# caminos de entrada para el mismo hecho —el webhook de Apify, que es el vivo, y
+# el lector de RSS de más abajo, que ya no está en rotación— y un despacho tiene
+# que producir exactamente el mismo evento por los dos. Cuando esto vivía dentro
+# de la clase, el webhook sólo podía reusarlo instanciando un collector que no
+# iba a recolectar nada, o copiando la lógica: la segunda opción es cómo se
+# consigue que la misma 10-4 entre con `external_id` distinto según la puerta y
+# aparezca dos veces en el mapa.
+
+
+async def decode_dispatches(
+    dispatches: Sequence[Dispatch],
+    *,
+    source_handle: str,
+    max_llm_calls: int,
+) -> tuple[list[Dispatch], int]:
+    """Adjunta a cada despacho su resumen canónico. Devuelve `(despachos, por_reglas)`.
+
+    Secuencial y no `asyncio.gather`, a propósito: son como mucho un puñado de
+    avisos por lote y el paralelismo sólo serviría para chocar antes con la
+    cuota del modelo. Lo que sí hay es un tope duro: pasado ese número la
+    decodificación sigue, pero por reglas, que no cuestan nada.
+
+    Nada de esto puede tumbar al llamador. `gemini.extract_dispatch` ya absorbe
+    todo fallo del modelo, y el `except` de acá cubre lo que quede: un despacho
+    sin resumen entra igual, con el texto de siempre.
+
+    **No se avisa cuando se cae a las reglas**, y eso es una decisión, no un
+    olvido. Caer a las reglas es el camino NORMAL de cualquier despliegue sin
+    `GEMINI_API_KEY` —la capa funciona igual, sólo que sin modelo—. Marcar
+    `partial` una corrida sana es la misma trampa que este módulo ya documenta
+    para el feed sin 10-4: un aviso que se repite en cada corrida entrena a todo
+    el mundo a ignorar los avisos, y ahí se pierde el que sí importa. El modo
+    queda en `raw_data._extraction.mode`, que es donde se puede medir.
+    """
+    presupuesto = max_llm_calls
+    handle = source_handle.strip() or "Bomberos"
+    decodificados: list[Dispatch] = []
+    por_reglas = 0
+
+    for dispatch in dispatches:
+        decoded: dict[str, Any] | None = None
+        modo = gemini.MODE_HEURISTIC
+        try:
+            if presupuesto > 0 and gemini.is_configured():
+                presupuesto -= 1
+                decoded = await gemini.extract_dispatch(dispatch.raw_text, source_handle=handle)
+                if decoded is not None:
+                    modo = gemini.MODE_GEMINI
+            if decoded is None:
+                por_reglas += 1
+                decoded = gemini.dispatch_summary_heuristic(dispatch.raw_text, source_handle=handle)
+        except Exception as exc:  # pragma: no cover — extract_dispatch no lanza
+            logger.warning(
+                "no se pudo decodificar un despacho; entra con el texto crudo",
+                extra={"error": f"{type(exc).__name__}: {exc}"},
+            )
+
+        if decoded is not None:
+            # El modo se anota POR DESPACHO y no por lote: con el presupuesto
+            # agotado a mitad de camino, los primeros avisos pasaron por el
+            # modelo y los últimos no. Un solo valor para todos mentiría sobre
+            # la mitad.
+            decoded = {**decoded, "mode": modo}
+
+        decodificados.append(replace(dispatch, decoded=decoded))
+
+    if por_reglas:
+        logger.info(
+            "despachos decodificados por reglas",
+            extra={
+                "cantidad": por_reglas,
+                "tope": max_llm_calls,
+                "modelo_configurado": gemini.is_configured(),
+            },
+        )
+    return (decodificados, por_reglas)
+
+
+def dispatches_to_events(
+    dispatches: Sequence[Dispatch], *, collector: str
+) -> tuple[list[EventCreate], int]:
+    """Despachos decodificados → señales. Devuelve `(eventos, sin_fecha)`.
+
+    Pura y sin red. `collector` sólo viaja a `raw_data._collector` para que una
+    fila diga por qué puerta entró —webhook o feed— sin cambiar nada más del
+    evento: el `external_id`, el texto y la confianza son idénticos por los dos
+    caminos, que es lo que hace que la idempotencia funcione entre ellos.
+    """
+    now = datetime.now(UTC)
+    events: list[EventCreate] = []
+    undated = 0
+
+    for dispatch in dispatches:
+        if dispatch.occurred_at is None:
+            undated += 1
+        timestamp = dispatch.occurred_at or now
+        # Un feed con el reloj adelantado haría fallar la validación de
+        # `EventCreate` y perdería el lote entero por un ítem.
+        if timestamp > now:
+            timestamp = now
+
+        events.append(
+            EventCreate(
+                timestamp=timestamp,
+                source=EventSource.BOMBEROS,
+                type=EventType.ACCIDENT,
+                # Sin lat/lon: ver el docstring del módulo.
+                text=build_text(dispatch)[:10_000],
+                external_id=build_external_id(dispatch),
+                confidence=BOMBEROS_CONFIDENCE,
+                raw_data={
+                    "_collector": collector,
+                    "_bomberos": {
+                        "clave": dispatch.key,
+                        "direccion": dispatch.address,
+                        "aviso": dispatch.raw_text,
+                        "guid": dispatch.guid,
+                        "fecha_declarada": (
+                            dispatch.occurred_at.isoformat() if dispatch.occurred_at else None
+                        ),
+                    },
+                    # Las partes decodificadas van SEPARADAS del aviso, no
+                    # sobrescribiéndolo: el crudo es lo que dijo la central y lo
+                    # demás es lo que este sistema entendió. Fundir las dos
+                    # cosas borra la distinción para siempre, que es el mismo
+                    # criterio de `_extraction` en las otras capas.
+                    "_extraction": {
+                        # El modo real de ESTE despacho, puesto por
+                        # `decode_dispatches`. No se deriva de `is_configured()`:
+                        # con el presupuesto agotado, o con el modelo devolviendo
+                        # None, hay avisos que pasaron por las reglas aunque la
+                        # clave esté configurada.
+                        "mode": (dispatch.decoded or {}).get("mode", gemini.MODE_HEURISTIC),
+                        "clave": (dispatch.decoded or {}).get("clave"),
+                        "significado": (dispatch.decoded or {}).get("significado"),
+                        "street_1": (dispatch.decoded or {}).get("street_1"),
+                        "street_2": (dispatch.decoded or {}).get("street_2"),
+                        "city": (dispatch.decoded or {}).get("city"),
+                        "resumen": (dispatch.decoded or {}).get("resumen"),
+                    },
+                },
+            )
+        )
+
+    return (events, undated)
+
+
 class Bomberos104Collector(BaseCollector):
-    """Lector del feed RSS de despachos con clave de rescate vehicular."""
+    """Lector del feed RSS de despachos con clave de rescate vehicular.
+
+    **Fuera de `COLLECTORS`.** Ver el docstring de `__init__`: el puente que
+    leía está muerto y los despachos entran por el webhook de Apify.
+    """
 
     name = "bomberos_10_4"
     source = EventSource.BOMBEROS
@@ -322,14 +506,31 @@ class Bomberos104Collector(BaseCollector):
     def poll_interval_seconds(cls) -> int:
         return settings.BOMBEROS_POLL_INTERVAL_SECONDS
 
-    def __init__(self, session: Any) -> None:
+    def __init__(self, session: Any, *, feed_url: str = "") -> None:
+        """La URL del feed llega por argumento, **no desde `settings`**.
+
+        Antes salía de `BOMBEROS_DISPATCH_URL`, que ya no existe. Ese ajuste
+        apuntaba por defecto a un puente RSSHub sobre la cuenta de la central, y
+        ese camino está muerto sin reemplazo: la ruta de Twitter de RSSHub
+        desapareció con la API de X, y el espejo de xcancel tampoco responde. Un
+        ajuste que no admite ningún valor que funcione no es configuración, es
+        una trampa: el próximo que despliegue lo rellena, ve arrancar el
+        collector y tarda días en descubrir que no hay fuente detrás.
+
+        Los despachos entran hoy por `POST /api/v1/apify/webhook`. Esta clase
+        queda fuera de `COLLECTORS` (ver `app/collectors/registry.py`) y sólo
+        sirve si algún día se levanta un puente RSS **propio** —una instancia de
+        RSSHub sobre otra central, por ejemplo—, en cuyo caso quien la registre
+        le pasa la URL explícitamente y sabe lo que está haciendo.
+        """
         super().__init__(session)
-        if not settings.BOMBEROS_DISPATCH_URL.strip():
+        self.url = feed_url.strip()
+        if not self.url:
             raise CollectorError(
-                "BOMBEROS_DISPATCH_URL no está configurada; el collector no "
-                "tiene de dónde leer."
+                "Bomberos104Collector necesita una URL de feed explícita. El "
+                "camino vivo de los despachos es el webhook de Apify "
+                "(POST /api/v1/apify/webhook), no un feed RSS."
             )
-        self.url = settings.BOMBEROS_DISPATCH_URL.strip()
         self.keys = [key.strip() for key in settings.BOMBEROS_ACCIDENT_KEYS if key.strip()]
         if not self.keys:
             raise CollectorError("BOMBEROS_ACCIDENT_KEYS quedó vacía")
@@ -400,52 +601,35 @@ class Bomberos104Collector(BaseCollector):
                 "fuente esté caída aunque responda"
             )
 
-        return dispatches
+        return await self._decode(dispatches)
+
+    async def _decode(self, dispatches: Sequence[Dispatch]) -> list[Dispatch]:
+        """Delegación pura a `decode_dispatches`. Ver allá el porqué de todo.
+
+        Se conserva el método —y no se llama a la función libre desde `fetch`—
+        porque `_decode` es superficie usada por los tests de este worker desde
+        antes de que existiera el webhook, y romper ese nombre para ahorrar tres
+        líneas no compra nada.
+        """
+        decodificados, _por_reglas = await decode_dispatches(
+            dispatches,
+            source_handle=settings.BOMBEROS_SOURCE_HANDLE,
+            max_llm_calls=settings.BOMBEROS_MAX_LLM_CALLS,
+        )
+        return decodificados
 
     def normalize(self, records: Sequence[Dispatch]) -> list[EventCreate]:
-        now = datetime.now(UTC)
-        events: list[EventCreate] = []
-        undated = 0
+        """Delegación a `dispatches_to_events`, más el aviso de la corrida.
 
-        for dispatch in records:
-            if dispatch.occurred_at is None:
-                undated += 1
-            timestamp = dispatch.occurred_at or now
-            # Un feed con el reloj adelantado haría fallar la validación de
-            # `EventCreate` y perdería el lote entero por un ítem.
-            if timestamp > now:
-                timestamp = now
-
-            events.append(
-                EventCreate(
-                    timestamp=timestamp,
-                    source=EventSource.BOMBEROS,
-                    type=EventType.ACCIDENT,
-                    # Sin lat/lon: ver el docstring del módulo.
-                    text=build_text(dispatch)[:10_000],
-                    external_id=build_external_id(dispatch),
-                    confidence=BOMBEROS_CONFIDENCE,
-                    raw_data={
-                        "_collector": self.name,
-                        "_bomberos": {
-                            "clave": dispatch.key,
-                            "direccion": dispatch.address,
-                            "aviso": dispatch.raw_text,
-                            "guid": dispatch.guid,
-                            "fecha_declarada": (
-                                dispatch.occurred_at.isoformat()
-                                if dispatch.occurred_at
-                                else None
-                            ),
-                        },
-                    },
-                )
-            )
-
+        El aviso se queda acá y no baja al núcleo compartido a propósito:
+        `self.warn` deja la corrida en `partial`, y "partial" es un concepto de
+        `BaseCollector` —de una corrida de CRON— que el webhook no tiene. El
+        conteo de avisos sin fecha sí es compartido, y por eso lo devuelve la
+        función libre en vez de contarlo dos veces.
+        """
+        events, undated = dispatches_to_events(records, collector=self.name)
         if undated:
-            self.warn(
-                f"{undated} avisos sin fecha reconocible; se usó la hora de la corrida"
-            )
+            self.warn(f"{undated} avisos sin fecha reconocible; se usó la hora de la corrida")
         return events
 
 
@@ -470,6 +654,8 @@ __all__ = [
     "EstadoFeed",
     "build_external_id",
     "build_text",
+    "decode_dispatches",
+    "dispatches_to_events",
     "entry_text",
     "entry_timestamp",
     "feed_is_broken",

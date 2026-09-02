@@ -53,6 +53,11 @@ class EventSource(str, Enum):
     #: nadie sabe mejor que ellas dónde no hay luz.
     CHILQUINTA = "chilquinta"
     CGE = "cge"
+    #: Dirección de Vialidad (MOP). Publica rutas DAÑADAS —socavaciones,
+    #: derrumbes, puentes restringidos—, no siniestros. Es la autoridad sobre el
+    #: estado de la infraestructura vial, pero su cadencia es semanal: informa
+    #: contexto, no lo que está pasando ahora. Ver collectors/mop/.
+    MOP = "mop"
     OTHER = "other"
 
 
@@ -65,6 +70,9 @@ class EventType(str, Enum):
       - WILDFIRE / STRUCTURAL_FIRE: sólo cuando la fuente lo confirma.
       - EARTHQUAKE: medición instrumental de una red sismológica. Es un hecho
         confirmado, pero NO es un siniestro: es la causa posible de varios.
+      - ROAD_CLOSURE: intervención de la vía —desvío, faena, corte, restricción—.
+        Es un hecho cierto y verificable, pero NO es un siniestro: la mayoría
+        está programada de antemano. Contexto, igual que WEATHER_OBSERVATION.
     """
 
     WILDFIRE = "wildfire"
@@ -81,6 +89,23 @@ class EventType(str, Enum):
     EARTHQUAKE = "earthquake"
     POWER_OUTAGE = "power_outage"
     WEATHER_OBSERVATION = "weather_observation"
+    #: Vía intervenida: desvío, trabajos en la calzada, corte de tránsito,
+    #: restricción vehicular. La capa "táctica" del MTT.
+    #:
+    #: Es deliberadamente un tipo aparte de `ACCIDENT` y no una variante suya.
+    #: Un aviso de faena programada y un choque son hechos de naturaleza
+    #: opuesta: el primero se anuncia con semanas de anticipación, el segundo es
+    #: por definición imprevisto. Meterlos en el mismo tipo tendría una
+    #: consecuencia concreta y mala — quedarían en la familia `traffic` y el
+    #: motor de correlación leería "hay faena en Av. España" como una
+    #: corroboración independiente de "hubo un choque en Av. España", subiendo
+    #: la confianza de un siniestro con evidencia que no habla de él.
+    #:
+    #: Por eso está FUERA de `CORRELATABLE_EVENT_TYPES` y fuera de
+    #: `EVENT_TO_INCIDENT_TYPE`: no genera incidentes, no mueve confianzas y no
+    #: se agrupa con nada. Se recolecta para superponerse en el mapa, que es
+    #: donde una faena a 200 m explica el taco que alguien está reportando.
+    ROAD_CLOSURE = "road_closure"
     OTHER = "other"
     UNKNOWN = "unknown"
 
@@ -335,6 +360,14 @@ class LinkMethod(str, Enum):
 #: solo "incidente" y borraría la secuencia, que es el dato sismológico relevante.
 #: Un sismo es contexto —causa posible de incendios, derrumbes o tsunami—, no un
 #: siniestro con ubicación puntual en el mapa. Mismo tratamiento que `weather_observation`.
+#:
+#: `road_closure` queda fuera por la tercera razón del conjunto, distinta de las
+#: dos anteriores: no es que sea poco confiable ni que no tenga incertidumbre que
+#: resolver, es que **no es un siniestro**. Una faena programada ocurre donde y
+#: cuando alguien decidió que ocurriera. Si entrara, su daño sería específico y
+#: difícil de detectar después: comparte familia `traffic` con los accidentes y
+#: la escala espacial de la correlación —1500 m— es justo la escala a la que un
+#: desvío y un choque conviven en la misma avenida sin tener nada que ver.
 CORRELATABLE_EVENT_TYPES: frozenset[EventType] = frozenset(
     {
         EventType.WILDFIRE,
@@ -462,4 +495,9 @@ SOURCE_BASE_CONFIDENCE: dict[EventSource, float] = {
     EventSource.WAZE: 0.40,
     EventSource.OTHER: 0.30,
     EventSource.WEATHER: 0.10,
+    # Contexto puro, igual que la meteorología y por el mismo motivo: que una
+    # ruta lleve tres semanas socavada es un hecho cierto sobre el pavimento y
+    # ninguna evidencia sobre un siniestro en curso. Cero, no bajo — no hay
+    # ningún incidente cuya confianza deba moverse porque exista esta señal.
+    EventSource.MOP: 0.0,
 }

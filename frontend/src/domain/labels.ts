@@ -25,6 +25,7 @@ export const SOURCE_LABEL: Record<EventSource, string> = {
   transporte_informa: 'Transporte Informa (MTT)',
   chilquinta: 'Chilquinta',
   cge: 'CGE',
+  mop: 'Vialidad (MOP)',
   other: 'Otra fuente',
 }
 

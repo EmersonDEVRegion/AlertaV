@@ -18,7 +18,9 @@ import { MobileMapControls } from './MobileMapControls'
 import { DEFAULT_LAYER_VISIBILITY, DEFAULT_PROVIDER_VISIBILITY } from './SidePanel'
 import { emptyByLayer, makeIncident } from '@/test/fixtures'
 
-function renderControls(over: { hazardEnabled?: boolean; rainEnabled?: boolean } = {}) {
+function renderControls(
+  over: { hazardEnabled?: boolean; closureEnabled?: boolean } = {},
+) {
   const onHazardToggle = vi.fn()
   const onChange = vi.fn()
 
@@ -46,12 +48,12 @@ function renderControls(over: { hazardEnabled?: boolean; rainEnabled?: boolean }
         hazardError: null,
         onHazardToggle,
         onHazardRetry: vi.fn(),
-        rainEnabled: over.rainEnabled ?? false,
-        rainStatus: 'idle',
-        rainCount: 0,
-        rainRiskCount: 0,
-        onRainToggle: vi.fn(),
-        onRainRetry: vi.fn(),
+        closureEnabled: over.closureEnabled ?? false,
+        closureStatus: 'idle',
+        closureCount: 0,
+        closureCutCount: 0,
+        onClosureToggle: vi.fn(),
+        onClosureRetry: vi.fn(),
         theme: 'dark',
       }}
     />,
@@ -132,7 +134,12 @@ describe('cada ficha abre su contenido', () => {
     // La ficha ya hace de cabecera: repetir acá el desplegable del riel de
     // escritorio sería un clic de más para llegar a lo mismo.
     expect(screen.getByRole('switch', { name: /amenaza sísmica/i })).toBeInTheDocument()
-    expect(screen.getByRole('switch', { name: /lluvia pronosticada/i })).toBeInTheDocument()
+    // La lluvia ya NO está acá: su interruptor se mudó al widget meteorológico
+    // de la barra superior, que en compacto está siempre visible sin abrir
+    // ninguna ficha. Ver `WeatherWidget.test.tsx`.
+    expect(
+      screen.queryByRole('switch', { name: /lluvia pronosticada/i }),
+    ).not.toBeInTheDocument()
   })
 
   it('leyenda monta la escala de confianza', async () => {
@@ -161,7 +168,7 @@ describe('la barra resume sin abrir nada', () => {
   })
 
   it('la ficha de referencia cuenta sólo las capas encendidas', () => {
-    renderControls({ hazardEnabled: true, rainEnabled: true })
+    renderControls({ hazardEnabled: true, closureEnabled: true })
     expect(tab(/referencia/i)).toHaveTextContent('2')
   })
 

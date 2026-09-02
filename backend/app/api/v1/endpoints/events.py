@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
@@ -30,11 +30,16 @@ from app.schemas.event import (
     EventCreate,
     EventRead,
     EventStats,
+    GeoJSONFeature,
     GeoJSONFeatureCollection,
     IngestResult,
 )
 from app.schemas.seismic import SeismicEventRead, SeismicStats
-from app.schemas.weather import WeatherForecastRead, WeatherStats
+from app.schemas.weather import (
+    TacticalWeatherRead,
+    WeatherForecastRead,
+    WeatherStats,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -475,6 +480,47 @@ async def weather_geojson(
 
 
 @router.get(
+    "/weather/tactical",
+    response_model=TacticalWeatherRead,
+    summary="Estado meteorológico táctico de la región",
+    description=(
+        "El estado consolidado de las 36 comunas en un solo objeto: la peor "
+        "amenaza vigente, la cifra que la disparó y la comuna de donde salió, "
+        "más el ambiente regional para cuando no hay nada que alertar.\n\n"
+        "Es la ruta del **widget de la barra superior**, y su forma responde a "
+        "eso: un número grande y una línea de contexto.\n\n"
+        "**Los dos ceros no son el mismo cero.** `severidad: \"ninguna\"` con "
+        "`comunas: 36` significa que se consultaron 36 comunas y ninguna cruzó "
+        "un umbral — el estado más frecuente del año. `observado_en: null` "
+        "significa que no hay ninguna corrida reciente: el collector está "
+        "caído. Una interfaz que los pinte igual estará mostrando calma cuando "
+        "en realidad no sabe nada.\n\n"
+        "**`temp_c` es una mediana regional, no un máximo.** Describe el "
+        "ambiente donde está la gente; el máximo (`temp_max_c`) describe el "
+        "peor punto y es el que dispara la alerta de calor. No son "
+        "intercambiables.\n\n"
+        "Sigue siendo un pronóstico y ninguna de sus severidades es una alerta "
+        "declarada: esas las declara SENAPRED."
+    ),
+)
+async def weather_tactical(
+    service: WeatherServiceDep,
+    hours: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=48,
+            description=(
+                "Holgura hacia atrás. Estirarlo hace que el widget pueda mostrar "
+                "como «ahora» una temperatura de hace medio día."
+            ),
+        ),
+    ] = 3,
+) -> TacticalWeatherRead:
+    return await service.tactical(hours=hours)
+
+
+@router.get(
     "/weather/stats",
     response_model=WeatherStats,
     summary="Resumen de la capa meteorológica vigente",
@@ -488,6 +534,126 @@ async def weather_stats(
     hours: Annotated[int, Query(ge=1, le=48)] = 3,
 ) -> WeatherStats:
     return service.stats(await service.list_current(hours=hours, limit=2000))
+
+
+# -- Cortes de ruta (MOP + MTT) ----------------------------------------------
+#
+# La capa táctica de la vía, alimentada por DOS fuentes con forma distinta:
+#
+#   * **MOP / Vialidad** — emergencias de infraestructura (socavaciones,
+#     derrumbes, puentes con paso restringido). Trae `_mop.severidad`, un entero
+#     de 0 a 5 que el backend ya calculó combinando transitabilidad y gravedad.
+#     Cadencia semanal: es capa de contexto, no de tiempo real.
+#   * **MTT / Transporte Informa** — desvíos, faenas y cortes programados,
+#     raspados del portal. **No trae severidad**, y no porque falte mapearla: el
+#     portal no publica ninguna escala. Inventarle una sería fabricar un dato.
+#
+# Existe aparte de `/events/geojson` por el mismo motivo que la meteorológica:
+# esa ruta **no expone `raw_data`**, y `severidad` vive ahí dentro. Sin esta
+# ruta el frontend recibiría el punto sin lo único que permite jerarquizarlo.
+#
+# La decisión que hereda el mapa: `severidad` viaja como **entero o ausente**,
+# nunca como cero por defecto. Un corte del MTT con `severidad: 0` sería
+# indistinguible de una emergencia del MOP catalogada como la más leve, y son
+# cosas distintas —"no sabemos" contra "sabemos que es menor"—. La capa de
+# MapLibre distingue las dos con `["has", "severidad"]`.
+#
+# IMPORTANTE: va declarada antes de `/{public_id}`, por lo mismo que las
+# sísmicas y las meteorológicas — FastAPI resuelve por orden de registro y
+# "road-closures" entraría por la ruta del detalle, fallando al parsearlo como
+# UUID.
+
+
+def _road_closure_feature(event: Any) -> GeoJSONFeature:
+    """Un corte → feature, con la severidad del MOP si la hay.
+
+    `raw_data` puede llegar en `None` desde una fila vieja, y `_mop` puede no
+    estar: es lo normal en todo lo que venga del MTT.
+    """
+    raw: dict[str, Any] = event.raw_data if isinstance(event.raw_data, dict) else {}
+    bloque = raw.get("_mop")
+    mop: dict[str, Any] = bloque if isinstance(bloque, dict) else {}
+
+    properties: dict[str, Any] = {
+        "public_id": str(event.public_id),
+        "timestamp": event.timestamp.isoformat(),
+        "source": event.source.value,
+        "type": event.type.value,
+        "confidence": event.confidence,
+        "text": event.text,
+        "commune": event.commune,
+        # Igual que en `/events/geojson`: una señal cruda no es un incidente.
+        "is_confirmed_incident": False,
+    }
+
+    # Sólo se emite la clave cuando el número existe de verdad. Ver la nota de
+    # arriba sobre por qué no hay un cero por defecto.
+    severidad = mop.get("severidad")
+    if isinstance(severidad, int) and not isinstance(severidad, bool):
+        properties["severidad"] = severidad
+
+    # Contexto operativo del MOP, para el popup. Ausente en lo del MTT.
+    for campo in ("transito", "transitable", "gravedad", "restriccion", "rol"):
+        valor = mop.get(campo)
+        if valor is not None:
+            properties[campo] = valor
+
+    geometry = (
+        {"type": "Point", "coordinates": [event.lon, event.lat]}
+        if event.lat is not None and event.lon is not None
+        else None
+    )
+    return GeoJSONFeature(geometry=geometry, properties=properties)
+
+
+@router.get(
+    "/road-closures/geojson",
+    response_model=GeoJSONFeatureCollection,
+    summary="Cortes e intervenciones de la vía como GeoJSON",
+    description=(
+        "Todo lo que interrumpe la circulación, de las dos fuentes que lo "
+        "publican: emergencias de infraestructura de **Vialidad (MOP)** y "
+        "avisos operativos de **Transporte Informa (MTT)**.\n\n"
+        "**No son siniestros.** `road_closure` está fuera de "
+        "`CORRELATABLE_EVENT_TYPES`: estas señales no crean incidentes ni "
+        "mueven la confianza de ninguno. Una emergencia del MOP sigue vigente "
+        "durante semanas, y si aportara peso le regalaría corroboración a cada "
+        "choque ocurrido en esa cuesta durante todo ese tiempo.\n\n"
+        "`severidad` (0 a 5, mayor es peor) viene **sólo del MOP** y combina "
+        "transitabilidad y gravedad, con la transitabilidad mandando. Los "
+        "avisos del MTT **no la traen**: el portal no publica ninguna escala y "
+        "el campo se omite en vez de mandarse en cero. Un consumidor debe "
+        "distinguir «sin severidad» de «severidad 0»."
+    ),
+)
+async def road_closures_geojson(
+    service: IngestServiceDep,
+    hours: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=2160,
+            description=(
+                "Ventana hacia atrás. El defecto es ancho —30 días— a "
+                "propósito: el MOP se actualiza los lunes y una emergencia "
+                "suya sigue vigente durante semanas. Con las 24 h del resto de "
+                "las capas, el mapa saldría vacío casi todos los días."
+            ),
+        ),
+    ] = 720,
+    source: Annotated[list[EventSource] | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=2000)] = 500,
+) -> GeoJSONFeatureCollection:
+    events = await service.repo.list_events(
+        since=datetime.now(UTC) - timedelta(hours=hours),
+        sources=source,
+        types=[EventType.ROAD_CLOSURE],
+        bbox=service.region_bbox(),
+        limit=limit,
+    )
+    return GeoJSONFeatureCollection(
+        features=[_road_closure_feature(event) for event in events]
+    )
 
 
 @router.get("/{public_id}", response_model=EventRead, summary="Detalle de un evento")

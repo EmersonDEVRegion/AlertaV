@@ -31,6 +31,10 @@ export const EVENT_SOURCES = [
   'csn',
   'chilquinta',
   'cge',
+  // Dirección de Vialidad (MOP): rutas dañadas, no siniestros. Emite
+  // `road_closure` con confianza 0, así que NUNCA aparece en el desglose por
+  // fuente de un incidente — sólo en la capa de contexto del mapa.
+  'mop',
   'other',
 ] as const
 export type EventSource = (typeof EVENT_SOURCES)[number]

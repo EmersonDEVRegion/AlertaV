@@ -45,6 +45,15 @@ export const queryKeys = {
     geojson: (params: unknown) => ['rain', 'geojson', params] as const,
   },
   /**
+   * Cortes e intervenciones de la vía (MOP + MTT). Ruta propia y no
+   * `/events/geojson` porque `severidad` vive en `raw_data`, que esa ruta no
+   * expone. Mismo motivo por el que la meteorológica tiene la suya.
+   */
+  roadClosures: {
+    all: ['road-closures'] as const,
+    geojson: (params: unknown) => ['road-closures', 'geojson', params] as const,
+  },
+  /**
    * Capa de amenaza sísmica: un archivo estático servido en `/static`, no una
    * ruta de la API. Vive en el mismo cliente igualmente, porque lo que se busca
    * de react-query acá no es la caché sino la CANCELACIÓN y el ciclo de vida:

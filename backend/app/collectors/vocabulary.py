@@ -164,6 +164,57 @@ def find_codes(text: str) -> list[tuple[int, ...]]:
     return found
 
 
+def parse_key(token: str) -> tuple[int, ...] | None:
+    """Una clave **configurada** → tupla comparable. None si no lo es.
+
+    Es el lado de la configuración de lo que `normalise_code` hace del lado del
+    texto, y son dos funciones y no una porque los dos lados admiten cosas
+    distintas. Del lado del texto, un número suelto no puede ser una clave: en
+    un despacho, "12" es casi siempre el carro, la altura de la calle o la hora,
+    y por eso `normalise_code` exige dos grupos de dígitos. Del lado de la
+    configuración el número YA viene aislado —alguien escribió `12` en
+    `BOMBEROS_ACCIDENT_KEYS` con la intención de nombrar una clave— y esa
+    ambigüedad no existe.
+
+    El fallo que esto corrige era mudo, que es el peor de los que persigue este
+    proyecto. `matches_key` normalizaba cada clave con `normalise_code` y
+    **saltaba con `continue` la que devolviera None**: configurar `12` no
+    producía ningún error, ninguna advertencia y ninguna coincidencia — la clave
+    simplemente no existía, y el tablero mostraba cero despachos de servicio
+    especial como si la central no los despachara.
+
+    >>> parse_key("10-4")
+    (10, 4)
+    >>> parse_key("12")
+    (12,)
+    >>> parse_key("CLAVE 12")
+    (12,)
+    >>> parse_key("10-4-2026") is None
+    True
+    """
+    limpio = normalise_text(token)
+    if not limpio:
+        return None
+
+    # La forma con familia (`10-4`, `10-0-4`, `10.4`) es la de siempre y manda:
+    # se prueba primero para que nada de lo que ya funcionaba cambie de camino.
+    code = normalise_code(limpio)
+    if code is not None:
+        return code
+
+    # Formas de una sola clave: `12`, `clave 12`, `clave n° 12`. Se reutiliza
+    # `_CLAVE_LITERAL` en vez de escribir otra expresión — es el mismo lenguaje
+    # y tener dos definiciones de "clave suelta" es cómo divergen.
+    literal = _CLAVE_LITERAL.search(limpio)
+    if literal is not None:
+        return (int(literal.group(1)),)
+
+    if limpio.isdigit() and len(limpio) <= _MAX_GROUP_DIGITS:
+        return (int(limpio),)
+
+    return None
+
+
 def matches_key(text: str, keys: Sequence[str]) -> str | None:
     """Devuelve la clave buscada que aparece en el texto, o None.
 
@@ -174,13 +225,32 @@ def matches_key(text: str, keys: Sequence[str]) -> str | None:
 
     `10-40` produce `(10, 40)`, que no tiene a `(10, 4)` por prefijo, así que no
     coincide. Sin lookaheads y sin ambigüedad.
+
+    Del lado del texto se usa `find_claves` y no `find_codes`, y ese cambio es
+    lo que hace visible la forma **`CLAVE 12`** que el Cuerpo de Valparaíso
+    publica a secas, sin familia por delante. `find_codes` no puede verla por
+    diseño —exige dos grupos de dígitos— así que mientras fuera la única fuente
+    de este filtro, ninguna configuración podía capturar esos despachos.
+
+    Lo que NO cambia con eso: `find_claves` es un superconjunto estricto de
+    `find_codes` sobre el mismo texto, y `_CLAVE_LITERAL` lleva un lookahead que
+    impide que `clave 10-4` se lea como la clave literal `10`. Las impostoras de
+    siempre —`10-40`, `10-41`, `10-0-1`, la fecha `10-4-2026`, el `Carro 104`,
+    la `Unidad 110-4`— siguen sin coincidir, y `test_matches_key_distingue_la_
+    clave_de_sus_impostoras` sigue siendo el que lo garantiza.
+
+    Tampoco hay aliasing entre familias: `12` responde a "CLAVE 12" y **no** a
+    "10-12", aunque `CLAVE_MEANINGS` les dé el mismo significado. Son tuplas
+    distintas —`(12,)` y `(10, 12)`— y hacerlas equivalentes exigiría una tabla
+    de sinónimos que hoy no existe. Para capturar las dos formas, configurar
+    las dos claves.
     """
-    present = find_codes(text)
+    present = find_claves(text)
     if not present:
         return None
 
     for key in keys:
-        wanted = normalise_code(key)
+        wanted = parse_key(key)
         if wanted is None:
             continue
         for code in present:
@@ -211,6 +281,81 @@ TRAFFIC_TERMS: frozenset[str] = frozenset(
         "transito suspendido",
         "siniestro vial",
         "vuelco",
+    }
+)
+
+#: Intervención de la vía: desvíos, faenas, cortes y restricciones.
+#:
+#: **NO forma parte de `CRITICAL_TERMS` y eso es la mitad del diseño.** Una faena
+#: programada no es una emergencia, y `is_emergency` la alimenta a los workers de
+#: prensa e Instagram, donde un "corte de tránsito por obras" entrando como
+#: siniestro sería ruido puro. Este conjunto existe para la capa táctica del MTT
+#: —una fuente que publica avisos operativos por diseño— y se consulta aparte,
+#: por `es_operacion_vial`.
+#:
+#: La palabra peligrosa del bloque es **"corte"**, y por eso no aparece sola en
+#: ningún término. Este archivo lo comparten tres workers, y en dos de ellos
+#: "corte" es casi siempre eléctrico o de agua: "corte de luz", "corte de
+#: suministro", "corte programado de agua". Un `"corte"` suelto acá convertiría
+#: cada corte de Chilquinta en una intervención vial. Todos los términos con esa
+#: raíz llevan el sustantivo de la vía pegado, y esa redundancia es la que hace
+#: que el conjunto sea seguro de importar desde cualquier parte.
+#:
+#: Al revés que el resto del archivo, este bloque se inclina a la **precisión**.
+#: La regla general —ante la duda, pasa— vale cuando el costo de un falso
+#: positivo es una llamada al modelo. Acá el falso positivo es un punto en el
+#: mapa que dice que una calle está cortada cuando no lo está, y eso es peor que
+#: no decir nada: un vecino que se desvía por un corte inventado pierde el viaje
+#: y deja de creerle a la capa.
+ROAD_OPS_TERMS: frozenset[str] = frozenset(
+    {
+        # -- Desvíos ---------------------------------------------------------
+        "desvio de transito",
+        "desvio vehicular",
+        "desvio obligatorio",
+        "transito desviado",
+        "se desvia el transito",
+        "desvios de transito",
+        # -- Faenas y obras ---------------------------------------------------
+        # "trabajos" a secas queda fuera a propósito: "trabajan en el lugar" es
+        # `OPERATIONAL_TERMS` y describe a Bomberos operando en una emergencia,
+        # que es justo lo contrario de una faena programada.
+        "trabajos en la via",
+        "trabajos en la calzada",
+        "trabajos en la ruta",
+        "trabajos viales",
+        "faena",
+        "obras viales",
+        "obra vial",
+        "mantencion vial",
+        "mantenimiento de la via",
+        "repavimentacion",
+        "bacheo",
+        # -- Cortes y cierres. Siempre con el sustantivo de la vía. ------------
+        "corte de transito",
+        "corte de calle",
+        "corte de via",
+        "corte de ruta",
+        "corte de pista",
+        "corte de calzada",
+        "corte vehicular",
+        "cierre de la via",
+        "cierre vial",
+        "cierre de pista",
+        "cierre de calzada",
+        "via cerrada",
+        "calzada cerrada",
+        "pista cerrada",
+        "ruta cerrada",
+        "camino cerrado",
+        "transito cortado",
+        "transito suspendido",
+        "paso restringido",
+        # -- Restricciones ----------------------------------------------------
+        "restriccion vehicular",
+        "restriccion de circulacion",
+        "prohibido el estacionamiento",
+        "solo transito local",
     }
 )
 
@@ -404,8 +549,162 @@ CODE_TYPES: dict[tuple[int, ...], EventType] = {
 #:
 #: Para que dispare solo, mover esta entrada a `CODE_TYPES`. Es una línea.
 SUPPORT_CODES: dict[tuple[int, ...], EventType] = {
-    (10, 12): EventType.OTHER,  # apoyo
+    (10, 12): EventType.OTHER,  # apoyo / llamado a servicio especial
 }
+
+
+# =============================================================================
+#  Significado de la clave: el diccionario que también lee el modelo
+# =============================================================================
+#
+# `CODE_TYPES` responde "¿qué EventType es esto?". Esta tabla responde otra
+# pregunta, la que hace un humano mirando el mapa: "¿qué significa 10-4?".
+#
+# Son dos tablas y no una a propósito. `CODE_TYPES` sólo puede contener claves
+# que el sistema sepa clasificar, y meter acá el `3-1` —que no describe un
+# siniestro sino una petición de concurrencia— convertiría cada solicitud de
+# Carabineros en un evento del mapa. La separación deja poner nombre a claves
+# que **no** deben disparar nada.
+#
+# **Esta tabla es la fuente del prompt de Gemini.** `traffic/gemini.py` la
+# renderiza dentro de su instrucción de sistema en vez de repetir el diccionario
+# en prosa, y esa indirección es el punto entero del bloque: un diccionario
+# escrito a mano dentro de un prompt es un segundo diccionario, y este módulo
+# existe porque dos diccionarios de emergencia que se editan por separado
+# terminan divergiendo. Agregar una clave acá la agrega en los dos lugares.
+#
+# Además, el significado que llega al resumen **se busca acá, no se le cree al
+# modelo**: si Gemini devuelve "10-4" y de significado "incendio forestal", gana
+# esta tabla. Ver `gemini.format_dispatch_summary`.
+#
+# Las claves se escriben normalizadas (ver `normalise_code`), así que `10-0-4`
+# ya entra como `(10, 4)`. La comparación es por PREFIJO, igual que en todo el
+# módulo: `10-4-1` responde a `(10, 4)`.
+#
+# Ojo con `(10, 1)`: entra por el rango "10-0 al 10-2 son incendios" que usa la
+# central, pero **no** está en `CODE_TYPES`, así que hoy nombra sin clasificar.
+# Si el Cuerpo de Valparaíso despacha estructurales como 10-1, hay que agregarlo
+# también allá; es una línea y cambia qué se pinta en el mapa.
+CLAVE_MEANINGS: dict[tuple[int, ...], str] = {
+    # -- Familia 10: qué está pasando -------------------------------------
+    (10, 0): "Incendio estructural",
+    (10, 1): "Incendio estructural",
+    (10, 2): "Incendio de pastizales",
+    (10, 3): "Rescate o salvamento",
+    (10, 4): "Rescate vehicular",
+    (10, 12): "Llamado a servicio especial",
+    # -- Familia 3: a quién se pide que concurra ---------------------------
+    #
+    # Estas tres NO describen un siniestro: describen un recurso solicitado.
+    # Tienen nombre para que un resumen pueda decirlo, y deliberadamente no
+    # están en `CODE_TYPES` ni en `SUPPORT_CODES` — un `3-2` no puede crear un
+    # evento por sí solo, porque la emergencia que motivó la ambulancia ya
+    # entró (o no entró) por su propia clave.
+    (3, 1): "Solicita concurrencia de Carabineros",
+    (3, 2): "Solicita ambulancia",
+    (3, 3): "Solicita concurrencia de la empresa eléctrica",
+    # -- Forma literal "CLAVE N" ------------------------------------------
+    #
+    # El Cuerpo de Bomberos de Valparaíso publica "CLAVE 12" a secas, sin la
+    # familia por delante. `normalise_code` no la ve —exige dos grupos— así que
+    # se reconoce aparte (ver `_CLAVE_LITERAL`) y se representa como tupla de un
+    # solo elemento. Significa lo mismo que `10-12` y por eso comparte texto:
+    # el día que alguien edite uno, `test_clave_12_y_10_12_significan_lo_mismo`
+    # avisa del otro.
+    (12,): "Llamado a servicio especial",
+}
+
+#: "CLAVE 12", "clave n° 12", "Clave 3" — la forma literal, sin familia.
+#:
+#: El lookahead de la derecha es lo único que evita que "clave 10-4" se lea como
+#: la clave literal 10: si el número viene seguido de un separador y otro
+#: dígito, es un código de familia y le corresponde a `find_codes`, no a esta
+#: expresión. Sin él, todo despacho de la familia 10 se resumiría como "Clave
+#: 10", que no existe.
+_CLAVE_LITERAL = re.compile(r"\bclave\s*(?:n[o°º]?\s*)?(\d{1,2})(?!\s*[-–—/.]\s*\d)(?!\d)")
+
+
+def find_claves(texto: str) -> list[tuple[int, ...]]:
+    """Códigos y claves literales del texto, en orden de aparición.
+
+    Superconjunto de `find_codes`: suma la forma "CLAVE N" que aquella no puede
+    ver por diseño (exige dos grupos de dígitos). Se ordena por posición para
+    que "10-4, se solicita 3-2" resuelva al rescate vehicular y no a la
+    ambulancia — la primera clave del aviso es la que lo motiva.
+
+    Trabaja sobre texto ya normalizado; si le llega crudo, lo normaliza.
+    """
+    limpio = normalise_text(texto)
+    if not limpio:
+        return []
+
+    encontrados: list[tuple[int, tuple[int, ...]]] = []
+
+    for match in _CODE_TOKEN.finditer(limpio):
+        code = normalise_code(match.group(1))
+        if code is not None:
+            encontrados.append((match.start(), code))
+
+    for match in _CLAVE_LITERAL.finditer(limpio):
+        encontrados.append((match.start(), (int(match.group(1)),)))
+
+    encontrados.sort(key=lambda par: par[0])
+
+    ordenados: list[tuple[int, ...]] = []
+    for _, code in encontrados:
+        if code not in ordenados:
+            ordenados.append(code)
+    return ordenados
+
+
+def clave_label(code: tuple[int, ...]) -> str:
+    """Tupla → la clave tal como la escribe la central.
+
+    Dos formas, porque la central usa dos: la familia va con guiones y la clave
+    suelta va con la palabra delante. Escribir `(12,)` como "12" a secas dejaría
+    un resumen que empieza con un número huérfano.
+
+    >>> clave_label((10, 4))
+    '10-4'
+    >>> clave_label((12,))
+    'Clave 12'
+    """
+    if len(code) == 1:
+        return f"Clave {code[0]}"
+    return "-".join(str(group) for group in code)
+
+
+def clave_meaning(code: tuple[int, ...]) -> str | None:
+    """Significado de una clave normalizada. None si no está en el diccionario.
+
+    Comparación por prefijo: `10-4-1` (rescate con víctima atrapada) hereda el
+    significado de `10-4`. Se prueba de lo más específico a lo más general para
+    que una entrada futura de `(10, 4, 1)` gane sobre `(10, 4)`.
+    """
+    for largo in range(len(code), 0, -1):
+        meaning = CLAVE_MEANINGS.get(code[:largo])
+        if meaning is not None:
+            return meaning
+    return None
+
+
+def resolve_clave(texto: str) -> tuple[str, str] | None:
+    """Texto de un despacho → `(etiqueta, significado)`. None si no hay clave.
+
+    Es la función que usa el resumen: devuelve la PRIMERA clave del aviso que
+    esté en el diccionario. "Primera" y no "más específica" porque el orden en
+    que la central escribe importa —el despacho abre con lo que pasó y después
+    pide recursos— y porque un `3-2` sin su clave de familia delante describe
+    una ambulancia, no una emergencia.
+
+    >>> resolve_clave("81 * DIEGO COOK / GUACOLDA * CLAVE 12")
+    ('Clave 12', 'Llamado a servicio especial')
+    """
+    for code in find_claves(texto):
+        meaning = clave_meaning(code)
+        if meaning is not None:
+            return (clave_label(code), meaning)
+    return None
 
 
 # =============================================================================
@@ -792,6 +1091,106 @@ def classify_event_type(texto: str) -> EventType | None:
 
 
 # =============================================================================
+#  La capa táctica de tránsito
+# =============================================================================
+#
+# Entrada aparte del resto del módulo, y conviene decir por qué no se resolvió
+# metiendo `ROAD_OPS_TERMS` en `_CLASSIFIERS`, que es lo que uno haría primero.
+#
+# `classify_event_type` tiene una invariante escrita en su docstring: devuelve
+# `None` si y sólo si `is_emergency` devolvió `False`. Un desvío por obras no es
+# una emergencia y `is_emergency` tiene que seguir diciendo que no —de eso
+# dependen los workers de prensa e Instagram, donde un aviso de faena es ruido—.
+# Así que agregar la familia vial a la cadena general habría roto la invariante
+# o habría convertido las faenas en emergencias. Ninguna de las dos.
+#
+# La capa táctica es, en cambio, algo que sólo tiene sentido en una fuente que
+# publica avisos operativos por diseño: el MTT. Un portal de tránsito diciendo
+# "corte de calzada en Av. España" está informando un hecho de su competencia.
+# El mismo texto en un titular de diario es contexto de otra historia.
+
+#: Términos de accidente para la capa vial: `TRAFFIC_TERMS` menos lo que también
+#: nombra una intervención programada.
+#:
+#: Hoy la intersección es exactamente `{"transito suspendido"}`, y resolverla
+#: hacia el cierre es lo correcto: un aviso del MTT que sólo dice "tránsito
+#: suspendido" describe una vía cerrada, no un choque. Cuando además hubo un
+#: choque, el texto lo dice con todas sus letras —"Accidente vehicular; tránsito
+#: suspendido hacia el poniente"— y `accidente` gana igual, porque se consulta
+#: primero.
+#:
+#: Se calcula como diferencia de conjuntos en vez de escribirse a mano para que
+#: no pueda divergir: si mañana alguien agrega un término a los dos lados, esto
+#: lo resuelve solo y `test_la_interseccion_vial_es_la_esperada` avisa del
+#: cambio en vez de dejarlo pasar.
+ACCIDENT_TERMS: frozenset[str] = TRAFFIC_TERMS - ROAD_OPS_TERMS
+
+
+def es_operacion_vial(texto: str) -> bool:
+    """¿El texto informa una intervención de la vía? Síncrono, sin red.
+
+    Es el equivalente de `is_emergency` para la capa táctica, y como aquél, es
+    el guardián del gasto: lo que devuelve `False` no llega al extractor de
+    calles ni al geocodificador.
+
+    Deliberadamente NO consulta `is_emergency`: son dos preguntas
+    independientes. "Accidente en Ruta 68; tránsito desviado" responde que sí a
+    las dos, y eso está bien — quien decide qué tipo emitir es
+    `clasificar_transito`.
+    """
+    texto_limpio = haystack(texto)
+    if not texto_limpio:
+        return False
+    return any(term in texto_limpio for term in ROAD_OPS_TERMS)
+
+
+def es_accidente_vial(texto: str) -> bool:
+    """¿El texto describe un siniestro vial? Síncrono, sin red.
+
+    Esta decisión **no la toma el modelo**, y no es una preferencia estilística.
+    El contrato de Gemini en este proyecto son tres campos geográficos y ningún
+    juicio sobre el hecho (ver `app/collectors/traffic/gemini.py`).
+
+    El motivo es la asimetría del daño. Si el modelo se equivoca extrayendo una
+    calle, el resultado es una geocodificación fallida o un punto discutible:
+    visible, marcado en `raw_data._geocoding`, corregible. Si se le permitiera
+    decidir "esto es un accidente", podría inventar un siniestro que nadie
+    reportó, y eso llegaría al mapa con la confianza 0.80 de una fuente oficial
+    detrás.
+    """
+    texto_limpio = haystack(texto)
+    if not texto_limpio:
+        return False
+    return any(term in texto_limpio for term in ACCIDENT_TERMS)
+
+
+def clasificar_transito(texto: str) -> EventType | None:
+    """Aviso de tránsito → `ACCIDENT`, `ROAD_CLOSURE` o `None`.
+
+    **El accidente se consulta primero, y ese orden es el diseño.** Casi todo
+    siniestro en la vía produce un desvío, así que la mayoría de los avisos de
+    choque contienen también vocabulario de cierre: "Colisión en Av. España con
+    Uno Norte; tránsito desviado por Errázuriz". Si el cierre ganara, el sistema
+    archivaría el choque como una faena y la capa de accidentes perdería su
+    fuente oficial más rápida — en silencio, que es como duelen estos fallos.
+
+    Al revés no hay riesgo simétrico: una faena programada no menciona una
+    colisión. El orden equivocado pierde accidentes; el correcto, en el peor
+    caso, etiqueta como accidente un cierre que alguien redactó raro. Se elige
+    el error barato.
+
+    Devuelve `None` cuando el aviso no es ninguna de las dos cosas: un paso
+    fronterizo habilitado, un cambio de recorrido de micros, la nota sobre el
+    nuevo horario del terminal. El portal publica bastante de eso.
+    """
+    if es_accidente_vial(texto):
+        return EventType.ACCIDENT
+    if es_operacion_vial(texto):
+        return EventType.ROAD_CLOSURE
+    return None
+
+
+# =============================================================================
 #  El registro del titular
 # =============================================================================
 #
@@ -913,7 +1312,9 @@ def clasificar_noticia(texto: str) -> EventType | None:
 
 
 __all__ = [
+    "ACCIDENT_TERMS",
     "AGENCY_TERMS",
+    "CLAVE_MEANINGS",
     "CODE_TYPES",
     "CRITICAL_TERMS",
     "FIRE_TERMS",
@@ -924,16 +1325,25 @@ __all__ = [
     "OPERATIONAL_TERMS",
     "PRESS_NOISE_PHRASES",
     "RESCUE_TERMS",
+    "ROAD_OPS_TERMS",
     "SUPPORT_CODES",
     "TRAFFIC_TERMS",
     "clasificar_noticia",
+    "clasificar_transito",
     "classify_event_type",
+    "clave_label",
+    "clave_meaning",
+    "es_accidente_vial",
     "es_emergencia",
+    "es_operacion_vial",
+    "find_claves",
     "find_codes",
     "haystack",
     "haystack_prensa",
     "is_emergency",
     "matches_key",
     "normalise_code",
+    "parse_key",
+    "resolve_clave",
     "tipo_por_verbo",
 ]

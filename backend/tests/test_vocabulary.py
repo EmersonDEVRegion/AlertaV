@@ -23,6 +23,7 @@ import pytest
 
 from app.collectors.geoservices import normalise_text
 from app.collectors.vocabulary import (
+    ACCIDENT_TERMS,
     AGENCY_TERMS,
     CRITICAL_TERMS,
     FIRE_TERMS,
@@ -33,10 +34,13 @@ from app.collectors.vocabulary import (
     OPERATIONAL_TERMS,
     PRESS_NOISE_PHRASES,
     RESCUE_TERMS,
+    ROAD_OPS_TERMS,
     TRAFFIC_TERMS,
     clasificar_noticia,
+    clasificar_transito,
     classify_event_type,
     es_emergencia,
+    es_operacion_vial,
     is_emergency,
 )
 from app.models.enums import EventType, family_of_event
@@ -52,6 +56,7 @@ from app.models.enums import EventType, family_of_event
         CRITICAL_TERMS
         | AGENCY_TERMS
         | OPERATIONAL_TERMS
+        | ROAD_OPS_TERMS
         | set(HEADLINE_VERBS)
         | set(NOISE_PHRASES)
         | set(PRESS_NOISE_PHRASES)
@@ -77,6 +82,103 @@ def test_las_familias_nuevas_estan_en_los_terminos_criticos() -> None:
     assert FLOOD_TERMS <= CRITICAL_TERMS
     assert LANDSLIDE_TERMS <= CRITICAL_TERMS
     assert TRAFFIC_TERMS | FIRE_TERMS | RESCUE_TERMS <= CRITICAL_TERMS
+
+
+# =============================================================================
+#  La capa táctica de tránsito
+# =============================================================================
+
+
+def test_lo_vial_operativo_no_es_una_emergencia() -> None:
+    """La invariante que aísla la capa táctica del resto de la plataforma.
+
+    `ROAD_OPS_TERMS` NO puede entrar en `CRITICAL_TERMS`. Si entrara, cada aviso
+    de faena programada pasaría `is_emergency`, y ese filtro lo comparten los
+    workers de prensa e Instagram: "Municipalidad anuncia repavimentación de Av.
+    Alemania" se convertiría en un siniestro con la misma facilidad con que hoy
+    se descarta.
+    """
+    # El único solape admitido es el que ya existía en `TRAFFIC_TERMS`
+    # ("transito suspendido"); nada nuevo entra a los términos críticos por acá.
+    assert not (ROAD_OPS_TERMS & CRITICAL_TERMS) - TRAFFIC_TERMS
+    assert is_emergency("Trabajos en la calzada de Av. Alemania desde el lunes.") is False
+    assert is_emergency("Desvío de tránsito por obras viales en Quilpué.") is False
+
+
+def test_corte_a_secas_no_es_una_intervencion_vial() -> None:
+    """El falso amigo que obligó a escribir el sustantivo de la vía en cada término.
+
+    Este vocabulario lo comparten tres workers y en dos de ellos "corte" es casi
+    siempre eléctrico. Un `"corte"` suelto en `ROAD_OPS_TERMS` habría convertido
+    cada aviso de Chilquinta en una calle cerrada.
+    """
+    assert es_operacion_vial("Corte de luz programado en Villa Alemana.") is False
+    assert es_operacion_vial("Corte de suministro de agua en Playa Ancha.") is False
+    assert es_operacion_vial("Corte de calzada en Av. España por faena.") is True
+
+
+def test_el_accidente_gana_sobre_el_desvio_que_provoca() -> None:
+    """El orden de `clasificar_transito`, que es su decisión de diseño.
+
+    Casi todo choque produce un desvío, así que la mayoría de los avisos de
+    siniestro traen también vocabulario de cierre. Si el cierre ganara, la capa
+    de accidentes perdería su fuente oficial más rápida archivándola como faena
+    — y lo haría en silencio, que es lo que hace grave al fallo.
+    """
+    aviso = (
+        "Accidente vehicular en Av. España con Uno Norte, Viña del Mar. "
+        "Tránsito desviado por Errázuriz."
+    )
+    assert clasificar_transito(aviso) is EventType.ACCIDENT
+
+    # Al revés no hay riesgo simétrico: una faena no menciona una colisión.
+    assert (
+        clasificar_transito("Trabajos en la ruta 68 entre los km 42 y 45.")
+        is EventType.ROAD_CLOSURE
+    )
+
+
+def test_transito_suspendido_se_resuelve_hacia_el_cierre() -> None:
+    """El único término que está en los dos conjuntos.
+
+    `ACCIDENT_TERMS` se calcula como diferencia para que la ambigüedad se
+    resuelva sola y de un solo lado. Un aviso que sólo dice "tránsito suspendido"
+    describe una vía cerrada; cuando además hubo un choque, el texto lo dice y
+    `accidente` gana porque se consulta primero.
+    """
+    assert set(TRAFFIC_TERMS & ROAD_OPS_TERMS) == {"transito suspendido"}
+    assert "transito suspendido" not in ACCIDENT_TERMS
+    assert (
+        clasificar_transito("Tránsito suspendido en Cuesta Balmaceda.")
+        is EventType.ROAD_CLOSURE
+    )
+
+
+def test_lo_que_no_es_ni_siniestro_ni_intervencion_no_pasa() -> None:
+    """El portal del MTT publica bastante que no es ninguna de las dos cosas."""
+    for aviso in (
+        "",
+        "   ",
+        "Nuevo recorrido de la línea 605 desde el 1 de octubre.",
+        "Paso fronterizo Los Libertadores habilitado sin restricciones.",
+    ):
+        assert clasificar_transito(aviso) is None
+
+
+def test_el_corte_de_via_no_entra_al_motor_de_correlacion() -> None:
+    """La garantía que hace segura toda la capa táctica.
+
+    Es la razón por la que `road_closure` puede compartir fuente y confianza con
+    los accidentes sin contaminarlos: no se agrupa, no genera incidente y no
+    mueve ninguna confianza.
+    """
+    from app.models.enums import (
+        CORRELATABLE_EVENT_TYPES,
+        EVENT_TO_INCIDENT_TYPE,
+    )
+
+    assert EventType.ROAD_CLOSURE not in CORRELATABLE_EVENT_TYPES
+    assert EventType.ROAD_CLOSURE not in EVENT_TO_INCIDENT_TYPE
 
 
 def test_la_excision_no_depende_del_orden_de_la_lista() -> None:

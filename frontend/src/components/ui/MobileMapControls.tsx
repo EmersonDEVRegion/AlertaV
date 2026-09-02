@@ -90,7 +90,7 @@ const TABS: readonly Tab[] = [
   {
     key: 'reference',
     label: 'Referencia',
-    description: 'referencia: amenaza sísmica y lluvia',
+    description: 'referencia: amenaza sísmica y cortes de ruta',
   },
   { key: 'legend', label: 'Leyenda', description: 'leyenda: qué significan los colores' },
 ]
@@ -125,8 +125,12 @@ export function MobileMapControls({
   // completo sin buscar una «×» en una esquina.
   const toggle = (key: PanelKey) => setOpen((current) => (current === key ? null : key))
 
+  // La lluvia ya no se cuenta acá: su interruptor se mudó al widget
+  // meteorológico de la barra superior, que está siempre visible y dice su
+  // propio estado. Sumarla a este contador anunciaría, desde una ficha cerrada,
+  // una capa que no se puede encender desde dentro de esa ficha.
   const activeReference =
-    Number(reference.hazardEnabled) + Number(reference.rainEnabled)
+    Number(reference.hazardEnabled) + Number(reference.closureEnabled)
 
   /** Contador de la ficha. `null` cuando no hay nada que contar. */
   const badgeFor = (key: PanelKey): number | null => {

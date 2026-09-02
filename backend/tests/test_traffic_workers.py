@@ -503,7 +503,10 @@ def test_mtt_normaliza_con_y_sin_geocodificacion():
     )
 
     con_punto, sin_punto = collector.normalize(
-        [(aviso, extraccion, punto), (aviso, extraccion, None)]
+        [
+            (aviso, EventType.ACCIDENT, extraccion, punto),
+            (aviso, EventType.ACCIDENT, extraccion, None),
+        ]
     )
 
     assert con_punto.lat == pytest.approx(-33.0245)
@@ -525,11 +528,101 @@ def test_mtt_deja_los_dos_pasos_separados_y_auditables():
     collector = TransporteInformaCollector.__new__(TransporteInformaCollector)
     aviso = TrafficNotice(notice_id="1", text="Choque en Ruta 68.", published_at=AHORA)
     evento = collector.normalize(
-        [(aviso, extract_streets_heuristic(aviso.text), GeocodeResult(lat=-33.0, lon=-71.5))]
+        [
+            (
+                aviso,
+                EventType.ACCIDENT,
+                extract_streets_heuristic(aviso.text),
+                GeocodeResult(lat=-33.0, lon=-71.5),
+            )
+        ]
     )[0]
 
     assert evento.raw_data["_extraction"]["mode"] == "heuristic"
     assert evento.raw_data["_geocoding"]["provider"] == "nominatim"
+
+
+def test_mtt_el_corte_de_via_se_emite_como_capa_aparte():
+    """Un desvío no es un accidente, y el sistema tiene que poder distinguirlos.
+
+    Es la razón entera por la que existe `EventType.ROAD_CLOSURE`: sin él, la
+    única forma de retener un aviso táctico habría sido emitirlo como accidente,
+    y eso lo mete en la familia `traffic` del motor — donde una faena a 200 m
+    corrobora un choque que no tiene nada que ver.
+    """
+    from app.models.enums import CORRELATABLE_EVENT_TYPES
+
+    collector = TransporteInformaCollector.__new__(TransporteInformaCollector)
+    aviso = TrafficNotice(
+        notice_id="77",
+        text="Trabajos en la calzada de Av. Alemania, Valparaíso. Desvío por Yungay.",
+        published_at=AHORA,
+    )
+
+    evento = collector.normalize([(aviso, EventType.ROAD_CLOSURE, {}, None)])[0]
+
+    assert evento.type is EventType.ROAD_CLOSURE
+    assert evento.type not in CORRELATABLE_EVENT_TYPES
+    # Misma fuente y misma confianza que un accidente: el MTT es tan autoridad
+    # sobre un corte que él decretó como sobre un choque que le reportaron. Lo
+    # que aísla la capa es el TIPO, no una confianza rebajada.
+    assert evento.source is EventSource.TRANSPORTE_INFORMA
+    assert evento.confidence == pytest.approx(0.80)
+
+
+def test_mtt_el_identificador_de_los_accidentes_no_cambia():
+    """La regresión más cara que este cambio podía introducir, y no introduce.
+
+    `external_id` es la clave de idempotencia. Uniformar el prefijo a
+    `mtt:<tipo>:<hash>` se lee mejor y habría reinsertado, en la primera corrida
+    tras el despliegue, todos los accidentes que el sistema ya conocía — con
+    identificador nuevo, idénticos en texto, tiempo y lugar, y corroborándose
+    entre sí en el motor.
+    """
+    collector = TransporteInformaCollector.__new__(TransporteInformaCollector)
+    aviso = TrafficNotice(notice_id="abc123", text="Choque en Ruta 68.", published_at=AHORA)
+
+    accidente = collector.normalize([(aviso, EventType.ACCIDENT, {}, None)])[0]
+    corte = collector.normalize([(aviso, EventType.ROAD_CLOSURE, {}, None)])[0]
+
+    assert accidente.external_id == "mtt:abc123"
+    assert corte.external_id == "mtt:closure:abc123"
+    assert accidente.external_id != corte.external_id
+
+
+def test_mtt_solo_los_accidentes_sin_punto_generan_aviso():
+    """Un corte sin coordenadas no pierde nada; un accidente sí.
+
+    `road_closure` no entra al Paso A bajo ninguna circunstancia, así que
+    contarlo entre los avisos degradados describiría un problema que no existe y
+    dejaría la corrida `partial` sin motivo — que es como se enseña a un equipo a
+    ignorar el amarillo del panel.
+    """
+    collector = TransporteInformaCollector.__new__(TransporteInformaCollector)
+    aviso = TrafficNotice(notice_id="x", text="Corte de calzada.", published_at=AHORA)
+
+    collector.normalize([(aviso, EventType.ROAD_CLOSURE, {}, None)])
+    assert collector.warnings == []
+
+    collector.normalize([(aviso, EventType.ACCIDENT, {}, None)])
+    assert any("sin coordenadas" in aviso_ for aviso_ in collector.warnings)
+
+
+def test_mtt_las_palabras_clave_cubren_las_dos_capas():
+    """La red gruesa tiene que dejar pasar lo táctico o nada podrá clasificarlo.
+
+    Antes de centralizar el léxico, `TRAFFIC_KEYWORDS` era una tupla literal de
+    siete palabras sin "desvío" ni "faena": un aviso de desvío no llegaba
+    siquiera a ser un bloque candidato, así que ninguna clasificación posterior
+    podía rescatarlo. El fallo no era visible en ninguna parte.
+    """
+    from app.collectors.traffic.transporteinforma_worker import TRAFFIC_KEYWORDS
+
+    assert "desvio de transito" in TRAFFIC_KEYWORDS
+    assert "faena" in TRAFFIC_KEYWORDS
+    assert "accidente" in TRAFFIC_KEYWORDS
+    # Marcadores de la maqueta del portal, que no son vocabulario del idioma.
+    assert "trabajos" in TRAFFIC_KEYWORDS
 
 
 def test_mtt_parse_notice_acepta_los_alias_del_feed():

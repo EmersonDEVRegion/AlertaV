@@ -36,6 +36,11 @@ import {
   rainRiskRingLayer,
   rainTextLayer,
 } from './rainLayers'
+import {
+  closureBodyLayer,
+  closureCutRingLayer,
+  closureMttDotLayer,
+} from './roadClosureLayers'
 import { coneFillLayer, coneLineLayer, reachFillLayer, reachLineLayer } from './overlayLayers'
 
 const THEMES = ['light', 'dark'] as const
@@ -74,6 +79,21 @@ function buildStyle(): StyleSpecification {
         source: 'rain',
       } as LayerSpecification)
     }
+
+    /*
+     * Los cortes de ruta. La rampa de color interpola sobre `severidad` DENTRO
+     * de una interpolación sobre el zoom, que es exactamente la forma que el
+     * validador rechaza si se anida al revés. Y como toda la capa se construye
+     * por tema, una rampa mal formada en oscuro no se vería nunca desde el
+     * tema claro.
+     */
+    for (const factory of [closureCutRingLayer, closureBodyLayer, closureMttDotLayer]) {
+      layers.push({
+        ...factory(theme, true),
+        id: `${factory.name}-${theme}`,
+        source: 'closures',
+      } as LayerSpecification)
+    }
   }
 
   for (const layer of [reachFillLayer, reachLineLayer, coneFillLayer, coneLineLayer]) {
@@ -83,7 +103,12 @@ function buildStyle(): StyleSpecification {
   return {
     version: 8,
     name: 'alertav-check',
-    sources: { hazard: emptySource, rain: emptySource, overlay: emptySource },
+    sources: {
+      hazard: emptySource,
+      rain: emptySource,
+      overlay: emptySource,
+      closures: emptySource,
+    },
     layers,
   }
 }
@@ -115,12 +140,13 @@ describe('las capas compilan contra la spec de MapLibre', () => {
     const layers: LayerSpecification[] = [
       { ...hazardFillLayer('dark', false), source: 'hazard' } as LayerSpecification,
       { ...rainHeatLayer('dark', false), source: 'rain' } as LayerSpecification,
+      { ...closureBodyLayer('dark', false), source: 'closures' } as LayerSpecification,
     ]
 
     const errors = validateStyleMin({
       version: 8,
       name: 'off',
-      sources: { hazard: emptySource, rain: emptySource },
+      sources: { hazard: emptySource, rain: emptySource, closures: emptySource },
       layers,
     })
 

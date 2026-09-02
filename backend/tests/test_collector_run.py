@@ -172,3 +172,70 @@ class TestWarningsSinInit:
 def test_todos_los_estados_son_validos_en_el_check_de_la_tabla(estado: CollectorStatus) -> None:
     """El CHECK de `collector_runs.status` acepta exactamente estos cuatro."""
     assert estado.value in {"running", "success", "partial", "failed"}
+
+
+# =============================================================================
+#  Cadencia: la dispersión de cada ciclo
+# =============================================================================
+
+
+class TestCadencia:
+    """Lo que impide que cada collector se convierta en un metrónomo.
+
+    El escalonado del arranque (`_STARTUP_JITTER`) reparte el primer disparo y
+    no toca el régimen. Pasada esa primera espera, sin `_next_delay`, cada
+    collector queda pidiendo su fuente en un ciclo exacto durante semanas: es la
+    firma que un WAF reconoce como automatización antes de mirar el volumen, y
+    es también lo que vuelve a alinear dos cadencias con divisor común —600 s y
+    900 s coinciden cada media hora, elija el arranque el desfase que elija—.
+    """
+
+    def test_la_dispersion_es_simetrica_y_acotada(self) -> None:
+        from app.collectors import runner
+
+        muestras = [runner._next_delay(600) for _ in range(400)]
+
+        # ±10 % sobre 600 s = [540, 660].
+        assert all(540.0 <= muestra <= 660.0 for muestra in muestras)
+        # Simétrica: no arrastra la cadencia efectiva hacia arriba con los
+        # ciclos. Un sesgo de un 1 % sobre 600 s son seis segundos por ciclo,
+        # que en un día son catorce minutos de deriva.
+        assert 570.0 < sum(muestras) / len(muestras) < 630.0
+        # Y dispersa de verdad: si todas las esperas fueran iguales, el patrón
+        # seguiría siendo el metrónomo que esto viene a romper.
+        assert len(set(muestras)) > 1
+
+    def test_sin_dispersion_configurada_la_cadencia_es_exacta(self) -> None:
+        """`COLLECTOR_JITTER_RATIO = 0` tiene que devolver el intervalo pelado.
+
+        Es la vía de escape para depurar: con la dispersión encendida, dos
+        corridas nunca caen en el mismo segundo y comparar bitácoras se vuelve
+        incómodo.
+        """
+        from app.collectors import runner
+        from app.core.config import settings
+
+        original = settings.COLLECTOR_JITTER_RATIO
+        try:
+            settings.COLLECTOR_JITTER_RATIO = 0.0
+            assert runner._next_delay(600) == 600.0
+        finally:
+            settings.COLLECTOR_JITTER_RATIO = original
+
+    def test_un_intervalo_corto_nunca_produce_una_espera_absurda(self) -> None:
+        """La cota inferior que evita el bucle apretado.
+
+        Con la dispersión al máximo y un intervalo corto, la resta podría dar
+        una espera de milisegundos —o negativa— y convertir el bucle del
+        collector en una tormenta de peticiones contra la fuente. Justo lo
+        contrario de lo que esta función existe para lograr.
+        """
+        from app.collectors import runner
+        from app.core.config import settings
+
+        original = settings.COLLECTOR_JITTER_RATIO
+        try:
+            settings.COLLECTOR_JITTER_RATIO = 0.5
+            assert all(runner._next_delay(4) >= 5.0 for _ in range(100))
+        finally:
+            settings.COLLECTOR_JITTER_RATIO = original

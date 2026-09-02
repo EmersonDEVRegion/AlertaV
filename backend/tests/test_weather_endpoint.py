@@ -33,6 +33,7 @@ from app.collectors.weather.openmeteo_worker import (
     WEATHER_KEY,
     OpenMeteoCollector,
 )
+from app.collectors.weather.region import consolidar
 from app.collectors.weather.umbrales import PuntoHorario, evaluar
 from app.core.config import settings
 from app.main import app
@@ -49,11 +50,33 @@ BASE = "/api/v1/events/weather"
 # --- Fábricas ----------------------------------------------------------------
 
 
-def pronostico_de(comuna: Comuna, mms, *, ahora: datetime) -> Any:
-    """Un pronóstico real, calculado por el módulo de umbrales."""
+def pronostico_de(
+    comuna: Comuna,
+    mms,
+    *,
+    ahora: datetime,
+    temp: float | None = None,
+    humedad: float = 70.0,
+    rafaga: float = 15.0,
+    uv: float = 2.0,
+) -> Any:
+    """Un pronóstico real, calculado por el módulo de umbrales.
+
+    El ambiente por defecto es una tarde en que no pasa nada: los tests de la
+    capa de lluvia tienen que poder construir un temporal sin encender de paso
+    una amenaza de incendio.
+    """
     inicio = ahora.replace(minute=0, second=0, microsecond=0)
     puntos = [
-        PuntoHorario(inicio + timedelta(hours=indice), mm)
+        PuntoHorario(
+            inicio + timedelta(hours=indice),
+            mm,
+            temp_c=15.0 if temp is None else temp,
+            humedad=humedad,
+            viento_kmh=8.0,
+            rafaga_kmh=rafaga,
+            uv=uv,
+        )
         for indice, mm in enumerate(mms)
     ]
     return evaluar(comuna, puntos, ahora=ahora)
@@ -170,7 +193,12 @@ class TestRuteo:
 
     @pytest.mark.parametrize(
         "ruta",
-        ["/events/weather", "/events/weather/geojson", "/events/weather/stats"],
+        [
+            "/events/weather",
+            "/events/weather/geojson",
+            "/events/weather/stats",
+            "/events/weather/tactical",
+        ],
     )
     def test_no_queda_capturada_por_la_ruta_de_detalle(self, ruta: str) -> None:
         assert self._indice(ruta) < self._indice("/events/{public_id}")
@@ -381,6 +409,105 @@ def test_un_payload_incompleto_se_omite(cliente):
 
     assert respuesta.status_code == 200
     assert [item["comuna"] for item in respuesta.json()] == ["Quilpué"]
+
+
+# --- 5 bis. El estado táctico: la ruta del widget ---------------------------
+
+
+def fila_regional(*pronosticos, ahora: datetime) -> SimpleNamespace:
+    """La fila del agregado, escrita por el mismo `normalize()` que las comunas.
+
+    Igual que `fila`: el `raw_data` no se escribe a mano. Si el collector deja de
+    poner un campo, este test se entera, que es justamente lo que se busca de una
+    prueba de costura.
+    """
+    estado = consolidar(
+        list(pronosticos),
+        inicio=pronosticos[0].inicio,
+        fin=pronosticos[0].fin,
+    )
+    evento = OpenMeteoCollector.normalize(
+        OpenMeteoCollector.__new__(OpenMeteoCollector), [estado]
+    )[0]
+    return SimpleNamespace(
+        public_id=uuid4(),
+        timestamp=evento.timestamp,
+        source=EventSource.WEATHER,
+        type=EventType.WEATHER_OBSERVATION,
+        lat=evento.lat,
+        lon=evento.lon,
+        text=evento.text,
+        raw_data=evento.raw_data,
+        commune=None,
+        province=None,
+    )
+
+
+def test_el_estado_tactico_nombra_la_amenaza_y_la_comuna_culpable(cliente):
+    """Lo que el widget expande: el número, su umbral y de dónde salió."""
+    ahora = datetime.now(UTC)
+    caluroso = pronostico_de(VALPO, [0.0] * 4, ahora=ahora, temp=38.0)
+    templado = pronostico_de(QUILPUE, [0.0] * 4, ahora=ahora, temp=17.0)
+
+    client, _ = cliente([fila_regional(caluroso, templado, ahora=ahora)])
+    estado = client.get(f"{BASE}/tactical").json()
+
+    assert estado["severidad"] == "critica"
+    assert estado["amenaza"] == "calor"
+    assert estado["comuna_origen"] == "Valparaíso"
+    assert estado["disparo_principal"]["valor"] == 38.0
+    assert estado["disparo_principal"]["unidad"] == "°C"
+    assert estado["disparo_principal"]["umbral"] == 36.0
+    # La mediana para el ambiente, el máximo para la alerta. No son lo mismo.
+    assert estado["temp_c"] == 27.5
+    assert estado["temp_max_c"] == 38.0
+    assert estado["es_pronostico"] is True
+
+
+def test_sin_corrida_reciente_no_es_lo_mismo_que_calma(cliente):
+    """Los dos ceros que el widget no puede pintar igual.
+
+    Una fuente caída tiene que verse distinta de una tarde tranquila, o la
+    interfaz estará mostrando calma cuando en realidad no sabe nada.
+    """
+    client, _ = cliente([])
+
+    estado = client.get(f"{BASE}/tactical").json()
+
+    assert estado["observado_en"] is None
+    assert estado["comunas"] == 0
+    assert estado["severidad"] == "ninguna"
+
+
+def test_la_fila_regional_no_se_cuela_en_la_capa_comunal(cliente):
+    """El agregado comparte tabla, fuente y tipo con las comunas, y no es una.
+
+    Sin el discriminador `ambito` aparecería como una comuna fantasma en el
+    centro de la V Región, con su propia mancha de lluvia sobre el mapa.
+    """
+    ahora = datetime.now(UTC)
+    lluvioso = pronostico_de(VALPO, [9.0, 9.0, 9.0], ahora=ahora)
+
+    client, _ = cliente(
+        [fila(VALPO, [9.0, 9.0, 9.0], ahora=ahora), fila_regional(lluvioso, ahora=ahora)]
+    )
+
+    comunas = [item["comuna"] for item in client.get(BASE).json()]
+    assert comunas == ["Valparaíso"]
+
+    geojson = client.get(f"{BASE}/geojson").json()
+    assert [f["properties"]["comuna"] for f in geojson["features"]] == ["Valparaíso"]
+
+    # Y el resumen tampoco la cuenta como una comuna más.
+    assert client.get(f"{BASE}/stats").json()["comunas"] == 1
+
+
+def test_el_estado_tactico_ignora_las_filas_comunales(cliente):
+    """Sólo la regional habla por la región. Una comuna no puede suplantarla."""
+    ahora = datetime.now(UTC)
+    client, _ = cliente([fila(VALPO, [9.0, 9.0, 9.0], ahora=ahora)])
+
+    assert client.get(f"{BASE}/tactical").json()["observado_en"] is None
 
 
 # --- 6. Resumen --------------------------------------------------------------
