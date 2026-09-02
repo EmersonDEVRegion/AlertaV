@@ -296,10 +296,45 @@ class IncidentEventLink(BaseModel):
     )
 
 
+class CongestionRead(BaseModel):
+    """Estimación de cuánto va a durar el taco. NO es una medición.
+
+    El nombre de cada campo insiste en eso porque el consumidor va a mostrarlo a
+    alguien que decide si sale de su casa. `basis` y `source_time` existen para
+    que la ficha pueda explicar el número en vez de sólo mostrar dos relojes:
+    sin ellos, una estimación de tabla se vería igual que un dato medido.
+    """
+
+    road: str = Field(..., description="Vía reconocida en la tabla de arterias.")
+    basis: str = Field(..., description="Por qué esa vía genera congestión.")
+    starts_at: datetime
+    ends_at: datetime
+    peak_hour: bool = Field(..., description="¿El hecho cayó en hora punta hábil?")
+    duration_minutes: int
+    source_time: str = Field(
+        ...,
+        description=(
+            "De dónde salió la hora del hecho: `exacta` o `aproximada` si la "
+            "nota la declaró, `franja` si sólo dijo un tramo del día "
+            "(«durante la tarde»), y `publicacion` si no dijo ninguna y se usó "
+            "la hora en que se publicó — que suele ser bastante posterior."
+        ),
+    )
+
+
 class IncidentDetail(IncidentRead):
     """Incidente con todas sus señales y la trazabilidad de cada vínculo."""
 
     events: list[IncidentEventLink] = Field(default_factory=list)
+    congestion: CongestionRead | None = Field(
+        default=None,
+        description=(
+            "Ventana estimada de congestión. `null` cuando el incidente no es "
+            "un accidente, cuando no se reconoció la vía, o cuando la vía no "
+            "está en la tabla de arterias — que es el caso de la enorme "
+            "mayoría de las calles, y es deliberado."
+        ),
+    )
 
 
 class IncidentStats(BaseModel):

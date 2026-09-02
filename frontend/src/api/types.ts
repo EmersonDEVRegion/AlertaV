@@ -240,9 +240,41 @@ export interface IncidentEventLink {
   source_label: string | null
 }
 
+/**
+ * Ventana estimada de congestión. **NO es una medición.**
+ *
+ * Sale de una tabla declarada de arterias (`services/congestion.py`), no de
+ * datos de flujo: AlertaV no tiene la API de Waze y no mide tráfico. Cada campo
+ * que la acompaña existe para que la ficha pueda decir de dónde salió el
+ * número, porque una estimación presentada como dato es peor que no decir nada.
+ */
+export interface Congestion {
+  /** Vía reconocida en la tabla. */
+  road: string
+  /** Por qué esa vía genera congestión: se muestra como base de la estimación. */
+  basis: string
+  starts_at: string
+  ends_at: string
+  peak_hour: boolean
+  duration_minutes: number
+  /**
+   * De dónde salió la hora del hecho, y por lo tanto cuánto vale la ventana:
+   *
+   * - `exacta` — la nota dijo hora y minuto.
+   * - `aproximada` — dijo la hora («cerca de las 14 horas»).
+   * - `franja` — sólo dijo un tramo del día («durante la tarde»).
+   * - `publicacion` — no dijo ninguna y se usó la hora en que se publicó, que
+   *   suele ser bastante posterior al hecho. Es la base más débil y la ficha
+   *   tiene que decirlo.
+   */
+  source_time: 'exacta' | 'aproximada' | 'franja' | 'publicacion'
+}
+
 /** `IncidentDetail` — `GET /api/v1/incidents/{code}`. */
 export interface IncidentDetail extends Incident {
   events: IncidentEventLink[]
+  /** `null` si no es accidente o la vía no está en la tabla de arterias. */
+  congestion: Congestion | null
 }
 
 /** `IncidentStats` — `GET /api/v1/incidents/stats`. */

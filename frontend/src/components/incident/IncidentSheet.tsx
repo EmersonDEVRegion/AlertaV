@@ -17,6 +17,7 @@ import { formatDateTime, formatDistance, formatRelative } from '@/lib/format'
 import { AlertBadge } from './AlertBadge'
 import { ConfidenceAudit } from './ConfidenceAudit'
 import { ConfidenceBar } from './ConfidenceBar'
+import { CongestionNotice } from './CongestionNotice'
 import { OutageDetails } from './OutageDetails'
 import { SourceChips } from './SourceChips'
 
@@ -170,6 +171,13 @@ export function IncidentSheet({
 
         {/* --- Corte de suministro ------------------------------------------- */}
         {incident.outage && <OutageDetails outage={incident.outage} />}
+
+        {/* --- Congestión estimada -------------------------------------------
+            Va ARRIBA de las fuentes y la línea de tiempo: para alguien que está
+            por salir a la calle es lo más accionable de la ficha, y enterrarlo
+            bajo la trazabilidad sería ordenar el panel por lo que le interesa
+            al que audita en vez de al que va manejando. */}
+        {detail?.congestion && <CongestionNotice congestion={detail.congestion} />}
 
         {/* --- Fuentes ------------------------------------------------------- */}
         <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-ink-muted">

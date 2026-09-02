@@ -17,6 +17,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.collectors.horas import parse_hora_declarada
 from app.core.config import settings
 from app.models.enums import (
     EventSource,
@@ -30,12 +31,14 @@ from app.models.incident import Incident
 from app.repositories.incident_repository import IncidentRepository
 from app.schemas.event import GeoJSONFeature, GeoJSONFeatureCollection
 from app.schemas.incident import (
+    CongestionRead,
     IncidentDetail,
     IncidentEventLink,
     IncidentRead,
     OutageDetail,
     confidence_label,
 )
+from app.services.congestion import CHILE_TZ, arteria_de, estimar
 from app.services.correlation.engine import CorrelationEngine, CorrelationPass
 from app.services.source_links import source_label_for, source_url_for
 
@@ -125,6 +128,7 @@ class IncidentService:
             )
             for link, event in pairs
         ]
+        detail.congestion = _congestion_for(incident, [event for _, event in pairs])
         return detail
 
     async def stats(self, *, hours: int | None = None) -> dict[str, Any]:
@@ -239,6 +243,73 @@ class IncidentService:
         autenticación de operador en producción.
         """
         return await CorrelationEngine(self.session).run()
+
+
+def _congestion_for(
+    incident: Incident, events: Sequence[Any]
+) -> CongestionRead | None:
+    """Ventana estimada para un accidente en una arteria conocida.
+
+    Se calcula al LEER y no se guarda. La ventana es una función de (vía, hora,
+    tabla), y la tabla se va a corregir con lo que se vaya viendo: si estuviera
+    materializada en la base, cada ajuste obligaría a reprocesar el histórico
+    para que los incidentes viejos dejaran de mostrar el número antiguo.
+
+    Sólo accidentes. Un corte de luz o un incendio también cortan calles, pero
+    esta tabla está calibrada sobre siniestros viales y aplicarla a otra cosa
+    sería usar un número fuera del dominio donde significa algo.
+    """
+    if incident.type is not IncidentType.ACCIDENT:
+        return None
+
+    # La calle sale del Paso A de la extracción, que es lo único que nombra la
+    # vía: ni el incidente ni el evento tienen una columna de calle.
+    calle: str | None = None
+    texto: str | None = None
+    for event in events:
+        extraccion = (event.raw_data or {}).get("_extraction") or {}
+        candidata = extraccion.get("street_1")
+        if candidata and arteria_de(str(candidata)) is not None:
+            calle = str(candidata)
+            texto = event.text
+            break
+
+    if calle is None:
+        return None
+
+    # La hora del HECHO, no la de publicación. Entre las dos hay una hora larga
+    # y la diferencia decide si la ventana sirve o llega tarde: ver
+    # `collectors/horas.py`.
+    base = incident.first_seen_at
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=UTC)
+    origen = "publicacion"
+
+    declarada = parse_hora_declarada(texto or "")
+    if declarada is not None:
+        local = base.astimezone(CHILE_TZ).replace(
+            hour=declarada.hora, minute=declarada.minuto, second=0, microsecond=0
+        )
+        # Una nota publicada a las 00:30 que dice «a las 23:00» habla de ayer.
+        # Sin esta corrección la ventana quedaría casi un día en el futuro.
+        if local > base.astimezone(CHILE_TZ):
+            local -= timedelta(days=1)
+        base = local.astimezone(UTC)
+        origen = declarada.precision.value
+
+    ventana = estimar(calle, base)
+    if ventana is None:
+        return None
+
+    return CongestionRead(
+        road=ventana.arteria,
+        basis=ventana.motivo,
+        starts_at=ventana.desde,
+        ends_at=ventana.hasta,
+        peak_hour=ventana.en_punta,
+        duration_minutes=ventana.duracion_min,
+        source_time=origen,
+    )
 
 
 def _outage_provider(incident: Incident) -> str | None:
