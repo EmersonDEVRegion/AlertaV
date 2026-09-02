@@ -224,7 +224,8 @@ class CollectorRun(Base):
     __tablename__ = "collector_runs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('running', 'success', 'partial', 'failed')", name="status"
+            "status IN ('running', 'success', 'partial', 'degraded', 'failed')",
+            name="status",
         ),
         Index("ix_collector_runs_source_started", "source", sa_text("started_at DESC")),
         {"schema": _SCHEMA},

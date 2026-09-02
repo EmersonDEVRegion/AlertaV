@@ -6,6 +6,7 @@ lanzan tráfico saliente hacia APIs de terceros con cuota.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -15,6 +16,7 @@ from sqlalchemy import desc, select
 from app.api.deps import IngestServiceDep, SessionDep
 from app.collectors.registry import available_collectors, get_collector
 from app.models.event import CollectorRun
+from app.services.collector_health import build_health
 
 router = APIRouter(prefix="/collectors", tags=["collectors"])
 
@@ -44,9 +46,72 @@ class CollectorRunRead(BaseModel):
     error: str | None
 
 
+class CollectorHealthRead(BaseModel):
+    collector: str
+    families: list[str]
+    status: str
+    last_run_at: datetime | None
+    age_seconds: int | None
+    expected_interval_seconds: int
+    detail: str | None
+
+
+class HealthRead(BaseModel):
+    """Lo que el mapa necesita para no mentir con un cero."""
+
+    generated_at: datetime
+    by_family: dict[str, str]
+    collectors: list[CollectorHealthRead]
+
+
 @router.get("", summary="Collectors disponibles")
 async def list_collectors() -> dict[str, list[str]]:
     return {"collectors": available_collectors()}
+
+
+@router.get(
+    "/health",
+    response_model=HealthRead,
+    summary="Frescura de la recolección, por familia",
+    description=(
+        "Responde la pregunta que un contador en cero no puede: ¿no pasó nada, "
+        "o no está llegando nada? `by_family` da el estado de cada capa del "
+        "mapa —`ok`, `stale`, `failing`, `degraded`, `never`— y un cero con la "
+        "familia en cualquier estado que no sea `ok` NO significa calma."
+    ),
+)
+async def collectors_health(session: SessionDep) -> HealthRead:
+    # Una fila por collector: la más reciente. `DISTINCT ON` es de PostgreSQL y
+    # este proyecto ya depende de PostGIS, así que la portabilidad no es un
+    # argumento; la alternativa con `row_number()` sobre la tabla entera lee
+    # mucho más para el mismo resultado.
+    stmt = (
+        select(CollectorRun)
+        .distinct(CollectorRun.collector)
+        .order_by(CollectorRun.collector, desc(CollectorRun.started_at))
+    )
+    runs = (await session.execute(stmt)).scalars().all()
+    ultimas = {run.collector: run for run in runs}
+
+    salud, por_familia = build_health(ultimas)
+    return HealthRead(
+        generated_at=datetime.now(UTC),
+        by_family=por_familia,
+        collectors=[
+            CollectorHealthRead(
+                collector=item.collector,
+                families=list(item.families),
+                status=item.status,
+                last_run_at=item.last_run_at,
+                age_seconds=item.age_seconds,
+                expected_interval_seconds=item.expected_interval_seconds,
+                # Recortado: `error` guarda hasta 4000 caracteres y esto lo
+                # consume el mapa en cada refresco.
+                detail=item.detail[:300] if item.detail else None,
+            )
+            for item in salud
+        ],
+    )
 
 
 @router.post(

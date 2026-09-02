@@ -41,6 +41,7 @@ import { MapOverlayState } from '@/components/ui/MapOverlayState'
 import { StalenessBanner } from '@/components/ui/StalenessBanner'
 import { levelOf } from '@/domain/symbology'
 import { useActiveIncidents } from '@/hooks/useActiveIncidents'
+import { useCollectorHealth } from '@/hooks/useCollectorHealth'
 import { useSeismicEvents } from '@/hooks/useSeismicEvents'
 import { useFreshness } from '@/hooks/useFreshness'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
@@ -79,6 +80,9 @@ export default function App() {
    */
   const rain = useRainLayer()
   const closures = useRoadClosures()
+  // Sin `enabled`: su valor aparece justamente cuando el mapa está vacío, que
+  // es cuando nadie está tocando nada y nadie iría a buscarlo.
+  const health = useCollectorHealth()
 
   const [selectedCode, setSelectedCode] = useState<string | null>(null)
   const [selectedUsgsId, setSelectedUsgsId] = useState<string | null>(null)
@@ -285,6 +289,9 @@ export default function App() {
     onSeismicFilterChange: setSeismicFilter,
     providers,
     onProvidersChange: setProviders,
+    // Va acá y no en cada rama por el mismo motivo que el resto: declarar las
+    // propiedades dos veces garantiza que una se quede atrás.
+    health: health.data,
   }
 
   const referenceControls = {

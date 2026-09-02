@@ -78,9 +78,45 @@ class BaseCollector(abc.ABC):
         Cambió un nombre de campo, se usó una fuente de respaldo, llegaron filas
         sin fecha… Nada de eso justifica perder la corrida completa, pero tampoco
         puede desaparecer: termina en `collector_runs` con estado `partial`.
+
+        **No confundir con `blind`.** Esto dice «entregué menos de lo ideal»;
+        `blind` dice «lo que entregué no describe el presente».
         """
         if message not in self.warnings:
             self.warnings.append(message)
+
+    @property
+    def blindness(self) -> list[str]:
+        """Motivos por los que esta corrida no describe el presente."""
+        existing = getattr(self, "_blindness", None)
+        if existing is None:
+            existing = []
+            self._blindness = existing
+        return existing
+
+    def blind(self, message: str) -> None:
+        """Declara que la corrida está CIEGA: corrió, pero no ve el presente.
+
+        Es la distinción que `partial` nunca pudo hacer. Un rechazo por filtro
+        regional y una fuente congelada hace dos horas terminaban con el mismo
+        estado, y como lo primero ocurre en cada corrida de fuentes sanas, lo
+        segundo se volvía invisible por costumbre.
+
+        Cuándo usarlo, y es un umbral alto: cuando el collector puede afirmar
+        que **un hecho ocurrido ahora no llegaría a aparecer**. No cuando trae
+        pocos datos, no cuando una fuente de respaldo reemplazó a la principal
+        —eso es `warn`—, sino cuando la ventana al mundo está tapada.
+
+        El caso canónico es un pull sobre caché ajena: el collector de Instagram
+        lee el dataset de la última corrida del Actor, así que si el Actor deja
+        de correr, sigue devolviendo datos válidos y viejos indefinidamente. No
+        falla nunca, y esa es exactamente la razón por la que hace falta decirlo
+        en voz alta.
+
+        Gana sobre `warn`: una corrida ciega que además rechazó filas es ciega.
+        """
+        if message not in self.blindness:
+            self.blindness.append(message)
 
     # -- A implementar por cada fuente ---------------------------------------
 
@@ -152,6 +188,23 @@ class BaseCollector(abc.ABC):
                 result.status = CollectorStatus.PARTIAL
                 result.details["warnings"] = list(self.warnings)
                 result.error = "; ".join(self.warnings)[:4000]
+
+            # La ceguera se evalúa AL FINAL y pisa a `partial`, no al revés.
+            #
+            # Una corrida ciega casi siempre rechazó algo también —el filtro
+            # regional sigue corriendo sobre los datos viejos— así que evaluarla
+            # antes la dejaría en `partial` y el aviso se perdería justo en el
+            # caso que motivó todo esto. El estado que llega a la base es el del
+            # problema más grave, y quedarse ciego lo es.
+            if self.blindness:
+                result.status = CollectorStatus.DEGRADED
+                result.details["blindness"] = list(self.blindness)
+                # El motivo de la ceguera va PRIMERO en el mensaje: es lo que se
+                # lee en la ficha del mapa y en la fila de `collector_runs`, y
+                # tiene que decir por qué esta capa no ve, no que el filtro
+                # regional descartó filas.
+                partes = [*self.blindness, *self.warnings]
+                result.error = "; ".join(partes)[:4000]
 
         except CollectorError as exc:
             result.status = CollectorStatus.FAILED

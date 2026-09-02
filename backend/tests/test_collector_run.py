@@ -170,8 +170,13 @@ class TestWarningsSinInit:
 
 @pytest.mark.parametrize("estado", list(CollectorStatus))
 def test_todos_los_estados_son_validos_en_el_check_de_la_tabla(estado: CollectorStatus) -> None:
-    """El CHECK de `collector_runs.status` acepta exactamente estos cuatro."""
-    assert estado.value in {"running", "success", "partial", "failed"}
+    """El CHECK de `collector_runs.status` acepta exactamente estos cinco.
+
+    Este test hizo su trabajo: al agregar `degraded` falló antes de que el
+    estado nuevo llegara a producción a chocar contra la restricción. Si vuelve
+    a fallar, lo que falta es la migración, no relajar el conjunto.
+    """
+    assert estado.value in {"running", "success", "partial", "degraded", "failed"}
 
 
 # =============================================================================

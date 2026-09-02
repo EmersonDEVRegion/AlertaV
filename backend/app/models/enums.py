@@ -111,9 +111,34 @@ class EventType(str, Enum):
 
 
 class CollectorStatus(str, Enum):
+    """En qué terminó una corrida.
+
+    `PARTIAL` y `DEGRADED` no son grados de lo mismo, y confundirlos fue el
+    problema que obligó a separarlos.
+
+    **`PARTIAL` = rechacé filas.** El USGS descarta 235 sismos por corrida
+    porque son de otras regiones, y eso está bien: es el filtro trabajando. Como
+    cualquier rechazo pone la corrida en `partial`, ese estado aparece
+    permanentemente en fuentes sanas y por eso **nunca sirvió como señal de
+    salud**: mirarlo entrena a ignorar lo amarillo.
+
+    **`DEGRADED` = corrí, pero lo que leí no describe el presente.** El
+    collector no falló —tiene datos, los entregó— y aun así está ciego. El caso
+    que lo motivó: el Actor de Instagram dejó de correr durante dos horas y el
+    collector siguió leyendo alegremente el dataset de la última corrida buena,
+    reportando `partial` cada cinco minutos mientras un accidente en Avenida
+    España se publicaba y no entraba. La base sabía que estaba ciega; el mapa no
+    tenía cómo enterarse.
+
+    La diferencia práctica: `partial` se ignora, `degraded` se muestra. Un
+    contador en cero con su fuente `degraded` no es «no pasó nada», es «no
+    llegó nada», y son cosas opuestas.
+    """
+
     RUNNING = "running"
     SUCCESS = "success"
     PARTIAL = "partial"
+    DEGRADED = "degraded"
     FAILED = "failed"
 
 

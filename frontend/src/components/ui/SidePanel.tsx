@@ -9,6 +9,8 @@ import {
   Sheet,
 } from '@/components/ui/primitives'
 import { LAYER_LABEL } from '@/domain/families'
+import type { CollectorsHealth } from '@/api/health'
+import { LayerHealth } from './LayerHealth'
 import type { IncidentLayerKey } from '@/domain/families'
 import { OTHER_LEVEL } from '@/domain/otherSymbology'
 import { PROVIDER, PROVIDER_ORDER, providerOf } from '@/domain/powerSymbology'
@@ -96,6 +98,12 @@ export interface SidePanelProps {
   onSeismicFilterChange: (filter: SeismicFilterKey) => void
   providers: ProviderVisibility
   onProvidersChange: (next: ProviderVisibility) => void
+  /**
+   * Salud de la recolección por familia. `undefined` mientras carga o si la
+   * consulta falló: en ese caso el panel se comporta como antes, porque no
+   * saber si una capa ve no autoriza a afirmar que está ciega.
+   */
+  health?: CollectorsHealth
 }
 
 interface Row {
@@ -142,6 +150,7 @@ export function IncidentFilters({
   onSeismicFilterChange,
   providers,
   onProvidersChange,
+  health,
 }: SidePanelProps) {
   const [expanded, setExpanded] = useState<keyof LayerVisibility | null>(null)
   const toggleExpanded = (key: keyof LayerVisibility) =>
@@ -181,6 +190,26 @@ export function IncidentFilters({
                     />
                     <span className="truncate font-medium">{row.label}</span>
                   </label>
+
+                  {/* Fuera del <label>, igual que el acordeón: dentro, el clic
+                      se reenviaría a la casilla y apagaría la capa.
+
+                      Los sismos no llevan marca: vienen de `/events/seismic`,
+                      con su propio esquema y su propia cadencia, y no son una
+                      familia de `collector_health`. */}
+                  {row.key !== 'seismic' && (
+                    <LayerHealth
+                      status={health?.by_family[row.key]}
+                      count={count}
+                      detail={
+                        health?.collectors.find(
+                          (c) =>
+                            c.families.includes(row.key as IncidentLayerKey) &&
+                            c.status !== 'ok',
+                        )?.detail
+                      }
+                    />
+                  )}
 
                   {/* Hermano de la casilla, no dentro de su <label>: un
                       <label> reenvía el clic a su input, así que abrir la

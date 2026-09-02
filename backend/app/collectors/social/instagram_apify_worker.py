@@ -542,11 +542,18 @@ class InstagramApifyCollector(BaseCollector):
 
         stale, motivo = apify_client.run_looks_stale(run, self.max_run_age)
         if stale:
+            # `blind` y no `warn`, y la diferencia dejó de ser teórica.
+            #
             # No es fatal —el dataset viejo puede traer algo que aún no
-            # procesamos— pero tiene que verse. Es la diferencia entre "hoy no
-            # hubo emergencias" y "el Schedule de Apify lleva dos días muerto",
-            # que sin este aviso se ven idénticas desde `collector_runs`.
-            self.warn(f"datos rancios: {motivo}")
+            # procesamos— pero esta capa dejó de ver el presente: si el Actor no
+            # corre, `runs/last` devuelve indefinidamente la misma foto vieja y
+            # el collector la lee sin quejarse. Con `warn` esto quedaba en
+            # `partial`, o sea indistinguible del filtro regional del USGS, y el
+            # 2026-09-02 costó exactamente lo que tenía que costar: el Actor
+            # estuvo detenido dos horas, se publicó un accidente en Avenida
+            # España, la base sabía que estaba ciega y el mapa mostró un cero
+            # idéntico al de un día tranquilo.
+            self.blind(f"datos rancios: {motivo}")
 
         useful, problemas = apify_client.describe_items(items)
         for problema in problemas:
