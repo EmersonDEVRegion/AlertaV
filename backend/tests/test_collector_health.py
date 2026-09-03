@@ -254,6 +254,28 @@ def test_toda_familia_tiene_al_menos_una_fuente_principal():
         assert principales, f"{familia_} no tiene ninguna fuente principal"
 
 
+def test_toda_puerta_que_escribe_en_collector_runs_esta_declarada():
+    """El olvido que este test impide que se repita.
+
+    `prensa_x_webhook` se construyó, se desplegó y escribió en `collector_runs`
+    durante horas sin estar en `COLLECTOR_ROLES`. Consecuencia: su caída no
+    movía el estado de ninguna familia, o sea que la fuente podía morir en
+    silencio — exactamente lo que este módulo existe para impedir.
+
+    La lista se declara a mano y no se deriva de `COLLECTORS` porque las dos
+    puertas de webhook no están ahí: no las dispara el runner, las empuja Apify.
+    """
+    from app.services.collector_health import COLLECTOR_ROLES
+
+    puertas_por_webhook = {"bomberos_apify_webhook", "prensa_x_webhook"}
+
+    for nombre in puertas_por_webhook:
+        assert nombre in COLLECTOR_ROLES, (
+            f"{nombre} escribe en collector_runs y no está en COLLECTOR_ROLES: "
+            f"su caída no movería ninguna familia"
+        )
+
+
 def test_los_roles_declarados_son_los_dos_que_existen():
     """Un typo en el rol degradaría la fuente a apoyo en silencio."""
     from app.services.collector_health import COLLECTOR_ROLES

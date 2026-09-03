@@ -79,6 +79,20 @@ COLLECTOR_ROLES: dict[str, dict[str, str]] = {
         "traffic": "principal",
         "otros": "principal",
     },
+    #: La segunda puerta de X. Se agregó tarde y ese olvido es en sí mismo el
+    #: argumento del comentario de arriba: la ruta existía, escribía en
+    #: `collector_runs` y aun así `/collectors/health` no la miraba, así que su
+    #: caída no habría movido el estado de ninguna familia. Una fuente que no
+    #: está en esta tabla es una fuente que puede morir en silencio.
+    #:
+    #: `principal` en `traffic` porque el MTT y la concesionaria son de las
+    #: pocas fuentes que reportan un corte de vía antes que nadie; `apoyo` en
+    #: las otras dos, donde sólo aporta si la prensa alcanza a publicar.
+    "prensa_x_webhook": {
+        "fire": "apoyo",
+        "traffic": "principal",
+        "otros": "apoyo",
+    },
 }
 
 #: Vista plana, que es lo que la API expone por collector.

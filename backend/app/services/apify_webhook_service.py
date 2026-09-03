@@ -405,7 +405,46 @@ async def _process(dataset_id: str, traza: str) -> None:
                     },
                 )
 
-            estado = CollectorStatus.PARTIAL if problemas else CollectorStatus.SUCCESS
+            # Lo que se descartó tiene que llegar a `collector_runs`, no sólo al
+            # log de Render.
+            #
+            # `collector_runs` es lo que expone la API y lo que lee
+            # `/collectors/health`; el log hay que ir a buscarlo al panel del
+            # proveedor. Mientras el motivo del cero viviera sólo ahí, una
+            # corrida `success · fetched 10 · inserted 0` era exactamente igual
+            # de opaca que antes de todo este trabajo: la fila decía que había
+            # leído diez tuits y nada más.
+            #
+            # Es el caso del 2026-09-03: el `5-1` de Avenida España llegó al
+            # webhook con seis horas encima y se descartó por edad —bien
+            # descartado, un despacho de hace seis horas no describe el
+            # presente— pero para saberlo hubo que hacer la resta a mano entre
+            # la hora del tuit y la de la corrida.
+            notas = list(problemas)
+            if claves_no_configuradas:
+                notas.append(
+                    "claves que la central usa y no están configuradas: "
+                    + ", ".join(
+                        f"{clave}×{veces}"
+                        for clave, veces in claves_no_configuradas.most_common(5)
+                    )
+                )
+            if descartados_por_edad:
+                notas.append(
+                    f"{descartados_por_edad} despachos más viejos que "
+                    f"{settings.APIFY_WEBHOOK_MAX_AGE_MINUTES} min; se descartaron"
+                )
+
+            # Una clave sin configurar es una degradación real —se están
+            # tirando despachos de la fuente de peso 1.00— y merece `partial`.
+            # El descarte por edad NO: es el filtro haciendo su trabajo, y
+            # marcarlo pintaría de amarillo cada corrida nocturna. Se anota
+            # igual, porque anotar y alarmar son cosas distintas.
+            estado = (
+                CollectorStatus.PARTIAL
+                if problemas or claves_no_configuradas
+                else CollectorStatus.SUCCESS
+            )
 
             await service.finish_run(
                 run,
@@ -413,7 +452,7 @@ async def _process(dataset_id: str, traza: str) -> None:
                 fetched=len(items),
                 inserted=inserted,
                 duplicate=duplicated,
-                error="; ".join(problemas)[:2000] if problemas else None,
+                error="; ".join(notas)[:2000] if notas else None,
             )
 
             logger.info(
