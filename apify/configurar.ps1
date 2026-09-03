@@ -64,9 +64,32 @@ O ponelos en backend\.env, que esta en .gitignore.
 "@
 }
 Write-Host "Token cargado ($($token.Length) caracteres)." -ForegroundColor DarkGray
+
+# Sin secreto NO se crean webhooks. Antes esto era un aviso amarillo y se
+# seguía adelante; el resultado fue dos integraciones que no podian funcionar
+# ni una sola vez.
+#
+# Si el backend tiene APIFY_WEBHOOK_SECRET puesto —y en produccion lo tiene— la
+# ruta responde 401 a toda entrega sin cabecera. Apify reintenta once veces y
+# despues DESHABILITA la integracion. O sea que crear el webhook sin secreto no
+# deja el sistema "abierto pero andando": lo deja roto, y encima el diagnostico
+# llega por correo horas mas tarde.
+#
+# El 2026-09-03 costo exactamente eso: dos correos de Apify diciendo
+# "Endpoint responded with HTTP status code 401", uno por Task.
 if (-not $secreto) {
-    Write-Host "AVISO: APIFY_WEBHOOK_SECRET vacio. Los webhooks quedaran SIN cabecera" -ForegroundColor Yellow
-    Write-Host "       de autenticacion y la ruta acepta a cualquiera que sepa la URL." -ForegroundColor Yellow
+    throw @"
+APIFY_WEBHOOK_SECRET no esta ni en el entorno ni en backend\.env.
+
+Sin el, los webhooks se crearian sin cabecera de autenticacion y el backend
+responderia 401 a cada entrega — hasta que Apify deshabilite la integracion.
+
+Pasalo junto al token, en la misma linea:
+
+    `$env:APIFY_TOKEN='apify_api_...'; `$env:APIFY_WEBHOOK_SECRET='...'; .\apify\configurar.ps1
+
+Tiene que ser EL MISMO valor que la variable APIFY_WEBHOOK_SECRET de Render.
+"@
 }
 
 $headers = @{ Authorization = "Bearer $token" }
@@ -161,6 +184,36 @@ foreach ($t in $tasks) {
         } else {
             Api POST "/webhooks" $cuerpo | Out-Null
             Write-Host "  webhook creado      -> $($t.webhook)" -ForegroundColor Green
+        }
+
+        # --- Comprobar la cabecera contra el backend REAL --------------------
+        #
+        # El script termina diciendo "listo" aunque haya dejado una cabecera que
+        # el backend rechaza. Sin esta comprobacion, el unico aviso llega por
+        # correo de Apify horas despues —"Endpoint responded with HTTP status
+        # code 401"— y para entonces la integracion puede estar deshabilitada.
+        #
+        # Se manda un cuerpo sin `defaultDatasetId` a proposito: el backend lo
+        # responde `200 ignored` sin leer ningun dataset ni escribir en la base.
+        # Lo unico que se esta probando es la puerta.
+        try {
+            $sonda = Invoke-WebRequest -Method POST -Uri $url `
+                -Headers @{ "X-AlertaV-Apify-Secret" = $secreto } `
+                -Body '{"eventType":"CONFIGURACION","resource":{}}' `
+                -ContentType "application/json" -UseBasicParsing -TimeoutSec 45
+            Write-Host "  verificado          -> HTTP $($sonda.StatusCode)" -ForegroundColor DarkGray
+        } catch {
+            $codigo = $_.Exception.Response.StatusCode.value__
+            if ($codigo -eq 401) {
+                throw @"
+El backend rechazo la cabecera con 401 en $url
+
+El webhook quedo creado pero NO va a funcionar: el valor de
+APIFY_WEBHOOK_SECRET que se uso aca no coincide con el de Render.
+Corregilo y volve a correr este script — es idempotente.
+"@
+            }
+            Write-Host "  AVISO: la sonda devolvio HTTP $codigo (revisar)" -ForegroundColor Yellow
         }
     }
     else {
