@@ -466,9 +466,9 @@ def test_un_error_servido_con_http_200_se_convierte_en_fallo_con_nombre():
 
 def test_solo_pasan_los_tuits_con_una_clave_configurada():
     """La cuenta de una central publica mucho más que despachos."""
-    claves = ["10-4", "12"]
+    claves = ["5-1", "12"]
 
-    assert svc.parse_tweet(tuit("81 * RUTA 68 KM 42 * CLAVE 10-4"), claves) is not None
+    assert svc.parse_tweet(tuit("81 * RUTA 68 KM 42 * CLAVE 5-1"), claves) is not None
     assert svc.parse_tweet(tuit("81 * DIEGO COOK / GUACOLDA * CLAVE 12"), claves) is not None
     assert svc.parse_tweet(tuit("Gracias a la comunidad por su apoyo"), claves) is None
     assert svc.parse_tweet(tuit("Corte de agua programado en Playa Ancha"), claves) is None
@@ -488,8 +488,8 @@ def test_la_clave_12_literal_entra_y_es_la_que_no_entraba_antes():
 
 
 def test_una_impostora_de_la_clave_no_entra():
-    """`10-40` es emanación de gas, no rescate vehicular."""
-    assert svc.parse_tweet(tuit("Clave 10-40 emanación de gas, Av. Brasil"), ["10-4"]) is None
+    """`5-10` es emanación de gas, no rescate vehicular."""
+    assert svc.parse_tweet(tuit("Clave 5-10 emanación de gas, Av. Brasil"), ["5-1"]) is None
 
 
 def test_el_identificador_sale_del_tuit_y_no_del_texto():
@@ -498,8 +498,8 @@ def test_el_identificador_sale_del_tuit_y_no_del_texto():
     Con un id derivado del texto, cada corrección sería un segundo incidente en
     el mapa en vez de una actualización de la misma fila.
     """
-    original = svc.parse_tweet(tuit("81 * RUTA 68 * CLAVE 10-4", id_="99"), ["10-4"])
-    corregido = svc.parse_tweet(tuit("81 * RUTA 68 KM 42 * CLAVE 10-4", id_="99"), ["10-4"])
+    original = svc.parse_tweet(tuit("81 * RUTA 68 * CLAVE 5-1", id_="99"), ["5-1"])
+    corregido = svc.parse_tweet(tuit("81 * RUTA 68 KM 42 * CLAVE 5-1", id_="99"), ["5-1"])
 
     assert original is not None and corregido is not None
     assert original.guid == corregido.guid == "x:99"
@@ -508,14 +508,14 @@ def test_el_identificador_sale_del_tuit_y_no_del_texto():
 def test_el_texto_se_busca_por_alias_de_campo():
     """Migrar de Actor es cambiar una línea en el Schedule, no tocar código."""
     for campo in ("full_text", "fullText", "text", "content", "rawContent"):
-        item = {"id": "7", campo: "81 * RUTA 68 * CLAVE 10-4"}
-        assert svc.parse_tweet(item, ["10-4"]) is not None, campo
+        item = {"id": "7", campo: "81 * RUTA 68 * CLAVE 5-1"}
+        assert svc.parse_tweet(item, ["5-1"]) is not None, campo
 
 
 def test_un_despacho_viejo_se_descarta_y_uno_sin_fecha_pasa():
     """Asimetría deliberada. Ver el docstring de `is_fresh`."""
-    viejo = svc.parse_tweet(tuit("81 * RUTA 68 * CLAVE 10-4", minutos=600), ["10-4"])
-    sin_fecha = svc.parse_tweet({"id": "3", "text": "81 * RUTA 68 * CLAVE 10-4"}, ["10-4"])
+    viejo = svc.parse_tweet(tuit("81 * RUTA 68 * CLAVE 5-1", minutos=600), ["5-1"])
+    sin_fecha = svc.parse_tweet({"id": "3", "text": "81 * RUTA 68 * CLAVE 5-1"}, ["5-1"])
 
     assert viejo is not None and sin_fecha is not None
     assert svc.is_fresh(viejo, now=AHORA, max_age_minutes=180) is False
@@ -595,13 +595,13 @@ def test_la_tarea_ingiere_los_despachos_y_deja_la_corrida_en_success(servicio):
         return_value=httpx.Response(
             200,
             json=[
-                tuit("81 * RUTA 68 KM 42 * CLAVE 10-4", id_="1"),
+                tuit("81 * RUTA 68 KM 42 * CLAVE 5-1", id_="1"),
                 tuit("Gracias a la comunidad", id_="2"),
                 tuit("22 * DIEGO COOK / GUACOLDA * CLAVE 12", id_="3"),
             ],
         )
     )
-    settings.BOMBEROS_ACCIDENT_KEYS = ["10-4", "12"]
+    settings.BOMBEROS_ACCIDENT_KEYS = ["5-1", "12"]
 
     asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
 
@@ -668,11 +668,11 @@ def test_un_perfil_caido_deja_la_corrida_en_partial(servicio):
             200,
             json=[
                 {"error": "no_items", "errorDescription": "cuenta suspendida", "username": "CGI_CBV"},
-                tuit("81 * RUTA 68 * CLAVE 10-4", id_="5"),
+                tuit("81 * RUTA 68 * CLAVE 5-1", id_="5"),
             ],
         )
     )
-    settings.BOMBEROS_ACCIDENT_KEYS = ["10-4"]
+    settings.BOMBEROS_ACCIDENT_KEYS = ["5-1"]
 
     asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
 
@@ -702,7 +702,9 @@ def test_una_clave_no_configurada_deja_aviso_en_vez_de_desaparecer(servicio, cap
         return_value=httpx.Response(
             200,
             json=[
-                tuit("91, 71 * AVENIDA ESPANA / AVENIDA ARGENTINA * CLAVE 5-1", id_="1"),
+                # `7-9` no existe en la tabla del CBV: es el caso «la central
+                # empezó a despachar algo que nadie registró».
+                tuit("91, 71 * AVENIDA ESPANA / AVENIDA ARGENTINA * CLAVE 7-9", id_="1"),
                 tuit("Saludos a la comunidad en su aniversario", id_="2"),
             ],
         )
@@ -713,7 +715,7 @@ def test_una_clave_no_configurada_deja_aviso_en_vez_de_desaparecer(servicio, cap
 
     avisos = [r for r in caplog.records if "no están en BOMBEROS_ACCIDENT_KEYS" in r.message]
     assert avisos, "una clave que la central usa y nosotros tiramos tiene que verse"
-    assert "5-1" in avisos[-1].claves
+    assert "7-9" in avisos[-1].claves
     # El saludo NO cuenta: no traía clave, y ése sí es silencio legítimo.
     assert sum(avisos[-1].claves.values()) == 1
 
@@ -723,7 +725,7 @@ def test_un_lote_sin_despachos_no_es_un_aviso(servicio):
     """La central publica muchas cosas que no son claves.
 
     Avisarlo en cada entrega enseñaría a ignorar los avisos, que es como se
-    pierde el que sí importa. Mismo criterio que el feed sin 10-4.
+    pierde el que sí importa. Mismo criterio que el feed sin 5-1.
 
     (El `@respx.mock` faltaba: este test venía pasando por el router global que
     dejaba abierto el test anterior, o sea dependiendo del orden de ejecución.
@@ -746,9 +748,9 @@ def test_el_evento_ingerido_lleva_la_confianza_y_el_tipo_de_bomberos(servicio):
     from app.models.enums import EventType
 
     respx.get(ITEMS_URL).mock(
-        return_value=httpx.Response(200, json=[tuit("81 * RUTA 68 KM 42 * CLAVE 10-4", id_="9")])
+        return_value=httpx.Response(200, json=[tuit("81 * RUTA 68 KM 42 * CLAVE 5-1", id_="9")])
     )
-    settings.BOMBEROS_ACCIDENT_KEYS = ["10-4"]
+    settings.BOMBEROS_ACCIDENT_KEYS = ["5-1"]
 
     asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
 
@@ -764,22 +766,22 @@ def test_el_evento_ingerido_lleva_la_confianza_y_el_tipo_de_bomberos(servicio):
 def test_el_mismo_despacho_produce_el_mismo_external_id_por_las_dos_puertas(servicio):
     """La razón de que `dispatches_to_events` sea una función libre.
 
-    Si el webhook armara su propio evento, la misma 10-4 entraría con
+    Si el webhook armara su propio evento, la misma 5-1 entraría con
     `external_id` distinto según la puerta y aparecería dos veces en el mapa.
     """
     from app.collectors.traffic.bomberos_10_4_worker import Dispatch, build_external_id
 
     respx.get(ITEMS_URL).mock(
-        return_value=httpx.Response(200, json=[tuit("81 * RUTA 68 * CLAVE 10-4", id_="77")])
+        return_value=httpx.Response(200, json=[tuit("81 * RUTA 68 * CLAVE 5-1", id_="77")])
     )
-    settings.BOMBEROS_ACCIDENT_KEYS = ["10-4"]
+    settings.BOMBEROS_ACCIDENT_KEYS = ["5-1"]
 
     asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
     por_webhook = ServicioFalso.ultimo.eventos[0].external_id
 
     por_feed = build_external_id(
         Dispatch(
-            key="10-4",
+            key="5-1",
             address="x",
             occurred_at=None,
             commune=None,
@@ -839,11 +841,11 @@ def con_geocodificacion(monkeypatch):
 def test_el_despacho_geocodificado_entra_con_coordenadas(servicio, con_geocodificacion):
     respx.get(ITEMS_URL).mock(
         return_value=httpx.Response(
-            200, json=[tuit("81 * DIEGO COOK / GUACOLDA * 10-4", id_="5")]
+            200, json=[tuit("81 * DIEGO COOK / GUACOLDA * 5-1", id_="5")]
         )
     )
     respx.get(url__startswith=NOMINATIM_URL).mock(return_value=_nominatim())
-    settings.BOMBEROS_ACCIDENT_KEYS = ["10-4"]
+    settings.BOMBEROS_ACCIDENT_KEYS = ["5-1"]
 
     asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
 
@@ -860,16 +862,16 @@ def test_el_despacho_geocodificado_entra_con_coordenadas(servicio, con_geocodifi
 def test_si_nominatim_falla_el_despacho_entra_igual(servicio, con_geocodificacion):
     """La propiedad que no se puede perder al ganar el punto.
 
-    Una 10-4 vale por su certeza sobre el hecho. Tirarla porque OpenStreetMap no
+    Una 5-1 vale por su certeza sobre el hecho. Tirarla porque OpenStreetMap no
     conoce una esquina sería cambiar un problema de cobertura por uno de datos.
     """
     respx.get(ITEMS_URL).mock(
         return_value=httpx.Response(
-            200, json=[tuit("81 * CALLE INEXISTENTE / OTRA * 10-4", id_="6")]
+            200, json=[tuit("81 * CALLE INEXISTENTE / OTRA * 5-1", id_="6")]
         )
     )
     respx.get(url__startswith=NOMINATIM_URL).mock(side_effect=httpx.ConnectError("sin red"))
-    settings.BOMBEROS_ACCIDENT_KEYS = ["10-4"]
+    settings.BOMBEROS_ACCIDENT_KEYS = ["5-1"]
 
     asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
 
@@ -885,10 +887,10 @@ def test_el_presupuesto_de_geocodificacion_se_respeta(servicio, monkeypatch):
     """Con el tope en cero no se toca la red, y los despachos entran igual."""
     monkeypatch.setattr(settings, "BOMBEROS_MAX_GEOCODES", 0)
     respx.get(ITEMS_URL).mock(
-        return_value=httpx.Response(200, json=[tuit("81 * RUTA 68 * 10-4", id_="7")])
+        return_value=httpx.Response(200, json=[tuit("81 * RUTA 68 * 5-1", id_="7")])
     )
     ruta = respx.get(url__startswith=NOMINATIM_URL).mock(return_value=_nominatim())
-    settings.BOMBEROS_ACCIDENT_KEYS = ["10-4"]
+    settings.BOMBEROS_ACCIDENT_KEYS = ["5-1"]
 
     asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
 
@@ -901,7 +903,7 @@ def test_un_incendio_estructural_no_entra_como_accidente(servicio):
     """El literal `EventType.ACCIDENT` que la ingesta ampliada dejó obsoleto.
 
     `BOMBEROS_ACCIDENT_KEYS` trae la familia 10 entera desde hace tiempo; el tipo
-    seguía fijo. Un 10-1 quedaba en la familia `traffic`, incapaz de corroborar
+    seguía fijo. Un 1-1 quedaba en la familia `traffic`, incapaz de corroborar
     ninguna señal de fuego, y sumando al contador equivocado de la interfaz.
     """
     from app.models.enums import EventType
@@ -910,14 +912,14 @@ def test_un_incendio_estructural_no_entra_como_accidente(servicio):
         return_value=httpx.Response(
             200,
             json=[
-                tuit("B2 * ALDUNATE 1200 * 10-1", id_="10"),
-                tuit("M5 * CAMINO LA POLVORA * 10-2", id_="11"),
-                tuit("81 * DIEGO COOK / GUACOLDA * CLAVE 12", id_="12"),
-                tuit("21 * RUTA 68 KM 42 * 10-4", id_="13"),
+                tuit("B2 * ALDUNATE 1200 * 1-1", id_="10"),
+                tuit("M5 * CAMINO LA POLVORA * 2-2", id_="11"),
+                tuit("41 * AV ESPANA * 4-1", id_="12"),
+                tuit("21 * RUTA 68 KM 42 * 5-1", id_="13"),
             ],
         )
     )
-    settings.BOMBEROS_ACCIDENT_KEYS = ["10-1", "10-2", "10-4", "12"]
+    settings.BOMBEROS_ACCIDENT_KEYS = ["1-1", "2-2", "4-1", "5-1"]
 
     asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
 

@@ -30,8 +30,10 @@ from app.models.enums import EventType, family_of_event
 
 FUENTE = "@CGI_CBV"
 
-#: El despacho real del 1 de septiembre de 2026, tal como lo publicó la cuenta.
-DESPACHO_REAL = "81 * DIEGO COOK / GUACOLDA * CLAVE 12"
+#: Despacho real de @CGI_CBV del 2 de septiembre de 2026, tal como lo publicó.
+#: Es el que destapó que las tablas de claves eran de otro sistema: `5-1` no
+#: estaba en ninguna, así que este accidente se descartaba en silencio.
+DESPACHO_REAL = "91, 71 * AVENIDA ESPANA / AVENIDA ARGENTINA * CLAVE 5-1"
 
 
 # =============================================================================
@@ -42,15 +44,15 @@ DESPACHO_REAL = "81 * DIEGO COOK / GUACOLDA * CLAVE 12"
 def test_el_despacho_real_produce_el_resumen_pedido():
     """El ejemplo de la especificación, carácter por carácter."""
     resumen = gemini.format_dispatch_summary(
-        clave="CLAVE 12",
-        street_1="DIEGO COOK",
-        street_2="GUACOLDA",
+        clave="5-1",
+        street_1="AVENIDA ESPANA",
+        street_2="AVENIDA ARGENTINA",
         city="VALPARAÍSO",
         source_handle=FUENTE,
     )
     assert resumen == (
-        "(Clave 12) (Llamado a servicio especial) "
-        "en (Diego Cook con Guacolda, Valparaíso) (Fuente: @CGI_CBV)"
+        "(5-1) (Rescate vehicular simple) "
+        "en (Avenida Espana con Avenida Argentina, Valparaíso) (Fuente: @CGI_CBV)"
     )
 
 
@@ -63,12 +65,13 @@ def test_la_heuristica_sola_decodifica_el_despacho_real():
     """
     decoded = gemini.dispatch_summary_heuristic(DESPACHO_REAL, source_handle=FUENTE)
     assert decoded is not None
-    assert decoded["clave"] == "Clave 12"
-    assert decoded["street_1"] == "DIEGO COOK"
-    assert decoded["street_2"] == "GUACOLDA"
+    assert decoded["clave"] == "5-1"
+    assert decoded["street_1"] == "AVENIDA ESPANA"
+    assert decoded["street_2"] == "AVENIDA ARGENTINA"
     assert decoded["city"] is None
     assert decoded["resumen"] == (
-        "(Clave 12) (Llamado a servicio especial) en (Diego Cook con Guacolda) (Fuente: @CGI_CBV)"
+        "(5-1) (Rescate vehicular simple) "
+        "en (Avenida Espana con Avenida Argentina) (Fuente: @CGI_CBV)"
     )
 
 
@@ -80,57 +83,63 @@ def test_la_heuristica_sola_decodifica_el_despacho_real():
 @pytest.mark.parametrize(
     ("texto", "esperado"),
     [
-        ("10-0 en Serrano", ("10-0", "Incendio estructural")),
-        ("10-2 en el cerro", ("10-2", "Incendio de pastizales")),
-        ("10-3 rescate", ("10-3", "Rescate o salvamento")),
-        ("10-4 en Ruta 68", ("10-4", "Rescate vehicular")),
-        # El cero intermedio es separador de familia, no un valor.
-        ("10-0-4 en Ruta 68", ("10-4", "Rescate vehicular")),
+        ("1-1 en Serrano", ("1-1", "Incendio estructural simple")),
+        ("2-2 en el cerro", ("2-2", "Incendio forestal rural")),
+        ("3-1 en la vía", ("3-1", "Incendio vehicular menor")),
+        ("5-1 en Ruta 68", ("5-1", "Rescate vehicular simple")),
+        ("5-2 con atrapados", ("5-2", "Rescate vehicular complejo")),
+        ("6-1 rescate", ("6-1", "Rescate de persona de baja complejidad")),
+        ("9-1 en el túnel", ("9-1", "Accidente en túnel")),
         # El sufijo es un subtipo del mismo despacho: hereda el significado.
-        ("10-4-1 con atrapado", ("10-4-1", "Rescate vehicular")),
-        ("10-12 apoyo", ("10-12", "Llamado a servicio especial")),
-        ("CLAVE 12", ("Clave 12", "Llamado a servicio especial")),
-        ("3-1 al lugar", ("3-1", "Solicita concurrencia de Carabineros")),
-        ("3-2 al lugar", ("3-2", "Solicita ambulancia")),
-        ("3-3 al lugar", ("3-3", "Solicita concurrencia de la empresa eléctrica")),
+        ("5-1-2 con atrapado", ("5-1-2", "Rescate vehicular simple")),
+        # Nombradas pero NO ingeridas: el resumen las dice igual.
+        ("CLAVE 12", ("Clave 12", "Academia de Cuerpo")),
+        ("CLAVE 13", ("Clave 13", "Simulacro")),
     ],
 )
 def test_el_diccionario_decodifica_las_claves_del_estandar(texto, esperado):
     assert resolve_clave(texto) == esperado
 
 
-def test_clave_12_y_10_12_significan_lo_mismo():
-    """Las dos formas de la misma clave no pueden divergir.
+def test_la_clave_12_es_una_academia_y_no_se_ingiere():
+    """El hallazgo que obligó a rehacer las tablas.
 
-    Están escritas como dos entradas de `CLAVE_MEANINGS` porque se reconocen por
-    caminos distintos —una es un código de familia, la otra la forma literal—,
-    y dos entradas separadas es exactamente la situación en la que alguien edita
-    una y olvida la otra.
+    `12` estaba en `BOMBEROS_ACCIDENT_KEYS` como «llamado a servicio especial»,
+    tomado de otro sistema de claves. En el CBV es **Academia de Cuerpo**: una
+    capacitación. Con la configuración anterior, una academia podía entrar al
+    mapa como emergencia confirmada con confianza 1.00.
     """
-    assert CLAVE_MEANINGS[(12,)] == CLAVE_MEANINGS[(10, 12)]
+    from app.collectors.vocabulary import CODE_TYPES, NON_INCIDENT_CODES
+
+    assert CLAVE_MEANINGS[(12,)] == "Academia de Cuerpo"
+    assert (12,) in NON_INCIDENT_CODES
+    assert (12,) not in CODE_TYPES
 
 
-def test_10_40_no_es_10_4():
+def test_5_10_no_es_5_1():
     """La confusión que este proyecto persigue desde el primer worker.
 
-    `10-40` es emanación de gas. Si respondiera a `10-4`, un despacho por fuga
-    aparecería en el mapa como accidente vehicular.
+    Un `5-10` inexistente no puede responder a `5-1`: un despacho cualquiera
+    aparecería en el mapa como rescate vehicular, o sea como un choque con
+    lesionados que nadie reportó.
     """
-    assert resolve_clave("10-40 en Placeres") is None
-    assert clave_meaning((10, 40)) is None
+    assert resolve_clave("5-10 en Placeres") is None
+    assert clave_meaning((5, 10)) is None
 
 
 def test_una_fecha_no_es_una_clave():
-    assert resolve_clave("el 10-4-2026 se realizara el simulacro") is None
+    assert resolve_clave("el 5-1-2026 se realizara el simulacro") is None
 
 
-def test_clave_10_4_no_se_lee_como_la_clave_literal_10():
+def test_clave_5_1_no_se_lee_como_la_clave_literal_5():
     """El lookahead de `_CLAVE_LITERAL`, que es lo único que separa los dos casos.
 
-    Sin él, "clave 10-4" produciría `(10,)` —una clave que no existe— y todo
-    despacho de la familia 10 se resumiría igual.
+    Sin él, "clave 5-1" produciría `(5,)` y el rescate vehicular perdería su
+    subclave. Importa más que antes: `(10,)` SÍ existe en el CBV —abastecer
+    agua— así que una lectura corta de "clave 10-4" produciría una clave real y
+    equivocada en vez de una inexistente.
     """
-    assert find_claves("clave 10-4") == [(10, 4)]
+    assert find_claves("clave 5-1") == [(5, 1)]
 
 
 def test_la_primera_clave_del_aviso_es_la_que_manda():
@@ -139,26 +148,27 @@ def test_la_primera_clave_del_aviso_es_la_que_manda():
     "10-4 ... se solicita 3-2" es un rescate vehicular con ambulancia en camino,
     no una ambulancia. El orden de aparición es lo que los distingue.
     """
-    assert find_claves("10-4 en Ruta 68, se solicita 3-2") == [(10, 4), (3, 2)]
-    assert resolve_clave("10-4 en Ruta 68, se solicita 3-2") == (
-        "10-4",
-        "Rescate vehicular",
+    assert find_claves("5-1 en Ruta 68, luego 6-1") == [(5, 1), (6, 1)]
+    assert resolve_clave("5-1 en Ruta 68, luego 6-1") == (
+        "5-1",
+        "Rescate vehicular simple",
     )
 
 
-def test_las_claves_de_familia_3_no_crean_eventos():
-    """Tienen nombre y NO están en las tablas que clasifican.
+def test_las_claves_internas_no_crean_eventos():
+    """Tienen nombre y NO están en la tabla que clasifica.
 
     Es la razón de que `CLAVE_MEANINGS` sea una tabla aparte de `CODE_TYPES`:
-    una petición de recursos se puede nombrar sin que dispare un punto en el
-    mapa. Si alguien las mueve, este test lo dice.
+    una academia, un simulacro o un abastecimiento de agua se pueden nombrar sin
+    que disparen un punto en el mapa. Poner cualquiera de éstas en `CODE_TYPES`
+    metería un ejercicio de bomberos en la capa de emergencias, con la confianza
+    de la central detrás.
     """
-    from app.collectors.vocabulary import CODE_TYPES, SUPPORT_CODES
+    from app.collectors.vocabulary import CODE_TYPES, NON_INCIDENT_CODES
 
-    for code in ((3, 1), (3, 2), (3, 3)):
-        assert code in CLAVE_MEANINGS
-        assert code not in CODE_TYPES
-        assert code not in SUPPORT_CODES
+    for code in NON_INCIDENT_CODES:
+        assert code in CLAVE_MEANINGS, f"{code} se excluye sin nombrar"
+        assert code not in CODE_TYPES, f"{code} no describe una emergencia"
 
 
 def test_clave_label_distingue_las_dos_formas():
@@ -185,27 +195,28 @@ def test_el_significado_lo_pone_el_diccionario_y_no_el_modelo():
     de la central —confianza 1.00— algo que la central no dijo.
     """
     decoded = gemini.parse_dispatch_response(
-        '{"clave": "10-2", "significado": "Rescate vehicular", '
+        '{"clave": "2-2", "significado": "Rescate vehicular", '
         '"street_1": "CAMINO LA POLVORA", "street_2": null, "city": null, '
         '"resumen": "cualquier cosa"}',
         source_handle=FUENTE,
     )
     assert decoded is not None
-    assert "Incendio de pastizales" in decoded["resumen"]
+    assert "Incendio forestal rural" in decoded["resumen"]
     assert "Rescate vehicular" not in decoded["resumen"]
 
 
 def test_el_resumen_del_modelo_nunca_se_guarda():
     """Aunque el modelo devuelva un resumen con otro formato, se ignora."""
     decoded = gemini.parse_dispatch_response(
-        '{"clave": "10-4", "significado": "Rescate vehicular", '
+        '{"clave": "5-1", "significado": "Rescate vehicular", '
         '"street_1": "AV ESPANA", "street_2": null, "city": "VALPARAISO", '
-        '"resumen": "10-4 — Av España (Valparaíso) [CGI_CBV]"}',
+        '"resumen": "5-1 — Av España (Valparaíso) [CGI_CBV]"}',
         source_handle=FUENTE,
     )
     assert decoded is not None
     assert decoded["resumen"] == (
-        "(10-4) (Rescate vehicular) en (Av Espana, Valparaiso) (Fuente: @CGI_CBV)"
+        "(5-1) (Rescate vehicular simple) en (Av Espana, Valparaiso) "
+        "(Fuente: @CGI_CBV)"
     )
 
 
@@ -213,19 +224,19 @@ def test_una_clave_desconocida_conserva_el_numero():
     """El número es el dato; el significado ausente es la señal de que falta una
     entrada en `CLAVE_MEANINGS`. Escribir "Sin clave" ocultaría justo eso."""
     resumen = gemini.format_dispatch_summary(
-        clave="10-99",
+        clave="5-99",
         street_1="BLANCO",
         street_2=None,
         city=None,
         source_handle=FUENTE,
     )
-    assert resumen.startswith("(10-99) (Clave no reconocida)")
+    assert resumen.startswith("(5-99) (Clave no reconocida)")
 
 
 def test_sin_via_la_ubicacion_es_explicita():
     """Un paréntesis vacío parece un error de código; esto es un dato ausente."""
     resumen = gemini.format_dispatch_summary(
-        clave="10-4", street_1=None, street_2=None, city=None, source_handle=FUENTE
+        clave="5-1", street_1=None, street_2=None, city=None, source_handle=FUENTE
     )
     assert f"en ({gemini.UBICACION_DESCONOCIDA})" in resumen
 
@@ -341,12 +352,12 @@ def test_la_clave_sola_basta_aunque_no_haya_calle():
     ubicarla.
     """
     decoded = gemini.parse_dispatch_response(
-        '{"clave": "10-4", "significado": null, "street_1": null, '
+        '{"clave": "5-1", "significado": null, "street_1": null, '
         '"street_2": null, "city": null, "resumen": null}',
         source_handle=FUENTE,
     )
     assert decoded is not None
-    assert decoded["resumen"].startswith("(10-4) (Rescate vehicular)")
+    assert decoded["resumen"].startswith("(5-1) (Rescate vehicular simple)")
 
 
 def test_el_markdown_que_el_modelo_agrega_se_limpia():
@@ -372,6 +383,21 @@ def test_la_unidad_despachada_no_es_una_direccion():
     assert decoded is not None
     assert decoded["street_1"] == "AVENIDA ALEMANIA"
     assert decoded["street_2"] == "LOS PLACERES"
+
+
+def test_varias_unidades_juntas_tampoco_son_una_direccion():
+    """A una emergencia grande la central despacha mas de un carro.
+
+    El despacho real que destapo las tablas de claves abria con «91, 71». Con el
+    patron de una sola unidad, ese campo no se reconocia y terminaba en
+    `street_1`: el rescate vehicular de Avenida Espana se iba a geocodificar
+    buscando la calle «91, 71». El fallo aparece justo en los despachos mas
+    grandes, que son los que mas importan.
+    """
+    decoded = gemini.dispatch_summary_heuristic(
+        "B2, M5, 11 * ALDUNATE 1200 * 1-1", source_handle=FUENTE
+    )
+    assert decoded["street_1"] == "ALDUNATE 1200"
 
 
 def test_una_altura_de_calle_si_es_direccion():
@@ -494,26 +520,35 @@ def test_el_default_de_la_configuracion_es_parseable_entero():
 @pytest.mark.parametrize(
     ("despacho", "esperado"),
     [
-        ("81 * DIEGO COOK / GUACOLDA * 10-4", EventType.ACCIDENT),
-        # `10-4-1` es un subtipo del mismo despacho: comparación por prefijo.
-        ("21 * RUTA 68 KM 42 * 10-4-1", EventType.ACCIDENT),
-        ("B2 * ALDUNATE 1200 * 10-1", EventType.STRUCTURAL_FIRE),
-        ("11 * SUBIDA CARVALLO * 10-0", EventType.STRUCTURAL_FIRE),
-        ("M5 * CAMINO LA POLVORA * 10-2", EventType.WILDFIRE),
-        ("31 * QUEBRADA VERDE * 10-3", EventType.RESCUE),
+        # El despacho real que destapó todo esto.
+        ("91, 71 * AVENIDA ESPANA / AVENIDA ARGENTINA * 5-1", EventType.ACCIDENT),
+        # `5-1-2` es un subtipo del mismo despacho: comparación por prefijo.
+        ("21 * RUTA 68 KM 42 * 5-1-2", EventType.ACCIDENT),
+        ("21 * RUTA 68 KM 42 * 5-2", EventType.ACCIDENT),
+        ("B2 * ALDUNATE 1200 * 1-1", EventType.STRUCTURAL_FIRE),
+        ("11 * SUBIDA CARVALLO * 1-2", EventType.STRUCTURAL_FIRE),
+        ("M5 * CAMINO LA POLVORA * 2-2", EventType.WILDFIRE),
+        ("31 * QUEBRADA VERDE * 6-1", EventType.RESCUE),
+        # Incendio vehicular: `STRUCTURAL_FIRE` es lo más cercano del enum y lo
+        # que importa es que caiga en la familia `fire`.
+        ("41 * AV ESPANA * 3-2", EventType.STRUCTURAL_FIRE),
+        ("51 * TUNEL * 9-1", EventType.ACCIDENT),
     ],
 )
 def test_cada_clave_produce_su_tipo(despacho, esperado):
     assert vocabulary.dispatch_event_type(despacho) is esperado
 
 
-def test_una_clave_de_apoyo_no_es_un_accidente():
-    """"CLAVE 12" es un llamado a servicio especial: puede ser cualquier cosa.
+def test_una_clave_interna_no_afirma_una_emergencia():
+    """Una academia o un simulacro no son un hecho del mundo que mapear.
 
-    `OTHER` cae en la familia `other` —"Otras emergencias" en el mapa— que es
-    exactamente lo que el sistema sabe. `ACCIDENT` afirmaría que hubo un choque.
+    Caen al tipo por defecto —`OTHER`— y además quedan fuera de
+    `BOMBEROS_ACCIDENT_KEYS`, así que ni siquiera llegan a crear un evento.
+    Doble barrera a propósito: la clasificación y la ingesta son dos decisiones
+    distintas y ninguna debería depender de que la otra esté bien.
     """
-    assert vocabulary.dispatch_event_type(DESPACHO_REAL) is EventType.OTHER
+    assert vocabulary.dispatch_event_type("81 * CUARTEL * CLAVE 12") is EventType.OTHER
+    assert vocabulary.dispatch_event_type("81 * CUARTEL * CLAVE 13") is EventType.OTHER
 
 
 def test_la_clave_de_familia_10_gana_a_la_peticion_de_recursos():
@@ -523,7 +558,7 @@ def test_la_clave_de_familia_10_gana_a_la_peticion_de_recursos():
     la primera clave manda. Es el mismo criterio que `resolve_clave`.
     """
     assert (
-        vocabulary.dispatch_event_type("81 * AV ARGENTINA * 10-1, se solicita 3-2")
+        vocabulary.dispatch_event_type("81 * AV ARGENTINA * 1-1, luego 6-1")
         is EventType.STRUCTURAL_FIRE
     )
 
@@ -533,20 +568,36 @@ def test_un_despacho_sin_clave_no_afirma_nada():
     assert vocabulary.DISPATCH_DEFAULT_TYPE is EventType.OTHER
 
 
-def test_10_1_esta_en_las_dos_tablas():
-    """El desfase que motivó el arreglo, fijado para que no vuelva.
+def test_toda_clave_ingerida_tiene_significado_y_tipo():
+    """La invariante que ya falló dos veces, ahora sobre toda la tabla.
 
-    `10-1` estaba en `CLAVE_MEANINGS` —o sea, el resumen la nombraba— pero no en
-    `CODE_TYPES`, así que nombraba sin clasificar. Y `BOMBEROS_ACCIDENT_KEYS` la
-    incluye: el despacho entraba y caía al tipo por defecto.
+    Primero fue `10-1`, que se nombraba sin clasificar. Después fue peor: la
+    tabla entera describía otro sistema de claves, así que ninguna de las que
+    se ingerían existía en el CBV.
+
+    Una clave configurada sin tipo entra como `OTHER` y sale de la familia donde
+    el mapa la busca — un incendio de la fuente de peso 1.00 fuera de
+    «Incendios». Una sin significado sale en el resumen como un número pelado.
     """
-    for code in CLAVE_MEANINGS:
-        if code[:1] != (10,) or code in {(10, 12)}:
-            continue
-        assert code in CODE_TYPES, (
-            f"{clave_label(code)} tiene significado pero no tipo: se nombra en el "
-            f"resumen y no se clasifica en el mapa"
-        )
+    from app.core.config import settings
+
+    for key in settings.BOMBEROS_ACCIDENT_KEYS:
+        code = vocabulary.parse_key(key)
+        assert code is not None, f"{key} no es una clave parseable"
+        assert code in CLAVE_MEANINGS, f"{key} se ingiere y no tiene significado"
+        assert code in CODE_TYPES, f"{key} se ingiere y no tiene tipo"
+
+
+def test_ninguna_clave_interna_esta_configurada_para_ingesta():
+    """El contrapunto: lo que NO es una emergencia no puede entrar.
+
+    Es lo que fallaba con `12`, que estaba configurada y es una academia.
+    """
+    from app.collectors.vocabulary import NON_INCIDENT_CODES
+    from app.core.config import settings
+
+    configuradas = {vocabulary.parse_key(k) for k in settings.BOMBEROS_ACCIDENT_KEYS}
+    assert not (configuradas & NON_INCIDENT_CODES)
 
 
 def test_el_evento_de_un_incendio_estructural_cae_en_la_familia_fire():
@@ -556,7 +607,7 @@ def test_el_evento_de_un_incendio_estructural_cae_en_la_familia_fire():
     de FIRMS del mismo cerro. Con el literal viejo, no podía.
     """
     despacho = Dispatch(
-        key="10-1",
+        key="1-1",
         address="ALDUNATE 1200",
         occurred_at=None,
         commune=None,

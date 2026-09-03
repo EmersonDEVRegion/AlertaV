@@ -156,10 +156,10 @@ def test_classify_event_type(texto: str, esperado: EventType | None) -> None:
         "Primera alarma de incendio estructural en calle Serrano",
         "Quema de pastizales en Villa Alemana",
         # Claves radiales
-        "10-0 en calle Serrano, se despachan carros",
-        "Bomberos despacha 10-4 en Ruta 68",
-        "Alerta de 10-2 en el sector alto",
-        "Se solicita 10-3 en el acantilado",
+        "1-1 en calle Serrano, se despachan carros",
+        "Bomberos despacha 5-1 en Ruta 68",
+        "Alerta de 2-2 en el sector alto",
+        "Se solicita 6-1 en el acantilado",
         # Entidad + contexto operativo
         "Bomberos concurre a una emergencia en el cerro Barón",
         "SAMU trasladó a dos lesionados hasta el Hospital Van Buren",
@@ -229,19 +229,19 @@ def test_la_excision_es_quirurgica_y_no_veta_el_post_entero() -> None:
 
 
 def test_las_fechas_no_se_confunden_con_claves_radiales() -> None:
-    """`10-12-2026` es una fecha, no un despacho de apoyo. Lo resuelve
+    """`1-12-2026` es una fecha, no un despacho de apoyo. Lo resuelve
     `normalise_code`, reutilizado del worker de Bomberos."""
-    assert is_emergency("Nos vemos el 10-12-2026 en la plaza") is False
-    assert is_emergency("Actividad el 10-4-2026 en el muelle") is False
-    # 10-40 es otra clave por completo: no puede responder a 10-4.
-    assert is_emergency("Radio 10-40 transmite desde el puerto") is False
+    assert is_emergency("Nos vemos el 1-12-2026 en la plaza") is False
+    assert is_emergency("Actividad el 5-1-2026 en el muelle") is False
+    # 5-10 es otra clave por completo: no puede responder a 5-1.
+    assert is_emergency("Radio 5-10 transmite desde el puerto") is False
 
 
 def test_el_apoyo_10_12_necesita_compania() -> None:
     """Un apoyo no describe una emergencia nueva: es un despacho adicional a una
-    que ya está en curso. Y `10-12` colisiona con una fecha corta."""
-    assert is_emergency("Programación del 10-12 en el teatro") is False
-    assert is_emergency("Bomberos solicita 10-12 de urgencia al lugar") is True
+    que ya está en curso. Y `1-12` colisiona con una fecha corta."""
+    assert is_emergency("Programación del 1-12 en el teatro") is False
+    assert is_emergency("Bomberos solicita 1-12 de urgencia al lugar") is True
 
 
 def test_los_terminos_estan_normalizados() -> None:
@@ -270,7 +270,7 @@ def test_el_prefiltro_es_sincronico() -> None:
     [
         "Choque en Av. España",
         "Bomberos concurre a una emergencia",
-        "10-12 solicitado por Bomberos",
+        "1-12 solicitado por Bomberos",
         "El alcalde inauguró la plaza",
         "",
         "Incendio forestal en Placilla",
@@ -290,15 +290,16 @@ def test_el_prefiltro_y_el_clasificador_no_se_contradicen(caption: str) -> None:
 @pytest.mark.parametrize(
     ("caption", "esperado"),
     [
-        ("10-0 en calle Serrano", EventType.STRUCTURAL_FIRE),
-        ("Despacho 10-2 al sector alto", EventType.WILDFIRE),
-        ("Solicitan 10-3 en el acantilado", EventType.RESCUE),
-        ("10-4 en Ruta 68", EventType.ACCIDENT),
-        # Subtipo: 10-4-1 es rescate vehicular con víctima atrapada, el mismo
+        ("1-1 en calle Serrano", EventType.STRUCTURAL_FIRE),
+        ("Despacho 2-2 al sector alto", EventType.WILDFIRE),
+        ("Solicitan 6-1 en el acantilado", EventType.RESCUE),
+        ("5-1 en Ruta 68", EventType.ACCIDENT),
+        # Subtipo: 5-1-1 es rescate vehicular con víctima atrapada, el mismo
         # despacho. La comparación por prefijo lo deja pasar.
-        ("Confirman 10-4-1 en la Ruta 68", EventType.ACCIDENT),
-        # El separador de familia colapsa: 10-0-4 ES un 10-4.
-        ("Clave 10-0-4 en Av. Argentina", EventType.ACCIDENT),
+        ("Confirman 5-1-1 en la Ruta 68", EventType.ACCIDENT),
+        # Un incendio estructural sigue siendo estructural aunque el caption
+        # hable de "emergencia": la clave es más específica que el sinónimo.
+        ("Clave 1-1 en Av. Argentina", EventType.STRUCTURAL_FIRE),
     ],
 )
 def test_la_clave_radial_manda_sobre_el_vocabulario(

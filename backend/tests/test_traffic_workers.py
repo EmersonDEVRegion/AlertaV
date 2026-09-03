@@ -258,13 +258,13 @@ RSS_FEED = """<?xml version="1.0" encoding="UTF-8"?>
   <channel>
     <title>Central CBV</title>
     <item>
-      <title>Clave 10-4 en Ruta 68 km 42, se despachan unidades</title>
+      <title>Clave 5-1 en Ruta 68 km 42, se despachan unidades</title>
       <description>Rescate vehicular. Personal en el lugar.</description>
       <guid>https://ejemplo.cl/status/1</guid>
       <pubDate>Wed, 19 Aug 2026 14:30:00 GMT</pubDate>
     </item>
     <item>
-      <title>Clave 10-0-4 Av. Espa&#241;a con Uno Norte</title>
+      <title>Clave 5-0-1 Av. Espa&#241;a con Uno Norte</title>
       <guid>https://ejemplo.cl/status/2</guid>
       <pubDate>Wed, 19 Aug 2026 14:35:00 GMT</pubDate>
     </item>
@@ -284,16 +284,16 @@ RSS_FEED = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def test_bomberos_extrae_del_rss_solo_la_clave_pedida():
-    despachos = parse_dispatches(RSS_FEED, ["10-4"])
+    despachos = parse_dispatches(RSS_FEED, ["5-1"])
 
-    assert len(despachos) == 2, "deben entrar 10-4 y 10-0-4, y sólo esas"
-    assert {d.key for d in despachos} == {"10-4"}
+    assert len(despachos) == 2, "deben entrar 5-1 y 5-0-1, y sólo esas"
+    assert {d.key for d in despachos} == {"5-1"}
     assert "Ruta 68" in (despachos[0].address or "")
     assert "España" in (despachos[1].address or ""), "las entidades XML se decodifican"
 
 
 def test_bomberos_lee_la_fecha_del_pubdate():
-    despacho = parse_dispatches(RSS_FEED, ["10-4"])[0]
+    despacho = parse_dispatches(RSS_FEED, ["5-1"])[0]
     assert despacho.occurred_at is not None
     assert (despacho.occurred_at.day, despacho.occurred_at.month) == (19, 8)
     assert despacho.occurred_at.tzinfo is not None, "debe llegar con zona horaria"
@@ -304,18 +304,18 @@ def test_bomberos_mira_titulo_y_descripcion():
     feed = """<?xml version="1.0"?><rss version="2.0"><channel>
       <item>
         <title>Despacho en curso</title>
-        <description>Clave 10-4 en Av. Argentina</description>
+        <description>Clave 5-1 en Av. Argentina</description>
         <guid>x1</guid>
       </item></channel></rss>"""
-    despachos = parse_dispatches(feed, ["10-4"])
+    despachos = parse_dispatches(feed, ["5-1"])
     assert len(despachos) == 1
     assert "Av. Argentina" in despachos[0].address
 
 
 def test_bomberos_emite_accidente_confirmado_sin_coordenadas():
-    """Una 10-4 aporta certeza, no ubicación. Ver el docstring del worker."""
+    """Una 5-1 aporta certeza, no ubicación. Ver el docstring del worker."""
     collector = Bomberos104Collector.__new__(Bomberos104Collector)
-    eventos = collector.normalize(parse_dispatches(RSS_FEED, ["10-4"]))
+    eventos = collector.normalize(parse_dispatches(RSS_FEED, ["5-1"]))
 
     assert len(eventos) == 2
     evento = eventos[0]
@@ -328,8 +328,8 @@ def test_bomberos_emite_accidente_confirmado_sin_coordenadas():
 
 def test_bomberos_el_id_externo_sale_del_guid():
     """Idempotencia: releer el feed cada 3 min no puede duplicar el despacho."""
-    primera = parse_dispatches(RSS_FEED, ["10-4"])
-    segunda = parse_dispatches(RSS_FEED, ["10-4"])
+    primera = parse_dispatches(RSS_FEED, ["5-1"])
+    segunda = parse_dispatches(RSS_FEED, ["5-1"])
     assert build_external_id(primera[0]) == build_external_id(segunda[0])
     assert build_external_id(primera[0]) != build_external_id(primera[1])
 

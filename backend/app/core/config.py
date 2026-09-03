@@ -341,8 +341,31 @@ class Settings(BaseSettings):
     #: `12` es la forma literal "CLAVE 12" que publica el Cuerpo de Valparaíso,
     #: sin familia por delante. Necesita `parse_key` para ser reconocida: hasta
     #: ese cambio, configurarla no producía error **ni coincidencia**.
+    #: Claves del CBV que se ingieren. **Sólo emergencias reales.**
+    #:
+    #: La lista anterior —`10-0` … `10-4` y `12`— era de otro sistema de claves.
+    #: En el CBV, `10` es «abastecer o aspirar agua» y `12` es «Academia de
+    #: Cuerpo»: una academia podía entrar al mapa como emergencia confirmada
+    #: con confianza 1.00, y ninguna clave de accidente real estaba configurada.
+    #:
+    #: Quedan fuera a propósito 7, 8, 10, 11, 12, 13 y 14 — ver
+    #: `vocabulary.NON_INCIDENT_CODES`, que explica cada una.
+    #:
+    #: Agregar una clave nueva exige antes darle significado en `CLAVE_MEANINGS`
+    #: y tipo en `CODE_TYPES`. Sin tipo, el despacho entra como `OTHER` y un
+    #: incendio de la fuente de peso 1.00 queda fuera de la familia donde el
+    #: mapa lo busca.
     BOMBEROS_ACCIDENT_KEYS: CsvList = Field(
-        default_factory=lambda: ["10-0", "10-1", "10-2", "10-3", "10-4", "12"]
+        default_factory=lambda: [
+            "1-1", "1-2", "1-3",           # incendio estructural
+            "2-1", "2-2", "2-3",           # incendio forestal
+            "3-1", "3-2",                  # incendio vehicular
+            "4-1", "4-2",                  # materiales peligrosos
+            "5-1", "5-2",                  # rescate vehicular = siniestro vial
+            "6-1", "6-2", "6-3", "6-4", "6-5",  # rescate de personas
+            "9-1", "9-2", "9-3",           # túneles
+            "15",                          # otros servicios
+        ]
     )
     #: Tope de consultas a Nominatim por entrega del webhook.
     #:

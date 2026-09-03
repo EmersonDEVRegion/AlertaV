@@ -780,7 +780,15 @@ _VIA_SPLIT = re.compile(r"\s*(?:/|\bcon\b|\besq\.?\b|\bc/\b|\bx\b)\s*", re.IGNOR
 #:
 #: Sólo aplica al campo COMPLETO. "GUACOLDA 81" es una altura de calle y sí es
 #: una dirección; lo que se descarta es el campo que no contiene nada más.
-_UNIDAD = re.compile(r"^[A-Za-z]{0,2}\s*\d{1,3}$")
+#:
+#: **Acepta varias unidades separadas por coma.** A una emergencia grande la
+#: central despacha más de un carro y las lista juntas: el despacho real que
+#: destapó las tablas de claves abría con «91, 71». Con la versión anterior —una
+#: sola unidad— ese campo no se reconocía como tal y «91, 71» terminaba siendo
+#: `street_1`, o sea que el rescate vehicular de Avenida España se iba a
+#: geocodificar buscando la calle «91, 71». El fallo aparece justamente en los
+#: despachos más grandes, que son los que más importan.
+_UNIDAD = re.compile(r"^[A-Za-z]{0,2}\s*\d{1,3}(?:\s*,\s*[A-Za-z]{0,2}\s*\d{1,3})*$")
 
 
 def dispatch_summary_heuristic(text: str, *, source_handle: str) -> dict[str, Any] | None:

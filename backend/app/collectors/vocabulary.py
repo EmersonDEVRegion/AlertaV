@@ -531,19 +531,101 @@ OPERATIONAL_TERMS: frozenset[str] = frozenset(
 #: que `10-0-4` normaliza a `(10, 4)` y NO a `(10, 0)`. Esta tabla reconoce el
 #: `10-0` escrito tal cual. Si el Cuerpo de la zona despacha los estructurales
 #: como `10-0-1`, hay que agregar `(10, 1)` acá.
+# =============================================================================
+#  Claves del Cuerpo de Bomberos de Valparaíso
+# =============================================================================
+#
+# Fuente: tabla oficial publicada del CBV (16 compañías, comuna de Valparaíso).
+# Es la que usa @CGI_CBV, que es la cuenta que este backend lee.
+#
+# ## Estas tablas describían OTRO sistema de claves
+#
+# Hasta el 2026-09-02 acá vivía una familia `10-x` con incendios y rescates, y
+# un `12` como "llamado a servicio especial". En el CBV real:
+#
+#   * `10` es **abastecer o aspirar agua** — logística, no una emergencia. Y no
+#     tiene subclaves: `10-0` … `10-4` no existen.
+#   * `12` es **Academia de Cuerpo**, o sea una capacitación.
+#   * `3-1` y `3-2` son **incendios vehiculares**, no peticiones de Carabineros
+#     y ambulancia. Esas son `W-1` y `W-2`.
+#   * Los accidentes de tránsito son `5-x` (rescate vehicular) y `9-x`
+#     (accidente en túnel), que no estaban en ninguna tabla.
+#
+# El daño era de los dos lados. Por un lado, `BOMBEROS_ACCIDENT_KEYS` incluía
+# `12`: una academia podía entrar al mapa como emergencia confirmada con
+# confianza 1.00. Por el otro, ninguna clave de accidente real estaba
+# configurada, así que la fuente más útil del sistema no aportaba un solo
+# evento — y su descarte era silencioso hasta el aviso que se agregó ese día.
+#
+# ## Lo que NO está acá
+#
+# Las familias `Z` (operaciones), `W` (servicios de apoyo), `X` (informaciones)
+# y `R` (comunicaciones) son tráfico radial: estado de una unidad, petición de
+# recursos, calidad de recepción. Ninguna describe una emergencia nueva. Además
+# `find_codes` sólo parsea códigos numéricos, así que no llegarían igual.
+
 CODE_TYPES: dict[tuple[int, ...], EventType] = {
-    (10, 0): EventType.STRUCTURAL_FIRE,  # incendio estructural
-    # `10-1` es la forma en que el Cuerpo de Valparaíso despacha el estructural,
-    # y estaba SÓLO en `CLAVE_MEANINGS`: nombraba sin clasificar. El desfase no
-    # era teórico — `BOMBEROS_ACCIDENT_KEYS` la incluye desde que la ingesta se
-    # abrió a la familia 10 entera, así que el despacho entraba y caía al tipo
-    # por defecto. Un incendio estructural de la fuente de confianza 1.00
-    # quedaba fuera de la familia `fire`, que es donde el mapa lo busca.
-    (10, 1): EventType.STRUCTURAL_FIRE,  # incendio estructural
-    (10, 2): EventType.WILDFIRE,  # pastizales
-    (10, 3): EventType.RESCUE,  # rescate de personas
-    (10, 4): EventType.ACCIDENT,  # rescate vehicular
+    # -- Familia 1: incendio estructural ----------------------------------
+    (1, 1): EventType.STRUCTURAL_FIRE,  # simple
+    (1, 2): EventType.STRUCTURAL_FIRE,  # en altura
+    (1, 3): EventType.STRUCTURAL_FIRE,  # público / eléctrico
+    # -- Familia 2: incendio forestal --------------------------------------
+    (2, 1): EventType.WILDFIRE,  # urbano o interfase
+    (2, 2): EventType.WILDFIRE,  # rural
+    (2, 3): EventType.WILDFIRE,  # urbano menor
+    # -- Familia 3: incendio vehicular -------------------------------------
+    #
+    # `STRUCTURAL_FIRE` es lo más cercano que ofrece `EventType` y no es
+    # exacto: un auto ardiendo no es una estructura. Se elige igual porque lo
+    # que decide es la FAMILIA del mapa —`fire`— y la alternativa (`OTHER`) lo
+    # mandaría a «Otras emergencias», perdiendo la señal de fuego por completo.
+    # Si algún día hace falta la distinción, el arreglo es un `VEHICLE_FIRE` en
+    # el enum, no cambiar esto por `OTHER`.
+    (3, 1): EventType.STRUCTURAL_FIRE,  # vehicular menor
+    (3, 2): EventType.STRUCTURAL_FIRE,  # vehicular mayor
+    # -- Familia 4: materiales peligrosos ----------------------------------
+    (4, 1): EventType.OTHER,  # haz-mat confirmado
+    (4, 2): EventType.OTHER,  # haz-mat probable
+    # -- Familia 5: rescate vehicular = SINIESTRO VIAL ---------------------
+    #
+    # La razón por la que se revisó todo esto. «Rescate vehicular» significa
+    # que hay gente atrapada en un vehículo, o sea un choque con lesionados.
+    # Es la clave que buscábamos desde el principio.
+    (5, 1): EventType.ACCIDENT,  # simple
+    (5, 2): EventType.ACCIDENT,  # complejo
+    # -- Familia 6: rescate de personas ------------------------------------
+    (6, 1): EventType.RESCUE,  # baja complejidad
+    (6, 2): EventType.RESCUE,  # técnico con cuerda
+    (6, 3): EventType.RESCUE,  # espacios confinados
+    (6, 4): EventType.RESCUE,  # estructuras colapsadas o zanjas
+    (6, 5): EventType.RESCUE,  # búsqueda en zonas agrestes
+    # -- Familia 9: túneles -------------------------------------------------
+    (9, 1): EventType.ACCIDENT,  # accidente en túnel
+    (9, 2): EventType.ACCIDENT,  # accidente en túnel con haz-mat
+    (9, 3): EventType.STRUCTURAL_FIRE,  # incendio vehicular en túnel
+    # -- Sueltas -------------------------------------------------------------
+    (15,): EventType.OTHER,  # otros servicios
 }
+
+#: Claves que el CBV usa y que **no describen una emergencia en el mapa**.
+#:
+#: Tienen nombre —el resumen puede decir qué son— y deliberadamente no están en
+#: `CODE_TYPES` ni en `BOMBEROS_ACCIDENT_KEYS`. Ingerirlas pondría en el mapa,
+#: con confianza 1.00, cosas que no le pasan a ningún ciudadano:
+#:
+#:   7   acuartelamiento del Cuerpo      — disponibilidad interna
+#:   8   apoyo a otro Cuerpo             — la emergencia es de otra jurisdicción
+#:        y la clave no dice de qué tipo
+#:   10  abastecer o aspirar agua        — logística
+#:   11  en prevención                   — guardia preventiva, no hay hecho
+#:   12  academia de Cuerpo              — una capacitación
+#:   13  simulacro                       — un ejercicio, por definición no real
+#:   14  rebrote de incendio             — es un hecho real, pero la clave no
+#:        dice si es forestal o estructural; entra sólo si alguien decide a qué
+#:        familia mandarlo
+NON_INCIDENT_CODES: frozenset[tuple[int, ...]] = frozenset(
+    {(7,), (8,), (10,), (11,), (12,), (13,), (14,)}
+)
 
 #: `10-12` (apoyo) va aparte y **necesita compañía** para pasar el filtro. Dos
 #: razones, y la primera es de dominio, no un parche:
@@ -555,9 +637,17 @@ CODE_TYPES: dict[tuple[int, ...], EventType] = {
 #:   forma sin año pasaría.
 #:
 #: Para que dispare solo, mover esta entrada a `CODE_TYPES`. Es una línea.
-SUPPORT_CODES: dict[tuple[int, ...], EventType] = {
-    (10, 12): EventType.OTHER,  # apoyo / llamado a servicio especial
-}
+#: Vacío desde que las tablas se corrigieron al sistema real del CBV.
+#:
+#: Lo ocupaba `10-12` («apoyo»), que en el sistema anterior necesitaba compañía
+#: para pasar el filtro. En el CBV el apoyo a otro Cuerpo es la `CLAVE 8`, que
+#: directamente no se ingiere: la emergencia es de otra jurisdicción y la clave
+#: ni siquiera dice de qué tipo. Ver `NON_INCIDENT_CODES`.
+#:
+#: Se conserva la estructura —y el mecanismo que la consume— porque la
+#: distinción sigue siendo válida: una clave que sólo aporta contexto a una
+#: emergencia ya despachada no debe crear un evento por sí sola.
+SUPPORT_CODES: dict[tuple[int, ...], EventType] = {}
 
 
 # =============================================================================
@@ -593,32 +683,40 @@ SUPPORT_CODES: dict[tuple[int, ...], EventType] = {
 # Si el Cuerpo de Valparaíso despacha estructurales como 10-1, hay que agregarlo
 # también allá; es una línea y cambia qué se pinta en el mapa.
 CLAVE_MEANINGS: dict[tuple[int, ...], str] = {
-    # -- Familia 10: qué está pasando -------------------------------------
-    (10, 0): "Incendio estructural",
-    (10, 1): "Incendio estructural",
-    (10, 2): "Incendio de pastizales",
-    (10, 3): "Rescate o salvamento",
-    (10, 4): "Rescate vehicular",
-    (10, 12): "Llamado a servicio especial",
-    # -- Familia 3: a quién se pide que concurra ---------------------------
+    # -- Emergencias, con su tipo en `CODE_TYPES` ---------------------------
+    (1, 1): "Incendio estructural simple",
+    (1, 2): "Incendio estructural en altura",
+    (1, 3): "Incendio estructural público o eléctrico",
+    (2, 1): "Incendio forestal urbano o de interfase",
+    (2, 2): "Incendio forestal rural",
+    (2, 3): "Incendio forestal urbano menor",
+    (3, 1): "Incendio vehicular menor",
+    (3, 2): "Incendio vehicular mayor",
+    (4, 1): "Emergencia con materiales peligrosos",
+    (4, 2): "Probable emergencia con materiales peligrosos",
+    (5, 1): "Rescate vehicular simple",
+    (5, 2): "Rescate vehicular complejo",
+    (6, 1): "Rescate de persona de baja complejidad",
+    (6, 2): "Rescate técnico de persona, con cuerda",
+    (6, 3): "Rescate de persona en espacio confinado",
+    (6, 4): "Rescate en estructura colapsada o zanja",
+    (6, 5): "Búsqueda de persona en zona agreste",
+    (9, 1): "Accidente en túnel",
+    (9, 2): "Accidente en túnel con materiales peligrosos",
+    (9, 3): "Incendio vehicular en túnel",
+    (15,): "Otros servicios",
+    # -- Nombradas pero NO ingeridas. Ver `NON_INCIDENT_CODES` --------------
     #
-    # Estas tres NO describen un siniestro: describen un recurso solicitado.
-    # Tienen nombre para que un resumen pueda decirlo, y deliberadamente no
-    # están en `CODE_TYPES` ni en `SUPPORT_CODES` — un `3-2` no puede crear un
-    # evento por sí solo, porque la emergencia que motivó la ambulancia ya
-    # entró (o no entró) por su propia clave.
-    (3, 1): "Solicita concurrencia de Carabineros",
-    (3, 2): "Solicita ambulancia",
-    (3, 3): "Solicita concurrencia de la empresa eléctrica",
-    # -- Forma literal "CLAVE N" ------------------------------------------
-    #
-    # El Cuerpo de Bomberos de Valparaíso publica "CLAVE 12" a secas, sin la
-    # familia por delante. `normalise_code` no la ve —exige dos grupos— así que
-    # se reconoce aparte (ver `_CLAVE_LITERAL`) y se representa como tupla de un
-    # solo elemento. Significa lo mismo que `10-12` y por eso comparte texto:
-    # el día que alguien edite uno, `test_clave_12_y_10_12_significan_lo_mismo`
-    # avisa del otro.
-    (12,): "Llamado a servicio especial",
+    # Están acá para que un resumen pueda decir qué es lo que se descartó, y
+    # sobre todo para que el aviso de «clave no configurada» no las reporte
+    # como desconocidas: no lo son, se excluyen a propósito.
+    (7,): "Acuartelamiento del Cuerpo",
+    (8,): "Apoyo a otro Cuerpo de Bomberos",
+    (10,): "Abastecer o aspirar agua",
+    (11,): "Guardia preventiva",
+    (12,): "Academia de Cuerpo",
+    (13,): "Simulacro",
+    (14,): "Rebrote de incendio",
 }
 
 #: "CLAVE 12", "clave n° 12", "Clave 3" — la forma literal, sin familia.
