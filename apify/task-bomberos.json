@@ -1,0 +1,15 @@
+{
+  "twitterHandles": ["CGI_CBV"],
+  "searchTerms": [],
+  "startUrls": [],
+  "conversationIds": [],
+  "maxItems": 25,
+  "sort": "Latest",
+  "includeSearchTerms": false,
+  "onlyImage": false,
+  "onlyQuote": false,
+  "onlyTwitterBlue": false,
+  "onlyVerifiedUsers": false,
+  "onlyVideo": false,
+  "customMapFunction": "(object) => { return {...object} }"
+}

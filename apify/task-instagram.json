@@ -1,0 +1,11 @@
+{
+  "directUrls": [
+    "https://www.instagram.com/alertanoticiasvalparaiso/",
+    "https://www.instagram.com/valparaisoinforma/",
+    "https://www.instagram.com/valparaiso_noticias/"
+  ],
+  "resultsType": "posts",
+  "resultsLimit": 10,
+  "onlyPostsNewerThan": "1 day",
+  "addParentData": false
+}

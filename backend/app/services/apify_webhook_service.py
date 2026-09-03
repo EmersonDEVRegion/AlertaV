@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -59,7 +60,7 @@ from app.collectors.traffic.bomberos_10_4_worker import (
     geocode_dispatches,
     strip_html,
 )
-from app.collectors.vocabulary import matches_key
+from app.collectors.vocabulary import clave_label, find_claves, matches_key
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.exceptions import CollectorError
@@ -327,9 +328,31 @@ async def _process(dataset_id: str, traza: str) -> None:
             dispatches: list[Dispatch] = []
             descartados_por_edad = 0
 
+            claves_no_configuradas: Counter[str] = Counter()
+
             for item in buenos:
                 dispatch = parse_tweet(item, keys)
                 if dispatch is None:
+                    # Antes de seguir: ¿el tuit traía UNA CLAVE que no está
+                    # configurada? Eso no es lo mismo que un tuit cualquiera de
+                    # la central, y hasta ahora se veían idénticos —los dos
+                    # devolvían None y desaparecían sin dejar rastro—.
+                    #
+                    # La diferencia importa porque el 2026-09-02 se descubrió
+                    # que @CGI_CBV publica «CLAVE 5-1» y `BOMBEROS_ACCIDENT_KEYS`
+                    # sólo tenía la familia 10 y el 12. Un accidente en Avenida
+                    # España con Avenida Argentina, de la fuente de confianza
+                    # 1.00 y con la esquina exacta en el texto, se tiraba a la
+                    # basura sin una línea de log.
+                    #
+                    # NO se ingiere: una clave cuyo significado no está en
+                    # `CLAVE_MEANINGS` no se puede clasificar, y adivinarle el
+                    # tipo a un despacho de peso 1.00 es peor que perderlo. Lo
+                    # que se hace es dejar constancia de que existe, para que
+                    # alguien decida qué significa y la agregue.
+                    texto = strip_html(str(_first(item, _TEXT_KEYS) or ""))
+                    for código in find_claves(texto):
+                        claves_no_configuradas[clave_label(código)] += 1
                     continue
                 if not is_fresh(
                     dispatch, now=now, max_age_minutes=settings.APIFY_WEBHOOK_MAX_AGE_MINUTES
@@ -362,6 +385,26 @@ async def _process(dataset_id: str, traza: str) -> None:
             # persona. Que el lote no traiga despachos NO es un aviso — la
             # central publica muchas cosas que no son claves, y avisarlo en cada
             # entrega enseñaría a ignorar los avisos.
+            if claves_no_configuradas:
+                # WARNING, no INFO. Esto es la central publicando despachos que
+                # este backend está tirando: no es ruido de la fuente, es un
+                # hueco de configuración nuestro, y cada uno es una emergencia
+                # real que no llegó al mapa.
+                logger.warning(
+                    "la central publicó claves que no están en BOMBEROS_ACCIDENT_KEYS",
+                    extra={
+                        "claves": dict(claves_no_configuradas.most_common(10)),
+                        "configuradas": keys,
+                        "remedio": (
+                            "averiguar qué significa cada una, agregarla a "
+                            "CLAVE_MEANINGS y CODE_TYPES, y recién entonces a "
+                            "BOMBEROS_ACCIDENT_KEYS — sin significado no hay "
+                            "tipo, y un despacho de peso 1.00 mal tipificado es "
+                            "peor que uno perdido"
+                        ),
+                    },
+                )
+
             estado = CollectorStatus.PARTIAL if problemas else CollectorStatus.SUCCESS
 
             await service.finish_run(

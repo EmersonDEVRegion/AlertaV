@@ -1,0 +1,20 @@
+{
+  "twitterHandles": [
+    "TTIValparaiso",
+    "RutasPacificoCL",
+    "sitiodelsuceso",
+    "RNEValparaiso"
+  ],
+  "searchTerms": [],
+  "startUrls": [],
+  "conversationIds": [],
+  "maxItems": 40,
+  "sort": "Latest",
+  "includeSearchTerms": false,
+  "onlyImage": false,
+  "onlyQuote": false,
+  "onlyTwitterBlue": false,
+  "onlyVerifiedUsers": false,
+  "onlyVideo": false,
+  "customMapFunction": "(object) => { return {...object} }"
+}

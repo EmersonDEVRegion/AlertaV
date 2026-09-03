@@ -683,11 +683,51 @@ def test_un_perfil_caido_deja_la_corrida_en_partial(servicio):
 
 
 @respx.mock
+@respx.mock
+def test_una_clave_no_configurada_deja_aviso_en_vez_de_desaparecer(servicio, caplog):
+    """El hallazgo del 2026-09-02, con el tuit real de @CGI_CBV.
+
+    La central publica «CLAVE 5-1» y `BOMBEROS_ACCIDENT_KEYS` sólo tenía la
+    familia 10 y el 12. Ese despacho —un accidente en Avenida España con
+    Avenida Argentina, de la fuente de confianza 1.00, con la esquina exacta en
+    el texto— se descartaba sin una sola línea de log: `parse_tweet` devolvía
+    None igual que ante un tuit cualquiera de la cuenta, y las dos cosas se
+    veían idénticas.
+
+    NO se ingiere. Una clave sin significado en `CLAVE_MEANINGS` no se puede
+    tipificar, y adivinarle el tipo a un despacho de peso 1.00 es peor que
+    perderlo. Lo que cambia es que ahora se sabe que existe.
+    """
+    respx.get(ITEMS_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                tuit("91, 71 * AVENIDA ESPANA / AVENIDA ARGENTINA * CLAVE 5-1", id_="1"),
+                tuit("Saludos a la comunidad en su aniversario", id_="2"),
+            ],
+        )
+    )
+
+    with caplog.at_level(logging.WARNING, logger="app.services.apify_webhook_service"):
+        asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
+
+    avisos = [r for r in caplog.records if "no están en BOMBEROS_ACCIDENT_KEYS" in r.message]
+    assert avisos, "una clave que la central usa y nosotros tiramos tiene que verse"
+    assert "5-1" in avisos[-1].claves
+    # El saludo NO cuenta: no traía clave, y ése sí es silencio legítimo.
+    assert sum(avisos[-1].claves.values()) == 1
+
+
+@respx.mock
 def test_un_lote_sin_despachos_no_es_un_aviso(servicio):
     """La central publica muchas cosas que no son claves.
 
     Avisarlo en cada entrega enseñaría a ignorar los avisos, que es como se
     pierde el que sí importa. Mismo criterio que el feed sin 10-4.
+
+    (El `@respx.mock` faltaba: este test venía pasando por el router global que
+    dejaba abierto el test anterior, o sea dependiendo del orden de ejecución.
+    Insertar un test entremedio lo destapó.)
     """
     respx.get(ITEMS_URL).mock(
         return_value=httpx.Response(200, json=[tuit("Feliz aniversario a la 3a Compañía")])
