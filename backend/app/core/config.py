@@ -541,6 +541,16 @@ class Settings(BaseSettings):
     #: ids que llegaron, listos para pegar acá. Admite varios separados por coma
     #: —el del Actor y el del Task son distintos— y se compara contra ambos.
     APIFY_BOMBEROS_ACTOR_IDS: CsvList = Field(default_factory=list)
+    #: Tasks autorizados a entregar por `/apify/webhook/prensa`. Vacío = cualquiera.
+    #:
+    #: Lista aparte de la de Bomberos y no la misma: son dos puertas con bandas
+    #: de confianza distintas —1.00 contra 0.45–0.80— y compartir la lista
+    #: significaría que autorizar una autoriza la otra.
+    #:
+    #: **Acá va el id del TASK, no el del Actor.** Los dos Tasks salen del mismo
+    #: Actor de X, así que comparten `actId` y ése no los distingue.
+    #: `extract_actor_ids` lee también `actorTaskId` justamente para esto.
+    APIFY_PRENSA_ACTOR_IDS: CsvList = Field(default_factory=list)
     #: Items a leer del dataset que anuncia el webhook. Independiente de
     #: `APIFY_MAX_ITEMS`: una corrida de X/Twitter trae muchos menos tuits que
     #: una de Instagram trae posts, y el webhook llega una vez por corrida en
@@ -895,6 +905,7 @@ class Settings(BaseSettings):
         "BOMBEROS_ACCIDENT_KEYS",
         "APIFY_INSTAGRAM_ACCOUNTS",
         "APIFY_BOMBEROS_ACTOR_IDS",
+        "APIFY_PRENSA_ACTOR_IDS",
         mode="before",
     )
     @classmethod
