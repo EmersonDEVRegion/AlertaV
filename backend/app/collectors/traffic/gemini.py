@@ -46,6 +46,7 @@ from typing import Any
 
 from app.collectors.vocabulary import (
     CLAVE_MEANINGS,
+    NON_INCIDENT_CODES,
     clave_label,
     clave_meaning,
     find_claves,
@@ -391,8 +392,24 @@ async def extract_streets(text: str) -> dict[str, Any] | None:
 #: en tiempo de importación en vez de escribirse a mano, para que el prompt no
 #: pueda divergir de la tabla que valida su salida. Ver el comentario de esa
 #: tabla en `app/collectors/vocabulary.py`.
+#:
+#: Esa decisión se pagó sola el 2026-09-02: cuando se descubrió que las tablas
+#: describían otro sistema de claves y se reemplazaron por la del CBV, el
+#: prompt se actualizó sin que nadie lo tocara. Un glosario escrito a mano
+#: habría seguido enseñándole al modelo que `10-4` es rescate vehicular.
+#:
+#: Va **ordenado por familia** y con las no-emergencias marcadas. Lo primero
+#: porque el orden de inserción del diccionario deja "Clave 15" antes que
+#: "Clave 7" y eso no ayuda a nadie a leer. Lo segundo importa más: sin la
+#: marca, el modelo ve "Clave 12: Academia de Cuerpo" en la misma lista que un
+#: incendio estructural y no tiene cómo saber que una es un hecho del mundo y la
+#: otra una actividad interna del Cuerpo. Que igual se filtren en la ingesta no
+#: quita que el modelo trabaje mejor sabiéndolo.
 CLAVE_GLOSSARY: str = "\n".join(
-    f"- {clave_label(code)}: {meaning}" for code, meaning in CLAVE_MEANINGS.items()
+    f"- {clave_label(code)}: {meaning}"
+    + (" [NO es una emergencia: actividad interna del Cuerpo]"
+       if code in NON_INCIDENT_CODES else "")
+    for code, meaning in sorted(CLAVE_MEANINGS.items())
 )
 
 #: Plantilla del resumen. Una sola definición, usada por el prompt y por el

@@ -65,17 +65,31 @@ APIFY_PRENSA_ACTOR_IDS   = <actorTaskId del Task prensa>
 Mientras estén vacías el guard está apagado y cualquier Task puede entregar por
 cualquier puerta.
 
-## Pendiente: las claves de @CGI_CBV
+## Las claves de @CGI_CBV
 
-`BOMBEROS_ACCIDENT_KEYS` sólo declara la familia 10 y el 12, y la central publica
-también otras —se detectó `CLAVE 5-1` en un accidente real—. Las que no están se
-**descartan**, y desde el 2026-09-02 quedan avisadas en el log:
+Resuelto el 2026-09-02. Las tablas del código describían **otro sistema de
+claves**: `10-x` como incendios y rescates, `12` como «llamado a servicio
+especial». En el CBV real, `10` es abastecer agua y `12` es **Academia de
+Cuerpo** — una capacitación que podía entrar al mapa con confianza 1.00 — y los
+accidentes son `5-x` (rescate vehicular) y `9-x` (túnel), que no existían en
+ninguna tabla.
+
+Hoy `CLAVE_MEANINGS`, `CODE_TYPES` y `BOMBEROS_ACCIDENT_KEYS` siguen la tabla
+oficial del Cuerpo, y `NON_INCIDENT_CODES` declara lo que se despacha y no es
+una emergencia del mapa (7, 8, 10, 11, 12, 13, 14).
+
+El prompt de Gemini se construye **desde** `CLAVE_MEANINGS` en tiempo de
+importación, así que se actualizó solo. Es la razón por la que ese glosario
+nunca se escribe a mano: uno escrito a mano habría seguido enseñándole al modelo
+que `10-4` es rescate vehicular.
+
+Si la central empieza a despachar una clave que no está, queda avisada en el log:
 
 ```
 la central publicó claves que no están en BOMBEROS_ACCIDENT_KEYS
-  claves: {"5-1": 1}
+  claves: {"7-9": 1}
 ```
 
-Antes de agregar una hay que saber qué significa: sin entrada en `CLAVE_MEANINGS`
-y `CODE_TYPES` el despacho entra sin tipo, y un despacho de peso 1.00 mal
-tipificado es peor que uno perdido.
+Antes de agregarla hay que saber qué significa: sin entrada en `CLAVE_MEANINGS`
+y `CODE_TYPES` el despacho entra sin tipo, y uno de peso 1.00 mal tipificado es
+peor que uno perdido. Hay dos tests que lo impiden en los dos sentidos.
