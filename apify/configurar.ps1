@@ -16,6 +16,7 @@
 
 param(
     [switch]$DryRun,
+    [switch]$Auditar,
     [string]$ApiBase = "https://api.apify.com/v2",
     [string]$BackendUrl = "https://alertav-api.onrender.com",
     [string]$Cron = "*/30 * * * *"
@@ -104,6 +105,54 @@ function Api([string]$metodo, [string]$ruta, $cuerpo = $null) {
     }
     return Invoke-RestMethod -Method $metodo -Uri $uri -Headers $headers
 }
+
+# --- Auditoria: solo lee, no cambia nada ------------------------------------
+#
+# Existe porque despues de limpiar seguian llegando correos de 401 nombrando un
+# Task viejo, y sin ver el estado completo de la cuenta cualquier explicacion
+# era conjetura. Muestra las TRES cosas que pueden disparar una entrega:
+# webhooks, tasks y schedules. El script gestiona un solo schedule —`alertav`—
+# asi que cualquier otro que exista sigue corriendo lo que tenga dentro, y eso
+# no se ve mirando webhooks.
+
+if ($Auditar) {
+    $anfitrion = ([uri]$BackendUrl).Host
+
+    Write-Host "`n=== WEBHOOKS que apuntan a $anfitrion ===" -ForegroundColor Cyan
+    $webhooks = (Api GET "/webhooks?limit=1000").data.items |
+                Where-Object { $_.requestUrl -and ([uri]$_.requestUrl).Host -eq $anfitrion }
+    if (-not $webhooks) { Write-Host "  (ninguno)" }
+    foreach ($w in $webhooks) {
+        $de = if ($w.condition.actorTaskId) { "task $($w.condition.actorTaskId)" }
+              elseif ($w.condition.actorId) { "ACTOR $($w.condition.actorId)" }
+              else { "sin condicion" }
+        # `headersTemplate` puede traer el secreto: se dice si LO HAY, nunca cual.
+        $cab = if ($w.headersTemplate -and $w.headersTemplate -match "Secret") { "con cabecera" }
+               else { "SIN CABECERA -> 401 seguro" }
+        Write-Host "  [$($w.id)] $de"
+        Write-Host "      $($w.requestUrl)  ($cab)"
+    }
+
+    Write-Host "`n=== TASKS con nombre de AlertaV ===" -ForegroundColor Cyan
+    $tareas = (Api GET "/actor-tasks?limit=1000").data.items |
+              Where-Object { $_.name -match "(?i)alerta" }
+    foreach ($t in $tareas) { Write-Host "  [$($t.id)] $($t.name)" }
+
+    Write-Host "`n=== SCHEDULES ===" -ForegroundColor Cyan
+    $nombres = @{}; foreach ($t in $tareas) { $nombres[$t.id] = $t.name }
+    foreach ($s in (Api GET "/schedules?limit=1000").data.items) {
+        $estado = if ($s.isEnabled) { "activo" } else { "pausado" }
+        Write-Host "  '$($s.name)' ($($s.cronExpression)) $estado"
+        foreach ($a in $s.actions) {
+            $quien = if ($nombres.ContainsKey($a.actorTaskId)) { $nombres[$a.actorTaskId] }
+                     else { $a.actorTaskId }
+            Write-Host "      -> $quien"
+        }
+    }
+    Write-Host ""
+    return
+}
+
 
 # --- Definicion de los tres Tasks -------------------------------------------
 
