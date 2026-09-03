@@ -225,6 +225,76 @@ Corregilo y volve a correr este script — es idempotente.
 
 if ($DryRun) { return }
 
+# --- Limpieza de webhooks huerfanos -----------------------------------------
+#
+# Toda configuracion manual anterior sigue viva en el panel. Un webhook viejo
+# apuntando a la misma URL entrega igual, con la cabecera que tuviera entonces
+# —o sin ninguna— y el backend responde 401 a cada intento. Apify reintenta
+# once veces y despues deshabilita esa integracion.
+#
+# El sintoma son correos de Apify por Tasks que uno cree tener bien
+# configurados, y corridas fantasma en `collector_runs`. Ya habia pasado antes
+# en este proyecto: el endpoint documenta que baja el log del 401 sin credencial
+# a INFO precisamente porque estos huerfanos inundaban Render.
+#
+# El criterio de borrado es estricto y esta puesto para no pasarse:
+#
+#   1. Solo webhooks cuya `requestUrl` apunte a ESTE backend. Cualquier otra
+#      integracion de la cuenta —Slack, otro proyecto, lo que sea— no se toca.
+#   2. Solo los que NO cuelgan de uno de los Tasks que este script gestiona.
+#
+# Lo segundo cubre tambien los webhooks colgados del ACTOR en vez del Task, que
+# son los que provocan la entrega doble: un webhook de Actor dispara ademas para
+# las corridas de sus Tasks.
+
+$gestionados = @($resultado | ForEach-Object { $_.TaskId })
+$anfitrion = ([uri]$BackendUrl).Host
+
+$huerfanos = (Api GET "/webhooks?limit=1000").data.items | Where-Object {
+    $_.requestUrl -and
+    ([uri]$_.requestUrl).Host -eq $anfitrion -and
+    $_.condition.actorTaskId -notin $gestionados
+}
+
+if ($huerfanos) {
+    Write-Host "`nWebhooks huerfanos apuntando a $anfitrion :" -ForegroundColor Yellow
+    foreach ($h in $huerfanos) {
+        $de = if ($h.condition.actorTaskId) { "task $($h.condition.actorTaskId)" }
+              elseif ($h.condition.actorId) { "ACTOR $($h.condition.actorId)" }
+              else { "sin condicion" }
+        Write-Host "  borrando: $de -> $($h.requestUrl)"
+        Api DELETE "/webhooks/$($h.id)" | Out-Null
+    }
+    Write-Host "  $($huerfanos.Count) eliminados." -ForegroundColor Green
+}
+else {
+    Write-Host "`nSin webhooks huerfanos." -ForegroundColor DarkGray
+}
+
+# --- Tasks duplicados: se reportan, NO se borran -----------------------------
+#
+# El script empareja por nombre exacto, asi que una configuracion manual previa
+# con otro nombre —"Alertav Prensa" contra `alertav-prensa`— no se reutiliza: se
+# crea un Task nuevo al lado. Los dos quedan vivos y, si el viejo esta en algun
+# Schedule, sigue corriendo y gastando credito para no entregar nada (su webhook
+# acaba de borrarse arriba).
+#
+# Se reportan y no se borran a proposito. Un Task puede tener un input afinado a
+# mano que valga la pena mirar antes de tirarlo, y borrar cosas de la cuenta de
+# alguien sin preguntar es de las pocas acciones que no se deshacen.
+
+$otros = (Api GET "/actor-tasks?limit=1000").data.items | Where-Object {
+    $_.name -match "(?i)alerta" -and $_.id -notin $gestionados
+}
+
+if ($otros) {
+    Write-Host "`nTasks con nombre de AlertaV que este script NO gestiona:" -ForegroundColor Yellow
+    foreach ($o in $otros) { Write-Host "  $($o.name)  [$($o.id)]" }
+    Write-Host "  Sus webhooks ya se eliminaron, asi que no entregan nada." -ForegroundColor DarkGray
+    Write-Host "  Si son de la configuracion manual anterior, borralos en el panel" -ForegroundColor DarkGray
+    Write-Host "  y sacalos del Schedule para no gastar credito." -ForegroundColor DarkGray
+}
+
 # --- Schedule unico con los tres Tasks --------------------------------------
 #
 # 30 minutos y no 5: APIFY_MAX_RUN_AGE_MINUTES tolera 45, asi que media hora
