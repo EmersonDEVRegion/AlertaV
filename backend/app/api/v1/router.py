@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import apify, collectors, events, health, incidents, push
+from app.api.v1.endpoints import apify, collectors, events, feed, health, incidents, push
 
 api_router = APIRouter()
 api_router.include_router(health.router)
@@ -18,3 +18,5 @@ api_router.include_router(collectors.router)
 api_router.include_router(apify.router)
 # Suscripciones a notificaciones push. Prefijo propio (`/push`), sin solape.
 api_router.include_router(push.router)
+# Feeds paralelos al mapa (hoy, vehículos de GBV). Prefijo propio (`/feed`).
+api_router.include_router(feed.router)

@@ -35,6 +35,10 @@ export const EVENT_SOURCES = [
   // `road_closure` con confianza 0, así que NUNCA aparece en el desglose por
   // fuente de un incidente — sólo en la capa de contexto del mapa.
   'mop',
+  // GBV SpA: vehículos robados, recuperados y abandonados. Emite
+  // `vehicle_report`, fuera del motor y del mapa: sólo lo lee `/feed/vehiculos`.
+  // Está acá para que el espejo del enum siga completo.
+  'gbv',
   'other',
 ] as const
 export type EventSource = (typeof EVENT_SOURCES)[number]

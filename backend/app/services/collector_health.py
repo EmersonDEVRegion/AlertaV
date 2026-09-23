@@ -171,6 +171,19 @@ def _intervalo(nombre: str) -> int:
     return collector_class(nombre).poll_interval_seconds()
 
 
+def estado_de_collector(
+    nombre: str, run: CollectorRun | None, *, ahora: datetime | None = None
+) -> str:
+    """Estado de UN collector con las mismas reglas que `/collectors/health`.
+
+    Para las capas que no alimentan ninguna familia del mapa —hoy, el feed de
+    vehículos de GBV— y por eso no están en `COLLECTOR_ROLES`, pero igual tienen
+    que poder decir si su cero es calma o ceguera. Mismas reglas, un solo lugar:
+    si `_clasificar` cambia, el feed cambia con él.
+    """
+    return _clasificar(run, _intervalo(nombre), ahora=ahora or datetime.now(UTC))
+
+
 def _clasificar(run: CollectorRun | None, intervalo: int, *, ahora: datetime) -> str:
     if run is None:
         return "never"

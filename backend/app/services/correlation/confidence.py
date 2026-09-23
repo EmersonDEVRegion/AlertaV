@@ -260,6 +260,12 @@ RULES: dict[EventSource, SourceRule] = {
     # corroboración: una socavación de hace tres semanas no confirma el choque
     # que alguien está reportando hoy en esa misma cuesta.
     EventSource.MOP: SourceRule(0.0, 0.0, 0.0, 0.0),
+    # GBV: avisos de vehículos robados, recuperados o abandonados. Tampoco se
+    # ejecuta nunca —`vehicle_report` está fuera de CORRELATABLE_EVENT_TYPES—
+    # y está escrita por la misma razón que la del MOP: si alguien cambiara eso,
+    # el peso por defecto le regalaría a un choque la corroboración de un auto
+    # robado a dos cuadras, que no dice nada sobre él.
+    EventSource.GBV: SourceRule(0.0, 0.0, 0.0, 0.0),
 }
 
 DEFAULT_RULE = SourceRule(0.15, 0.30, 0.5, 0.45)
