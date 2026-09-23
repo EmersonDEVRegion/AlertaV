@@ -45,6 +45,12 @@ interface AppHeaderProps {
   themeToggle?: ReactNode
   /** La campana de avisos push. Se inyecta por la misma razón que el tema. */
   notifications?: ReactNode
+  /**
+   * El botón del radar de vehículos. Se inyecta porque su estado (abierto o
+   * cerrado) vive en `App`, que es quien cierra la ficha del incidente al
+   * abrirlo. `undefined` con el interruptor `VITE_VEHICLE_RADAR` apagado.
+   */
+  radar?: ReactNode
 }
 
 /**
@@ -123,6 +129,7 @@ export function AppHeader({
   onToggleConfirmedOnly,
   themeToggle,
   notifications,
+  radar,
 }: AppHeaderProps) {
   return (
     <header
@@ -202,6 +209,14 @@ export function AppHeader({
           <span className="hidden sm:inline">Verificados en terreno</span>
           <span className="sm:hidden">Verificados</span>
         </label>
+
+        {/*
+          El radar va antes de la campana. Como el widget meteorológico, es un
+          indicador que cambia solo —su contador—, y los controles que sólo
+          hacen lo que se les pidió (campana, tema) quedan en el extremo.
+          Tampoco es una capa del mapa: sus avisos no tienen coordenadas.
+        */}
+        {radar}
 
         {/*
           La campana va junto al tema porque las dos son preferencias del

@@ -22,6 +22,7 @@ from app.collectors.senapred.collector import SenapredCollector
 from app.collectors.social.instagram_apify_worker import InstagramApifyCollector
 from app.collectors.traffic.transporteinforma_worker import TransporteInformaCollector
 from app.collectors.usgs.collector import UsgsCollector
+from app.collectors.vehicles.gbv_worker import GbvCollector
 from app.collectors.weather.openmeteo_worker import OpenMeteoCollector
 from app.core.config import settings
 
@@ -186,6 +187,17 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     # portal caído deja la corrida `partial` con el nombre del medio en el aviso;
     # sólo si caen los dos queda `failed`.
     LocalNewsCollector.name: LocalNewsCollector,
+    # -- Vehículos (feed paralelo, fuera del mapa) ----------------------------
+    # GBV SpA: robados, recuperados y abandonados. NO es una fuente de
+    # emergencias y no toca nada de lo de arriba: emite `vehicle_report`, fuera
+    # de `CORRELATABLE_EVENT_TYPES`, sin coordenadas y con confianza 0. Lo lee
+    # sólo `GET /feed/vehiculos`. Tampoco está en `COLLECTOR_ROLES` de
+    # `collector_health`: no alimenta ninguna familia del mapa, y su salud viaja
+    # en la respuesta del propio feed (`fuente`).
+    #
+    # Cadencia de 30 minutos y delta por clave: cada corrida son tres listados,
+    # más el detalle sólo de lo nuevo. Ver `app/collectors/vehicles/gbv_worker.py`.
+    GbvCollector.name: GbvCollector,
     # Próximos hitos:
     #   BroadcastifyCollector.name: BroadcastifyCollector,  # STT → evento
 }

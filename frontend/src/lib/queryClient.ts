@@ -31,6 +31,14 @@ export const queryKeys = {
     detail: (code: string) => ['incidents', 'detail', code] as const,
     stats: (hours?: number) => ['incidents', 'stats', hours ?? null] as const,
   },
+  /**
+   * Radar de vehículos (GBV). No es una capa del mapa: es un feed de consumo
+   * rápido, sin coordenadas. Ver `api/vehicleFeed.ts`.
+   */
+  vehicles: {
+    all: ['vehicles'] as const,
+    feed: (params: unknown) => ['vehicles', 'feed', params] as const,
+  },
   seismic: {
     all: ['seismic'] as const,
     list: (params: unknown) => ['seismic', 'list', params] as const,

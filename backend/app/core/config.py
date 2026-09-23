@@ -510,6 +510,39 @@ class Settings(BaseSettings):
     #: para infraestructura dañada es de sobra.
     MOP_VIALIDAD_POLL_INTERVAL_SECONDS: int = Field(default=3600, ge=300, le=86400)
 
+    # -- Vehículos: GBV SpA (feed paralelo, fuera del mapa) ------------------
+    #: Raíz del sitio. El collector arma desde acá las tres secciones que lee
+    #: —`/denuncias/`, `/vehiculos-recuperados` y `/vehiculos-abandonados/`— y
+    #: resuelve los enlaces relativos de cada tarjeta contra la página donde
+    #: aparecieron (`../denuncias/…` en una, `./denuncias/…` en otra).
+    GBV_BASE_URL: str = "https://gbvspa.cl"
+    #: Navegador + identificación, el mismo criterio que
+    #: `TRANSPORTE_INFORMA_USER_AGENT`: un WAF trata a un UA sin navegador como
+    #: bot, y quien opera el sitio —una ONG— tiene derecho a saber quién le pega
+    #: y a quién escribirle. Sin tildes: las cabeceras HTTP van en latin-1.
+    GBV_USER_AGENT: str = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 "
+        "AlertaV/1.0 (+https://github.com/alertav; feed de vehiculos "
+        "Region de Valparaiso)"
+    )
+    GBV_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0, le=120)
+    #: 30 minutos. GBV publica unas pocas denuncias al día y la primera página
+    #: del listado cubre semanas: consultar más seguido sólo le pegaría más a un
+    #: servidor chico para leer la misma portada.
+    GBV_POLL_INTERVAL_SECONDS: int = Field(default=1800, ge=300, le=86400)
+    #: Tope de fichas de detalle por corrida. El detalle es lo único que trae
+    #: marca, modelo, color y fecha; lo que exceda el tope NO se ingresa a
+    #: medias, se difiere a la corrida siguiente —sigue siendo "nuevo" para el
+    #: delta— para que ninguna fila quede para siempre sin su detalle.
+    GBV_MAX_DETALLES: int = Field(default=15, ge=1, le=100)
+    #: Páginas del listado de denuncias que se pueden leer en una corrida. Sólo
+    #: se pasa a la siguiente si la anterior venía entera nueva (hubo una caída
+    #: larga); en régimen, una.
+    GBV_MAX_PAGINAS: int = Field(default=2, ge=1, le=10)
+    #: Pausa entre peticiones consecutivas al sitio. Cortesía, no rate limit.
+    GBV_PAUSA_SEGUNDOS: float = Field(default=0.5, ge=0.0, le=10.0)
+
     # -- Apify: qué capas siguen en uso -------------------------------------
     #
     # Desde 2026-09-22 Apify queda para UNA cosa: el Task de X que raspa a las

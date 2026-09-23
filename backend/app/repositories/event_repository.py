@@ -13,12 +13,12 @@ from typing import Any
 from uuid import UUID
 
 from geoalchemy2 import Geography
-from sqlalchemy import Select, cast, func, literal_column, select
+from sqlalchemy import Select, cast, func, literal_column, or_, select
 from sqlalchemy import text as sa_text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import EventSource, EventType
+from app.models.enums import EventSource, EventType, VehicleLocation, VehicleStatus
 from app.models.event import RawEvent
 from app.repositories.confidence_filters import confidence_at_least
 from app.schemas.event import EventCreate
@@ -203,6 +203,84 @@ class EventRepository:
         )
         result = await self.session.execute(stmt)
         return dict(result.all())  # type: ignore[arg-type]
+
+    async def count_containing(self, source: EventSource, fragment: dict[str, Any]) -> int:
+        """Filas de una fuente cuyo `raw_data` contiene `fragment` (`@>`).
+
+        La usa el collector de GBV para saber si una sección ya fue sembrada.
+        `@>` y no `->>`: es el operador que aprovecha el índice GIN
+        `ix_raw_events_raw_data` (`jsonb_path_ops`).
+        """
+        stmt = (
+            select(func.count())
+            .select_from(RawEvent)
+            .where(RawEvent.source == source, RawEvent.raw_data.contains(fragment))
+        )
+        return int((await self.session.execute(stmt)).scalar_one())
+
+    # -- Feed de vehículos (GBV) ---------------------------------------------
+
+    def vehicle_feed_stmt(
+        self,
+        *,
+        since: datetime,
+        statuses: Sequence[VehicleStatus] | None = None,
+        locations: Sequence[VehicleLocation],
+        commune: str | None = None,
+        limit: int = 100,
+    ) -> Select:
+        """La consulta de `list_vehicle_feed`, separada para testearla sin base.
+
+        La ventana se mide con `ingested_at` —cuándo lo vio AlertaV— y no con
+        `timestamp`: GBV publica con atraso y los recuperados no traen fecha.
+        Las filas `semilla` (la primera lectura de cada sección) no salen nunca:
+        son el punto de partida, no novedades.
+
+        Todos los filtros sobre `raw_data` son de contención (`@>`), que es lo
+        que el índice GIN sabe responder.
+        """
+        stmt = select(RawEvent).where(
+            RawEvent.source == EventSource.GBV,
+            RawEvent.type == EventType.VEHICLE_REPORT,
+            RawEvent.ingested_at >= since,
+            ~RawEvent.raw_data.contains({"gbv": {"semilla": True}}),
+            or_(
+                *(
+                    RawEvent.raw_data.contains({"gbv": {"region": location.value}})
+                    for location in locations
+                )
+            ),
+        )
+        if statuses:
+            stmt = stmt.where(
+                or_(
+                    *(
+                        RawEvent.raw_data.contains({"gbv": {"estado": status.value}})
+                        for status in statuses
+                    )
+                )
+            )
+        if commune:
+            stmt = stmt.where(RawEvent.raw_data.contains({"gbv": {"comuna": commune}}))
+        return stmt.order_by(RawEvent.ingested_at.desc(), RawEvent.id.desc()).limit(limit)
+
+    async def list_vehicle_feed(
+        self,
+        *,
+        since: datetime,
+        statuses: Sequence[VehicleStatus] | None = None,
+        locations: Sequence[VehicleLocation],
+        commune: str | None = None,
+        limit: int = 100,
+    ) -> Sequence[RawEvent]:
+        stmt = self.vehicle_feed_stmt(
+            since=since,
+            statuses=statuses,
+            locations=locations,
+            commune=commune,
+            limit=limit,
+        )
+        return (await self.session.execute(stmt)).scalars().all()
 
     async def add(self, event: EventCreate) -> RawEvent:
         """Inserta un evento y devuelve la entidad persistida."""

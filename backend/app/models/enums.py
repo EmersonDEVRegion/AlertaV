@@ -58,6 +58,11 @@ class EventSource(str, Enum):
     #: estado de la infraestructura vial, pero su cadencia es semanal: informa
     #: contexto, no lo que está pasando ahora. Ver collectors/mop/.
     MOP = "mop"
+    #: GBV SpA (Grupo Búsqueda de Vehículos): denuncias de vehículos robados,
+    #: recuperados y abandonados. NO es una fuente de emergencias: vive en un
+    #: feed aparte (`GET /feed/vehiculos`), fuera del mapa y del motor de
+    #: correlación. Ver collectors/vehicles/.
+    GBV = "gbv"
     OTHER = "other"
 
 
@@ -106,6 +111,17 @@ class EventType(str, Enum):
     #: se agrupa con nada. Se recolecta para superponerse en el mapa, que es
     #: donde una faena a 200 m explica el taco que alguien está reportando.
     ROAD_CLOSURE = "road_closure"
+    #: Aviso sobre un vehículo: robado, recuperado o abandonado (fuente GBV).
+    #:
+    #: Tipo propio, y no `other`, por una razón concreta y no de prolijidad:
+    #: `other` y `unknown` están DENTRO de `CORRELATABLE_EVENT_TYPES`, y
+    #: `services/backfill.py` toma las señales sin coordenadas de esos tipos y
+    #: las geocodifica contra Nominatim. Un auto robado etiquetado `other`
+    #: terminaría consumiendo la cuota de geocodificación —y, si la calle se
+    #: resolviera, abriendo un incidente en el mapa— por un hecho que no es una
+    #: emergencia. Fuera de `CORRELATABLE_EVENT_TYPES` y de
+    #: `EVENT_TO_INCIDENT_TYPE`: no crea incidentes ni mueve confianzas.
+    VEHICLE_REPORT = "vehicle_report"
     OTHER = "other"
     UNKNOWN = "unknown"
 
@@ -530,4 +546,38 @@ SOURCE_BASE_CONFIDENCE: dict[EventSource, float] = {
     # ninguna evidencia sobre un siniestro en curso. Cero, no bajo — no hay
     # ningún incidente cuya confianza deba moverse porque exista esta señal.
     EventSource.MOP: 0.0,
+    # Un auto robado no es evidencia de ninguna emergencia en curso. Cero por el
+    # mismo motivo que el MOP: no hay incidente cuya confianza deba moverse.
+    EventSource.GBV: 0.0,
 }
+
+
+class VehicleStatus(str, Enum):
+    """Estado de un vehículo en el feed de GBV.
+
+    No es una columna: viaja en `raw_data["gbv"]["estado"]`. Vive acá, y no en
+    el collector ni en el schema, por la misma razón que `ConfidenceLevel`: lo
+    usan los dos lados —el parser que lo escribe y la API que filtra por él— y
+    `app.models` es la capa que ambos pueden importar sin ciclos.
+    """
+
+    ROBADO = "robado"
+    RECUPERADO = "recuperado"
+    ABANDONADO = "abandonado"
+
+
+class VehicleLocation(str, Enum):
+    """Qué se pudo decir sobre DÓNDE está el hecho, sin geocodificar.
+
+    GBV publica todo Chile y su campo de lugar es texto libre, a veces sin
+    comuna ("los araucanos 290"). Tres valores y no un booleano, porque "no sé
+    dónde es" y "sé que es en Maipú" llevan a decisiones opuestas: lo primero se
+    muestra marcado, lo segundo se oculta.
+    """
+
+    #: Se reconoció una comuna (o un sector inequívoco) de la V Región.
+    V_REGION = "v_region"
+    #: No hay comuna de la V Región y sí un lugar inequívoco de otra región.
+    OTRA = "otra"
+    #: Ni lo uno ni lo otro.
+    SIN_UBICAR = "sin_ubicar"

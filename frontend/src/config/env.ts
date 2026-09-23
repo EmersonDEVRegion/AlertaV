@@ -6,6 +6,24 @@ function num(value: string | undefined, fallback: number): number {
 }
 
 /**
+ * Interruptor de funcionalidad. Acepta `on/off`, `true/false`, `1/0`, `sí/no`.
+ * Un valor que no es ninguno de esos cae al respaldo y deja rastro en consola:
+ * una variable mal escrita que enciende algo en producción sin querer es
+ * justo lo que este interruptor existe para evitar.
+ */
+function flag(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined || value.trim() === '') return fallback
+  const normalized = value.trim().toLowerCase()
+  if (['on', 'true', '1', 'si', 'sí', 'yes'].includes(normalized)) return true
+  if (['off', 'false', '0', 'no'].includes(normalized)) return false
+  console.warn(
+    `[AlertaV/env] Interruptor con valor desconocido (${JSON.stringify(value)}); ` +
+      `se usa ${fallback ? 'encendido' : 'apagado'}.`,
+  )
+  return fallback
+}
+
+/**
  * Envolturas que llegan pegadas al valor cuando se copia desde otro medio.
  * El caso real que motivó esto: `VITE_API_BASE_URL` guardado en Vercel como
  * `[https://alertav-api.onrender.com/api/v1]`. Los corchetes son basura de un
@@ -172,6 +190,19 @@ export const env = {
     import.meta.env.VITE_ROAD_CLOSURE_POLL_INTERVAL_MS,
     900_000,
   ),
+  /**
+   * Radar de vehículos (GBV). Apagado en producción hasta que se avise a GBV
+   * que AlertaV republica sus avisos (plan.md, §10.5 y P6). Ver `flag`.
+   */
+  vehicleRadarEnabled: flag(import.meta.env.VITE_VEHICLE_RADAR, import.meta.env.DEV),
+  /**
+   * Cadencia del radar. El collector de GBV corre cada 30 min y GBV publica unas
+   * pocas denuncias al día: cinco minutos basta para que un aviso nuevo aparezca
+   * poco después de que AlertaV lo lea. A diferencia de las capas de referencia,
+   * se consulta desde el arranque, porque el contador del botón tiene que estar
+   * ahí sin abrir nada.
+   */
+  vehiclePollIntervalMs: num(import.meta.env.VITE_VEHICLE_POLL_INTERVAL_MS, 300_000),
   /** A partir de aquí la UI avisa que el dato puede no describir el presente. */
   staleAfterMs: num(import.meta.env.VITE_STALE_AFTER_MS, 180_000),
   mapStyle: url(

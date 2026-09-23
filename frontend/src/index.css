@@ -503,6 +503,23 @@ html.dark {
   }
 
   /*
+   * Halo de un aviso reciente.
+   *
+   * Un anillo que sale de un punto de color y se desvanece. Va en un elemento
+   * PROPIO, posicionado de forma absoluta detrás del punto, y ese elemento sólo
+   * anima `scale` y `opacity`: el punto y la cifra que tiene al lado no se
+   * mueven, así que nada deja de poder leerse (el problema que descartó el
+   * `animate-pulse` de Tailwind, ver `.animate-pulse-soft`). Dos segundos y
+   * medio por ciclo: se nota de reojo sin volverse una sirena en una lista.
+   *
+   * La regla global de `prefers-reduced-motion` lo apaga; lo que queda es el
+   * color y la franja de la tarjeta, que cargan la señal por sí solos.
+   */
+  .animate-halo {
+    animation: halo 2.4s var(--ease-out-soft) infinite;
+  }
+
+  /*
    * Barrido de carga.
    *
    * Reemplaza al «Cargando…» estático. Es un degradado que cruza el elemento;
@@ -558,6 +575,18 @@ html.dark {
   }
   to {
     background-position: -200% 0;
+  }
+}
+
+@keyframes halo {
+  0% {
+    opacity: 0.55;
+    scale: 1;
+  }
+  80%,
+  100% {
+    opacity: 0;
+    scale: 2.6;
   }
 }
 
