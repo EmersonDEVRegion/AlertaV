@@ -48,8 +48,10 @@ import hashlib
 import logging
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlsplit
 
 from app.collectors.geoservices import parse_timestamp, request_json
 from app.collectors.social.apify_client import build_client, describe_items
@@ -61,7 +63,15 @@ from app.collectors.traffic.bomberos_10_4_worker import (
     geocode_dispatches,
     strip_html,
 )
-from app.collectors.vocabulary import clave_label, find_claves, matches_key
+from app.collectors.vocabulary import (
+    CBV,
+    SISTEMAS_CLAVES,
+    SistemaClaves,
+    clave_label,
+    find_claves,
+    matches_key,
+    sistema_de_cuenta,
+)
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.exceptions import CollectorError
@@ -210,6 +220,94 @@ async def fetch_dataset_items(dataset_id: str, *, limit: int) -> list[Any]:
     )
 
 
+#: Dónde dice el Actor quién publicó el tuit. Varía por Actor igual que el texto.
+_AUTHOR_KEYS = ("userName", "username", "screen_name", "screenName", "handle")
+_AUTHOR_CONTAINERS = ("author", "user")
+#: Dónde viene el enlace público del tuit.
+_URL_KEYS = ("url", "twitterUrl", "permalink")
+_X_HOSTS = frozenset({"x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"})
+
+
+def tweet_handle(payload: Any) -> str | None:
+    """Cuenta que publicó el tuit, con arroba («@CBVM132»). None si no lo dice.
+
+    Hace falta desde que el Task raspa dos centrales en la misma corrida: el
+    dataset mezcla despachos de Valparaíso y de Viña, y cada uno se lee con el
+    diccionario de su Cuerpo. Se mira primero el autor declarado y después la
+    URL del tuit (`x.com/<cuenta>/status/<id>`), que traen todos los Actors
+    conocidos aunque no traigan el objeto `author`.
+    """
+    if not isinstance(payload, Mapping):
+        return None
+
+    for contenedor in _AUTHOR_CONTAINERS:
+        seccion = payload.get(contenedor)
+        if isinstance(seccion, Mapping):
+            valor = _first(seccion, _AUTHOR_KEYS)
+            if isinstance(valor, str) and valor.strip():
+                return f"@{valor.strip().lstrip('@')}"
+
+    valor = _first(payload, _AUTHOR_KEYS)
+    if isinstance(valor, str) and valor.strip():
+        return f"@{valor.strip().lstrip('@')}"
+
+    for clave in _URL_KEYS:
+        url = payload.get(clave)
+        if not isinstance(url, str):
+            continue
+        try:
+            partes = urlsplit(url.strip())
+        except ValueError:
+            continue
+        segmentos = [s for s in partes.path.split("/") if s]
+        if partes.netloc.lower() in _X_HOSTS and len(segmentos) >= 2 and segmentos[1] == "status":
+            return f"@{segmentos[0]}"
+    return None
+
+
+def tweet_url(payload: Any) -> str | None:
+    """Enlace público del tuit, si el Actor lo trae como URL de X."""
+    if not isinstance(payload, Mapping):
+        return None
+    for clave in _URL_KEYS:
+        url = payload.get(clave)
+        if isinstance(url, str) and url.strip().lower().startswith(("https://x.com/", "https://twitter.com/")):
+            return url.strip()
+    return None
+
+
+def es_retuit(payload: Any) -> bool:
+    """¿Es un retuit? No es un despacho de la central: es de otra cuenta.
+
+    Un retuit trae el texto ajeno bajo la cuenta propia, y con peso 1.00 eso es
+    justo lo que no puede pasar: el aviso de otro Cuerpo leído con el
+    diccionario de éste.
+    """
+    if not isinstance(payload, Mapping):
+        return False
+    if payload.get("isRetweet") is True or payload.get("retweeted_status"):
+        return True
+    texto = str(_first(payload, _TEXT_KEYS) or "").lstrip()
+    return texto.startswith("RT @")
+
+
+#: Qué ajuste lista las claves que se ingieren de cada Cuerpo. Las claves son
+#: configuración —se agregan sin tocar código— y el significado es léxico, que
+#: vive en `vocabulary`. Un Cuerpo sin entrada acá no ingiere nada.
+_AJUSTE_DE_CLAVES: dict[str, str] = {
+    "cbv": "BOMBEROS_ACCIDENT_KEYS",
+    "cbvm": "BOMBEROS_CBVM_KEYS",
+}
+
+
+def claves_de_ingesta(sistema: SistemaClaves) -> list[str]:
+    """Claves configuradas para ingerir de ese Cuerpo."""
+    ajuste = _AJUSTE_DE_CLAVES.get(sistema.slug)
+    if ajuste is None:
+        return []
+    return [key.strip() for key in getattr(settings, ajuste, []) if key.strip()]
+
+
 def parse_tweet(payload: Any, keys: Sequence[str]) -> Dispatch | None:
     """Un item del dataset → `Dispatch`, si trae una clave configurada.
 
@@ -247,6 +345,8 @@ def parse_tweet(payload: Any, keys: Sequence[str]) -> Dispatch | None:
         commune=None,
         raw_text=text[:2000],
         guid=guid,
+        cuenta=tweet_handle(payload),
+        url=tweet_url(payload),
     )
 
 
@@ -307,18 +407,31 @@ async def _process(dataset_id: str, traza: str) -> None:
     """El cuerpo de `process_dataset`, con la sesión abierta. Puede lanzar."""
     async with AsyncSessionLocal() as session:
         service = IngestService(session)
-        keys = [key.strip() for key in settings.BOMBEROS_ACCIDENT_KEYS if key.strip()]
+        # Un juego de claves por Cuerpo: la misma `Clave 10` se ingiere en Viña
+        # (otros servicios) y se descarta en Valparaíso (abastecer agua).
+        claves_por_cuerpo = {
+            sistema.slug: claves_de_ingesta(sistema) for sistema in SISTEMAS_CLAVES
+        }
+        keys = claves_por_cuerpo[CBV.slug]
+        respaldo = settings.BOMBEROS_SOURCE_HANDLE
 
         run = await service.start_run(
             source=EventSource.BOMBEROS,
             collector=COLLECTOR_NAME,
             # El `dataset_id` sí, el token jamás. `params` se serializa a la base.
-            params={"dataset_id": dataset_id, "keys": keys, "traza": traza},
+            params={
+                "dataset_id": dataset_id,
+                "keys": keys,
+                "claves_por_cuerpo": claves_por_cuerpo,
+                "traza": traza,
+            },
         )
 
         try:
-            if not keys:
-                raise CollectorError("BOMBEROS_ACCIDENT_KEYS quedó vacía")
+            if not any(claves_por_cuerpo.values()):
+                raise CollectorError(
+                    "BOMBEROS_ACCIDENT_KEYS y BOMBEROS_CBVM_KEYS quedaron vacías"
+                )
 
             items = await fetch_dataset_items(
                 dataset_id, limit=settings.APIFY_WEBHOOK_MAX_ITEMS
@@ -330,9 +443,29 @@ async def _process(dataset_id: str, traza: str) -> None:
             descartados_por_edad = 0
 
             claves_no_configuradas: Counter[str] = Counter()
+            cuentas_sin_tabla: Counter[str] = Counter()
+            retuits = 0
 
             for item in buenos:
-                dispatch = parse_tweet(item, keys)
+                if es_retuit(item):
+                    retuits += 1
+                    continue
+
+                # Cada tuit se lee con el diccionario de la central que lo
+                # publicó. Sin autor en el item —Actors viejos, o el formato de
+                # los tests— rige la cuenta configurada, como siempre.
+                cuenta = tweet_handle(item) or respaldo
+                sistema = sistema_de_cuenta(cuenta)
+                if sistema is None:
+                    # Una cuenta sin tabla NO se lee con la de otro Cuerpo. Es
+                    # el error que obligó a separar las tablas: sus claves
+                    # entrarían con peso 1.00 y otro significado.
+                    cuentas_sin_tabla[cuenta] += 1
+                    continue
+
+                dispatch = parse_tweet(item, claves_por_cuerpo.get(sistema.slug, []))
+                if dispatch is not None:
+                    dispatch = replace(dispatch, cuenta=cuenta)
                 if dispatch is None:
                     # Antes de seguir: ¿el tuit traía UNA CLAVE que no está
                     # configurada? Eso no es lo mismo que un tuit cualquiera de
@@ -351,9 +484,21 @@ async def _process(dataset_id: str, traza: str) -> None:
                     # tipo a un despacho de peso 1.00 es peor que perderlo. Lo
                     # que se hace es dejar constancia de que existe, para que
                     # alguien decida qué significa y la agregue.
+                    #
+                    # Las internas (academia, servicios internos, simulacro)
+                    # tienen nombre y se descartan a propósito: no cuentan. Es
+                    # lo que prometía el comentario de `CLAVE_MEANINGS` y el
+                    # código no hacía, y con @CBVM132 importa: su clave más
+                    # frecuente es la 16, carros moviéndose entre cuarteles, y
+                    # contarla dejaría cada entrega en `partial`.
                     texto = strip_html(str(_first(item, _TEXT_KEYS) or ""))
                     for código in find_claves(texto):
-                        claves_no_configuradas[clave_label(código)] += 1
+                        if sistema.es_interna(código):
+                            continue
+                        etiqueta = clave_label(código)
+                        if sistema is not CBV:
+                            etiqueta = f"{sistema.slug.upper()} {etiqueta}"
+                        claves_no_configuradas[etiqueta] += 1
                     continue
                 if not is_fresh(
                     dispatch, now=now, max_age_minutes=settings.APIFY_WEBHOOK_MAX_AGE_MINUTES
@@ -402,6 +547,7 @@ async def _process(dataset_id: str, traza: str) -> None:
                     extra={
                         "claves": dict(claves_no_configuradas.most_common(10)),
                         "configuradas": keys,
+                        "configuradas_por_cuerpo": claves_por_cuerpo,
                         "remedio": (
                             "averiguar qué significa cada una, agregarla a "
                             "CLAVE_MEANINGS y CODE_TYPES, y recién entonces a "
@@ -441,6 +587,19 @@ async def _process(dataset_id: str, traza: str) -> None:
                     f"{descartados_por_edad} despachos más viejos que "
                     f"{settings.APIFY_WEBHOOK_MAX_AGE_MINUTES} min; se descartaron"
                 )
+            # Se anota y no se alarma, igual que la edad: una cuenta sin tabla
+            # en el dataset es un `twitterHandles` mal puesto en el Task, y un
+            # retuit es la central compartiendo algo ajeno.
+            if cuentas_sin_tabla:
+                notas.append(
+                    "tuits de cuentas sin tabla de claves, no se ingieren: "
+                    + ", ".join(
+                        f"{cuenta}×{veces}"
+                        for cuenta, veces in cuentas_sin_tabla.most_common(5)
+                    )
+                )
+            if retuits:
+                notas.append(f"{retuits} retuits; no son despachos propios")
 
             # Una clave sin configurar es una degradación real —se están
             # tirando despachos de la fuente de peso 1.00— y merece `partial`.
@@ -472,6 +631,9 @@ async def _process(dataset_id: str, traza: str) -> None:
                     "insertados": inserted,
                     "duplicados": duplicated,
                     "descartados_por_edad": descartados_por_edad,
+                    "cuentas_sin_tabla": dict(cuentas_sin_tabla),
+                    "retuits": retuits,
+                    "por_cuenta": dict(Counter(d.cuenta or respaldo for d in dispatches)),
                     "sin_fecha": undated,
                     "por_reglas": por_reglas,
                     # Los que quedan sin punto no entran al Paso A del motor:
@@ -500,10 +662,14 @@ async def _process(dataset_id: str, traza: str) -> None:
 
 __all__ = [
     "COLLECTOR_NAME",
+    "claves_de_ingesta",
     "dataset_items_url",
+    "es_retuit",
     "extract_dataset_id",
     "fetch_dataset_items",
     "is_fresh",
     "parse_tweet",
     "process_dataset",
+    "tweet_handle",
+    "tweet_url",
 ]

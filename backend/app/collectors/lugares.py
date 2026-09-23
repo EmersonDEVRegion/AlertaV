@@ -75,7 +75,10 @@ def comuna_por_nombre(texto: str | None) -> str | None:
 
 
 def comuna_en_texto(texto: str) -> str | None:
-    """Comuna nombrada en el texto. Respaldo del respaldo, para el camino HTML.
+    """Comuna nombrada en el texto. Respaldo del respaldo.
+
+    La usan el camino HTML de la prensa, que no tiene categorías, y el RSS
+    cuando las categorías del portal no nombran ninguna comuna.
 
     Acá sí se busca por subcadena, porque la entrada es prosa. Es más frágil que
     `comuna_en_categorias` —"vecinos de Valparaíso viajaron a Los Andes" devuelve

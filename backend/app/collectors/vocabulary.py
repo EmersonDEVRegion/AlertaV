@@ -52,7 +52,8 @@ menos cuatro decisiones tomadas por ese motivo (ver "anegad", "derrumb",
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 
 from app.collectors.geoservices import normalise_text
 from app.models.enums import EventType
@@ -536,7 +537,7 @@ OPERATIONAL_TERMS: frozenset[str] = frozenset(
 # =============================================================================
 #
 # Fuente: tabla oficial publicada del CBV (16 compañías, comuna de Valparaíso).
-# Es la que usa @CGI_CBV, que es la cuenta que este backend lee.
+# Es la que usa @CGI_CBV. La de @CBVM132 es otro sistema: ver `CBVM_CODE_TYPES`.
 #
 # ## Estas tablas describían OTRO sistema de claves
 #
@@ -779,15 +780,22 @@ def clave_label(code: tuple[int, ...]) -> str:
     return "-".join(str(group) for group in code)
 
 
-def clave_meaning(code: tuple[int, ...]) -> str | None:
+def clave_meaning(
+    code: tuple[int, ...], sistema: SistemaClaves | None = None
+) -> str | None:
     """Significado de una clave normalizada. None si no está en el diccionario.
 
     Comparación por prefijo: `10-4-1` (rescate con víctima atrapada) hereda el
     significado de `10-4`. Se prueba de lo más específico a lo más general para
     que una entrada futura de `(10, 4, 1)` gane sobre `(10, 4)`.
+
+    `sistema` elige el diccionario del Cuerpo que despachó. Sin él, el del CBV,
+    que es el comportamiento de siempre. Ver `SistemaClaves`: la misma `Clave 10`
+    es logística en Valparaíso y un servicio en Viña.
     """
+    tabla = sistema.meanings if sistema is not None else CLAVE_MEANINGS
     for largo in range(len(code), 0, -1):
-        meaning = CLAVE_MEANINGS.get(code[:largo])
+        meaning = tabla.get(code[:largo])
         if meaning is not None:
             return meaning
     return None
@@ -804,7 +812,7 @@ def clave_meaning(code: tuple[int, ...]) -> str | None:
 DISPATCH_DEFAULT_TYPE = EventType.OTHER
 
 
-def dispatch_event_type(texto: str) -> EventType:
+def dispatch_event_type(texto: str, sistema: SistemaClaves | None = None) -> EventType:
     """Texto de un despacho → naturaleza de la señal, según su clave.
 
     Es el reemplazo del `EventType.ACCIDENT` fijo que tenía
@@ -830,37 +838,267 @@ def dispatch_event_type(texto: str) -> EventType:
     un apoyo a una emergencia en curso, y si el aviso trae también la clave de
     lo que está pasando, esa es la que describe el hecho.
 
-    >>> dispatch_event_type("81 * DIEGO COOK / GUACOLDA * 10-4")
+    `sistema` elige las tablas del Cuerpo que despachó; sin él, las del CBV.
+
+    >>> dispatch_event_type("91, 71 * AVENIDA ESPANA / AVENIDA ARGENTINA * CLAVE 5-1")
     <EventType.ACCIDENT: 'accident'>
-    >>> dispatch_event_type("10-1 * ALDUNATE 1200")
+    >>> dispatch_event_type("B2 * ALDUNATE 1200 * 1-1")
     <EventType.STRUCTURAL_FIRE: 'structural_fire'>
     >>> dispatch_event_type("81 * DIEGO COOK / GUACOLDA * CLAVE 12")
     <EventType.OTHER: 'other'>
+    >>> dispatch_event_type("Clave 3 AVENIDA LIBERTAD U-12", CBVM)
+    <EventType.STRUCTURAL_FIRE: 'structural_fire'>
     """
+    tablas = (
+        (sistema.code_types, sistema.support_codes)
+        if sistema is not None
+        else (CODE_TYPES, SUPPORT_CODES)
+    )
     for code in find_claves(texto):
-        for tabla in (CODE_TYPES, SUPPORT_CODES):
+        for tabla in tablas:
             for wanted, event_type in tabla.items():
                 if code[: len(wanted)] == wanted:
                     return event_type
     return DISPATCH_DEFAULT_TYPE
 
 
-def resolve_clave(texto: str) -> tuple[str, str] | None:
+def resolve_clave(
+    texto: str, sistema: SistemaClaves | None = None
+) -> tuple[str, str] | None:
     """Texto de un despacho → `(etiqueta, significado)`. None si no hay clave.
 
     Es la función que usa el resumen: devuelve la PRIMERA clave del aviso que
     esté en el diccionario. "Primera" y no "más específica" porque el orden en
-    que la central escribe importa —el despacho abre con lo que pasó y después
-    pide recursos— y porque un `3-2` sin su clave de familia delante describe
-    una ambulancia, no una emergencia.
+    que la central escribe importa: el despacho abre con lo que pasó y después
+    pide recursos.
+
+    `sistema` elige el diccionario del Cuerpo; sin él, el del CBV.
 
     >>> resolve_clave("81 * DIEGO COOK / GUACOLDA * CLAVE 12")
-    ('Clave 12', 'Llamado a servicio especial')
+    ('Clave 12', 'Academia de Cuerpo')
+    >>> resolve_clave("Clave 10 ALVAREZ / QUILLOTA U-12", CBVM)
+    ('Clave 10', 'Otros servicios')
     """
     for code in find_claves(texto):
-        meaning = clave_meaning(code)
+        meaning = clave_meaning(code, sistema)
         if meaning is not None:
             return (clave_label(code), meaning)
+    return None
+
+
+# =============================================================================
+#  Claves del Cuerpo de Bomberos de Viña del Mar (CBVM)
+# =============================================================================
+#
+# Fuente: tabla del CBVM publicada por Wurtlitzer
+# (wurtlitzer.com/bomberos/claves/detalle/?region=valparaiso&cuerpo=vina_del_mar),
+# contrastada el 2026-09-22 con una copia anterior de la misma tabla y con los
+# despachos reales de @CBVM132. Diez compañías; cubre Viña del Mar y Concón.
+#
+# ## Es OTRO sistema de claves, y por eso vive en otra tabla
+#
+# Comparte con el CBV la estructura de familias (1 estructural, 2 forestal,
+# 5 rescate vehicular…) y eso invita a reutilizar las tablas de arriba. No se
+# puede, porque desde la familia 3 en adelante los números significan cosas
+# distintas, y los choques caen justo donde duele:
+#
+#     clave   CBV (Valparaíso)             CBVM (Viña del Mar)
+#     3       —  (usa 3-1 / 3-2)           incendio vehicular
+#     4-1     materiales peligrosos        emanación de gases
+#     9       —  (usa 9-x: túneles)        emergencia estructural industrial
+#     10      abastecer agua  (NO ingiere) otros servicios        (ingiere)
+#     11      en prevención   (NO ingiere) rebrote de incendio    (NO ingiere)
+#     14      rebrote         (NO ingiere) accidente eléctrico    (sin verificar)
+#     15      otros servicios (ingiere)    accidente aéreo        (ingiere)
+#     16      —                            servicios internos     (NO ingiere)
+#
+# Pasar un tuit de @CBVM132 por las tablas del CBV habría tirado cada incendio
+# vehicular (`Clave 3` no existe allá) y cada `Clave 10`, y habría rotulado un
+# accidente aéreo como «otros servicios». Por eso cada central declara su
+# Cuerpo y el Cuerpo trae su diccionario: ver `SistemaClaves`.
+#
+# ## Qué se verificó contra la cuenta real
+#
+# * `Clave 5-1` = rescate vehicular: @CBVM132 lo escribe a veces con el
+#   significado pegado («Clave 5-1 RESCATE VEHICULAR LIVIANO …»).
+# * `Clave 16` = **servicios internos**, que no está en la tabla de Wurtlitzer
+#   pero sí en la cuenta («Clave 16 SERVICIOS INTERNOS Cuartel General CBVM»).
+#   Es la clave más frecuente del feed: carros moviéndose entre cuarteles.
+# * `Clave 11` aparece seguido. Las dos versiones de la tabla dicen «rebrote»;
+#   se trata igual que el rebrote del CBV: con nombre y sin ingesta.
+#
+# ## La 14 queda a propósito sin decidir
+#
+# La tabla actual dice «llamado por accidente eléctrico» y la copia anterior
+# «ejercicio de unidad». Una es un hecho del mundo y la otra un ejercicio, y con
+# peso 1.00 el error caro es el segundo. No se ingiere ni se declara interna:
+# queda fuera de las dos listas para que, si la central la usa, el webhook avise
+# «clave no configurada» y alguien la mire antes de decidir.
+
+CBVM_CODE_TYPES: dict[tuple[int, ...], EventType] = {
+    (1, 1): EventType.STRUCTURAL_FIRE,  # simple
+    (1, 2): EventType.STRUCTURAL_FIRE,  # en altura
+    (1, 3): EventType.STRUCTURAL_FIRE,  # lugar con gran afluencia de público
+    (2, 1): EventType.WILDFIRE,  # sector alto de Viña del Mar
+    (2, 2): EventType.WILDFIRE,  # rural
+    (2, 3): EventType.WILDFIRE,  # cercano a vivienda
+    # Mismo criterio que el 3-x del CBV: un auto ardiendo no es una estructura,
+    # pero lo que decide es la familia `fire`, no el rótulo.
+    (3,): EventType.STRUCTURAL_FIRE,  # incendio vehicular
+    (4, 1): EventType.OTHER,  # emanación de gases
+    (4, 2): EventType.OTHER,  # materiales peligrosos
+    (5, 1): EventType.ACCIDENT,  # rescate vehicular simple / liviano
+    (5, 2): EventType.ACCIDENT,  # rescate vehicular pesado
+    (6, 1): EventType.RESCUE,  # persona en altura
+    (6, 2): EventType.RESCUE,  # persona en sitio derrumbado
+    (6, 3): EventType.RESCUE,  # persona en ascensor, casa o edificio
+    (9,): EventType.STRUCTURAL_FIRE,  # emergencia estructural industrial
+    (10,): EventType.OTHER,  # otros servicios (espejo del 15 del CBV)
+    (15,): EventType.OTHER,  # accidente aéreo: no es la familia vial
+}
+
+#: Lo que el CBVM despacha y no es una emergencia del mapa. Mismo criterio que
+#: `NON_INCIDENT_CODES`: tiene nombre para el resumen y no entra a la ingesta.
+CBVM_NON_INCIDENT_CODES: frozenset[tuple[int, ...]] = frozenset(
+    {(7,), (8,), (11,), (12,), (13,), (16,)}
+)
+
+CBVM_CLAVE_MEANINGS: dict[tuple[int, ...], str] = {
+    (1, 1): "Incendio estructural simple",
+    (1, 2): "Incendio estructural en altura",
+    (1, 3): "Incendio estructural en lugar con afluencia de público",
+    (2, 1): "Incendio forestal en sector alto",
+    (2, 2): "Incendio forestal rural",
+    (2, 3): "Incendio forestal cercano a vivienda",
+    (3,): "Incendio vehicular",
+    (4, 1): "Emergencia con emanación de gases",
+    (4, 2): "Emergencia con materiales peligrosos",
+    (5, 1): "Rescate vehicular simple",
+    (5, 2): "Rescate vehicular pesado",
+    (6, 1): "Rescate de persona en altura",
+    (6, 2): "Rescate de persona en sitio derrumbado",
+    (6, 3): "Rescate de persona en ascensor, casa o edificio",
+    (9,): "Emergencia estructural industrial",
+    (10,): "Otros servicios",
+    (14,): "Llamado por accidente eléctrico",
+    (15,): "Llamado por accidente aéreo",
+    # -- Nombradas pero NO ingeridas --------------------------------------
+    (7,): "Acuartelamiento del Cuerpo",
+    (8,): "Apoyo a otro Cuerpo de Bomberos",
+    (11,): "Rebrote de incendio",
+    (12,): "Academia de Cuerpo",
+    (13,): "Simulacro",
+    (16,): "Servicios internos",
+}
+
+
+# =============================================================================
+#  Un sistema de claves por Cuerpo
+# =============================================================================
+
+
+@dataclass(frozen=True, slots=True)
+class SistemaClaves:
+    """El diccionario radial de UN Cuerpo de Bomberos.
+
+    Existe porque la misma cifra significa cosas distintas según quién la
+    despacha (ver la tabla comparativa de arriba). Mientras el backend leía una
+    sola central, las tablas podían ser globales; con dos, una tabla global
+    garantiza que una de las dos se lea mal.
+
+    Esto es léxico puro: qué significa cada clave y qué tipo de señal produce.
+    Qué claves se **ingieren** es configuración y vive en `settings` (ver
+    `claves_de_ingesta` en el servicio del webhook), igual que antes.
+    """
+
+    #: Identificador corto y estable: va a `raw_data._bomberos.cuerpo`.
+    slug: str
+    nombre: str
+    #: Cuentas de X que despachan con esta tabla, en minúscula y sin arroba.
+    cuentas: tuple[str, ...]
+    #: Comunas de la jurisdicción, la principal primero. La primera acota la
+    #: geocodificación; las demás son el reintento (Concón en el CBVM).
+    comunas: tuple[str, ...]
+    code_types: Mapping[tuple[int, ...], EventType]
+    non_incident: frozenset[tuple[int, ...]]
+    meanings: Mapping[tuple[int, ...], str]
+    support_codes: Mapping[tuple[int, ...], EventType] = field(default_factory=dict)
+    #: Cómo escribe la central sus despachos. `campos` = separados por `*`
+    #: («72 * CALLE / CALLE * CLAVE 4-1», el CBV); `clave_primero` = la clave
+    #: abre el aviso y las unidades lo cierran («Clave 5-1 CALLE / CALLE U-63»,
+    #: el CBVM). Lo usa el decodificador por reglas, no este módulo.
+    formato: str = "campos"
+    #: Despacho real para el ejemplo del prompt: `(texto, clave, calle 1, calle 2)`.
+    ejemplo: tuple[str, str, str, str | None] = ("", "", "", None)
+
+    @property
+    def handle(self) -> str:
+        """La cuenta principal con arroba, para el `(Fuente: …)` del resumen."""
+        return f"@{self.cuentas[0].upper()}" if self.cuentas else self.nombre
+
+    def es_interna(self, code: tuple[int, ...]) -> bool:
+        """¿La clave tiene nombre pero NO describe una emergencia del mapa?
+
+        Igualdad exacta y no prefijo, a propósito: `7-9` no es el `7` del
+        acuartelamiento, es una clave que nadie registró, y tiene que seguir
+        apareciendo en el aviso de «clave no configurada».
+        """
+        return code in self.non_incident
+
+
+CBV = SistemaClaves(
+    slug="cbv",
+    nombre="Cuerpo de Bomberos de Valparaíso",
+    cuentas=("cgi_cbv",),
+    comunas=("Valparaíso",),
+    code_types=CODE_TYPES,
+    non_incident=NON_INCIDENT_CODES,
+    meanings=CLAVE_MEANINGS,
+    support_codes=SUPPORT_CODES,
+    formato="campos",
+    ejemplo=(
+        "72 * PRIMERO DE MAYO / 12 DE OCTUBRE * CLAVE 4-1",
+        "4-1",
+        "PRIMERO DE MAYO",
+        "12 DE OCTUBRE",
+    ),
+)
+
+CBVM = SistemaClaves(
+    slug="cbvm",
+    nombre="Cuerpo de Bomberos de Viña del Mar",
+    cuentas=("cbvm132",),
+    comunas=("Viña del Mar", "Concón"),
+    code_types=CBVM_CODE_TYPES,
+    non_incident=CBVM_NON_INCIDENT_CODES,
+    meanings=CBVM_CLAVE_MEANINGS,
+    formato="clave_primero",
+    ejemplo=(
+        "Clave 5-1 LOS PELLINES / LOS GINKOS U-63, U-82",
+        "5-1",
+        "LOS PELLINES",
+        "LOS GINKOS",
+    ),
+)
+
+#: Todos los sistemas conocidos. Agregar una central es agregar una entrada acá
+#: con su tabla; sin entrada, sus tuits no se ingieren (ver `sistema_de_cuenta`).
+SISTEMAS_CLAVES: tuple[SistemaClaves, ...] = (CBV, CBVM)
+
+
+def sistema_de_cuenta(cuenta: str | None) -> SistemaClaves | None:
+    """Sistema de claves de una cuenta de X. None si nadie la declaró.
+
+    None NO significa «usar el del CBV»: una cuenta sin tabla no se ingiere,
+    porque sus claves se leerían con el diccionario de otro Cuerpo y entrarían
+    con peso 1.00. Es exactamente el error que motivó separar las tablas.
+    """
+    if not cuenta:
+        return None
+    limpia = cuenta.strip().lstrip("@").lower()
+    for sistema in SISTEMAS_CLAVES:
+        if limpia in sistema.cuentas:
+            return sistema
     return None
 
 
@@ -1630,6 +1868,11 @@ def clasificar_noticia(texto: str) -> EventType | None:
 __all__ = [
     "ACCIDENT_TERMS",
     "AGENCY_TERMS",
+    "CBV",
+    "CBVM",
+    "CBVM_CLAVE_MEANINGS",
+    "CBVM_CODE_TYPES",
+    "CBVM_NON_INCIDENT_CODES",
     "CLAVE_MEANINGS",
     "CODE_TYPES",
     "CRITICAL_TERMS",
@@ -1639,13 +1882,16 @@ __all__ = [
     "HEADLINE_VERBS",
     "LANDSLIDE_TERMS",
     "NOISE_PHRASES",
+    "NON_INCIDENT_CODES",
     "OPERATIONAL_TERMS",
     "PRESS_NOISE_PHRASES",
     "RESCUE_TERMS",
     "ROAD_OPS_TERMS",
     "SECUELA_TERMS",
+    "SISTEMAS_CLAVES",
     "SUPPORT_CODES",
     "TRAFFIC_TERMS",
+    "SistemaClaves",
     "clasificar_noticia",
     "clasificar_transito",
     "classify_event_type",
@@ -1665,5 +1911,6 @@ __all__ = [
     "normalise_code",
     "parse_key",
     "resolve_clave",
+    "sistema_de_cuenta",
     "tipo_por_verbo",
 ]

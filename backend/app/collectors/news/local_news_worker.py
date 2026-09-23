@@ -587,6 +587,14 @@ def parse_feed(cuerpo: str, portal: NewsPortal) -> list[NewsItem]:
 
         bajada = strip_html(_entry_value(entry, "summary", "description") or "")
         categorias = _entry_categorias(entry)
+        # La categoría es la fuente diciendo dónde ocurrió y manda. Cuando no
+        # nombra una comuna —Prensa Marga Marga etiqueta «Marga Marga»,
+        # «Policial», «Destacado»: la provincia y la sección— se cae al texto,
+        # igual que en el camino HTML. Sin esto, «Tragedia en Olmué: …» no le
+        # llevaba ninguna comuna al geocodificador.
+        comuna = comuna_en_categorias(categorias) or comuna_en_texto(
+            f"{titular} {bajada}"
+        )
 
         noticias.append(
             NewsItem(
@@ -598,7 +606,7 @@ def parse_feed(cuerpo: str, portal: NewsPortal) -> list[NewsItem]:
                 guid=_entry_value(entry, "id", "guid"),
                 published_at=_entry_timestamp(entry),
                 resolucion_dia=False,
-                comuna_hint=comuna_en_categorias(categorias),
+                comuna_hint=comuna,
                 origen="rss",
                 raw={
                     "categorias": categorias,

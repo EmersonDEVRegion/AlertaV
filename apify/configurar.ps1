@@ -1,7 +1,23 @@
-# Crea en Apify los tres Tasks, sus webhooks y el Schedule.
+# Crea en Apify el Task de X de las centrales de Bomberos, su webhook y el
+# Schedule.
+#
+# DESDE EL 2026-09-22 ES UN SOLO TASK. Los de prensa (X) y de Instagram salieron
+# por cuota: el plan gratuito no alcanzaba para tres, y lo que cubrian lo toma
+# la prensa local por RSS en el backend. Correr este script deja el Schedule
+# 'alertav' con el Task de Bomberos solo, borra el webhook huerfano del Task de
+# prensa y LISTA los dos Tasks viejos para que los borres en el panel (no los
+# borra: ver "Tasks duplicados" mas abajo).
 #
 # Es idempotente: busca por nombre antes de crear, y actualiza si ya existe. Se
 # puede correr las veces que haga falta.
+#
+# EL ORDEN IMPORTA (2026-09-23)
+# -----------------------------
+# Primero el Task, despues el Schedule y recien despues los webhooks. El
+# Schedule es lo que gasta credito, y con la cuenta al tope Apify rechaza crear
+# webhooks: si el webhook iba antes y fallaba, el script abortaba y el Schedule
+# seguia corriendo los tres Tasks viejos. Un fallo de webhook ahora se avisa y
+# no detiene nada.
 #
 # SOBRE LAS CREDENCIALES
 # ----------------------
@@ -13,13 +29,22 @@
 #
 #   .\apify\configurar.ps1
 #   .\apify\configurar.ps1 -DryRun     # muestra qué haría, sin tocar nada
+#   .\apify\configurar.ps1 -Auditar    # lista webhooks, tasks, schedules y consumo
+#   .\apify\configurar.ps1 -Cron "0 */2 * * *"   # otra cadencia (ver COSTO)
 
 param(
     [switch]$DryRun,
     [switch]$Auditar,
+    # Permite una cadencia cuyo peor caso supera el plan gratuito (ver COSTO).
+    [switch]$AceptarCosto,
     [string]$ApiBase = "https://api.apify.com/v2",
     [string]$BackendUrl = "https://alertav-api.onrender.com",
-    [string]$Cron = "*/30 * * * *"
+    # Cada hora, no cada 30 minutos: ver COSTO. Si se cambia, APIFY_X_SCHEDULE_MINUTES
+    # en Render tiene que cambiar con el (el script lo imprime al final).
+    [string]$Cron = "0 * * * *",
+    # Tope de gasto de UNA corrida (opcion maxTotalChargeUsd del Task). Con
+    # maxItems = 15 y US$ 0,0004 por tuit, una corrida normal cuesta US$ 0,006.
+    [double]$MaxCostoPorCorrida = 0.01
 )
 
 $ErrorActionPreference = "Stop"
@@ -83,7 +108,7 @@ if (-not $secreto) {
 APIFY_WEBHOOK_SECRET no esta ni en el entorno ni en backend\.env.
 
 Sin el, los webhooks se crearian sin cabecera de autenticacion y el backend
-responderia 401 a cada entrega — hasta que Apify deshabilite la integracion.
+responderia 401 a cada entrega, hasta que Apify deshabilite la integracion.
 
 Pasalo junto al token, en la misma linea:
 
@@ -105,6 +130,82 @@ function Api([string]$metodo, [string]$ruta, $cuerpo = $null) {
     }
     return Invoke-RestMethod -Method $metodo -Uri $uri -Headers $headers
 }
+
+# --- Consumo de la cuenta -----------------------------------------------------
+#
+# El 2026-09-03 la cuenta llego a US$ 5,01 de US$ 5 y Apify dejo de iniciar
+# Actors hasta el periodo siguiente. Nadie lo vio hasta el correo: el mapa solo
+# mostro que Bomberos dejaba de entregar. Se imprime siempre, al principio.
+#
+# Lo que se gasto ese periodo (Billing, 2026-09-23):
+#   apify/instagram-scraper   1.682 resultados x US$ 0,0027 = US$ 4,54
+#   apidojo/tweet-scraper     1.120 tuits      x US$ 0,0004 = US$ 0,45
+# Instagram fue el 91 %. Por eso salio.
+
+function Show-Consumo {
+    try {
+        $lim = (Api GET "/users/me/limits").data
+        $usado = [double]$lim.current.monthlyUsageUsd
+        $tope = [double]$lim.limits.maxMonthlyUsageUsd
+        $fin = $lim.monthlyUsageCycle.endAt
+        Write-Host ("Consumo del periodo: US$ {0:N2} de US$ {1:N2} (el periodo termina {2})" -f $usado, $tope, $fin) -ForegroundColor DarkGray
+        if ($tope -gt 0 -and $usado -ge $tope) {
+            Write-Host "  CUENTA AL TOPE: Apify no inicia corridas hasta el proximo periodo." -ForegroundColor Yellow
+            Write-Host "  El Schedule se aplica igual, para que al renovarse corra SOLO Bomberos." -ForegroundColor Yellow
+        }
+    }
+    catch {
+        Write-Host "  (no se pudo leer el consumo: $($_.Exception.Message))" -ForegroundColor DarkGray
+    }
+}
+
+# --- COSTO: cuanto cuesta la cadencia elegida -----------------------------------
+#
+# El Actor de X (apidojo/tweet-scraper) cobra US$ 0,0004 por tuit devuelto, y
+# con sort=Latest cada corrida devuelve los `maxItems` tuits mas recientes, SEAN
+# NUEVOS O NO: los repetidos se vuelven a cobrar. El peor caso del mes es
+#
+#     corridas al mes x maxItems x US$ 0,0004
+#
+#   cada 30 min, 25 tuits:  1.488 x 25 x 0,0004 = US$ 14,88   (no cabe en Free)
+#   cada 1 h,    15 tuits:    744 x 15 x 0,0004 = US$  4,46   (cabe, con margen)
+#   cada 2 h,    25 tuits:    372 x 25 x 0,0004 = US$  3,72
+#
+# El plan Free tiene US$ 5 al mes y ademas cobra storage y transferencia (unos
+# centavos). Si el peor caso pasa de US$ 4,50 el script se niega a seguir sin
+# -AceptarCosto, que es para cuando la cuenta tenga un plan de pago.
+#
+# Lo que se pierde con 15 tuits por hora: si las dos centrales publican mas de
+# 15 despachos en una hora, los mas viejos de esa hora no llegan. Si el log del
+# webhook muestra corridas con exactamente 15 items una y otra vez, esa es la
+# senal de que hace falta mas cupo (plan de pago o mas frecuencia).
+
+$PrecioPorTuit = 0.0004
+$TopePlanFree = 4.5
+
+# Corridas al mes de un cron simple: "M * * * *", "*/N * * * *", "0 */N * * *",
+# listas con comas. Devuelve $null si el cron es de otra forma (dia, mes o dia de
+# la semana restringidos): en ese caso no se estima y se avisa.
+function Get-CorridasPorDia([string]$cron) {
+    $p = $cron.Trim() -split '\s+'
+    if ($p.Count -ne 5) { return $null }
+    if ($p[2] -ne '*' -or $p[3] -ne '*' -or $p[4] -ne '*') { return $null }
+
+    $porHora = $null
+    if ($p[0] -match '^\*/(\d+)$') { $porHora = [math]::Ceiling(60 / [int]$Matches[1]) }
+    elseif ($p[0] -match '^\d+(,\d+)*$') { $porHora = ($p[0] -split ',').Count }
+    if ($null -eq $porHora) { return $null }
+
+    $horas = $null
+    if ($p[1] -eq '*') { $horas = 24 }
+    elseif ($p[1] -match '^\*/(\d+)$') { $horas = [math]::Ceiling(24 / [int]$Matches[1]) }
+    elseif ($p[1] -match '^\d+(,\d+)*$') { $horas = ($p[1] -split ',').Count }
+    if ($null -eq $horas) { return $null }
+
+    return $porHora * $horas
+}
+
+Show-Consumo
 
 # --- Auditoria: solo lee, no cambia nada ------------------------------------
 #
@@ -154,28 +255,73 @@ if ($Auditar) {
 }
 
 
-# --- Definicion de los tres Tasks -------------------------------------------
+# --- Definicion del Task ----------------------------------------------------
+#
+# Uno solo: las dos centrales (@CGI_CBV y @CBVM132) en la misma corrida. El
+# backend separa cada tuit por su autor y lo lee con el diccionario de claves
+# de su Cuerpo.
+#
+# Los Tasks retirados, por si hubiera que volver a encenderlos (junto con
+# APIFY_PRENSA_ENABLED / APIFY_INSTAGRAM_ENABLED en Render):
+#
+#   @{ nombre = "alertav-prensa";    actor = "apidojo~tweet-scraper";
+#      archivo = "task-prensa.json";    webhook = "/api/v1/apify/webhook/prensa" }
+#   @{ nombre = "alertav-instagram"; actor = "apify~instagram-scraper";
+#      archivo = "task-instagram.json"; webhook = $null }
 
 $tasks = @(
     @{ nombre = "alertav-bomberos";  actor = "apidojo~tweet-scraper";
        archivo = "task-bomberos.json";  webhook = "/api/v1/apify/webhook" }
-    @{ nombre = "alertav-prensa";    actor = "apidojo~tweet-scraper";
-       archivo = "task-prensa.json";    webhook = "/api/v1/apify/webhook/prensa" }
-    # Instagram NO lleva webhook: el collector es *pull* y lee
-    # runs/last?status=SUCCEEDED por su cuenta cada 5 min.
-    @{ nombre = "alertav-instagram"; actor = "apify~instagram-scraper";
-       archivo = "task-instagram.json"; webhook = $null }
 )
 
 # Timeout 180s y no 0 (=sin limite): una corrida colgada se come el credito.
 # Memory 512MB y no 256: con menos va lento, y lento choca con el timeout — y
 # una corrida que expira NO queda en SUCCEEDED, que es lo que el collector lee.
-$runOptions = @{ build = "latest"; timeoutSecs = 180; memoryMbytes = 512 }
+# maxTotalChargeUsd: el tope de gasto por corrida que el README prometia y el
+# Task no tenia ("Maximum cost per run: Unlimited" en el panel, 2026-09-23).
+$runOptions = @{
+    build             = "latest"
+    timeoutSecs       = 180
+    memoryMbytes      = 512
+    maxTotalChargeUsd = $MaxCostoPorCorrida
+}
+
+# --- Estimacion de costo, antes de tocar nada ---------------------------------
+
+$corridasDia = Get-CorridasPorDia $Cron
+$maxItems = 0
+foreach ($t in $tasks) {
+    $e = Get-Content (Join-Path $PSScriptRoot $t.archivo) -Raw -Encoding UTF8 | ConvertFrom-Json
+    $maxItems += [int]$e.maxItems
+}
+$cadenciaMin = $null
+if ($null -eq $corridasDia) {
+    Write-Host "No se puede estimar el costo del cron '$Cron' (forma no simple). Revisalo a mano." -ForegroundColor Yellow
+}
+else {
+    $cadenciaMin = [math]::Ceiling(1440 / $corridasDia)
+    $peorCaso = $corridasDia * 31 * $maxItems * $PrecioPorTuit
+    Write-Host ("Cadencia '{0}': {1} corridas al dia, hasta {2} tuits cada una -> peor caso US$ {3:N2} al mes" -f $Cron, $corridasDia, $maxItems, $peorCaso)
+    if ($peorCaso -gt $TopePlanFree -and -not $AceptarCosto) {
+        throw @"
+El peor caso (US$ $([math]::Round($peorCaso, 2)) al mes) no cabe en el plan gratuito de Apify.
+
+Con la cuenta en Free, al pasar los US$ 5 Apify detiene TODOS los Actors hasta
+el periodo siguiente, y Bomberos deja de entregar por dias. Opciones:
+  - una cadencia mas espaciada:  -Cron "0 */2 * * *"
+  - menos tuits por corrida: bajar maxItems en task-bomberos.json
+  - si la cuenta ya tiene plan de pago, repetir con -AceptarCosto
+"@
+    }
+}
 
 $resultado = @()
+$avisos = @()
+
+# --- 1. El Task ---------------------------------------------------------------
 
 foreach ($t in $tasks) {
-    $input = Get-Content (Join-Path $PSScriptRoot $t.archivo) -Raw -Encoding UTF8 | ConvertFrom-Json
+    $entrada = Get-Content (Join-Path $PSScriptRoot $t.archivo) -Raw -Encoding UTF8 | ConvertFrom-Json
 
     # ¿Existe ya? Se busca por nombre para poder re-ejecutar sin duplicar.
     $existentes = (Api GET "/actor-tasks?limit=1000").data.items
@@ -188,93 +334,158 @@ foreach ($t in $tasks) {
     }
 
     if ($previo) {
-        $task = Api PUT "/actor-tasks/$($previo.id)" @{
-            name = $t.nombre; options = $runOptions; input = $input
+        # Si Apify rechaza la actualizacion (cuenta al tope, por ejemplo), el
+        # Task viejo sigue existiendo y el Schedule se ajusta igual con su id:
+        # que deje de correr lo retirado importa mas que actualizar el input.
+        try {
+            $task = Api PUT "/actor-tasks/$($previo.id)" @{
+                name = $t.nombre; options = $runOptions; input = $entrada
+            }
+            $taskId = $task.data.id
+            Write-Host "Task actualizado: $($t.nombre)" -ForegroundColor Cyan
         }
-        Write-Host "Task actualizado: $($t.nombre)" -ForegroundColor Cyan
+        catch {
+            $taskId = $previo.id
+            $avisos += "task $($t.nombre): $($_.Exception.Message)"
+            Write-Host "  AVISO: no se pudo actualizar el Task $($t.nombre); el Schedule se ajusta igual." -ForegroundColor Yellow
+        }
     }
     else {
         $actor = Api GET "/acts/$($t.actor)"
         $task = Api POST "/actor-tasks" @{
             actId = $actor.data.id; name = $t.nombre
-            options = $runOptions; input = $input
+            options = $runOptions; input = $entrada
         }
+        $taskId = $task.data.id
         Write-Host "Task creado: $($t.nombre)" -ForegroundColor Green
     }
 
-    $taskId = $task.data.id
+    $resultado += [pscustomobject]@{
+        Task = $t.nombre; TaskId = $taskId; Webhook = $t.webhook
+    }
+}
 
-    # --- Webhook, SOLO sobre el Task ----------------------------------------
-    #
-    # Nunca sobre el Actor: un webhook colgado del Actor dispara tambien para
-    # las corridas de sus Tasks, y con los dos puestos cada corrida entrega dos
-    # veces.
-    if ($t.webhook) {
-        $url = "$BackendUrl$($t.webhook)"
-        $plantilla = if ($secreto) {
-            (@{ "X-AlertaV-Apify-Secret" = $secreto } | ConvertTo-Json -Compress)
-        } else { "{}" }
+if ($DryRun) {
+    Write-Host "Dejaria el Schedule 'alertav' con: $(($tasks | ForEach-Object { $_.nombre }) -join ', ') ($Cron)"
+    return
+}
 
+# --- 2. El Schedule, antes que los webhooks -----------------------------------
+#
+# Es lo que gasta credito, y por eso va primero: ver "EL ORDEN IMPORTA" arriba.
+#
+# Cada corrida del Actor de X se cobra. Si se cambia el Cron, hay que cambiar
+# tambien APIFY_X_SCHEDULE_MINUTES en Render (se imprime al final): con eso la
+# salud sabe cada cuanto esperar una entrega y no marca en falso las tres
+# familias. Y APIFY_WEBHOOK_MAX_AGE_MINUTES (180) tiene que seguir siendo MAYOR
+# que la cadencia, o un despacho publicado justo despues de una corrida llega
+# viejo a la siguiente y se descarta.
+
+$acciones = @($resultado | ForEach-Object {
+    @{ type = "RUN_ACTOR_TASK"; actorTaskId = $_.TaskId }
+})
+
+$previo = (Api GET "/schedules?limit=1000").data.items |
+          Where-Object { $_.name -eq "alertav" } | Select-Object -First 1
+
+$cuerpoSchedule = @{
+    name           = "alertav"
+    cronExpression = $Cron
+    isEnabled      = $true
+    isExclusive    = $true
+    timezone       = "America/Santiago"
+    actions        = $acciones
+}
+
+if ($previo) {
+    Api PUT "/schedules/$($previo.id)" $cuerpoSchedule | Out-Null
+    Write-Host "Schedule 'alertav' actualizado ($Cron): solo $(($resultado | ForEach-Object { $_.Task }) -join ', ')" -ForegroundColor Cyan
+} else {
+    Api POST "/schedules" $cuerpoSchedule | Out-Null
+    Write-Host "Schedule 'alertav' creado ($Cron)" -ForegroundColor Green
+}
+
+# --- 3. Webhooks, SOLO sobre el Task ------------------------------------------
+#
+# Nunca sobre el Actor: un webhook colgado del Actor dispara tambien para las
+# corridas de sus Tasks, y con los dos puestos cada corrida entrega dos veces.
+#
+# Un fallo aca NO detiene el script: el Task y el Schedule ya quedaron bien, y
+# con la cuenta al tope Apify responde que los webhooks no estan habilitados.
+# Se avisa y se sigue. La unica excepcion es el 401 de la sonda, que significa
+# que el secreto no coincide con el de Render y el webhook no va a servir.
+
+foreach ($r in $resultado) {
+    if (-not $r.Webhook) {
+        Write-Host "  $($r.Task): sin webhook (pull)" -ForegroundColor DarkGray
+        continue
+    }
+
+    $url = "$BackendUrl$($r.Webhook)"
+    $plantilla = (@{ "X-AlertaV-Apify-Secret" = $secreto } | ConvertTo-Json -Compress)
+    $cuerpo = @{
+        eventTypes      = @("ACTOR.RUN.SUCCEEDED")
+        condition       = @{ actorTaskId = $r.TaskId }
+        requestUrl      = $url
+        headersTemplate = $plantilla
+        isAdHoc         = $false
+    }
+
+    try {
         $wh = (Api GET "/webhooks?limit=1000").data.items |
-              Where-Object { $_.condition.actorTaskId -eq $taskId } |
+              Where-Object { $_.condition.actorTaskId -eq $r.TaskId } |
               Select-Object -First 1
-
-        $cuerpo = @{
-            eventTypes      = @("ACTOR.RUN.SUCCEEDED")
-            condition       = @{ actorTaskId = $taskId }
-            requestUrl      = $url
-            headersTemplate = $plantilla
-            isAdHoc         = $false
-        }
-
         if ($wh) {
             Api PUT "/webhooks/$($wh.id)" $cuerpo | Out-Null
-            Write-Host "  webhook actualizado -> $($t.webhook)" -ForegroundColor Cyan
+            Write-Host "  webhook actualizado -> $($r.Webhook)" -ForegroundColor Cyan
         } else {
             Api POST "/webhooks" $cuerpo | Out-Null
-            Write-Host "  webhook creado      -> $($t.webhook)" -ForegroundColor Green
+            Write-Host "  webhook creado      -> $($r.Webhook)" -ForegroundColor Green
         }
+    }
+    catch {
+        $avisos += "webhook de $($r.Task): $($_.Exception.Message)"
+        Write-Host "  AVISO: no se pudo crear/actualizar el webhook de $($r.Task)." -ForegroundColor Yellow
+        Write-Host "  Si la cuenta esta al tope, repetir el script cuando se renueve el periodo." -ForegroundColor Yellow
+        continue
+    }
 
-        # --- Comprobar la cabecera contra el backend REAL --------------------
-        #
-        # El script termina diciendo "listo" aunque haya dejado una cabecera que
-        # el backend rechaza. Sin esta comprobacion, el unico aviso llega por
-        # correo de Apify horas despues —"Endpoint responded with HTTP status
-        # code 401"— y para entonces la integracion puede estar deshabilitada.
-        #
-        # Se manda un cuerpo sin `defaultDatasetId` a proposito: el backend lo
-        # responde `200 ignored` sin leer ningun dataset ni escribir en la base.
-        # Lo unico que se esta probando es la puerta.
-        try {
-            $sonda = Invoke-WebRequest -Method POST -Uri $url `
-                -Headers @{ "X-AlertaV-Apify-Secret" = $secreto } `
-                -Body '{"eventType":"CONFIGURACION","resource":{}}' `
-                -ContentType "application/json" -UseBasicParsing -TimeoutSec 45
-            Write-Host "  verificado          -> HTTP $($sonda.StatusCode)" -ForegroundColor DarkGray
-        } catch {
-            $codigo = $_.Exception.Response.StatusCode.value__
-            if ($codigo -eq 401) {
-                throw @"
+    # --- Comprobar la cabecera contra el backend REAL ------------------------
+    #
+    # El script termina diciendo "listo" aunque haya dejado una cabecera que el
+    # backend rechaza. Sin esta comprobacion, el unico aviso llega por correo de
+    # Apify horas despues —"Endpoint responded with HTTP status code 401"— y
+    # para entonces la integracion puede estar deshabilitada.
+    #
+    # Se manda un cuerpo sin `defaultDatasetId` a proposito: el backend lo
+    # responde `200 ignored` sin leer ningun dataset ni escribir en la base. Lo
+    # unico que se esta probando es la puerta.
+    #
+    # 90 s y no 45: en el plan gratuito de Render el servicio se duerme y la
+    # primera peticion tarda en despertarlo.
+    try {
+        $sonda = Invoke-WebRequest -Method POST -Uri $url `
+            -Headers @{ "X-AlertaV-Apify-Secret" = $secreto } `
+            -Body '{"eventType":"CONFIGURACION","resource":{}}' `
+            -ContentType "application/json" -UseBasicParsing -TimeoutSec 90
+        Write-Host "  verificado          -> HTTP $($sonda.StatusCode)" -ForegroundColor DarkGray
+    } catch {
+        $codigo = $_.Exception.Response.StatusCode.value__
+        if ($codigo -eq 401) {
+            throw @"
 El backend rechazo la cabecera con 401 en $url
 
 El webhook quedo creado pero NO va a funcionar: el valor de
 APIFY_WEBHOOK_SECRET que se uso aca no coincide con el de Render.
-Corregilo y volve a correr este script — es idempotente.
+Corregilo y volve a correr este script: es idempotente.
 "@
-            }
-            Write-Host "  AVISO: la sonda devolvio HTTP $codigo (revisar)" -ForegroundColor Yellow
         }
+        $avisos += "sonda de $($r.Task): HTTP $codigo"
+        Write-Host "  AVISO: la sonda devolvio HTTP $codigo (revisar)" -ForegroundColor Yellow
     }
-    else {
-        Write-Host "  sin webhook (pull)" -ForegroundColor DarkGray
-    }
-
-    $resultado += [pscustomobject]@{ Task = $t.nombre; TaskId = $taskId }
 }
 
-if ($DryRun) { return }
-
-# --- Limpieza de webhooks huerfanos -----------------------------------------
+# --- 4. Limpieza de webhooks huerfanos -----------------------------------------
 #
 # Toda configuracion manual anterior sigue viva en el panel. Un webhook viejo
 # apuntando a la misma URL entrega igual, con la cabecera que tuviera entonces
@@ -299,28 +510,34 @@ if ($DryRun) { return }
 $gestionados = @($resultado | ForEach-Object { $_.TaskId })
 $anfitrion = ([uri]$BackendUrl).Host
 
-$huerfanos = (Api GET "/webhooks?limit=1000").data.items | Where-Object {
-    $_.requestUrl -and
-    ([uri]$_.requestUrl).Host -eq $anfitrion -and
-    $_.condition.actorTaskId -notin $gestionados
-}
-
-if ($huerfanos) {
-    Write-Host "`nWebhooks huerfanos apuntando a $anfitrion :" -ForegroundColor Yellow
-    foreach ($h in $huerfanos) {
-        $de = if ($h.condition.actorTaskId) { "task $($h.condition.actorTaskId)" }
-              elseif ($h.condition.actorId) { "ACTOR $($h.condition.actorId)" }
-              else { "sin condicion" }
-        Write-Host "  borrando: $de -> $($h.requestUrl)"
-        Api DELETE "/webhooks/$($h.id)" | Out-Null
+try {
+    $huerfanos = (Api GET "/webhooks?limit=1000").data.items | Where-Object {
+        $_.requestUrl -and
+        ([uri]$_.requestUrl).Host -eq $anfitrion -and
+        $_.condition.actorTaskId -notin $gestionados
     }
-    Write-Host "  $($huerfanos.Count) eliminados." -ForegroundColor Green
+
+    if ($huerfanos) {
+        Write-Host "`nWebhooks huerfanos apuntando a $anfitrion :" -ForegroundColor Yellow
+        foreach ($h in $huerfanos) {
+            $de = if ($h.condition.actorTaskId) { "task $($h.condition.actorTaskId)" }
+                  elseif ($h.condition.actorId) { "ACTOR $($h.condition.actorId)" }
+                  else { "sin condicion" }
+            Write-Host "  borrando: $de -> $($h.requestUrl)"
+            Api DELETE "/webhooks/$($h.id)" | Out-Null
+        }
+        Write-Host "  $($huerfanos.Count) eliminados." -ForegroundColor Green
+    }
+    else {
+        Write-Host "`nSin webhooks huerfanos." -ForegroundColor DarkGray
+    }
 }
-else {
-    Write-Host "`nSin webhooks huerfanos." -ForegroundColor DarkGray
+catch {
+    $avisos += "limpieza de webhooks: $($_.Exception.Message)"
+    Write-Host "`nAVISO: no se pudieron revisar los webhooks huerfanos." -ForegroundColor Yellow
 }
 
-# --- Tasks duplicados: se reportan, NO se borran -----------------------------
+# --- 5. Tasks duplicados: se reportan, NO se borran ----------------------------
 #
 # El script empareja por nombre exacto, asi que una configuracion manual previa
 # con otro nombre —"Alertav Prensa" contra `alertav-prensa`— no se reutiliza: se
@@ -339,46 +556,16 @@ $otros = (Api GET "/actor-tasks?limit=1000").data.items | Where-Object {
 if ($otros) {
     Write-Host "`nTasks con nombre de AlertaV que este script NO gestiona:" -ForegroundColor Yellow
     foreach ($o in $otros) { Write-Host "  $($o.name)  [$($o.id)]" }
-    Write-Host "  Sus webhooks ya se eliminaron, asi que no entregan nada." -ForegroundColor DarkGray
-    Write-Host "  Si son de la configuracion manual anterior, borralos en el panel" -ForegroundColor DarkGray
-    Write-Host "  y sacalos del Schedule para no gastar credito." -ForegroundColor DarkGray
-}
-
-# --- Schedule unico con los tres Tasks --------------------------------------
-#
-# 30 minutos y no 5: APIFY_MAX_RUN_AGE_MINUTES tolera 45, asi que media hora
-# deja margen para una corrida fallida sin que la capa se declare ciega, y
-# estira el credito del plan gratuito.
-
-$acciones = $resultado | ForEach-Object {
-    @{ type = "RUN_ACTOR_TASK"; actorTaskId = $_.TaskId }
-}
-
-$previo = (Api GET "/schedules?limit=1000").data.items |
-          Where-Object { $_.name -eq "alertav" } | Select-Object -First 1
-
-$cuerpoSchedule = @{
-    name           = "alertav"
-    cronExpression = $Cron
-    isEnabled      = $true
-    isExclusive    = $true
-    timezone       = "America/Santiago"
-    actions        = $acciones
-}
-
-if ($previo) {
-    Api PUT "/schedules/$($previo.id)" $cuerpoSchedule | Out-Null
-    Write-Host "`nSchedule 'alertav' actualizado ($Cron)" -ForegroundColor Cyan
-} else {
-    Api POST "/schedules" $cuerpoSchedule | Out-Null
-    Write-Host "`nSchedule 'alertav' creado ($Cron)" -ForegroundColor Green
+    Write-Host "  Sus webhooks ya se eliminaron y el Schedule 'alertav' ya no los corre." -ForegroundColor DarkGray
+    Write-Host "  alertav-prensa y alertav-instagram estan RETIRADOS desde 2026-09-22:" -ForegroundColor DarkGray
+    Write-Host "  borralos en el panel. Si hay otro Schedule que los corra, sigue" -ForegroundColor DarkGray
+    Write-Host "  gastando credito: revisalo con -Auditar." -ForegroundColor DarkGray
 }
 
 # --- Lo que hay que copiar a Render -----------------------------------------
 #
-# Los dos Tasks salen del mismo Actor y comparten actId, asi que el guard tiene
-# que autorizar el actorTaskId. Estos ids NO son secretos: identifican un Task,
-# no autorizan nada por si solos.
+# El guard tiene que autorizar el actorTaskId. Estos ids NO son secretos:
+# identifican un Task, no autorizan nada por si solos.
 
 Write-Host "`n--- Variables para Render ---" -ForegroundColor Yellow
 foreach ($r in $resultado) {
@@ -387,4 +574,12 @@ foreach ($r in $resultado) {
         "alertav-prensa"   { Write-Host "APIFY_PRENSA_ACTOR_IDS   = $($r.TaskId)" }
     }
 }
-Write-Host "`nListo." -ForegroundColor Green
+if ($cadenciaMin) { Write-Host "APIFY_X_SCHEDULE_MINUTES = $cadenciaMin" }
+
+if ($avisos) {
+    Write-Host "`nTerminado con avisos:" -ForegroundColor Yellow
+    foreach ($a in $avisos) { Write-Host "  - $a" -ForegroundColor Yellow }
+}
+else {
+    Write-Host "`nListo." -ForegroundColor Green
+}

@@ -23,6 +23,7 @@ from app.collectors.social.instagram_apify_worker import InstagramApifyCollector
 from app.collectors.traffic.transporteinforma_worker import TransporteInformaCollector
 from app.collectors.usgs.collector import UsgsCollector
 from app.collectors.weather.openmeteo_worker import OpenMeteoCollector
+from app.core.config import settings
 
 CollectorFactory = Callable[[AsyncSession], BaseCollector]
 
@@ -149,21 +150,24 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     # actualiza los lunes ~15:00, y a diario sólo durante eventos de emergencia.
     MopVialidadCollector.name: MopVialidadCollector,
     # -- Redes sociales -------------------------------------------------------
+    # INSTAGRAM: FUERA DE ROTACIÓN por defecto desde el 2026-09-22 — se
+    # registra más abajo sólo con `APIFY_INSTAGRAM_ENABLED=true`.
+    #
+    # El motivo es de cuota, no de código: el plan gratuito de Apify no alcanza
+    # para tres Tasks y el único que se conserva es el de X para las centrales
+    # de Bomberos. Sin el Task de Instagram corriendo, este collector leería
+    # para siempre el dataset de la última corrida —datos válidos y viejos— y
+    # se declararía ciego cada cinco minutos: el mismo ruido inaccionable que
+    # sacó a Waze de acá. Lo que cubría lo toma la prensa local por RSS.
+    #
     # Cuentas hiperlocales de Instagram, leídas a través de Apify porque el WAF
     # de Meta bloquea cualquier intento directo. Emite `SOCIAL_MEDIA`, la banda
-    # más baja del catálogo: es la fuente más rápida del sistema y la única
-    # donde nadie verificó nada.
-    #
-    # Es también el único collector cuya fuente de datos **no la disparamos
-    # nosotros**: el Actor corre según su propio Schedule en el panel de Apify y
-    # acá sólo se lee el dataset resultante, que es gratis. Si el Schedule se
-    # detiene, este collector no falla — avisa (`datos rancios`) y queda
-    # `partial`. Ver `app/collectors/social/apify_client.py`.
-    InstagramApifyCollector.name: InstagramApifyCollector,
+    # más baja del catálogo. Ver `app/collectors/social/apify_client.py`.
     # -- Prensa local ---------------------------------------------------------
-    # Sitio del Suceso y Pura Noticia, raspados de forma nativa y sin
-    # intermediario: son portales abiertos, uno con RSS estándar y el otro con
-    # HTML público. Cero costo por corrida, a diferencia de la capa de Instagram.
+    # Alerta Noticias, Pura Noticia, Prensa Marga Marga y Quinta Prensa,
+    # raspados de forma nativa y sin intermediario: portales abiertos, con RSS
+    # estándar o HTML público. Cero costo por corrida, a diferencia de Apify.
+    # La lista vive en `LOCAL_NEWS_SOURCES`.
     #
     # Emite `MEDIA` (0.60), una banda entera por encima de `SOCIAL_MEDIA` (0.35),
     # y la diferencia no es de simpatía: estos dos tienen firma, editor y
@@ -185,6 +189,9 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     # Próximos hitos:
     #   BroadcastifyCollector.name: BroadcastifyCollector,  # STT → evento
 }
+
+if settings.APIFY_INSTAGRAM_ENABLED:
+    COLLECTORS[InstagramApifyCollector.name] = InstagramApifyCollector
 
 
 def collector_class(name: str) -> type[BaseCollector]:

@@ -43,6 +43,9 @@ def tuit(
 
 @pytest.fixture(autouse=True)
 def _config(monkeypatch):
+    # La puerta está apagada por defecto desde que el Task de prensa salió de
+    # Apify; estos tests la ejercitan encendida. El apagado tiene el suyo.
+    monkeypatch.setattr(settings, "APIFY_PRENSA_ENABLED", True)
     monkeypatch.setattr(settings, "APIFY_WEBHOOK_SECRET", "")
     monkeypatch.setattr(settings, "APIFY_PRENSA_ACTOR_IDS", [])
     monkeypatch.setattr(settings, "APIFY_WEBHOOK_MAX_AGE_MINUTES", 180)
@@ -266,3 +269,18 @@ def test_un_tuit_sin_fecha_se_considera_fresco():
     sin_fecha = svc.parse_tweet({"id": "9", "full_text": "Choque.", "author": {"userName": "sitiodelsuceso"}})
 
     assert svc.is_fresh(sin_fecha, now=AHORA, max_age_minutes=180) is True
+
+
+def test_con_la_puerta_apagada_la_entrega_se_ignora_sin_encolar(cliente, monkeypatch):
+    """El Task de prensa salió de Apify: un webhook olvidado en el panel no
+    puede ingerir nada, y tampoco puede recibir un 4xx que Apify reintentaría
+    hasta deshabilitar la integración."""
+    monkeypatch.setattr(settings, "APIFY_PRENSA_ENABLED", False)
+    client, encoladas = cliente
+
+    respuesta = client.post(RUTA, json=payload())
+
+    assert respuesta.status_code == 200
+    assert respuesta.json()["status"] == "ignored"
+    assert "APIFY_PRENSA_ENABLED" in respuesta.json()["reason"]
+    assert encoladas == []

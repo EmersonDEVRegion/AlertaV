@@ -5,7 +5,7 @@
 #  Arranca y supervisa los procesos que en local se ejecutan por separado:
 #
 #    1. uvicorn        — la API que consume el frontend
-#    2. app.workers    — recolección + correlación en un solo intérprete
+#    2. app.workers    — recolección + correlación + avisos push, un intérprete
 #
 #  En local son tres procesos; acá son dos. La fusión de los dos motores de
 #  fondo (WORKER_MODE=combined, el defecto) ahorra un intérprete de Python
@@ -43,6 +43,7 @@ readonly PORT="${PORT:-8000}"
 readonly RUN_MIGRATIONS="${RUN_MIGRATIONS:-0}"
 readonly ENABLE_COLLECTORS="${ENABLE_COLLECTORS:-1}"
 readonly ENABLE_CORRELATION="${ENABLE_CORRELATION:-1}"
+readonly ENABLE_PUSH="${ENABLE_PUSH:-1}"
 readonly BACKOFF_MAX_SECONDS="${BACKOFF_MAX_SECONDS:-60}"
 readonly WORKER_MODE="${WORKER_MODE:-combined}"
 
@@ -166,6 +167,7 @@ PIDS+=($!)
 
 [ "$ENABLE_COLLECTORS" = "1" ] || log WARN "recolección desactivada por ENABLE_COLLECTORS=0"
 [ "$ENABLE_CORRELATION" = "1" ] || log WARN "correlación desactivada por ENABLE_CORRELATION=0"
+[ "$ENABLE_PUSH" = "1" ] || log WARN "notificaciones push desactivadas por ENABLE_PUSH=0"
 
 case "$WORKER_MODE" in
     combined)
@@ -175,13 +177,15 @@ case "$WORKER_MODE" in
         worker_flags=()
         [ "$ENABLE_COLLECTORS" = "1" ] || worker_flags+=(--no-collectors)
         [ "$ENABLE_CORRELATION" = "1" ] || worker_flags+=(--no-correlation)
+        [ "$ENABLE_PUSH" = "1" ] || worker_flags+=(--no-push)
 
-        if [ "$ENABLE_COLLECTORS" = "1" ] || [ "$ENABLE_CORRELATION" = "1" ]; then
+        if [ "$ENABLE_COLLECTORS" = "1" ] || [ "$ENABLE_CORRELATION" = "1" ] \
+            || [ "$ENABLE_PUSH" = "1" ]; then
             log INFO "modo combinado: recolección y correlación comparten proceso"
             supervise workers python -m app.workers ${worker_flags[@]+"${worker_flags[@]}"} &
             PIDS+=($!)
         else
-            log WARN "ambos motores desactivados: sólo se levanta la API"
+            log WARN "todos los motores desactivados: sólo se levanta la API"
         fi
         ;;
 
@@ -194,6 +198,10 @@ case "$WORKER_MODE" in
         fi
         if [ "$ENABLE_CORRELATION" = "1" ]; then
             supervise correlation python -m app.services.correlation.runner --loop &
+            PIDS+=($!)
+        fi
+        if [ "$ENABLE_PUSH" = "1" ]; then
+            supervise push python -m app.services.push.runner --loop &
             PIDS+=($!)
         fi
         ;;

@@ -1,11 +1,14 @@
-"""Los dos motores de fondo dentro de un mismo proceso.
+"""Los motores de fondo dentro de un mismo proceso.
 
-    # ambos motores, cadencias del .env
+    # todos los motores, cadencias del .env
     python -m app.workers
 
     # sólo recolección, o sólo correlación
     python -m app.workers --no-correlation
     python -m app.workers --no-collectors
+
+    # sin el notificador push
+    python -m app.workers --no-push
 
     # forzar cadencias sin tocar el .env
     python -m app.workers --interval 900 --correlation-interval 300
@@ -69,6 +72,7 @@ from app.core.database import dispose_engine
 from app.core.logging import configure_logging
 from app.core.shutdown import install_signal_handlers, request_shutdown
 from app.services.correlation import runner as correlation_runner
+from app.services.push import runner as push_runner
 
 logger = logging.getLogger("alertav.workers")
 
@@ -114,6 +118,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="No levantar el motor de correlación.",
     )
+    parser.add_argument(
+        "--no-push",
+        action="store_true",
+        help="No levantar el notificador push.",
+    )
+    parser.add_argument(
+        "--push-interval",
+        type=int,
+        default=settings.PUSH_POLL_INTERVAL_SECONDS,
+        help="Segundos entre pasadas del notificador push.",
+    )
     return parser.parse_args(argv)
 
 
@@ -129,6 +144,17 @@ def _build_tasks(args: argparse.Namespace) -> dict[str, asyncio.Task[None]]:
         tasks["correlation"] = asyncio.create_task(
             correlation_runner.run_loop(max(15, args.correlation_interval)),
             name="correlation",
+        )
+    # El tercer motor. Comparte intérprete y pool por la misma razón que los
+    # otros dos (ver el docstring del módulo), y no pide nada que ellos no
+    # tengan: pasa casi todo el tiempo esperando, y cuando trabaja son unas
+    # pocas consultas y un puñado de POST. Sin claves VAPID se queda dormido
+    # hasta el apagado en vez de salir, porque su salida contaría como caída
+    # de un motor y tumbaría la recolección.
+    if not args.no_push:
+        tasks["push"] = asyncio.create_task(
+            push_runner.run_loop(max(15, args.push_interval)),
+            name="push",
         )
     return tasks
 
@@ -163,7 +189,7 @@ async def _main(argv: Sequence[str] | None = None) -> int:
 
     tasks = _build_tasks(args)
     if not tasks:
-        logger.error("no hay nada que ejecutar: se desactivaron ambos motores")
+        logger.error("no hay nada que ejecutar: se desactivaron todos los motores")
         return 2
 
     logger.info("workers iniciados", extra={"motores": sorted(tasks)})

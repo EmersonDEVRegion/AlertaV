@@ -367,6 +367,31 @@ class Settings(BaseSettings):
             "15",                          # otros servicios
         ]
     )
+    #: Claves del CBVM (@CBVM132, Viña del Mar y Concón) que se ingieren.
+    #:
+    #: Lista aparte y no la de arriba, porque es **otro sistema de claves**:
+    #: `3` es incendio vehicular (el CBV usa 3-1/3-2), `9` es emergencia
+    #: estructural industrial (en el CBV son túneles), `10` es «otros servicios»
+    #: (en el CBV es abastecer agua y NO se ingiere). Ver `CBVM_CODE_TYPES` en
+    #: `vocabulary`, con la tabla comparativa.
+    #:
+    #: Quedan fuera 7, 8, 11, 12, 13 y 16 —internas o sin hecho en el mapa, ver
+    #: `CBVM_NON_INCIDENT_CODES`— y la 14, que las dos versiones de la tabla
+    #: publicada no se ponen de acuerdo en qué es. Si la central la usa, el
+    #: webhook lo avisa como «clave no configurada».
+    BOMBEROS_CBVM_KEYS: CsvList = Field(
+        default_factory=lambda: [
+            "1-1", "1-2", "1-3",           # incendio estructural
+            "2-1", "2-2", "2-3",           # incendio forestal
+            "3",                           # incendio vehicular
+            "4-1", "4-2",                  # gases / materiales peligrosos
+            "5-1", "5-2",                  # rescate vehicular = siniestro vial
+            "6-1", "6-2", "6-3",           # rescate de personas
+            "9",                           # emergencia estructural industrial
+            "10",                          # otros servicios
+            "15",                          # accidente aéreo
+        ]
+    )
     #: Tope de consultas a Nominatim por entrega del webhook.
     #:
     #: Mismo mecanismo y mismo motivo que `TRANSPORTE_INFORMA_MAX_GEOCODES`: el
@@ -381,10 +406,11 @@ class Settings(BaseSettings):
     BOMBEROS_MAX_GEOCODES: int = Field(default=25, ge=0, le=200)
     BOMBEROS_TIMEOUT_SECONDS: float = 30.0
     BOMBEROS_POLL_INTERVAL_SECONDS: int = 180  # 3 min
-    #: Cuenta de origen que se cita en el resumen de cada despacho ("Fuente:
-    #: @CGI_CBV"). Es un ajuste y no una constante porque la atribución tiene
-    #: que seguir a la fuente: el día que se lea otra central —o la misma por
-    #: otra cuenta— el resumen ya publicado no puede seguir citando a ésta.
+    #: Cuenta de RESPALDO para citar y decodificar un despacho cuyo tuit no dice
+    #: quién lo publicó. Desde que el Task raspa dos centrales, cada despacho
+    #: usa la cuenta que trae el propio tuit (`author.userName` o la URL) y el
+    #: diccionario de su Cuerpo; esto sólo rige para Actors que no informan el
+    #: autor y para el camino RSS.
     BOMBEROS_SOURCE_HANDLE: str = "@CGI_CBV"
     #: Tope de decodificaciones por corrida. Un despacho es una llamada al
     #: modelo; una noche de temporal con 200 avisos no puede convertirse en 200
@@ -483,6 +509,32 @@ class Settings(BaseSettings):
     #: publica a diario— la capa se refresca con retraso máximo de una hora, que
     #: para infraestructura dañada es de sobra.
     MOP_VIALIDAD_POLL_INTERVAL_SECONDS: int = Field(default=3600, ge=300, le=86400)
+
+    # -- Apify: qué capas siguen en uso -------------------------------------
+    #
+    # Desde 2026-09-22 Apify queda para UNA cosa: el Task de X que raspa a las
+    # centrales de Bomberos (@CGI_CBV y @CBVM132) y entrega por
+    # `/apify/webhook`. La cuota gratuita no alcanzaba para tres Tasks, y lo que
+    # hacían los otros dos lo cubre ahora la prensa local por RSS, sin costo.
+    #
+    # Las dos capas retiradas NO se borran —su código y sus tests siguen siendo
+    # correctos— sino que se apagan acá. Apagadas no se registran, no cuentan
+    # para la salud de ninguna familia y no dejan filas en `collector_runs`: una
+    # capa que se sabe apagada y sigue «fallando» cada cinco minutos es el ruido
+    # que enseña a ignorar el rojo.
+    #
+    #: Collector de Instagram (pull sobre el dataset del Actor de Instagram).
+    APIFY_INSTAGRAM_ENABLED: bool = False
+    #: Segunda puerta de X (`/apify/webhook/prensa`). Apagada responde
+    #: `ignored` con el motivo, para que un webhook olvidado en el panel no
+    #: ingiera nada ni reviente.
+    APIFY_PRENSA_ENABLED: bool = False
+    #: Cada cuántos minutos corre el Schedule del Task de X en el panel de
+    #: Apify. **No lo dispara**: es lo que la salud espera, y con él decide
+    #: cuándo el webhook de Bomberos lleva demasiado callado. Tres cadencias sin
+    #: entrega = `stale`. Si el Schedule se espacia para cuidar la cuota, hay que
+    #: subirlo acá también, o las tres familias quedan marcadas en falso.
+    APIFY_X_SCHEDULE_MINUTES: int = Field(default=60, ge=5, le=1440)
 
     # -- Redes sociales: Instagram vía Apify ---------------------------------
     #: Token de la API de Apify. Viaja SIEMPRE en la cabecera `Authorization`,
@@ -651,11 +703,31 @@ class Settings(BaseSettings):
     #: mismo publicador, y por el mismo motivo: republica lo que le llega por
     #: mensaje directo, sin segunda fuente y sin corrección. Leerlo por RSS en vez
     #: de por Apify cambia cómo llega el texto, no quién lo escribió.
+    #:
+    #: `margamarga` y `quintaprensa` entraron el 2026-09-22, cuando se retiraron
+    #: los Tasks de Instagram y de prensa de Apify. Suman el Marga Marga
+    #: (Quilpué, Villa Alemana, Limache, Olmué) y el interior, que ninguna otra
+    #: fuente de prensa cubría. Los dos son WordPress con RSS estándar.
+    #:
+    #: **Sólo feed, sin portada de respaldo**, y es deliberado. La portada de
+    #: Prensa Marga Marga es un tema de WordPress cuyo ticker «Noticias de última
+    #: hora» son los diez posts más recientes SIN FECHA visible —el más viejo, de
+    #: mayo de 2025—. El camino HTML deja pasar lo que no trae fecha y lo
+    #: estampa con la hora de la corrida, así que un feed caído convertiría un
+    #: homicidio de hace un año en una emergencia de hoy.
+    #:
+    #: Ojo con la expectativa: medido el 2026-09-22, Prensa Marga Marga publica
+    #: una nota por semana (la última, del 11-09) y Quinta Prensa no publica
+    #: desde el 06-07. Lo que esos medios cuentan al minuto va a su Instagram,
+    #: no a la web. Entran porque no cuestan nada y cubren territorio, no porque
+    #: vayan a ser rápidos.
     LOCAL_NEWS_SOURCES: str = (
         "alertanoticias|Alerta Noticias|"
         "https://alertanoticias.cl/category/valparaiso/feed/|"
         "https://alertanoticias.cl/category/valparaiso/|0.35;"
-        "puranoticia|Pura Noticia||https://puranoticia.pnt.cl/region-valparaiso"
+        "puranoticia|Pura Noticia||https://puranoticia.pnt.cl/region-valparaiso;"
+        "margamarga|Prensa Marga Marga|https://prensamargamarga.cl/feed/|;"
+        "quintaprensa|Quinta Prensa|https://www.quintaprensa.cl/feed/|"
     )
     #: Cabeceras de navegador. El `User-Agent` por defecto de httpx
     #: (`python-httpx/0.28.1`) es lo primero que mira una regla básica de
@@ -949,6 +1021,77 @@ class Settings(BaseSettings):
     #: sube por encima y el incidente sale solo de esta regla.
     CITIZEN_UNCORROBORATED_MAX_CONFIDENCE: float = Field(default=0.40, ge=0.0, le=1.0)
 
+    # -- Notificaciones push (Web Push) --------------------------------------
+    #: Clave privada VAPID: el escalar P-256 de 32 bytes en base64url. La
+    #: pública se deriva de ésta y la PWA la pide a `/push/public-key`, así que
+    #: no hay una segunda variable que pueda quedar desincronizada. Se genera
+    #: con `python scripts/generate_vapid_keys.py`.
+    #:
+    #: **Cambiarla invalida todas las suscripciones.** El navegador ata cada
+    #: suscripción a la clave pública con la que se creó; con otra, el servicio
+    #: de push responde 403 a cada envío. Vacía = push desactivado: la API lo
+    #: informa y el notificador no arranca.
+    VAPID_PRIVATE_KEY: str = ""
+    #: Contacto del emisor, exigido por el RFC 8292: `mailto:` o `https://`. Los
+    #: servicios de push escriben ahí antes de bloquear a un emisor que abusa.
+    VAPID_SUBJECT: str = ""
+    #: Interruptor general. Con las claves puestas y esto en False la API sigue
+    #: aceptando suscripciones pero nadie envía nada: sirve para cortar los
+    #: avisos durante una falla sin perder a los suscritos.
+    PUSH_ENABLED: bool = True
+    #: Cadencia del notificador. No tiene sentido que sea más corta que la del
+    #: motor de correlación, que es quien crea los incidentes que se avisan.
+    PUSH_POLL_INTERVAL_SECONDS: int = Field(default=60, ge=15, le=3600)
+    #: Radio de aviso de emergencias para una suscripción nueva, en metros.
+    PUSH_INCIDENT_RADIUS_M: float = Field(default=5000.0, ge=500.0, le=20_000.0)
+    #: Confianza mínima para avisar de un incidente. 0.30 es el borde del tramo
+    #: `possible`: una señal aislada (tramo `unsafe`) no despierta a nadie. Los
+    #: incidentes confirmados por CONAF o Bomberos y los cortes de luz se avisan
+    #: siempre, porque su fuente ya es la autoridad sobre el hecho.
+    PUSH_INCIDENT_MIN_CONFIDENCE: float = Field(default=0.30, ge=0.0, le=1.0)
+    #: Fuentes DISTINTAS que tienen que sostener un incidente para avisarlo, si
+    #: ninguna es oficial. Con 1, un solo píxel de FIRMS (0.40) o una sola alerta
+    #: de Waze (0.40) ya superan el umbral de arriba: la chimenea de Ventanas
+    #: despertaría a Quintero cada noche. Con 2, hace falta que alguien más vea
+    #: lo mismo.
+    PUSH_INCIDENT_MIN_SOURCES: int = Field(default=2, ge=1, le=10)
+    #: Un incidente que apareció hace más que esto ya no se avisa aunque recién
+    #: alcance el umbral. Evita que, tras una caída del notificador, lleguen de
+    #: golpe los avisos de toda la tarde.
+    PUSH_INCIDENT_MAX_AGE_MINUTES: int = Field(default=180, ge=10, le=1440)
+    #: Magnitud mínima de un sismo para avisar. Por debajo de 3,5 casi nadie lo
+    #: siente aunque esté encima.
+    PUSH_SEISMIC_MIN_MAGNITUDE: float = Field(default=3.5, ge=0.0, le=10.0)
+    #: Antigüedad máxima de un sismo para avisarlo. El CSN y el USGS publican
+    #: con minutos de retraso y los collectors pasan cada 5; más allá de media
+    #: hora el aviso ya no le dice nada nuevo a quien lo sintió.
+    PUSH_SEISMIC_MAX_AGE_MINUTES: int = Field(default=30, ge=5, le=360)
+    #: Tope del radio de percepción, el mismo que usa el mapa
+    #: (`MAX_REACH_KM` en `frontend/src/domain/seismicReach.ts`).
+    PUSH_SEISMIC_MAX_REACH_KM: float = Field(default=400.0, ge=10.0, le=2000.0)
+    #: Fallos seguidos (que no sean 404/410) tras los cuales una suscripción se
+    #: da por perdida y se borra.
+    PUSH_MAX_CONSECUTIVE_FAILURES: int = Field(default=10, ge=1, le=1000)
+    #: Días que se guarda el registro de envíos. Sólo sirve para no repetir un
+    #: aviso y para auditar; pasado un mes no cumple ninguna de las dos cosas.
+    PUSH_DELIVERY_RETENTION_DAYS: int = Field(default=30, ge=1, le=365)
+    #: Segundos entre notificaciones de prueba desde una misma IP.
+    PUSH_TEST_MIN_INTERVAL_SECONDS: int = Field(default=60, ge=0, le=86_400)
+    #: Servicios de push aceptados, por dominio (vale el dominio y cualquier
+    #: subdominio). El servidor hace un POST a la URL que registre cualquiera:
+    #: sin esta lista, alguien podría suscribir `http://169.254.169.254/...` o
+    #: un servicio interno y usar el notificador para golpearlo. Son los de
+    #: Chrome/Android/Samsung (FCM), Firefox, Safari/iOS y Edge.
+    PUSH_ALLOWED_ENDPOINT_HOSTS: CsvList = Field(
+        default_factory=lambda: [
+            "fcm.googleapis.com",
+            "android.googleapis.com",
+            "push.services.mozilla.com",
+            "push.apple.com",
+            "notify.windows.com",
+        ]
+    )
+
     # -- Ingesta -------------------------------------------------------------
     INGEST_MAX_BATCH_SIZE: int = 1000
     # Tolerancia para eventos con timestamp futuro (desfase de reloj de fuentes)
@@ -963,9 +1106,11 @@ class Settings(BaseSettings):
         "USGS_EVENT_TYPES",
         "WAZE_ALERT_TYPES",
         "BOMBEROS_ACCIDENT_KEYS",
+        "BOMBEROS_CBVM_KEYS",
         "APIFY_INSTAGRAM_ACCOUNTS",
         "APIFY_BOMBEROS_ACTOR_IDS",
         "APIFY_PRENSA_ACTOR_IDS",
+        "PUSH_ALLOWED_ENDPOINT_HOSTS",
         mode="before",
     )
     @classmethod

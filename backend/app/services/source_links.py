@@ -65,7 +65,10 @@ _MAX_URL_LENGTH = 2048
 _URL_KEYS: dict[EventSource, tuple[str, ...]] = {
     EventSource.MEDIA: ("url", "link"),
     EventSource.SOCIAL_MEDIA: ("permalink", "url"),
-    EventSource.BOMBEROS: ("_bomberos.guid", "url"),
+    #: `_bomberos.url` primero: desde que el webhook guarda el enlace del tuit
+    #: que trae el Actor, el despacho puede enlazarse. El `guid` sigue detrás
+    #: por los despachos viejos, y casi nunca es una URL (ver abajo).
+    EventSource.BOMBEROS: ("_bomberos.url", "_bomberos.guid", "url"),
     EventSource.TRANSPORTE_INFORMA: ("url", "link", "detalle_url"),
 }
 
@@ -78,7 +81,13 @@ _URL_KEYS_DEFAULT: tuple[str, ...] = ("url", "link", "permalink")
 _LABEL_KEYS: dict[EventSource, tuple[str, ...]] = {
     EventSource.MEDIA: ("_prensa.medio", "_prensa.portal"),
     EventSource.SOCIAL_MEDIA: ("cuenta",),
+    #: Con dos centrales en el mismo webhook, «Bomberos» a secas ya no dice
+    #: quién despachó: la cuenta sí (@CGI_CBV, @CBVM132).
+    EventSource.BOMBEROS: ("_bomberos.cuenta",),
 }
+
+#: Fuentes cuyo nombre humano es una cuenta de X y lleva arroba.
+_HANDLE_SOURCES = frozenset({EventSource.SOCIAL_MEDIA, EventSource.BOMBEROS})
 
 _MAX_LABEL_LENGTH = 80
 
@@ -161,7 +170,7 @@ def source_label_for(source: EventSource, raw_data: Any) -> str | None:
             # El arroba se agrega acá y no se guarda en `raw_data`: ahí vive el
             # identificador de la cuenta, que es lo que se usa para volver a
             # consultarla. La decoración es del panel.
-            if source is EventSource.SOCIAL_MEDIA and not texto.startswith("@"):
+            if source in _HANDLE_SOURCES and not texto.startswith("@"):
                 texto = f"@{texto}"
             return texto
 
