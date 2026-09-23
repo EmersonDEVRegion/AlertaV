@@ -305,7 +305,10 @@ def test_el_megaincendio_sin_fecha_sigue_pasando() -> None:
         ("Excursionistas fueron rescatados tras perderse", EventType.RESCUE),
         ("Chocan dos vehículos en la Ruta 68", EventType.ACCIDENT),
         ("Camión volcó en la cuesta Las Chilcas", EventType.ACCIDENT),
-        ("Se incendia vivienda en el cerro Cordillera", EventType.OTHER),
+        # Con la edificación nombrada deja de ser fuego sin calificar (ver
+        # `vocabulary._BUILDING`); sin ella, el verbo sigue valiendo `OTHER`.
+        ("Se incendia vivienda en el cerro Cordillera", EventType.STRUCTURAL_FIRE),
+        ("Se incendia un vehículo en la subida Santos Ossa", EventType.OTHER),
     ],
 )
 def test_el_verbo_del_titular_tambien_es_una_emergencia(

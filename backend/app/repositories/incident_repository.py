@@ -92,6 +92,17 @@ def incident_family_sql(column: ColumnElement[Any]) -> Case:
     )
 
 
+def sector_clave_sql() -> ColumnElement[Any]:
+    """`raw_data._extraction.sector_clave` de una señal, como texto.
+
+    La escriben los collectors que leen prosa (prensa, Instagram, X) con
+    `lugares.anotar_sector`: "vina del mar|miraflores alto". Vive en
+    `_extraction` y no en `_geocoding` a propósito: una nota sin punto también
+    la tiene, y es justamente la que más la necesita.
+    """
+    return RawEvent.raw_data["_extraction"]["sector_clave"].astext
+
+
 @dataclass(frozen=True, slots=True)
 class ClusteredEvent:
     """Una señal con el racimo que le asignó DBSCAN en esta pasada."""
@@ -107,6 +118,8 @@ class ClusteredEvent:
     #: Familia de fenómeno: `fire`, `traffic`, `hydro`, `other`. Es la partición
     #: dentro de la cual se calcularon las distancias.
     family: str = DEFAULT_FAMILY
+    #: Sector que nombró la fuente, si lo nombró. Ver `sector_clave_sql`.
+    sector_clave: str | None = None
 
     @property
     def cluster_key(self) -> tuple[str, int | None]:
@@ -126,6 +139,17 @@ class ClusteredEvent:
 class NearbyIncident:
     incident: Incident
     distance_m: float
+
+
+@dataclass(frozen=True, slots=True)
+class SectorSignal:
+    """Una señal SIN punto que nombra un sector. Candidata al vínculo por sector."""
+
+    event_id: int
+    type: EventType
+    family: str
+    sector_clave: str
+    timestamp: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,6 +237,7 @@ class IncidentRepository:
                 RawEvent.type.label("type"),
                 RawEvent.geom.label("geom"),
                 event_family_sql(RawEvent.type).label("family"),
+                sector_clave_sql().label("sector_clave"),
             )
             .where(RawEvent.geom.isnot(None))
             .where(RawEvent.incident_id.is_(None))
@@ -238,6 +263,7 @@ class IncidentRepository:
             candidates.c.source,
             candidates.c.type,
             candidates.c.family,
+            candidates.c.sector_clave,
             cluster_id.label("cluster_id"),
         )
 
@@ -253,6 +279,92 @@ class IncidentRepository:
                 source=EventSource(getattr(row.source, "value", row.source)),
                 type=EventType(getattr(row.type, "value", row.type)),
                 family=str(row.family),
+                sector_clave=row.sector_clave or None,
+            )
+            for row in rows
+        ]
+
+    # -- Vínculo por sector ---------------------------------------------------
+
+    def open_incident_by_sector_stmt(
+        self, *, sector_clave: str, family: str, since: datetime
+    ) -> Select:
+        """La consulta de `find_open_incident_by_sector`, separada para testearla.
+
+        `@>` (`contains`) y no `->> =`: es lo que puede usar el índice GIN
+        `jsonb_path_ops` de `raw_data`.
+        """
+        return (
+            select(Incident)
+            .join(IncidentEvent, IncidentEvent.incident_id == Incident.id)
+            .join(RawEvent, RawEvent.id == IncidentEvent.raw_event_id)
+            .where(Incident.status.in_(_open_statuses()))
+            .where(Incident.last_seen_at >= since)
+            .where(incident_family_sql(Incident.type) == family)
+            .where(
+                RawEvent.raw_data.contains({"_extraction": {"sector_clave": sector_clave}})
+            )
+            # El más reciente: si hubo dos incendios en el sector el mismo día,
+            # el que sigue vivo es el que corresponde. A igualdad, el más
+            # antiguo, que es el que sobreviviría a una fusión.
+            .order_by(Incident.last_seen_at.desc(), Incident.id.asc())
+            .limit(1)
+            .execution_options(populate_existing=True)
+        )
+
+    async def find_open_incident_by_sector(
+        self, *, sector_clave: str, family: str, since: datetime
+    ) -> Incident | None:
+        """Incidente abierto de la familia cuyas señales nombran este sector.
+
+        Es la cuarta puerta del aislamiento entre familias, y por eso filtra por
+        familia igual que las otras tres: que un choque y un incendio ocurran en
+        el mismo sector la misma tarde no los vuelve el mismo hecho.
+        """
+        stmt = self.open_incident_by_sector_stmt(
+            sector_clave=sector_clave, family=family, since=since
+        )
+        return (await self.session.execute(stmt)).scalars().first()
+
+    def unlocated_sector_signals_stmt(self, *, since: datetime, limit: int) -> Select:
+        """La consulta de `unlocated_sector_signals`, separada para testearla."""
+        clave = sector_clave_sql()
+        return (
+            select(
+                RawEvent.id.label("id"),
+                RawEvent.type.label("type"),
+                RawEvent.timestamp.label("timestamp"),
+                event_family_sql(RawEvent.type).label("family"),
+                clave.label("sector_clave"),
+            )
+            .where(RawEvent.geom.is_(None))
+            .where(RawEvent.incident_id.is_(None))
+            .where(RawEvent.timestamp >= since)
+            .where(RawEvent.type.in_(sorted(CORRELATABLE_EVENT_TYPES, key=lambda t: t.value)))
+            .where(clave.isnot(None))
+            .where(clave != "")
+            .order_by(RawEvent.timestamp.asc())
+            .limit(limit)
+        )
+
+    async def unlocated_sector_signals(
+        self, *, since: datetime, limit: int
+    ) -> list[SectorSignal]:
+        """Señales sin punto, aún sin incidente, que nombran un sector.
+
+        Son las que el Paso A no puede ver —filtra por `geom IS NOT NULL`— y que
+        sin esto se quedaban para siempre fuera del mapa aunque otra fuente
+        estuviera contando el mismo hecho en el mismo sector.
+        """
+        stmt = self.unlocated_sector_signals_stmt(since=since, limit=limit)
+        rows = (await self.session.execute(stmt)).all()
+        return [
+            SectorSignal(
+                event_id=row.id,
+                type=EventType(getattr(row.type, "value", row.type)),
+                family=str(row.family),
+                sector_clave=str(row.sector_clave),
+                timestamp=row.timestamp,
             )
             for row in rows
         ]
@@ -369,9 +481,9 @@ class IncidentRepository:
     ) -> int:
         """Fija el puntero desnormalizado `raw_events.incident_id`.
 
-        Sólo para vínculos espaciales: es el único que es 1:1. Una alerta comunal
-        puede pertenecer a varios incidentes y por eso vive únicamente en la
-        tabla intermedia.
+        Para vínculos espaciales y por sector: los dos son 1:1 —una señal
+        pertenece a un solo incidente—. Una alerta comunal puede pertenecer a
+        varios incidentes y por eso vive únicamente en la tabla intermedia.
         """
         if not event_ids:
             return 0
@@ -925,6 +1037,8 @@ __all__ = [
     "EventLink",
     "IncidentRepository",
     "NearbyIncident",
+    "SectorSignal",
     "event_family_sql",
     "incident_family_sql",
+    "sector_clave_sql",
 ]

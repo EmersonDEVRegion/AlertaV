@@ -909,6 +909,14 @@ NOISE_PHRASES: tuple[str, ...] = tuple(
             "prevencion de incendios",
             "seguro contra incendios",
             "a fuego lento",
+            # "Fuego" que no es combustión. Entraron junto con la regla de fuego
+            # en vivienda (`_fuego_en_vivienda`): "disparos con arma de fuego
+            # contra un domicilio" tiene fuego y domicilio, y sin excindirlos se
+            # rotulaba incendio estructural y corroboraba al incendio real de la
+            # cuadra de al lado.
+            "arma de fuego",
+            "armas de fuego",
+            "fuego cruzado",
             # Ejercicios. Es una emergencia anunciada, que es justo lo contrario
             # de una emergencia.
             "simulacro de incendio",
@@ -995,10 +1003,91 @@ PRESS_NOISE_PHRASES: tuple[str, ...] = tuple(
     )
 )
 
+#: Cobertura de las **secuelas** de un siniestro: tribunales, reconstrucción,
+#: subsidios, aniversarios. Complementa a `PRESS_NOISE_PHRASES` para el caso que
+#: la excisión no puede resolver: cuando las palabras no vienen pegadas.
+#:
+#: El titular que lo destapó, de Pura Noticia, el 2026-09-03: "Megaincendio en
+#: Viña del Mar: Corte escuchó argumentos y dejó pendiente resolución de ocho
+#: recursos por reconstrucción de El Olivar". No trae la fecha —ninguna frase de
+#: `PRESS_NOISE_PHRASES` coincide— y el mapa lo mostró como una emergencia activa
+#: en Viña del Mar, dos años y medio después del incendio.
+#:
+#: Esto **no se excinde**: se usa para vetar la nota entera, que es justo lo que
+#: el bloque de ruido evita hacer ("un veto mal puesto perdería el accidente
+#: real que viniera en el mismo párrafo"). Por eso el veto pide combinaciones y
+#: no palabras sueltas —ver `es_cobertura_de_secuelas`— y por eso la lista deja
+#: fuera lo que también aparece en un siniestro en curso:
+#:
+#: * "damnificados": "incendio deja cinco familias damnificadas" es de hoy.
+#: * "recursos" a secas: "CONAF despliega recursos aéreos" es de hoy.
+#: * "corte" a secas: "corte de tránsito", "corte de luz".
+#: * "fiscalía", "formalizado", "detenido": un choque de esta mañana ya tiene
+#:   conductor detenido y fiscal de turno a mediodía.
+#:
+#: Por palabra completa, no por subcadena: "anos del" está dentro de "daños del
+#: incendio", que es de hoy.
+SECUELA_TERMS: tuple[str, ...] = (
+    # Tribunales. El tribunal llega meses después del siniestro.
+    "corte suprema",
+    "corte de apelaciones",
+    "recursos? de proteccion",
+    "querellas?",
+    "juicio oral",
+    "sentencia",
+    "alegatos",
+    "indemnizacion(?:es)?",
+    "demanda colectiva",
+    # Reconstrucción y vivienda.
+    "reconstruccion",
+    "subsidios?",
+    "serviu",
+    "minvu",
+    "viviendas? definitivas?",
+    # Memoria.
+    "aniversario",
+    r"conmemora\w*",
+    "a (?:un|dos|tres|cuatro|cinco) anos? del?",
+    "anos despues del?",
+    "comision investigadora",
+)
+_SECUELAS = tuple(re.compile(rf"\b{termino}\b") for termino in SECUELA_TERMS)
+
+
+def es_cobertura_de_secuelas(texto_limpio: str) -> bool:
+    """¿El texto cubre las secuelas de un siniestro y no un siniestro en curso?
+
+    Dos formas de serlo:
+
+    1. **"megaincendio" y al menos una secuela.** En la prensa regional
+       "megaincendio" nombra casi siempre el de febrero de 2024 (ver
+       `PRESS_NOISE_PHRASES`); un megaincendio nuevo se escribe con lo que está
+       pasando —"avanza", "evacuación"— y no con reconstrucción ni tribunales.
+    2. **Fuego y al menos dos secuelas distintas.** Una sola puede ser
+       coincidencia ("incendio en la Corte de Apelaciones"); dos ya describen
+       un trámite ("Serviu entrega viviendas definitivas a los afectados por el
+       incendio").
+
+    Recibe el texto ya pasado por `haystack` o `haystack_prensa`.
+    """
+    if not texto_limpio:
+        return False
+    secuelas = sum(1 for patron in _SECUELAS if patron.search(texto_limpio))
+    if not secuelas:
+        return False
+    if "megaincendio" in texto_limpio:
+        return True
+    return secuelas >= 2 and any(termino in texto_limpio for termino in FIRE_TERMS)
+
 
 # =============================================================================
 #  Normalización y excisión
 # =============================================================================
+
+
+def _borde(texto: str, posicion: int) -> bool:
+    """¿`posicion` cae fuera de una palabra? Los extremos del texto cuentan."""
+    return posicion < 0 or posicion >= len(texto) or not texto[posicion].isalnum()
 
 
 def _excindir(texto: str, frases: Sequence[str]) -> str:
@@ -1034,7 +1123,12 @@ def _excindir(texto: str, frases: Sequence[str]) -> str:
     for frase in frases:
         desde = texto.find(frase)
         while desde != -1:
-            tramos.append((desde, desde + len(frase)))
+            hasta = desde + len(frase)
+            # Sólo palabras completas. "anos del incendio" (el aniversario) está
+            # dentro de "danos del incendio", y excindirlo ahí borraba el único
+            # "incendio" de "Evalúan los daños del incendio en Placeres".
+            if _borde(texto, desde - 1) and _borde(texto, hasta):
+                tramos.append((desde, hasta))
             desde = texto.find(frase, desde + 1)
 
     if not tramos:
@@ -1115,6 +1209,11 @@ def is_emergency(texto: str) -> bool:
     if not texto_limpio:
         return False
 
+    # Antes que todo lo demás: una nota sobre el juicio o la reconstrucción de
+    # un incendio contiene "incendio" y no es una emergencia en curso.
+    if es_cobertura_de_secuelas(texto_limpio):
+        return False
+
     if any(term in texto_limpio for term in CRITICAL_TERMS):
         return True
 
@@ -1159,6 +1258,42 @@ _STRUCTURAL_FIRE = (
 #: Marcador genérico de fuego. Sólo se consulta si ninguno de los específicos
 #: coincidió, y produce `OTHER` a propósito — ver `classify_event_type`.
 _GENERIC_FIRE = ("incendio", "llamas", "amago", "fuego", "emanacion")
+
+#: Fuego nombrado junto a una edificación: "fuego que consumió una casa",
+#: "se incendia vivienda en el cerro Cordillera", "departamento en llamas".
+#:
+#: Es la calificación que `_STRUCTURAL_FIRE` busca por frase hecha y que la
+#: prensa casi nunca escribe así. El 2026-09-03 el mismo incendio de Miraflores
+#: Alto llegó dos veces: el tuit decía "incendio estructural" y quedó en `fire`;
+#: la nota de Pura Noticia decía "fuego que consumió una casa" y quedó en
+#: `OTHER`. Como el motor no fusiona entre familias, el mapa mostró dos
+#: incidentes para una sola casa quemada y ninguno subió de confianza.
+#:
+#: Afirmar "estructural" acá no es la inferencia que `classify_event_type`
+#: prohíbe para el fuego a secas: el texto nombra la edificación que se quema.
+#: Lo que sigue sin afirmarse es "forestal", y por eso esta regla corre
+#: **después** de `_WILDFIRE`: "incendio de pastizal amenaza viviendas" sigue
+#: siendo forestal.
+#:
+#: Por palabra completa y no por subcadena, a diferencia del resto del archivo:
+#: "casa" está dentro de "Casablanca" —una comuna— y de "casamiento".
+#:
+#: `_FIRE_ROOT` usa sólo formas que ya están en `FIRE_TERMS`. No es por
+#: austeridad: sostiene la invariante de `classify_event_type` (None si y sólo
+#: si `is_emergency` es False). "se incendia" no es un término crítico —entra
+#: por `HEADLINE_VERBS`, sólo en prensa— y por eso su versión con vivienda se
+#: resuelve en `tipo_por_verbo`, no acá.
+_FIRE_ROOT = re.compile(r"\b(?:incendios?|fuego|llamas|amagos?)\b")
+_BUILDING = re.compile(
+    r"\b(?:casas?|viviendas?|inmuebles?|departamentos?|domicilios?|edificios?|"
+    r"mediaguas?|cabanas?|galpon(?:es)?|bodegas?|local(?:es)? comercial(?:es)?|"
+    r"techumbres?)\b"
+)
+
+
+def _fuego_en_vivienda(texto_limpio: str) -> bool:
+    """¿El texto nombra fuego y una edificación? Ver `_BUILDING`."""
+    return bool(_FIRE_ROOT.search(texto_limpio) and _BUILDING.search(texto_limpio))
 
 #: Cadena de clasificación, de lo más específico a lo más genérico.
 #:
@@ -1206,6 +1341,9 @@ def classify_event_type(texto: str) -> EventType | None:
       mapa antes que subirle la confianza a un incendio con evidencia que no
       vale lo que parece.
 
+    Fuego **con una edificación nombrada** ya no es fuego sin calificar: "fuego
+    que consumió una casa" devuelve `STRUCTURAL_FIRE`. Ver `_BUILDING`.
+
     El agua no recibe ese trato y la asimetría es intencional: no existe un
     "posible anegamiento" con el que se pueda confundir. Una calle está cortada
     por barro o no lo está, no hay una versión satelital del hecho que pueda
@@ -1223,6 +1361,10 @@ def classify_event_type(texto: str) -> EventType | None:
     if not texto_limpio:
         return None
 
+    # La misma condición que `is_emergency`, en el mismo lugar: la invariante.
+    if es_cobertura_de_secuelas(texto_limpio):
+        return None
+
     # 1. La clave radial primero: es la central diciendo qué despachó, y eso
     #    vale más que adivinar por vocabulario. Un "10-0 en calle Serrano" es
     #    más específico que cualquier sinónimo de fuego que traiga el texto.
@@ -1234,6 +1376,11 @@ def classify_event_type(texto: str) -> EventType | None:
     for markers, event_type in _CLASSIFIERS:
         if any(marker in texto_limpio for marker in markers):
             return event_type
+        # Con la misma prioridad que las frases hechas de incendio estructural:
+        # después de lo forestal, antes que agua, barro y tránsito. Ver
+        # `_BUILDING`.
+        if markers is _STRUCTURAL_FIRE and _fuego_en_vivienda(texto_limpio):
+            return EventType.STRUCTURAL_FIRE
 
     if any(marker in texto_limpio for marker in _GENERIC_FIRE):
         return EventType.OTHER
@@ -1421,10 +1568,18 @@ HEADLINE_VERBS: dict[str, EventType] = {
 }
 
 
+#: Verbos de fuego de `HEADLINE_VERBS`. Con una edificación en el texto dejan de
+#: ser fuego sin calificar: "Se incendia vivienda en el cerro Cordillera" es un
+#: incendio estructural. Ver `_BUILDING`.
+_FIRE_VERBS = frozenset({"incendia"})
+
+
 def tipo_por_verbo(texto_limpio: str) -> EventType | None:
     """Primer tipo cuyo verbo de titular aparece en el texto ya normalizado."""
     for termino, tipo in HEADLINE_VERBS.items():
         if termino in texto_limpio:
+            if termino in _FIRE_VERBS and _BUILDING.search(texto_limpio):
+                return EventType.STRUCTURAL_FIRE
             return tipo
     return None
 
@@ -1442,6 +1597,8 @@ def es_emergencia(texto: str) -> bool:
     """
     texto_limpio = haystack_prensa(texto)
     if not texto_limpio:
+        return False
+    if es_cobertura_de_secuelas(texto_limpio):
         return False
     if is_emergency(texto_limpio):
         return True
@@ -1461,6 +1618,8 @@ def clasificar_noticia(texto: str) -> EventType | None:
     """
     texto_limpio = haystack_prensa(texto)
     if not texto_limpio:
+        return None
+    if es_cobertura_de_secuelas(texto_limpio):
         return None
     tipo = classify_event_type(texto_limpio)
     if tipo is not None:
@@ -1484,6 +1643,7 @@ __all__ = [
     "PRESS_NOISE_PHRASES",
     "RESCUE_TERMS",
     "ROAD_OPS_TERMS",
+    "SECUELA_TERMS",
     "SUPPORT_CODES",
     "TRAFFIC_TERMS",
     "clasificar_noticia",
@@ -1493,6 +1653,7 @@ __all__ = [
     "clave_meaning",
     "dispatch_event_type",
     "es_accidente_vial",
+    "es_cobertura_de_secuelas",
     "es_emergencia",
     "es_operacion_vial",
     "find_claves",

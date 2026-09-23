@@ -540,6 +540,33 @@ GiST sigue haciendo el prefiltrado por caja envolvente.
 | Fusión de incidentes convergentes | Un incendio que avanza produce racimos sucesivos que terminan tocándose. Sobrevive el más antiguo —es el que tiene folio circulando por radio— y el absorbido queda en `merged` apuntando a su sucesor, de modo que un folio ya comunicado sigue resolviendo a algo. |
 | `stale` ≠ `extinguished` | Que dejen de llegar detecciones satelitales no significa que el fuego se apagó: significa que no pasó un satélite. Sólo una fuente confirmatoria cierra una emergencia. |
 
+### Vínculo por sector
+
+La prensa y las cuentas locales casi nunca dan una esquina, y a veces el
+geocodificador ubica la misma casa quemada en dos puntos a kilómetros de
+distancia. Lo que sí repiten con las mismas palabras es el sector: "en el sector
+de Miraflores Alto".
+
+Los collectors de texto libre (prensa, Instagram, X) extraen ese sector
+(`app/collectors/lugares.py`) y lo guardan en `raw_data._extraction.sector_clave`
+junto con la comuna (`vina del mar|miraflores alto`). El geocodificador lo usa
+para descartar una calle que OSM ubica en otro sector y, si no hay calle, para
+geocodificar el sector mismo (`precision = "sector"`). El motor lo usa de dos
+formas, las dos con `link_method = 'sector_text'`:
+
+- Un racimo con punto que **no tiene incidente a menos de `CORRELATION_RADIUS_M`**
+  se une al incidente de su misma familia que nombra el mismo sector, antes de
+  abrir uno nuevo.
+- Una señal **sin punto** que nombra un sector se une al incidente de su familia
+  en ese sector. Como el Paso B, esto no crea incidentes: si no hay nadie ahí,
+  la señal espera.
+
+Siempre misma familia, misma comuna y una ventana corta
+(`CORRELATION_SECTOR_WINDOW_HOURS`, 3 h): un sector mide un par de kilómetros y
+dos incendios en él con medio día de diferencia son dos incendios. El vínculo no
+mueve el punto del incidente —`recompute_geometry` sólo promedia los espaciales—
+y guarda la distancia para que se vea cuánto discrepaban las fuentes.
+
 ### Paso B: correlación por comuna
 
 Una heurística sobre texto, tratada como tal: el vínculo se marca
@@ -723,6 +750,7 @@ Todos los parámetros son hipótesis de partida, no constantes físicas:
 | `CORRELATION_RADIUS_M` | 1500 | Radio de agrupación y de fusión |
 | `CORRELATION_WINDOW_HOURS` | 4 | Señales que entran a cada pasada |
 | `CORRELATION_MATCH_WINDOW_HOURS` | 12 | Antigüedad máxima para adherirse a un incidente abierto |
+| `CORRELATION_SECTOR_WINDOW_HOURS` | 3 | Ventana del vínculo por sector (`sector_text`): misma familia, mismo sector nombrado |
 | `CORRELATION_MIN_SIGNALS_FOR_INCIDENT` | 1 | Cuán estricto es el mapa |
 | `CORRELATION_STALE_HOURS` | 12 | Silencio tras el cual un incidente se marca `stale` |
 | `CORRELATION_ALERT_VALIDITY_HOURS` | 24 | Cuánto sigue vigente una alerta que dejó de refrescarse |

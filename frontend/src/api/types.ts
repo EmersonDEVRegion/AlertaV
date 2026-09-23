@@ -100,7 +100,7 @@ export const CONFIRMED_THRESHOLD = 0.6
 
 export type AlertLevel = 'roja' | 'amarilla' | 'temprana_preventiva' | 'verde'
 
-export type LinkMethod = 'spatial' | 'commune_text' | 'manual'
+export type LinkMethod = 'spatial' | 'commune_text' | 'sector_text' | 'manual'
 
 /** Etiquetas legibles que calcula el backend. No se recalculan en el cliente. */
 export type ConfidenceLabel =

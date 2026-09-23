@@ -10,6 +10,12 @@ Una pasada hace cuatro cosas, en este orden y por esta razón:
    incidente que está a punto de desaparecer absorbido.
 3. **Paso B — texto.** Adosa las alertas vigentes de SENAPRED, que no tienen
    coordenadas, a los incidentes espaciales de su comuna.
+
+Entre el Paso A y la fusión corre además el **vínculo por sector**
+(`_step_a_sector`): una nota de prensa que dice "sector de Miraflores Alto" y no
+trae calle se une al incidente de su misma familia cuyas señales nombran ese
+sector. Y dentro del Paso A, un racimo que no encuentra incidente a menos de
+`radius_m` prueba lo mismo antes de abrir uno nuevo. Ver `_incident_by_sector`.
 4. **Caducidad.** Dos reglas distintas y con criterios distintos: los
    incidentes sin señales nuevas pasan a `stale` tras horas, y los sostenidos
    sólo por un reporte ciudadano sin corroborar se descartan tras minutos. Ver
@@ -36,6 +42,10 @@ fusión:
    incidente que ya existe.
 3. `find_mergeable` exige familia común — dos incidentes que crecieron uno hacia
    el otro.
+
+El vínculo por sector agrega una cuarta, `find_open_incident_by_sector`, que
+filtra por familia por la misma razón: un choque y un incendio en el mismo
+sector la misma tarde no son el mismo hecho.
 
 Dejar una sola abierta anula a las otras dos: bastaría con que el choque se
 adhiriera al incendio ya existente para que todo el trabajo de particionar el
@@ -72,6 +82,7 @@ from app.repositories.incident_repository import (
     ClusteredEvent,
     EventLink,
     IncidentRepository,
+    SectorSignal,
 )
 from app.services.correlation.communes import (
     AlertView,
@@ -101,6 +112,14 @@ _MUTABLE_STATUSES = frozenset(
 
 _EARTH_RADIUS_M = 6_371_008.8
 
+#: `link_confidence` de un vínculo por sector. Por debajo del 1.0 espacial y del
+#: 0.70 de una comuna exacta en el Paso B, aunque un sector sea mucho más fino
+#: que una comuna: acá no hay un organismo declarando nada, sólo dos textos que
+#: dicen el mismo nombre. No entra en la confianza del incidente —esa se calcula
+#: sobre las señales—; es la marca con que un operador reconoce el vínculo más
+#: débil al auditar.
+LINK_CONFIDENCE_SECTOR = 0.60
+
 
 @dataclass(slots=True)
 class CorrelationPass:
@@ -114,6 +133,13 @@ class CorrelationPass:
     incidents_updated: int = 0
     spatial_links: int = 0
     clusters_deferred: int = 0
+    #: Racimos con punto que no tenían incidente a menos de `radius_m` y se
+    #: unieron a uno por nombrar el mismo sector.
+    clusters_joined_by_sector: int = 0
+    #: Señales sin punto que nombran un sector, evaluadas en la pasada.
+    unlocated_sector_signals: int = 0
+    #: Vínculos `sector_text` escritos en la pasada, de las dos vías.
+    sector_links: int = 0
     alerts_considered: int = 0
     alert_links: int = 0
     incidents_merged: int = 0
@@ -143,6 +169,9 @@ class CorrelationPass:
             "incidents_created": self.incidents_created,
             "incidents_updated": self.incidents_updated,
             "spatial_links": self.spatial_links,
+            "clusters_joined_by_sector": self.clusters_joined_by_sector,
+            "unlocated_sector_signals": self.unlocated_sector_signals,
+            "sector_links": self.sector_links,
             "alerts_considered": self.alerts_considered,
             "alert_links": self.alert_links,
             "incidents_merged": self.incidents_merged,
@@ -188,6 +217,7 @@ class CorrelationEngine:
         radius_m: float | None = None,
         window_hours: int | None = None,
         match_window_hours: int | None = None,
+        sector_window_hours: int | None = None,
         stale_hours: int | None = None,
         citizen_ttl_minutes: int | None = None,
         citizen_max_confidence: float | None = None,
@@ -202,6 +232,9 @@ class CorrelationEngine:
         self.window_hours = window_hours or settings.CORRELATION_WINDOW_HOURS
         self.match_window_hours = (
             match_window_hours or settings.CORRELATION_MATCH_WINDOW_HOURS
+        )
+        self.sector_window_hours = (
+            sector_window_hours or settings.CORRELATION_SECTOR_WINDOW_HOURS
         )
         self.stale_hours = stale_hours or settings.CORRELATION_STALE_HOURS
         self.citizen_ttl_minutes = (
@@ -247,6 +280,7 @@ class CorrelationEngine:
 
         try:
             await self._step_a_spatial(result, now=now)
+            await self._step_a_sector(result, now=now)
             await self._merge_converged(result, now=now)
             await self._step_b_commune(result, now=now)
             await self._expire(result, now=now)
@@ -294,8 +328,23 @@ class CorrelationEngine:
                 family=family,
             )
 
+            method = LinkMethod.SPATIAL
+            by_sector: Incident | None = None
+            if nearby is None:
+                by_sector = await self._incident_by_sector(
+                    [member.sector_clave for member in members], family=family, now=now
+                )
+
             if nearby is not None:
                 incident = nearby.incident
+            elif by_sector is not None:
+                # Nada a menos de `radius_m`, pero un incidente de la misma
+                # familia nombra el mismo sector. Uno de los dos puntos está mal
+                # —la prensa no da esquinas y OSM tiene calles homónimas— y lo
+                # que las dos fuentes sí dicen igual es el sector.
+                incident = by_sector
+                method = LinkMethod.SECTOR_TEXT
+                result.clusters_joined_by_sector += 1
             else:
                 if not self._should_open_incident(members):
                     # Señal aislada de una fuente no confirmatoria: se deja sin
@@ -310,18 +359,30 @@ class CorrelationEngine:
             links = [
                 EventLink(
                     raw_event_id=member.event_id,
-                    link_method=LinkMethod.SPATIAL,
-                    link_confidence=1.0,
+                    link_method=method,
+                    link_confidence=(
+                        1.0 if method is LinkMethod.SPATIAL else LINK_CONFIDENCE_SECTOR
+                    ),
+                    # En el vínculo por sector la distancia también se guarda:
+                    # es lo que muestra, al auditar, cuánto discrepaban los
+                    # dos puntos que el sector unió.
                     distance_m=round(
                         haversine_m(incident.lat, incident.lon, member.lat, member.lon),
                         2,
                     ),
+                    note=(
+                        f"sector: {member.sector_clave}"
+                        if method is LinkMethod.SECTOR_TEXT
+                        else None
+                    ),
                 )
                 for member in members
             ]
-            result.spatial_links += await self.repo.link_events(
-                incident_id=incident.id, links=links
-            )
+            written = await self.repo.link_events(incident_id=incident.id, links=links)
+            if method is LinkMethod.SPATIAL:
+                result.spatial_links += written
+            else:
+                result.sector_links += written
             await self.repo.assign_events_to_incident(
                 incident_id=incident.id,
                 event_ids=[member.event_id for member in members],
@@ -382,6 +443,89 @@ class CorrelationEngine:
         if not weighted:
             return IncidentType.POSSIBLE_FIRE
         return max(weighted.items(), key=lambda item: (item[1], item[0].value))[0]
+
+    # -- Vínculo por sector ---------------------------------------------------
+
+    async def _incident_by_sector(
+        self, claves: Sequence[str | None], *, family: str, now: datetime
+    ) -> Incident | None:
+        """Incidente abierto de `family` que nombra alguno de estos sectores.
+
+        Existe por el incendio de Miraflores Alto del 2026-09-03: la nota de
+        Pura Noticia y el tuit contaban la misma casa quemada, cayeron a 2,5 km
+        uno del otro, y el radio de 1500 m no podía unirlos. Lo que las dos
+        fuentes sí decían con las mismas palabras era el sector.
+
+        Tres condiciones, y las tres cuentan:
+
+        * **Misma familia** — la cuarta puerta del aislamiento (ver el
+          docstring del módulo).
+        * **Misma comuna y mismo sector**, que es lo que codifica la clave
+          ("vina del mar|miraflores alto"). Sin comuna no hay clave, y
+          "Miraflores Alto" y "Miraflores Bajo" son claves distintas.
+        * **Ventana corta** (`CORRELATION_SECTOR_WINDOW_HOURS`). Un sector mide
+          un par de kilómetros: dos incendios en él con medio día de diferencia
+          son dos incendios.
+        """
+        since = now - timedelta(hours=self.sector_window_hours)
+        for clave in sorted({clave for clave in claves if clave}):
+            incident = await self.repo.find_open_incident_by_sector(
+                sector_clave=clave, family=family, since=since
+            )
+            if incident is not None:
+                return incident
+        return None
+
+    async def _step_a_sector(self, result: CorrelationPass, *, now: datetime) -> None:
+        """Une las señales SIN punto que nombran un sector a su incidente.
+
+        El Paso A no las ve —filtra por `geom IS NOT NULL`— y antes de esto una
+        nota sin calle se quedaba fuera del mapa para siempre, aunque otra
+        fuente estuviera contando el mismo incendio en el mismo sector.
+
+        Como el Paso B, **no crea incidentes**: una nota que nombra un sector y
+        no encuentra a nadie ahí espera. Sigue sin incidente y la próxima pasada
+        la vuelve a mirar, dentro de `window_hours`, por si llegó la señal con
+        punto que la ubique. Pintar un punto que ninguna fuente dio sería peor.
+
+        A diferencia del Paso B, el vínculo **es historia**: no se reconstruye
+        en cada pasada. La señal queda asignada (`raw_events.incident_id`), igual
+        que una espacial, porque pertenece a un solo incidente.
+        """
+        since = now - timedelta(hours=self.window_hours)
+        signals = await self.repo.unlocated_sector_signals(since=since, limit=self.max_events)
+        result.unlocated_sector_signals = len(signals)
+        if not signals:
+            return
+
+        grouped: dict[tuple[str, str], list[SectorSignal]] = defaultdict(list)
+        for signal in signals:
+            grouped[(signal.family, signal.sector_clave)].append(signal)
+
+        for (family, clave), members in grouped.items():
+            incident = await self._incident_by_sector([clave], family=family, now=now)
+            if incident is None:
+                continue
+
+            links = [
+                EventLink(
+                    raw_event_id=member.event_id,
+                    link_method=LinkMethod.SECTOR_TEXT,
+                    link_confidence=LINK_CONFIDENCE_SECTOR,
+                    note=f"sector: {clave}",
+                )
+                for member in members
+            ]
+            result.sector_links += await self.repo.link_events(
+                incident_id=incident.id, links=links
+            )
+            await self.repo.assign_events_to_incident(
+                incident_id=incident.id,
+                event_ids=[member.event_id for member in members],
+                processed_at=now,
+            )
+            await self._refresh(incident, now=now)
+            result.incidents_updated += 1
 
     # -- Fusión ---------------------------------------------------------------
 

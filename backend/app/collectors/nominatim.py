@@ -39,6 +39,7 @@ from typing import Any
 import httpx
 
 from app.collectors.geoservices import as_float, normalise_text, request_json
+from app.collectors.lugares import sectores_compatibles
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -90,12 +91,106 @@ def get_limiter() -> RateLimiter:
 #: de una avenida y el de un cruce **no son el mismo dato**, y el mapa no los
 #: distingue solo: los dos son un pin.
 #:
-#: Hoy sólo se emite `street`. `INTERSECTION` existe declarada y sin usar a
-#: propósito: es la precisión que este sistema querría y que Nominatim no sabe
-#: dar (ver `build_queries`). El día que haya un proveedor que resuelva cruces,
-#: el consumidor ya sabe leer el valor.
+#: `INTERSECTION` existe declarada y sin usar a propósito: es la precisión que
+#: este sistema querría y que Nominatim no sabe dar (ver `build_queries`). El día
+#: que haya un proveedor que resuelva cruces, el consumidor ya sabe leer el valor.
+#:
+#: `SECTOR` es un barrio, población o cerro: lo que devuelve Nominatim cuando se
+#: le pide "Miraflores Alto, Viña del Mar", o cuando la "calle" que leyó el
+#: extractor era en realidad un sector. `COMUNA` es la ciudad entera, y **nunca
+#: se emite**: existe para poder nombrar lo que `geocode` descarta (ver
+#: `precision_de`).
 PRECISION_STREET = "street"
 PRECISION_INTERSECTION = "intersection"
+PRECISION_SECTOR = "sector"
+PRECISION_COMUNA = "comuna"
+
+#: `addresstype` de Nominatim → precisión. Lo que no está acá es una vía, un
+#: edificio o un punto de interés, y cuenta como calle.
+_ADDRESSTYPE_COMUNA = frozenset(
+    {"city", "town", "municipality", "county", "province", "state", "region", "country"}
+)
+_ADDRESSTYPE_SECTOR = frozenset(
+    {
+        "suburb", "neighbourhood", "quarter", "residential", "city_district",
+        "borough", "hamlet", "village", "locality", "isolated_dwelling",
+        "city_block", "allotments", "croft", "farm",
+    }
+)
+
+#: Campos de `address` donde OSM nombra la zona dentro de la comuna. Es contra
+#: esto que se verifica la guarda de sector, igual que la de comuna se verifica
+#: contra `_COMUNA_FIELDS`.
+_SECTOR_FIELDS = (
+    "suburb", "neighbourhood", "quarter", "residential", "city_district", "hamlet",
+)
+
+
+def precision_de(payload: Mapping[str, Any]) -> str:
+    """Qué tan fino es un resultado de Nominatim: calle, sector o comuna.
+
+    Se lee `addresstype` y, si falta, `place_rank` (16 o menos es una ciudad;
+    de 17 a 25, un barrio o localidad; 26 o más, una vía o algo más fino). Un
+    resultado que no trae ninguno de los dos cuenta como calle: es lo que
+    devolvían los resultados antes de que esto existiera y no hay razón para
+    degradarlos por un campo que no se pidió.
+
+    Existe por la nota de Pura Noticia del 2026-09-03: el extractor leyó "Viña
+    del Mar:" como calle, Nominatim devolvió el nodo de la ciudad, y el mapa
+    puso un incendio de Miraflores Alto en la plaza de Viña. El punto venía con
+    `precision="street"` y nada permitía sospechar de él.
+    """
+    tipo = str(payload.get("addresstype") or "").strip().lower()
+    if tipo in _ADDRESSTYPE_COMUNA:
+        return PRECISION_COMUNA
+    if tipo in _ADDRESSTYPE_SECTOR:
+        return PRECISION_SECTOR
+    if tipo:
+        return PRECISION_STREET
+
+    rango = as_float(payload.get("place_rank"))
+    if rango is None:
+        return PRECISION_STREET
+    if rango <= 16:
+        return PRECISION_COMUNA
+    if rango <= 25:
+        return PRECISION_SECTOR
+    return PRECISION_STREET
+
+
+def result_sectores(payload: Mapping[str, Any]) -> list[str]:
+    """Los nombres de zona que Nominatim le asigna a un resultado."""
+    address = payload.get("address")
+    if not isinstance(address, Mapping):
+        return []
+    return [
+        str(address[campo]).strip()
+        for campo in _SECTOR_FIELDS
+        if address.get(campo) and str(address[campo]).strip()
+    ]
+
+
+def sector_matches(payload: Mapping[str, Any], sector: str | None) -> bool:
+    """¿El resultado cae en el sector que nombró la fuente?
+
+    Misma filosofía que `comuna_matches`: sin sector esperado todo vale, y un
+    resultado que **no declara** zona también pasa, porque la guarda existe
+    para descartar lo que está demostradamente en otra parte, no lo que no se
+    sabe. Basta con que UNA de las zonas declaradas sea compatible —OSM puede
+    dar el barrio y la población a la vez— y la comparación es la de
+    `lugares.sectores_compatibles`, que acepta "Miraflores" por "Miraflores
+    Alto" y rechaza "Recreo".
+
+    El caso que la motivó: "calle once" de un tuit sobre Miraflores Alto
+    resolvía a una calle homónima a 2,5 km, en otro sector. Con la comuna sola
+    no había cómo verlo; las dos están en Viña.
+    """
+    if not sector:
+        return True
+    declaradas = result_sectores(payload)
+    if not declaradas:
+        return True
+    return any(sectores_compatibles(sector, zona) for zona in declaradas)
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,9 +228,18 @@ class GeocodeResult:
     #: Caja que sesgó la búsqueda, si hubo. `None` = sin sesgo: la comuna de la
     #: señal no está en `COMUNA_VIEWBOX`.
     viewbox: tuple[float, float, float, float] | None = None
+    #: Sector que nombró la fuente y contra el que se verificó el punto. Con
+    #: `precision="sector"`, el punto ES el sector; con `street`, es una calle
+    #: que pasó la guarda de sector (ver `sector_matches`).
+    sector: str | None = None
+    #: Zonas que Nominatim declara para el punto (`address.suburb` y afines).
+    #: Es lo que permite auditar después por qué la guarda lo aceptó.
+    zonas: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "sector": self.sector,
+            "zonas": list(self.zonas),
             "lat": self.lat,
             "lon": self.lon,
             "display_name": self.display_name,
@@ -350,6 +454,18 @@ def build_queries(
     # central escribe primero la vía donde ocurre el hecho.
     candidatas = formas(primary) + (formas(secondary) if secondary else [])
 
+    # Con sector, la primera consulta lo nombra: "calle once, Miraflores Alto,
+    # Viña del Mar" es la única forma de pedirle a Nominatim la calle Once de
+    # ESE sector y no la primera homónima de la comuna. Cuesta una petición más
+    # sólo cuando la fuente nombró un sector, y si no resuelve, las formas de
+    # siempre siguen detrás —ahora con la guarda de sector (`sector_matches`).
+    # Si lo que el extractor leyó como calle ES el sector ("Miraflores Alto"),
+    # nombrarlo dos veces sólo gasta una petición.
+    sector = (streets.get("sector") or "").strip()
+    if sector and normalise_text(sector) not in normalise_text(primary):
+        con_sector = ", ".join([primary, sector, *[p for p in (city, region) if p]])
+        candidatas = [con_sector, *candidatas]
+
     # Sin ciudad, las dos formas de una misma calle son la misma cadena.
     # Deduplicar acá y no en `geocode` evita gastar un segundo del limitador
     # global en repetir una consulta que ya falló.
@@ -394,6 +510,62 @@ def build_query(streets: dict[str, Any], *, region: str = DEFAULT_REGION) -> str
     return candidatas[0] if candidatas else None
 
 
+def build_sector_query(
+    streets: dict[str, Any], *, region: str = DEFAULT_REGION
+) -> str | None:
+    """Consulta del sector solo: "Miraflores Alto, Viña del Mar, Región…".
+
+    **Exige comuna.** Sin ella no hay guarda posible, y un nombre de sector se
+    repite de una comuna a otra: "Miraflores" existe en más de una. Un sector
+    en la comuna equivocada es el mismo punto falso que un «Primero de Mayo»
+    en Quillota, sólo que a menos kilómetros.
+    """
+    sector = (streets.get("sector") or "").strip()
+    city = (streets.get("city") or "").strip()
+    if not sector or not city:
+        return None
+    return ", ".join([sector, city, *[p for p in (region.strip(),) if p]])
+
+
+async def _buscar(
+    client: httpx.AsyncClient,
+    query: str,
+    *,
+    limiter: RateLimiter | None,
+    extra: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Una petición a Nominatim, con el limitador global. Lista vacía si nada."""
+    waited = await (limiter or _LIMITER).acquire()
+    if waited > 0:
+        logger.debug(
+            "espera por el rate limit de Nominatim",
+            extra={"waited_s": round(waited, 3), "query": query},
+        )
+
+    payload = await request_json(
+        client,
+        settings.NOMINATIM_URL,
+        {
+            "q": query,
+            "format": "jsonv2",
+            "limit": RESULT_LIMIT,
+            # Era 0. Sin esto no hay comuna que comparar y la guarda entera
+            # no se puede escribir: `display_name` no sirve, ver el bloque
+            # de `COMUNA_VIEWBOX`.
+            "addressdetails": 1,
+            "countrycodes": settings.NOMINATIM_COUNTRY_CODES,
+            **extra,
+        },
+        origin="nominatim",
+        # Un reintento y no dos: cada uno cuesta otro segundo de rate limit, y
+        # una dirección que no resuelve hoy tampoco resolverá en 1,5 segundos.
+        retries=1,
+    )
+    if not isinstance(payload, list):
+        return []
+    return [candidato for candidato in payload if isinstance(candidato, dict)]
+
+
 async def geocode(
     client: httpx.AsyncClient,
     streets: dict[str, Any],
@@ -413,16 +585,25 @@ async def geocode(
     el caso sano sigue costando una petición y un segundo de limitador; el peor
     caso —dos calles, ninguna reconocida— cuesta cuatro y devuelve None igual.
 
-    `comuna` es la guarda: se descarta todo resultado que Nominatim ubique en
-    otra comuna. Sin ella, «Primero de Mayo» de un despacho de Valparaíso
-    resuelve en Quillota, a 40 km, y el mapa no tiene forma de mostrar que ese
-    pin está mal. Ver el bloque de `COMUNA_VIEWBOX` para el detalle medido.
-    """
-    candidatas = build_queries(streets)
-    if not candidatas:
-        return None
+    Tres guardas, las tres con la misma regla —se descarta lo que está
+    demostradamente en otra parte, no lo que no se sabe—:
 
+    * `comuna`: se descarta todo resultado que Nominatim ubique en otra comuna.
+      Sin ella, «Primero de Mayo» de un despacho de Valparaíso resuelve en
+      Quillota, a 40 km. Ver el bloque de `COMUNA_VIEWBOX`.
+    * **La ciudad entera no es una calle** (`precision_de`). Si lo que el
+      extractor leyó como vía era el nombre de la comuna, Nominatim devuelve el
+      nodo de la ciudad, y ese pin en la plaza parece un dato.
+    * `sector` (si la fuente nombró uno): una calle que OSM ubica en otro
+      sector se descarta. Ver `sector_matches`.
+
+    Si ninguna calle pasa —o no había calle— y la fuente nombró un sector, se
+    geocodifica **el sector solo** (`build_sector_query`) y el punto sale con
+    `precision="sector"`. Es menos fino que una calle y es lo que la fuente
+    dijo; por eso el mapa puede mostrarlo, y por eso queda rotulado.
+    """
     esperada = comuna if comuna is not None else streets.get("city")
+    sector = str(streets.get("sector") or "").strip() or None
     caja = viewbox_for(esperada)
     extra: dict[str, Any] = {}
     if caja is not None:
@@ -431,44 +612,17 @@ async def geocode(
         # no se pueden poner bien. Ver el bloque de `COMUNA_VIEWBOX`.
         extra = {"viewbox": ",".join(str(v) for v in caja)}
 
-    for query in candidatas:
-        waited = await (limiter or _LIMITER).acquire()
-        if waited > 0:
-            logger.debug(
-                "espera por el rate limit de Nominatim",
-                extra={"waited_s": round(waited, 3), "query": query},
-            )
-
-        payload = await request_json(
-            client,
-            settings.NOMINATIM_URL,
-            {
-                "q": query,
-                "format": "jsonv2",
-                "limit": RESULT_LIMIT,
-                # Era 0. Sin esto no hay comuna que comparar y la guarda entera
-                # no se puede escribir: `display_name` no sirve, ver el bloque
-                # de `COMUNA_VIEWBOX`.
-                "addressdetails": 1,
-                "countrycodes": settings.NOMINATIM_COUNTRY_CODES,
-                **extra,
-            },
-            origin="nominatim",
-            # Un reintento y no dos: cada uno cuesta otro segundo de rate limit, y
-            # una dirección que no resuelve hoy tampoco resolverá en 1,5 segundos.
-            retries=1,
-        )
-
-        if not isinstance(payload, list) or not payload:
-            continue
-
-        for candidato in payload:
-            if not isinstance(candidato, dict):
-                continue
+    for query in build_queries(streets):
+        for candidato in await _buscar(client, query, limiter=limiter, extra=extra):
             if not comuna_matches(candidato, esperada):
                 # Está en otra comuna. Se descarta y se sigue mirando: el bueno
                 # suele venir detrás —«12 de Octubre» devuelve primero el de
                 # Viña y segundo el de Valparaíso— y con `limit=1` era invisible.
+                continue
+            precision = precision_de(candidato)
+            if precision == PRECISION_COMUNA:
+                continue
+            if not sector_matches(candidato, sector):
                 continue
 
             lat = as_float(candidato.get("lat"))
@@ -484,12 +638,52 @@ async def geocode(
                 osm_type=candidato.get("osm_type"),
                 importance=as_float(candidato.get("importance")),
                 query=query,
-                precision=PRECISION_STREET,
+                precision=precision,
                 matched=acertada,
                 omitted=omitted_keys(streets, matched=acertada),
                 comuna=result_comuna(candidato),
                 viewbox=caja,
+                sector=sector,
+                zonas=tuple(result_sectores(candidato)),
             )
+
+    consulta_sector = build_sector_query(streets)
+    if consulta_sector is None:
+        return None
+
+    for candidato in await _buscar(client, consulta_sector, limiter=limiter, extra=extra):
+        if not comuna_matches(candidato, esperada):
+            continue
+        # Sólo un barrio o localidad cuenta como "el sector". Una calle que se
+        # llama como él ("Av. Miraflores") no es el sector, y la ciudad entera
+        # tampoco.
+        if precision_de(candidato) != PRECISION_SECTOR:
+            continue
+        nombres = [str(candidato.get("name") or ""), *result_sectores(candidato)]
+        if not any(sectores_compatibles(sector, nombre) for nombre in nombres):
+            continue
+
+        lat = as_float(candidato.get("lat"))
+        lon = as_float(candidato.get("lon"))
+        if lat is None or lon is None:
+            continue
+
+        return GeocodeResult(
+            lat=lat,
+            lon=lon,
+            display_name=candidato.get("display_name"),
+            osm_type=candidato.get("osm_type"),
+            importance=as_float(candidato.get("importance")),
+            query=consulta_sector,
+            precision=PRECISION_SECTOR,
+            matched="sector",
+            # Todo lo que el extractor leyó como calle quedó fuera del punto.
+            omitted=omitted_keys(streets),
+            comuna=result_comuna(candidato),
+            viewbox=caja,
+            sector=sector,
+            zonas=tuple(result_sectores(candidato)),
+        )
 
     return None
 
@@ -509,7 +703,9 @@ def build_client(timeout: float | None = None) -> httpx.AsyncClient:
 
 __all__ = [
     "COMUNA_VIEWBOX",
+    "PRECISION_COMUNA",
     "PRECISION_INTERSECTION",
+    "PRECISION_SECTOR",
     "PRECISION_STREET",
     "RESULT_LIMIT",
     "GeocodeResult",
@@ -517,11 +713,15 @@ __all__ = [
     "build_client",
     "build_queries",
     "build_query",
+    "build_sector_query",
     "comuna_matches",
     "geocode",
     "get_limiter",
     "matched_key",
     "omitted_keys",
+    "precision_de",
     "result_comuna",
+    "result_sectores",
+    "sector_matches",
     "viewbox_for",
 ]

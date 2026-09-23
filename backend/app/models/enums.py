@@ -369,6 +369,11 @@ class LinkMethod(str, Enum):
 
     SPATIAL = "spatial"
     COMMUNE_TEXT = "commune_text"
+    #: Dos señales de la misma familia que nombran el mismo sector de la misma
+    #: comuna ("sector de Miraflores Alto", Viña del Mar) dentro de una ventana
+    #: corta. Es texto, como `COMMUNE_TEXT`, pero mucho más fino: un sector mide
+    #: uno o dos kilómetros, una comuna decenas. Ver `CorrelationEngine`.
+    SECTOR_TEXT = "sector_text"
     MANUAL = "manual"
 
 

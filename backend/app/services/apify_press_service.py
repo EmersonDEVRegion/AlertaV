@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from app.collectors.dia_del_hecho import hecho_fuera_de_ventana
 from app.collectors.nominatim import build_client as build_geo_client
 from app.collectors.social.apify_client import describe_items
 from app.collectors.social.instagram_apify_worker import geocode_text
@@ -206,10 +207,17 @@ def is_fresh(tuit: Tuit, *, now: datetime, max_age_minutes: int) -> bool:
     Misma decisión que en Instagram y por el mismo motivo: procesar de más un
     tuit viejo lo atrapa el `external_id` en la corrida siguiente, mientras que
     descartarlo pierde un accidente por un campo que el Actor no llenó.
+
+    Un tuit reciente que cuenta un hecho viejo ("la mañana del domingo", leído
+    un jueves) tampoco es fresco. Ver `app/collectors/dia_del_hecho.py`.
     """
-    if tuit.published_at is None:
-        return True
-    return (now - tuit.published_at) <= timedelta(minutes=max_age_minutes)
+    if tuit.published_at is not None and (now - tuit.published_at) > timedelta(
+        minutes=max_age_minutes
+    ):
+        return False
+    return not hecho_fuera_de_ventana(
+        tuit.text, publicado=tuit.published_at, ahora=now, max_age_minutes=max_age_minutes
+    )
 
 
 async def process_dataset(dataset_id: str, payload: Any) -> None:
