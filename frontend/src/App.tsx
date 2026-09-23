@@ -47,6 +47,10 @@ import { useSeismicEvents } from '@/hooks/useSeismicEvents'
 import { useFreshness } from '@/hooks/useFreshness'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
 import { useNotificationDeepLink } from '@/hooks/useNotificationDeepLink'
+import { useVehicleFeed } from '@/hooks/useVehicleFeed'
+import { VehicleRadarButton } from '@/components/vehicles/VehicleRadarButton'
+import { VehicleRadarPanel } from '@/components/vehicles/VehicleRadarPanel'
+import { env } from '@/config/env'
 import { usgsIdOf } from '@/lib/push'
 
 export default function App() {
@@ -89,6 +93,45 @@ export default function App() {
 
   const [selectedCode, setSelectedCode] = useState<string | null>(null)
   const [selectedUsgsId, setSelectedUsgsId] = useState<string | null>(null)
+
+  // --- Radar de vehículos ---------------------------------------------------
+  /*
+   * Vehículos robados, recuperados y abandonados (GBV). No es una capa del mapa
+   * —no tienen coordenadas— así que no pasa por `visibility` ni por el panel de
+   * capas: tiene su botón en la barra y su propio panel.
+   *
+   * La consulta corre desde el arranque (el contador del botón la necesita) y
+   * sólo si el interruptor está encendido: apagado, no hay botón, no hay panel
+   * y no sale ninguna petición.
+   *
+   * El panel y la ficha del incidente se excluyen. En teléfono ocupan el mismo
+   * borde inferior; en escritorio, el mismo borde derecho. Abrir el radar cierra
+   * la ficha, y seleccionar algo en el mapa cierra el radar.
+   */
+  const radarEnabled = env.vehicleRadarEnabled
+  const vehicles = useVehicleFeed(radarEnabled)
+  const [radarOpen, setRadarOpen] = useState(false)
+  const radarButtonRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (selectedCode !== null || selectedUsgsId !== null) setRadarOpen(false)
+  }, [selectedCode, selectedUsgsId])
+
+  const toggleRadar = useCallback(() => {
+    if (!radarOpen) {
+      setSelectedCode(null)
+      setSelectedUsgsId(null)
+    }
+    setRadarOpen(!radarOpen)
+  }, [radarOpen])
+
+  // Cierre pedido por la persona (Escape, ✕, velo): el foco vuelve al botón que
+  // lo abrió, o quien navega con teclado queda en ninguna parte.
+  const closeRadar = useCallback(() => {
+    setRadarOpen(false)
+    radarButtonRef.current?.focus()
+  }, [])
+
   const [confirmedOnly, setConfirmedOnly] = useState(false)
   const [visibility, setVisibility] = useState<LayerVisibility>(DEFAULT_LAYER_VISIBILITY)
   const [seismicFilter, setSeismicFilter] =
@@ -362,6 +405,18 @@ export default function App() {
         onToggleConfirmedOnly={setConfirmedOnly}
         themeToggle={<ThemeToggle theme={theme} onToggle={toggleTheme} />}
         notifications={<NotificationBell />}
+        radar={
+          // Con 404 el servidor todavía no tiene el feed: un botón que abre
+          // «no disponible» es cromo muerto, así que no se muestra.
+          radarEnabled && vehicles.status !== 'unavailable' ? (
+            <VehicleRadarButton
+              ref={radarButtonRef}
+              feed={vehicles}
+              open={radarOpen}
+              onToggle={toggleRadar}
+            />
+          ) : undefined
+        }
       />
 
       <StalenessBanner
@@ -440,7 +495,7 @@ export default function App() {
           del canvas. En teléfono se oculta mientras la ficha del incidente está
           abierta, porque esa ficha ocupa el mismo borde inferior.
         */}
-        <CitizenReportControl hiddenOnMobile={selected !== null} />
+        <CitizenReportControl hiddenOnMobile={selected !== null || radarOpen} />
 
         {isPending && (
           <MapOverlayState
@@ -486,6 +541,10 @@ export default function App() {
             event={selectedSeismic}
             onClose={() => setSelectedUsgsId(null)}
           />
+        )}
+
+        {radarEnabled && radarOpen && (
+          <VehicleRadarPanel feed={vehicles} onClose={closeRadar} />
         )}
       </main>
     </div>
