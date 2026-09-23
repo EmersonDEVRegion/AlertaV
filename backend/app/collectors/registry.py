@@ -23,6 +23,7 @@ from app.collectors.social.instagram_apify_worker import InstagramApifyCollector
 from app.collectors.traffic.transporteinforma_worker import TransporteInformaCollector
 from app.collectors.usgs.collector import UsgsCollector
 from app.collectors.vehicles.gbv_worker import GbvCollector
+from app.collectors.water.esval_worker import EsvalCollector
 from app.collectors.weather.openmeteo_worker import OpenMeteoCollector
 from app.core.config import settings
 
@@ -74,6 +75,21 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     # rurales— recupera la capa de cortes que sin CGE no tenía.
     ChilquintaCollector.name: ChilquintaCollector,
     CgeCollector.name: CgeCollector,
+    # -- Cortes de agua -------------------------------------------------------
+    # Esval: cortes programados y de emergencia de la sanitaria de la V Región.
+    # Emite `water_cut`, que igual que `road_closure` está FUERA de
+    # `CORRELATABLE_EVENT_TYPES`: no crea incidentes, no manda push y no mueve
+    # la confianza de nada. Es contexto para el mapa.
+    #
+    # Dos GET por corrida: la API de la Oficina Virtual (atributos, sin
+    # coordenadas) y el KML del visor oficial (punto y polígonos), unidos por
+    # `sisda`. Si el KML cae, la corrida sigue sin coordenadas y queda `partial`;
+    # si cae la API, `failed`. Cadencia de 10 minutos.
+    #
+    # Vigilar en la primera corrida en Render: `collector_runs` de
+    # `esval_cortes_agua`. Desde el navegador la API responde con o sin
+    # cabeceras, pero no se pudo probar desde una IP de datacenter.
+    EsvalCollector.name: EsvalCollector,
     # -- Accidentes viales ----------------------------------------------------
     # Los dos emiten `type=accident` y quedan aislados de la familia `fire` por
     # la partición del motor. Ninguno arranca sin su URL configurada: si falta,

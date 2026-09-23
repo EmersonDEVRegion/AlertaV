@@ -39,6 +39,9 @@ export const EVENT_SOURCES = [
   // `vehicle_report`, fuera del motor y del mapa: sólo lo lee `/feed/vehiculos`.
   // Está acá para que el espejo del enum siga completo.
   'gbv',
+  // Esval: cortes de agua. Emite `water_cut`, capa de contexto fuera del motor
+  // (como `road_closure`): no aparece en el desglose de fuentes de un incidente.
+  'esval',
   'other',
 ] as const
 export type EventSource = (typeof EVENT_SOURCES)[number]

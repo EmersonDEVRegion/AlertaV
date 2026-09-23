@@ -273,6 +273,37 @@ class Settings(BaseSettings):
     #: un servidor que no nos pertenece.
     POWER_POLL_INTERVAL_SECONDS: int = 300  # 5 min
 
+    # -- Cortes de agua: Esval -------------------------------------------------
+    #: Cortes vigentes de la Oficina Virtual de Esval. Es la API interna de su
+    #: frontend: devuelve `{"data": [...]}` con fechas, calles, motivo y el
+    #: número `sisda` de cada corte, **pero ninguna coordenada**. Incluye además
+    #: los de Aguas del Valle (IV Región), que se descartan por `empresaId`.
+    ESVAL_CORTES_URL: str = "https://ov.esval.cl/api-ov/api/EstadoDeServicio/CortesActivos"
+    #: KML de zonas de corte del visor oficial (`tupuntodeagua.esval.cl`), que es
+    #: de donde salen el punto y el polígono de cada corte. Se une con la API
+    #: por `sisda`. Si falla, la corrida sigue sin coordenadas.
+    ESVAL_ZONAS_KML_URL: str = (
+        "https://tupuntodeagua.esval.cl/script/generaKmlZonasCorte.aspx"
+    )
+    #: `empresaId` de Esval en la API. La cabecera `XCodempresa` **no** filtra:
+    #: con 1, con 2 o sin ella la respuesta es la misma (verificado el
+    #: 2026-09-23), así que el filtro se hace acá.
+    ESVAL_EMPRESA_ID: int = 1
+    #: Parámetro `region` del KML. La V Región es la 5.
+    ESVAL_REGION_KML: int = 5
+    #: Navegador + identificación, el criterio de `TRANSPORTE_INFORMA_USER_AGENT`.
+    #: Sin tildes: las cabeceras HTTP van en latin-1.
+    ESVAL_USER_AGENT: str = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 "
+        "AlertaV/1.0 (+https://github.com/alertav; cortes de agua "
+        "Region de Valparaiso)"
+    )
+    ESVAL_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0, le=120)
+    #: 10 minutos. Son dos GET livianos por corrida; un corte de emergencia se
+    #: publica en cualquier momento, pero no cambia minuto a minuto.
+    ESVAL_POLL_INTERVAL_SECONDS: int = Field(default=600, ge=120, le=86400)
+
     # -- Sismos: Centro Sismológico Nacional ---------------------------------
     # El CSN es la razón de ser de este collector: su umbral de detección en
     # Chile baja hasta M2.5, mientras el feed global del USGS filtra en M2.5

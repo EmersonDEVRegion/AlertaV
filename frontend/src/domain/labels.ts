@@ -27,6 +27,7 @@ export const SOURCE_LABEL: Record<EventSource, string> = {
   cge: 'CGE',
   mop: 'Vialidad (MOP)',
   gbv: 'GBV (vehículos)',
+  esval: 'Esval (agua)',
   other: 'Otra fuente',
 }
 

@@ -266,6 +266,13 @@ RULES: dict[EventSource, SourceRule] = {
     # el peso por defecto le regalaría a un choque la corroboración de un auto
     # robado a dos cuadras, que no dice nada sobre él.
     EventSource.GBV: SourceRule(0.0, 0.0, 0.0, 0.0),
+    # Esval es la autoridad sobre su red, como Chilquinta, y aun así pesa 0:
+    # `water_cut` está fuera de CORRELATABLE_EVENT_TYPES y esta regla no se
+    # ejecuta. Se escribe por el riesgo contrario al de las eléctricas: una
+    # matriz rota y una inundación en la misma calle son, a menudo, el mismo
+    # hecho, y si alguien decidiera correlacionar el agua, que lo haga a
+    # propósito y fijando el peso, no heredando el 0.15–0.30 por defecto.
+    EventSource.ESVAL: SourceRule(0.0, 0.0, 0.0, 0.0),
 }
 
 DEFAULT_RULE = SourceRule(0.15, 0.30, 0.5, 0.45)

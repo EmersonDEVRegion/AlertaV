@@ -53,6 +53,10 @@ class EventSource(str, Enum):
     #: nadie sabe mejor que ellas dónde no hay luz.
     CHILQUINTA = "chilquinta"
     CGE = "cge"
+    #: Sanitaria de la V Región. Mismo criterio que las distribuidoras: sobre SU
+    #: red es la autoridad, y el corte lo registra su propio sistema. Emite
+    #: `water_cut`, que es contexto y no siniestro. Ver collectors/water/.
+    ESVAL = "esval"
     #: Dirección de Vialidad (MOP). Publica rutas DAÑADAS —socavaciones,
     #: derrumbes, puentes restringidos—, no siniestros. Es la autoridad sobre el
     #: estado de la infraestructura vial, pero su cadencia es semanal: informa
@@ -78,6 +82,8 @@ class EventType(str, Enum):
       - ROAD_CLOSURE: intervención de la vía —desvío, faena, corte, restricción—.
         Es un hecho cierto y verificable, pero NO es un siniestro: la mayoría
         está programada de antemano. Contexto, igual que WEATHER_OBSERVATION.
+      - WATER_CUT: corte de agua informado por la sanitaria. Mismo trato que
+        ROAD_CLOSURE: hecho cierto, contexto, fuera del motor.
     """
 
     WILDFIRE = "wildfire"
@@ -122,6 +128,19 @@ class EventType(str, Enum):
     #: emergencia. Fuera de `CORRELATABLE_EVENT_TYPES` y de
     #: `EVENT_TO_INCIDENT_TYPE`: no crea incidentes ni mueve confianzas.
     VEHICLE_REPORT = "vehicle_report"
+    #: Corte de agua potable informado por la sanitaria (Esval).
+    #:
+    #: Es un hecho cierto —lo publica quien opera la red— pero NO un siniestro,
+    #: y por eso no es una variante de `power_outage` ni entra al motor. La
+    #: mayoría son cortes programados con días de aviso, y los de emergencia son
+    #: una matriz rota o una válvula en reparación: nada que otra fuente pueda
+    #: corroborar ni que deba abrir un incidente o mandar un push. Se recolecta
+    #: para superponerse en el mapa, como `road_closure`.
+    #:
+    #: Fuera de `CORRELATABLE_EVENT_TYPES` —así `services/backfill.py` tampoco
+    #: manda a Nominatim los cortes que lleguen sin coordenadas— y fuera de
+    #: `EVENT_TO_INCIDENT_TYPE`.
+    WATER_CUT = "water_cut"
     OTHER = "other"
     UNKNOWN = "unknown"
 
@@ -523,6 +542,11 @@ SOURCE_BASE_CONFIDENCE: dict[EventSource, float] = {
     # constatar" como CONAF: es que el corte lo registra su propio sistema.
     EventSource.CHILQUINTA: 1.00,
     EventSource.CGE: 1.00,
+    # La sanitaria sobre su propia red, con el mismo matiz que las eléctricas:
+    # el 1.0 dice que el corte existe, no que haya una emergencia. Y como
+    # `water_cut` no correlaciona, este número no mueve ningún incidente; su
+    # regla en `confidence.py` pesa cero.
+    EventSource.ESVAL: 1.00,
     EventSource.MUNICIPALITY: 0.90,
     EventSource.MEDIA: 0.70,
     EventSource.BROADCASTIFY: 0.65,
