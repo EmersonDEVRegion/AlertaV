@@ -118,3 +118,18 @@ export function sectorRing(
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
+
+/**
+ * Distancia sobre el círculo máximo entre dos puntos, en kilómetros (haversine).
+ *
+ * La usa la sincronización de avisos push para decidir si el teléfono se movió
+ * lo suficiente como para informar la ubicación nueva.
+ */
+export function distanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const dPhi = toRad(lat2 - lat1)
+  const dLambda = toRad(lon2 - lon1)
+  const a =
+    Math.sin(dPhi / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLambda / 2) ** 2
+  return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(a)))
+}

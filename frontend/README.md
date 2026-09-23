@@ -357,8 +357,10 @@ volver, así que la app no consume batería en el bolsillo.
   aporte alertas por crecida, `hydro` merece su capa y su paleta.
 - **Etiquetas por familia en el backend.** `LEVEL_STYLES` es hoy implícitamente
   de incendios; las de tráfico viven en el frontend por eso.
-- **Web Push**, reportes ciudadanos, historial y filtros por comuna quedan para
-  la siguiente iteración (ver `context.md`).
+- Historial y filtros por comuna quedan para la siguiente iteración (ver
+  `context.md`). Los avisos push ya están: ver
+  `backend/docs/notificaciones-push.md`. Se prueban con `npm run build && npm
+  run preview`, porque el service worker está apagado en `npm run dev`.
 - **Tests visuales.** `npm test` cubre comportamiento y geometría bajo jsdom, que
   no calcula layout ni renderiza píxeles. Una regresión puramente visual —un
   color mal contrastado, un solape— no la atrapa. Falta Playwright con capturas

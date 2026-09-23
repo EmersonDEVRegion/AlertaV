@@ -110,6 +110,12 @@ export default defineConfig(({ mode }) => {
         },
 
         workbox: {
+          // Avisos push. `generateSW` no acepta código propio en el service
+          // worker, pero sí scripts importados: `public/push-sw.js` registra
+          // los manejadores `push` y `notificationclick`. El navegador lo
+          // guarda junto al service worker, así que funciona sin señal.
+          importScripts: ['push-sw.js'],
+
           // `mjs` incluido a proposito: el bundle del worker de maplibre puede
           // emitirse con esa extension y sin precachearlo la app no abre el
           // mapa sin señal, que es justamente el caso de uso en terreno.

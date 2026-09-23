@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { MapRef } from 'react-map-gl/maplibre'
 import type { SeismicEvent } from '@/api/seismicTypes'
 import type { ActiveIncidentsQuery, Incident } from '@/api/types'
@@ -33,6 +33,7 @@ import { useRainLayer } from '@/hooks/useRainLayer'
 import { useRoadClosures } from '@/hooks/useRoadClosures'
 import { useSeismicHazard } from '@/hooks/useSeismicHazard'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
+import { NotificationBell } from '@/components/ui/NotificationBell'
 import { CitizenReportControl } from '@/components/report/CitizenReportControl'
 import { AppHeader } from '@/components/ui/AppHeader'
 import { MobileMapControls } from '@/components/ui/MobileMapControls'
@@ -45,6 +46,8 @@ import { useCollectorHealth } from '@/hooks/useCollectorHealth'
 import { useSeismicEvents } from '@/hooks/useSeismicEvents'
 import { useFreshness } from '@/hooks/useFreshness'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
+import { useNotificationDeepLink } from '@/hooks/useNotificationDeepLink'
+import { usgsIdOf } from '@/lib/push'
 
 export default function App() {
   // La referencia del mapa vive acá y no dentro de `IncidentMap`: el panel de
@@ -260,6 +263,46 @@ export default function App() {
     [flyTo],
   )
 
+  // --- Notificación tocada --------------------------------------------------
+  /*
+   * Un aviso push abre la app en `/?incidente=INC-…` (o le manda el destino si
+   * ya estaba abierta). El incidente puede estar en una capa apagada o fuera del
+   * filtro «Verificados», así que antes de volar hay que asegurarse de que el
+   * mapa lo vaya a mostrar: si no, la ficha se abriría sobre un pin invisible.
+   *
+   * Se espera a que lleguen los incidentes. Si llegaron y no está —ya se
+   * controló, o se fusionó con otro—, el destino se descarta en silencio y el
+   * mapa queda donde estaba: no hay nada mejor que mostrar.
+   */
+  const { link: pendingLink, clear: clearLink } = useNotificationDeepLink()
+
+  useEffect(() => {
+    if (!pendingLink) return
+
+    if (pendingLink.kind === 'seismic') {
+      setVisibility((current) => (current.seismic ? current : { ...current, seismic: true }))
+      setSelectedCode(null)
+      setSelectedUsgsId(usgsIdOf(pendingLink.key))
+      flyTo(pendingLink.lon, pendingLink.lat, SEISMIC_FOCUS_ZOOM)
+      clearLink()
+      return
+    }
+
+    if (confirmedOnly) {
+      setConfirmedOnly(false)
+      return
+    }
+    const target = all.find((incident) => incident.code === pendingLink.code)
+    if (target) {
+      const layer = layerOf(target.type)
+      setVisibility((current) => (current[layer] ? current : { ...current, [layer]: true }))
+      focusIncident(target)
+      clearLink()
+    } else if (!isPending && !isFetching) {
+      clearLink()
+    }
+  }, [pendingLink, clearLink, all, isPending, isFetching, confirmedOnly, flyTo, focusIncident])
+
   const byLevel = useMemo(() => {
     const counts = { unsafe: 0, possible: 0, confirmed: 0 }
     for (const incident of list) counts[levelOf(incident)] += 1
@@ -318,6 +361,7 @@ export default function App() {
         confirmedOnly={confirmedOnly}
         onToggleConfirmedOnly={setConfirmedOnly}
         themeToggle={<ThemeToggle theme={theme} onToggle={toggleTheme} />}
+        notifications={<NotificationBell />}
       />
 
       <StalenessBanner
