@@ -21,6 +21,12 @@ alembic==1.14.0
 # --- Cliente HTTP -------------------------------------------------------------
 httpx==0.28.1
 
+# --- Notificaciones push -------------------------------------------------------
+# Cifrado RFC 8291 y firma VAPID (app/services/push/webpush.py). Ya llegaba como
+# dependencia de google-auth; se declara porque ahora el código lo usa directo
+# y no puede depender de que otra librería lo siga arrastrando.
+cryptography==50.0.1
+
 # --- Parseo de fuentes sin API ------------------------------------------------
 # Los dos collectors de tránsito leen lo que hay, no lo que quisiéramos: un feed
 # RSS y una página de WordPress. Ninguna de las dos fuentes publica JSON.

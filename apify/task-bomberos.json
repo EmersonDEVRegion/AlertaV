@@ -1,9 +1,9 @@
 {
-  "twitterHandles": ["CGI_CBV"],
+  "twitterHandles": ["CBVM132", "CGI_CBV"],
   "searchTerms": [],
   "startUrls": [],
   "conversationIds": [],
-  "maxItems": 25,
+  "maxItems": 15,
   "sort": "Latest",
   "includeSearchTerms": false,
   "onlyImage": false,

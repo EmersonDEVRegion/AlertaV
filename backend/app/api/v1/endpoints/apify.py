@@ -241,6 +241,20 @@ async def apify_webhook_prensa(
             detail="el cuerpo del webhook debe ser un objeto JSON",
         )
 
+    if not settings.APIFY_PRENSA_ENABLED:
+        # Puerta retirada (ver `APIFY_PRENSA_ENABLED`). 200 y no 4xx por lo de
+        # siempre: un webhook que quedó en el panel reintentaría once veces y
+        # Apify deshabilitaría la integración. INFO y no WARNING: no hay nada
+        # roto, sólo un webhook de más que conviene borrar del panel.
+        logger.info(
+            "webhook de prensa ignorado: la puerta está apagada",
+            extra={"remedio": "borrar el webhook del Task de prensa en Apify"},
+        )
+        return {
+            "status": "ignored",
+            "reason": "la puerta de prensa está apagada (APIFY_PRENSA_ENABLED=false)",
+        }
+
     ids_actor = extract_actor_ids(payload)
     if not _autorizado_en(ids_actor, settings.APIFY_PRENSA_ACTOR_IDS):
         # Mismo criterio que en la puerta de Bomberos: 200 para que Apify no

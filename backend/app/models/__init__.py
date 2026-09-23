@@ -22,6 +22,7 @@ from app.models.enums import (
 )
 from app.models.event import CollectorRun, RawEvent, SourceConfidence
 from app.models.incident import Incident, IncidentCounter, IncidentEvent
+from app.models.push import PushDelivery, PushSubscription
 from app.models.seismic import SeismicDetail
 
 __all__ = [
@@ -44,6 +45,8 @@ __all__ = [
     "IncidentStatus",
     "IncidentType",
     "LinkMethod",
+    "PushDelivery",
+    "PushSubscription",
     "RawEvent",
     "SeismicDetail",
     "SourceConfidence",

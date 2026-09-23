@@ -308,7 +308,28 @@ def test_el_prompt_prohibe_lo_que_hay_que_prohibir():
 
 def test_el_prompt_muestra_el_formato_de_salida():
     assert "(Fuente: @CGI_CBV)" in gemini.DISPATCH_SYSTEM_INSTRUCTION
-    assert "(Clave 12) (Llamado a servicio especial)" in gemini.DISPATCH_SYSTEM_INSTRUCTION
+    assert (
+        "(4-1) (Emergencia con materiales peligrosos) en (Primero de Mayo con 12 de Octubre)"
+        in gemini.DISPATCH_SYSTEM_INSTRUCTION
+    )
+
+
+def test_el_ejemplo_del_prompt_no_contradice_al_diccionario():
+    """El ejemplo anterior decía «Clave 12 → Llamado a servicio especial».
+
+    Era del sistema de claves viejo: el glosario del MISMO prompt dice
+    «Academia de Cuerpo», así que el modelo recibía dos respuestas distintas
+    para la misma clave. El ejemplo ahora se construye con el formateador y el
+    diccionario de cada Cuerpo, y este test impide que vuelva a escribirse a
+    mano.
+    """
+    for sistema in vocabulary.SISTEMAS_CLAVES:
+        prompt = gemini.dispatch_instruction(sistema)
+        _, clave, _, _ = sistema.ejemplo
+        significado = sistema.meanings[vocabulary.parse_key(clave)]
+        assert f'"significado": "{significado}"' in prompt
+        assert "servicio especial" not in prompt
+        assert "familia 3 piden un recurso" not in prompt
 
 
 def test_el_esquema_declara_los_seis_campos():

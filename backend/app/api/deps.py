@@ -11,6 +11,7 @@ from app.core.database import get_session
 from app.services.hazard_service import SeismicHazardService
 from app.services.incident_service import IncidentService
 from app.services.ingest_service import IngestService
+from app.services.push.subscriptions import PushSubscriptionService
 from app.services.seismic_service import SeismicService
 from app.services.weather_service import WeatherService
 
@@ -33,6 +34,10 @@ async def get_weather_service(session: SessionDep) -> WeatherService:
     return WeatherService(session)
 
 
+async def get_push_service(session: SessionDep) -> PushSubscriptionService:
+    return PushSubscriptionService(session)
+
+
 def get_hazard_service() -> SeismicHazardService:
     """La capa de amenaza no toca la base: es un artefacto en disco.
 
@@ -48,3 +53,4 @@ IncidentServiceDep = Annotated[IncidentService, Depends(get_incident_service)]
 SeismicServiceDep = Annotated[SeismicService, Depends(get_seismic_service)]
 WeatherServiceDep = Annotated[WeatherService, Depends(get_weather_service)]
 HazardServiceDep = Annotated[SeismicHazardService, Depends(get_hazard_service)]
+PushServiceDep = Annotated[PushSubscriptionService, Depends(get_push_service)]

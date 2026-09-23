@@ -206,6 +206,16 @@ Marcá como **Secret** las tres primeras; el resto pueden ir como plain text.
 | `RUN_MIGRATIONS` | `0` | Las migraciones se aplican a mano (paso 1.4). **En Render el valor es `1`**: sin Shell ni Pre-Deploy Jobs, el contenedor es el único lugar donde pueden correr. Si falla, no arranca. |
 | `WORKER_MODE` | `combined` | Los dos motores de fondo en un proceso. `split` vuelve al esquema de tres, útil para depurar. |
 
+### Notificaciones push
+
+| Variable | Valor | Nota |
+|---|---|---|
+| `VAPID_PRIVATE_KEY` | la que imprime `python scripts/generate_vapid_keys.py` | 🔒 Secret. Generarla **una sola vez**: cambiarla deja mudas todas las suscripciones. Sin ella el push queda apagado y el resto funciona igual. |
+| `VAPID_SUBJECT` | `mailto:<tu correo>` | Obligatorio para los servicios de push. |
+
+Umbrales, radio y cadencia tienen valores por defecto; el detalle está en
+[`docs/notificaciones-push.md`](docs/notificaciones-push.md).
+
 ### Sólo si usás el pooler de transacción (puerto 6543)
 
 | Variable | Valor |
@@ -274,19 +284,32 @@ cambiar la variable sin redeploy no hace nada.
 
 ## 5. Mantener la instancia despierta
 
-Sin esto el sistema deja de recolectar cada noche. Configurá un ping externo
-—[cron-job.org](https://cron-job.org) o UptimeRobot, ambos gratis— a:
+Sin esto el sistema deja de recolectar. No es teórico: en producción (Render,
+plan gratuito) no corrió **ningún** collector del 16 al 18 ni del 20 al 22 de
+septiembre de 2026. `collector_runs` solo tiene filas en los ratos en que alguien
+abrió el mapa.
+
+Configurá un ping externo —[cron-job.org](https://cron-job.org) o UptimeRobot,
+ambos gratis— a:
 
 ```
-https://<tu-app>.koyeb.app/api/v1/health
+https://alertav-api.onrender.com/api/v1/health
 ```
 
-cada **10 minutos**. Tiene que ser un servicio externo: el tráfico que cuenta
-para el scale-to-zero es el que entra por el edge, así que un ping que el
-contenedor se hace a sí mismo no sirve de nada.
+cada **10 minutos** (Render apaga tras 15 minutos sin tráfico; Koyeb, tras una
+hora). Tiene que ser un servicio externo: el tráfico que cuenta para el
+scale-to-zero es el que entra por el edge, así que un ping que el contenedor se
+hace a sí mismo no sirve de nada.
 
-Un efecto secundario útil: el mismo monitor te avisa por correo cuando la API
-deja de responder.
+Además, el repositorio trae `.github/workflows/keepalive.yml`, que hace el mismo
+ping cada 10 minutos desde GitHub Actions. En un repo público no consume
+minutos, pero no reemplaza al monitor: GitHub puede atrasar o saltarse las
+corridas programadas en horas de carga, y las desactiva si el repositorio pasa
+60 días sin actividad. Los dos juntos se cubren entre sí.
+
+Un efecto secundario útil del monitor externo: te avisa por correo cuando la API
+deja de responder. El workflow no avisa a propósito, para no mandar un correo
+cada diez minutos durante una caída.
 
 ---
 

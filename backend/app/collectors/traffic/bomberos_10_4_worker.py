@@ -100,7 +100,15 @@ from app.collectors.base import BaseCollector
 from app.collectors.geoservices import parse_timestamp, request_text
 from app.collectors.nominatim import GeocodeResult, build_client, geocode
 from app.collectors.traffic import gemini
-from app.collectors.vocabulary import find_codes, matches_key, normalise_code
+from app.collectors.vocabulary import (
+    CBV,
+    SISTEMAS_CLAVES,
+    SistemaClaves,
+    find_codes,
+    matches_key,
+    normalise_code,
+    sistema_de_cuenta,
+)
 from app.core.config import settings
 from app.core.exceptions import CollectorError
 from app.models.enums import EventSource, EventType
@@ -159,6 +167,14 @@ class Dispatch:
     #: camino. None es un resultado frecuente y legítimo: la central nombra
     #: esquinas que OpenStreetMap no conoce.
     point: GeocodeResult | None = None
+    #: Cuenta de X que publicó el despacho, con arroba («@CBVM132»). Decide con
+    #: qué diccionario de claves se lee (ver `vocabulary.SistemaClaves`). None
+    #: en el camino RSS y en los tuits que no dicen su autor: ahí rige
+    #: `BOMBEROS_SOURCE_HANDLE`, que es como funcionaba todo antes.
+    cuenta: str | None = None
+    #: Enlace público al tuit, si el Actor lo trae. Sólo para el panel: la
+    #: identidad del despacho sigue siendo `guid`.
+    url: str | None = None
 
 
 def strip_html(fragment: str) -> str:
@@ -403,22 +419,31 @@ async def decode_dispatches(
     queda en `raw_data._extraction.mode`, que es donde se puede medir.
     """
     presupuesto = max_llm_calls
-    handle = source_handle.strip() or "Bomberos"
+    respaldo = source_handle.strip() or "Bomberos"
     decodificados: list[Dispatch] = []
     por_reglas = 0
 
     for dispatch in dispatches:
         decoded: dict[str, Any] | None = None
         modo = gemini.MODE_HEURISTIC
+        # La cuenta del propio despacho manda: con dos centrales en el mismo
+        # lote, un solo `source_handle` firmaría los despachos de Viña como de
+        # Valparaíso y los leería con el diccionario equivocado.
+        handle = dispatch.cuenta or respaldo
+        sistema = sistema_de_despacho(dispatch, respaldo=respaldo)
         try:
             if presupuesto > 0 and gemini.is_configured():
                 presupuesto -= 1
-                decoded = await gemini.extract_dispatch(dispatch.raw_text, source_handle=handle)
+                decoded = await gemini.extract_dispatch(
+                    dispatch.raw_text, source_handle=handle, sistema=sistema
+                )
                 if decoded is not None:
                     modo = gemini.MODE_GEMINI
             if decoded is None:
                 por_reglas += 1
-                decoded = gemini.dispatch_summary_heuristic(dispatch.raw_text, source_handle=handle)
+                decoded = gemini.dispatch_summary_heuristic(
+                    dispatch.raw_text, source_handle=handle, sistema=sistema
+                )
         except Exception as exc:  # pragma: no cover — extract_dispatch no lanza
             logger.warning(
                 "no se pudo decodificar un despacho; entra con el texto crudo",
@@ -457,9 +482,14 @@ async def decode_dispatches(
 #:
 #: Lo que costó: el 2026-09-03, «PRIMERO DE MAYO / 12 DE OCTUBRE» de @CGI_CBV
 #: resolvía en Quillota, a 40 km. Ver `nominatim.COMUNA_VIEWBOX`.
+#:
+#: Se deriva de `vocabulary.SISTEMAS_CLAVES` —la primera comuna de cada
+#: Cuerpo— para que declarar una central nueva sea una sola entrada allá.
 HANDLE_COMUNA: dict[str, str] = {
-    "cgi_cbv": "Valparaíso",
-    "cbvm132": "Viña del Mar",
+    cuenta: sistema.comunas[0]
+    for sistema in SISTEMAS_CLAVES
+    for cuenta in sistema.cuentas
+    if sistema.comunas
 }
 
 
@@ -472,6 +502,31 @@ def comuna_de_handle(handle: str | None) -> str | None:
     if not handle:
         return None
     return HANDLE_COMUNA.get(handle.strip().lstrip("@").lower())
+
+
+def comunas_alternativas(handle: str | None) -> tuple[str, ...]:
+    """Las OTRAS comunas de la jurisdicción, para reintentar la geocodificación.
+
+    El CBVM cubre Viña del Mar **y Concón**, y la central casi nunca escribe la
+    comuna. Con la guarda puesta en Viña, una esquina de Concón se descarta por
+    caer en la comuna equivocada; el reintento con Concón la recupera, y sólo
+    cuesta peticiones cuando la primera falló.
+    """
+    sistema = sistema_de_cuenta(handle)
+    if sistema is None:
+        return ()
+    return tuple(sistema.comunas[1:])
+
+
+def sistema_de_despacho(dispatch: Dispatch, *, respaldo: str | None = None) -> SistemaClaves:
+    """Con qué diccionario se lee un despacho.
+
+    El de su cuenta si la trae; si no, el de `respaldo` (la cuenta configurada);
+    y si tampoco, el del CBV, que es lo que regía antes de que hubiera dos
+    centrales. Quien filtra las cuentas sin tabla es el webhook, antes de llegar
+    acá: este respaldo sólo cubre el camino RSS y los tuits sin autor.
+    """
+    return sistema_de_cuenta(dispatch.cuenta) or sistema_de_cuenta(respaldo) or CBV
 
 
 async def geocode_dispatches(
@@ -529,26 +584,36 @@ async def geocode_dispatches(
                 continue
 
             punto: GeocodeResult | None = None
-            try:
-                punto = await geocode(
-                    client,
-                    dict(calles),
-                    # La comuna del despacho si el decodificador la sacó; si no
-                    # —el caso normal, la central no la escribe— la de la
-                    # central. Ver `HANDLE_COMUNA`.
-                    comuna=(calles.get("city") or comuna),
-                )
-            except Exception as exc:
-                # Se atrapa `Exception` y no `CollectorError` a propósito: una
-                # esquina que hace reventar a Nominatim no puede costarle el
-                # punto a los demás despachos del lote, y menos aún el lote.
-                logger.warning(
-                    "Nominatim falló para un despacho; entra sin coordenadas",
-                    extra={"error": f"{type(exc).__name__}: {exc}"},
-                )
-            # El presupuesto avanza igual: un servicio que falla consumió su
-            # segundo de rate limit lo mismo que uno que responde.
-            gastados += 1
+            # La comuna del despacho si el decodificador la sacó; si no —el
+            # caso normal, la central no la escribe— la de SU central, y recién
+            # después la que pasó el llamador. Ver `HANDLE_COMUNA`.
+            principal = calles.get("city") or comuna_de_handle(dispatch.cuenta) or comuna
+            intentos = [principal]
+            if not calles.get("city"):
+                intentos += [
+                    alternativa
+                    for alternativa in comunas_alternativas(dispatch.cuenta)
+                    if alternativa != principal
+                ]
+
+            for intento in intentos:
+                if gastados >= max_geocodes:
+                    break
+                try:
+                    punto = await geocode(client, dict(calles), comuna=intento)
+                except Exception as exc:
+                    # Se atrapa `Exception` y no `CollectorError` a propósito:
+                    # una esquina que hace reventar a Nominatim no puede
+                    # costarle el punto a los demás despachos del lote.
+                    logger.warning(
+                        "Nominatim falló para un despacho; entra sin coordenadas",
+                        extra={"error": f"{type(exc).__name__}: {exc}"},
+                    )
+                # El presupuesto avanza igual: un servicio que falla consumió
+                # su segundo de rate limit lo mismo que uno que responde.
+                gastados += 1
+                if punto is not None:
+                    break
 
             if punto is not None:
                 resueltos += 1
@@ -574,9 +639,12 @@ def dispatch_type(dispatch: Dispatch) -> EventType:
     `10-4`, y desde que la ingesta se abrió a la familia 10 entera ese literal
     estaba metiendo incendios estructurales en la familia `traffic`.
     """
+    # El diccionario del Cuerpo que despachó: `Clave 3` es un incendio
+    # vehicular en Viña y no existe en Valparaíso.
+    sistema = sistema_de_despacho(dispatch)
     clave = (dispatch.decoded or {}).get("clave")
     if isinstance(clave, str) and clave.strip():
-        tipo = vocabulary.dispatch_event_type(clave)
+        tipo = vocabulary.dispatch_event_type(clave, sistema)
         if tipo is not vocabulary.DISPATCH_DEFAULT_TYPE:
             return tipo
 
@@ -584,7 +652,7 @@ def dispatch_type(dispatch: Dispatch) -> EventType:
     # ingesta: es el respaldo natural cuando el decodificador no aisló ninguna.
     for texto in (dispatch.key, dispatch.raw_text):
         if texto:
-            tipo = vocabulary.dispatch_event_type(texto)
+            tipo = vocabulary.dispatch_event_type(texto, sistema)
             if tipo is not vocabulary.DISPATCH_DEFAULT_TYPE:
                 return tipo
 
@@ -639,6 +707,13 @@ def dispatches_to_events(
                         "direccion": dispatch.address,
                         "aviso": dispatch.raw_text,
                         "guid": dispatch.guid,
+                        # Quién despachó y con qué diccionario se leyó. Con dos
+                        # centrales en el mismo webhook, sin esto no hay forma
+                        # de saber desde la base si un `Clave 10` se interpretó
+                        # como agua (CBV) o como servicio (CBVM).
+                        "cuenta": dispatch.cuenta,
+                        "cuerpo": sistema_de_despacho(dispatch).slug,
+                        "url": dispatch.url,
                         "fecha_declarada": (
                             dispatch.occurred_at.isoformat() if dispatch.occurred_at else None
                         ),

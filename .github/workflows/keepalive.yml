@@ -1,0 +1,48 @@
+name: keepalive
+
+# Render (plan gratuito) apaga el servicio tras 15 minutos sin trafico HTTP, y
+# con el se apagan los workers: nadie recolecta ni correlaciona. Medido en
+# collector_runs: del 16 al 18 y del 20 al 22 de septiembre de 2026 no corrio
+# ningun collector. Ver backend/DEPLOY.md, paso 5.
+#
+# Tiene que ser un ping EXTERNO: lo que cuenta para Render es el trafico que
+# entra por su edge. GitHub Actions lo es, y en un repositorio publico no
+# consume minutos.
+#
+# No es puntual. GitHub puede atrasar o saltarse corridas programadas en horas
+# de carga, y apaga los cron de un repositorio que pasa 60 dias sin actividad.
+# Por eso DEPLOY.md recomienda ademas un monitor como cron-job.org o UptimeRobot:
+# los dos juntos se cubren entre si.
+#
+# El paso nunca falla: un servicio caido no debe convertirse en 144 correos de
+# GitHub al dia. Deja una advertencia en el resumen de la corrida.
+#
+# Otra URL sin tocar este archivo: variable de repositorio ALERTAV_HEALTH_URL
+# (Settings > Secrets and variables > Actions > Variables).
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Despertar la API
+        env:
+          URL: ${{ vars.ALERTAV_HEALTH_URL || 'https://alertav-api.onrender.com/api/v1/health' }}
+        run: |
+          # El arranque en frio de Render tarda alrededor de un minuto.
+          if codigo=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+                --max-time 180 --retry 2 --retry-delay 10 "$URL"); then
+            echo "HTTP $codigo desde $URL"
+            if [ "$codigo" != "200" ]; then
+              echo "::warning::la API respondio HTTP $codigo"
+            fi
+          else
+            echo "::warning::la API no respondio en 180 s ($URL)"
+          fi

@@ -13,6 +13,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
+from app.core.config import settings
 from app.models.enums import CollectorStatus
 from app.models.event import CollectorRun
 from app.services.collector_health import build_health
@@ -41,10 +44,21 @@ def familia(ultimas: dict[str, CollectorRun], nombre: str) -> str:
     return por_familia[nombre]
 
 
+@pytest.fixture
+def instagram_encendido(monkeypatch):
+    """La capa de Instagram tal como estaba el 2026-09-02, cuando corría.
+
+    Desde el 2026-09-22 viene apagada por defecto (`APIFY_INSTAGRAM_ENABLED`),
+    pero los casos que motivaron este módulo se escribieron con ella viva y
+    siguen siendo la mejor prueba de la regla: se reconstruyen encendiéndola.
+    """
+    monkeypatch.setattr(settings, "APIFY_INSTAGRAM_ENABLED", True)
+
+
 # --- 1. El caso que motivó el módulo -----------------------------------------
 
 
-def test_una_corrida_reciente_pero_ciega_no_es_salud():
+def test_una_corrida_reciente_pero_ciega_no_es_salud(instagram_encendido):
     """El corazón del asunto.
 
     La corrida terminó hace un minuto: cualquier chequeo de recencia la daría
@@ -86,7 +100,7 @@ def test_partial_permanente_no_ensucia_la_salud():
 # --- 2. La regla de agregación ----------------------------------------------
 
 
-def test_el_escenario_exacto_del_2_de_septiembre():
+def test_el_escenario_exacto_del_2_de_septiembre(instagram_encendido):
     """La reconstrucción del día que motivó todo esto.
 
     Instagram ciego, Transporte Informa publicando con normalidad, prensa
@@ -105,7 +119,7 @@ def test_el_escenario_exacto_del_2_de_septiembre():
     assert familia(ultimas, "traffic") == "degraded"
 
 
-def test_una_fuente_de_apoyo_sana_no_rescata_a_la_familia():
+def test_una_fuente_de_apoyo_sana_no_rescata_a_la_familia(instagram_encendido):
     """El MTT emite sobre todo `road_closure`, que no crea incidentes.
 
     Que publique con normalidad no significa que un choque se vaya a ver, así
@@ -283,3 +297,56 @@ def test_los_roles_declarados_son_los_dos_que_existen():
     for nombre, roles in COLLECTOR_ROLES.items():
         for familia_, rol in roles.items():
             assert rol in ("principal", "apoyo"), f"{nombre}/{familia_}: rol {rol!r}"
+
+
+# --- 5. Capas apagadas por configuración -------------------------------------
+
+
+def test_una_capa_apagada_no_marca_a_su_familia():
+    """El Task de Instagram salió de Apify el 2026-09-22.
+
+    Su última corrida queda para siempre en `collector_runs`, cada vez más
+    vieja. Si siguiera pesando, `traffic` quedaría `stale` —es principal ahí— y
+    el contador de accidentes se marcaría como sospechoso para siempre.
+    """
+    ultimas = {
+        "instagram_apify": corrida(
+            "instagram_apify", estado=CollectorStatus.DEGRADED, hace_minutos=900
+        ),
+        "prensa_x_webhook": corrida("prensa_x_webhook", hace_minutos=900),
+        "prensa_local": corrida("prensa_local"),
+    }
+
+    salud, por_familia = build_health(ultimas, ahora=AHORA)
+
+    nombres = {s.collector for s in salud}
+    assert "instagram_apify" not in nombres
+    assert "prensa_x_webhook" not in nombres
+    assert por_familia["traffic"] == "ok"
+
+
+def test_encender_la_capa_la_devuelve_al_cuadro(monkeypatch):
+    monkeypatch.setattr(settings, "APIFY_INSTAGRAM_ENABLED", True)
+    monkeypatch.setattr(settings, "APIFY_PRENSA_ENABLED", True)
+
+    salud, _ = build_health({}, ahora=AHORA)
+
+    nombres = {s.collector for s in salud}
+    assert {"instagram_apify", "prensa_x_webhook"} <= nombres
+
+
+def test_la_cadencia_del_webhook_sigue_al_schedule_declarado(monkeypatch):
+    """Si el Schedule se espacia para cuidar la cuota, la salud tiene que saberlo.
+
+    Con una corrida cada tres horas y el umbral fijo de antes (tres horas), el
+    webhook de Bomberos quedaba `stale` entre dos entregas normales y marcaba
+    en falso las tres familias que sostiene.
+    """
+    monkeypatch.setattr(settings, "APIFY_X_SCHEDULE_MINUTES", 180)
+    ultimas = {"bomberos_apify_webhook": corrida("bomberos_apify_webhook", hace_minutos=240)}
+
+    salud, _ = build_health(ultimas, ahora=AHORA)
+    webhook = next(s for s in salud if s.collector == "bomberos_apify_webhook")
+
+    assert webhook.expected_interval_seconds == 180 * 60
+    assert webhook.status == "ok"

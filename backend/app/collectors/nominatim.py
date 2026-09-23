@@ -325,6 +325,10 @@ DEFAULT_REGION = "Región de Valparaíso"
 COMUNA_VIEWBOX: dict[str, tuple[float, float, float, float]] = {
     "valparaiso": (-71.72, -33.13, -71.53, -32.99),
     "vina del mar": (-71.59, -33.11, -71.44, -32.94),
+    # Jurisdicción del CBVM junto con Viña: los despachos de @CBVM132 que no
+    # resuelven en Viña se reintentan acá. Sólo sesga el ranking (sin
+    # `bounded`), así que un borde aproximado no descarta nada.
+    "concon": (-71.57, -32.98, -71.40, -32.89),
 }
 
 #: Cuántos resultados se piden para poder elegir por comuna. Cinco y no uno:

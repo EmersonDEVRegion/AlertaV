@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from app.collectors.registry import COLLECTORS, collector_class
+from app.core.config import settings
 from app.models.enums import CollectorStatus
 from app.models.event import CollectorRun
 
@@ -100,6 +101,32 @@ COLLECTOR_FAMILIES: dict[str, tuple[str, ...]] = {
     nombre: tuple(roles) for nombre, roles in COLLECTOR_ROLES.items()
 }
 
+#: Capas que pueden estar APAGADAS por configuración, y el ajuste que las
+#: enciende. Apagada, una capa no pesa en ninguna familia.
+#:
+#: Sin esto, retirar el Task de Instagram de Apify dejaba `instagram_apify` sin
+#: corridas nuevas, `stale` a las tres cadencias y —como es `principal` en
+#: `traffic`— el contador de accidentes marcado como sospechoso para siempre.
+#: Es el mismo canal que grita siempre que este módulo existe para evitar.
+_INTERRUPTORES: dict[str, str] = {
+    "instagram_apify": "APIFY_INSTAGRAM_ENABLED",
+    "prensa_x_webhook": "APIFY_PRENSA_ENABLED",
+}
+
+
+def active_roles() -> dict[str, dict[str, str]]:
+    """`COLLECTOR_ROLES` sin las capas apagadas. Se lee en cada llamada.
+
+    Una función y no una constante para que encender una capa en el entorno
+    —o en un test— se refleje sin reimportar el módulo.
+    """
+    return {nombre: roles for nombre, roles in COLLECTOR_ROLES.items() if _encendida(nombre)}
+
+
+def _encendida(nombre: str) -> bool:
+    ajuste = _INTERRUPTORES.get(nombre)
+    return ajuste is None or bool(getattr(settings, ajuste, True))
+
 #: Familias que el mapa cuenta. Espejo de `INCIDENT_LAYERS` en el frontend.
 FAMILIES: tuple[str, ...] = ("fire", "traffic", "power", "otros")
 
@@ -133,12 +160,14 @@ def _intervalo(nombre: str) -> int:
     """Cadencia declarada del collector, o una hora si no está registrado.
 
     `bomberos_apify_webhook` no está en `COLLECTORS`: no lo dispara el runner,
-    lo empuja Apify. Su cadencia es la del Actor y no la conocemos desde acá, así
-    que se le da una hora — suficientemente laxa para no gritar por un rato
-    tranquilo y suficientemente estricta para notar una integración caída.
+    lo empuja Apify. Su cadencia es la del Schedule del Task de X, que vive en
+    el panel de Apify y se declara acá en `APIFY_X_SCHEDULE_MINUTES` (una hora
+    por defecto, lo mismo que se usaba fijo antes). Si el Schedule se espacia
+    para cuidar la cuota gratuita, subir ese ajuste evita marcar en falso las
+    tres familias que el webhook sostiene.
     """
     if nombre not in COLLECTORS:
-        return 3600
+        return settings.APIFY_X_SCHEDULE_MINUTES * 60
     return collector_class(nombre).poll_interval_seconds()
 
 
@@ -223,9 +252,11 @@ def build_health(
     aritmética de fechas y precedencias, no SQL.
     """
     momento = ahora or datetime.now(UTC)
+    roles_activos = active_roles()
 
     salud: list[CollectorHealth] = []
-    for nombre, familias in sorted(COLLECTOR_FAMILIES.items()):
+    for nombre, roles in sorted(roles_activos.items()):
+        familias = tuple(roles)
         run = ultimas.get(nombre)
         intervalo = _intervalo(nombre)
         estado = _clasificar(run, intervalo, ahora=momento)
@@ -255,7 +286,7 @@ def build_health(
             [
                 s.status
                 for s in salud
-                if COLLECTOR_ROLES.get(s.collector, {}).get(familia) == "principal"
+                if roles_activos.get(s.collector, {}).get(familia) == "principal"
             ]
         )
         for familia in FAMILIES
