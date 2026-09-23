@@ -514,6 +514,44 @@ def test_describe_items_separa_los_errores_disfrazados() -> None:
     assert "cuentaprivada" in problemas[0]
 
 
+def test_dataset_de_puros_errores_deja_la_corrida_ciega() -> None:
+    """`restricted_page` en los tres perfiles no es una tarde tranquila.
+
+    El hueco que esto tapa: `run_looks_stale` mira la EDAD de la corrida, y una
+    corrida bloqueada es fresca. Terminó en `SUCCEEDED` hace cinco minutos y
+    trajo dataset; lo que no trajo es un solo post. Con los errores saliendo por
+    `warn`, la corrida quedaba `partial` —el estado permanente de las fuentes
+    sanas, el que se aprende a ignorar— y la capa entregaba cero cada media hora
+    sin que ese cero significara nada distinto de un día sin emergencias.
+    """
+    from app.collectors.social.apify_client import dataset_looks_blocked
+
+    items = [
+        {"error": "restricted_page", "inputUrl": "https://www.instagram.com/una/"},
+        {"error": "restricted_page", "inputUrl": "https://www.instagram.com/otra/"},
+    ]
+    ciego, motivo = dataset_looks_blocked(items, [])
+
+    assert ciego is True
+    assert motivo is not None and "ninguno es un post" in motivo
+
+
+def test_dataset_vacio_no_es_ceguera() -> None:
+    """El Actor raspó y no había nada nuevo. Es un resultado legítimo.
+
+    Confundirlo con un bloqueo pondría la capa en `degraded` cada madrugada, que
+    es la forma de que `degraded` deje de significar algo — exactamente el
+    desgaste que separó `partial` de `degraded` en primer lugar.
+    """
+    from app.collectors.social.apify_client import dataset_looks_blocked
+
+    assert dataset_looks_blocked([], []) == (False, None)
+    assert dataset_looks_blocked([{"shortCode": "A"}], [{"shortCode": "A"}]) == (
+        False,
+        None,
+    )
+
+
 # --- Delta fetching ----------------------------------------------------------
 
 

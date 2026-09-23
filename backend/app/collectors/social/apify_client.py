@@ -175,6 +175,36 @@ def describe_items(items: Sequence[Any]) -> tuple[list[dict[str, Any]], list[str
     return (good, problems)
 
 
+def dataset_looks_blocked(
+    items: Sequence[Any], useful: Sequence[Any]
+) -> tuple[bool, str | None]:
+    """¿La corrida trajo dataset y **ningún post**? Devuelve `(ciego, motivo)`.
+
+    La contraparte de `run_looks_stale` para el fallo que la otra no ve. Allá el
+    Actor dejó de correr; acá corrió perfecto —`SUCCEEDED`, `finishedAt` de hace
+    cinco minutos— y lo que trajo son puros objetos-error: `restricted_page`,
+    `no_items`, perfil privado. Instagram le cerró la puerta y el Actor no lo
+    reporta como fallo, lo escribe en el dataset.
+
+    Sin esto, esos errores salían por `warn` y la corrida quedaba en `partial`,
+    que es el estado permanente de fuentes sanas —el filtro regional del USGS
+    vive ahí— y por lo tanto el estado que nadie mira. La capa entregaba cero
+    posts cada media hora, indistinguible de una tarde sin emergencias.
+
+    Un dataset **vacío** no es esto y no se declara ciego: significa que el Actor
+    raspó y no había nada nuevo, que es un resultado legítimo.
+    """
+    if not items or useful:
+        return (False, None)
+
+    return (
+        True,
+        f"el Actor devolvió {len(items)} items y ninguno es un post: Instagram "
+        f"le está negando las cuentas. Nada publicado ahora puede llegar al mapa "
+        f"por esta capa",
+    )
+
+
 def build_client(timeout: float | None = None) -> httpx.AsyncClient:
     """Cliente con la cabecera de autenticación ya puesta.
 
@@ -311,6 +341,7 @@ __all__ = [
     "TERMINAL_STATUSES",
     "ApifyRun",
     "build_client",
+    "dataset_looks_blocked",
     "describe_items",
     "fetch_items",
     "fetch_last_run",

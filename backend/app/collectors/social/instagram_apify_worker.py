@@ -559,6 +559,16 @@ class InstagramApifyCollector(BaseCollector):
         for problema in problemas:
             self.warn(problema)
 
+        bloqueado, motivo = apify_client.dataset_looks_blocked(items, useful)
+        if bloqueado and motivo:
+            # `blind` y no `warn`, por la misma razón que los datos rancios de
+            # más arriba: el Actor corrió impecable —`SUCCEEDED`, `finishedAt`
+            # de hace cinco minutos— y lo que trajo son puros objetos-error.
+            # Dejarlo en `partial` lo volvía indistinguible del filtro regional
+            # del USGS, o sea invisible por costumbre, mientras la capa
+            # entregaba cero posts cada media hora.
+            self.blind(motivo)
+
         posts = [post for raw in useful if (post := parse_post(raw)) is not None]
         frescos = [
             post
