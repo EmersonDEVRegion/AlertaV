@@ -43,6 +43,8 @@ interface AppHeaderProps {
   onToggleConfirmedOnly: (value: boolean) => void
   /** Se inyecta desde `App`, que es quien posee el estado del tema. */
   themeToggle?: ReactNode
+  /** La campana de avisos push. Se inyecta por la misma razón que el tema. */
+  notifications?: ReactNode
 }
 
 /**
@@ -120,6 +122,7 @@ export function AppHeader({
   confirmedOnly,
   onToggleConfirmedOnly,
   themeToggle,
+  notifications,
 }: AppHeaderProps) {
   return (
     <header
@@ -199,6 +202,12 @@ export function AppHeader({
           <span className="hidden sm:inline">Verificados en terreno</span>
           <span className="sm:hidden">Verificados</span>
         </label>
+
+        {/*
+          La campana va junto al tema porque las dos son preferencias del
+          teléfono, no del mapa: los avisos siguen llegando con la app cerrada.
+        */}
+        {notifications}
 
         {themeToggle}
       </div>
