@@ -178,6 +178,20 @@ class NewsPortal:
     nombre: str
     feed_url: str | None
     portada_url: str | None
+    #: Confianza propia del portal. `None` = usa `LOCAL_NEWS_CONFIDENCE`.
+    #:
+    #: Existe porque «prensa local» dejó de nombrar una sola cosa. Un portal con
+    #: redacción y uno que republica lo que le llega por mensaje directo caben
+    #: los dos en este collector, y la confianza mide exactamente la diferencia
+    #: entre ellos: cuánto vale la palabra de la fuente sobre el hecho que
+    #: informa. Meterlos en el mismo número obligaba a elegir entre inflar al
+    #: agregador o castigar al medio.
+    #:
+    #: El caso que lo motivó: `alertanoticias.cl` es el mismo publicador que la
+    #: cuenta de Instagram a la que el sistema le da 0.35 por no verificar nada.
+    #: Entrar por RSS no le agrega una redacción, así que entrar a 0.60 le
+    #: subiría el peso sin que hubiera cambiado nada del mundo.
+    confianza: float | None = None
 
     @property
     def base_url(self) -> str:
@@ -198,9 +212,14 @@ class NewsPortal:
 def parse_portals(raw: str | Sequence[str] | None) -> list[NewsPortal]:
     """Declaración textual del `.env` → portales.
 
-    Formato ``slug|nombre|feed_url|portada_url`` separando varios con ``;``, el
-    mismo idioma que `FIRMS_SOURCES` y `OPENMETEO_COMUNAS`. Cualquiera de las dos
-    URL puede ir vacía; las dos vacías es un error de configuración y se dice.
+    Formato ``slug|nombre|feed_url|portada_url[|confianza]`` separando varios con
+    ``;``, el mismo idioma que `FIRMS_SOURCES` y `OPENMETEO_COMUNAS`. Cualquiera
+    de las dos URL puede ir vacía; las dos vacías es un error de configuración y
+    se dice.
+
+    El quinto campo es **opcional** y sobrescribe `LOCAL_NEWS_CONFIDENCE` para
+    ese portal (ver `NewsPortal.confianza`). Omitirlo es lo normal; las filas
+    escritas antes de que existiera siguen siendo válidas sin tocarlas.
 
     Se valida al construir el collector —y no al leer— para que una fila mal
     escrita deje una corrida `failed` con el motivo en `collector_runs`, en vez
@@ -219,7 +238,8 @@ def parse_portals(raw: str | Sequence[str] | None) -> list[NewsPortal]:
         if len(partes) < 4:
             raise ValueError(
                 f"portal mal declarado: {token!r}. Formato esperado "
-                f"'slug|nombre|feed_url|portada_url' (las URL pueden ir vacías)"
+                f"'slug|nombre|feed_url|portada_url[|confianza]' (las URL pueden "
+                f"ir vacías)"
             )
         slug, nombre, feed_url, portada_url = partes[:4]
         if not slug:
@@ -229,12 +249,32 @@ def parse_portals(raw: str | Sequence[str] | None) -> list[NewsPortal]:
                 f"el portal {slug!r} no declara ni feed ni portada: no hay de "
                 f"dónde leer"
             )
+
+        crudo = partes[4] if len(partes) > 4 else ""
+        confianza: float | None = None
+        if crudo:
+            try:
+                confianza = float(crudo)
+            except ValueError as exc:
+                raise ValueError(
+                    f"la confianza de {slug!r} no es un número: {crudo!r}"
+                ) from exc
+            if not 0.0 <= confianza <= 1.0:
+                # Fuera de rango revienta en vez de recortarse. Un 60 escrito
+                # donde iba 0.60 es un error de dedo que, recortado en silencio a
+                # 1.00, convertiría a un portal cualquiera en la única banda que
+                # por sí sola marca un incidente como confirmado.
+                raise ValueError(
+                    f"la confianza de {slug!r} está fuera de [0, 1]: {confianza}"
+                )
+
         portales.append(
             NewsPortal(
                 slug=slug,
                 nombre=nombre or slug,
                 feed_url=feed_url or None,
                 portada_url=portada_url or None,
+                confianza=confianza,
             )
         )
     return portales
@@ -1253,6 +1293,18 @@ class LocalNewsCollector(BaseCollector):
 
         return resueltas
 
+    def _confianza_de(self, slug: str | None) -> float:
+        """Confianza del portal, o la del collector si no declara una propia.
+
+        Se resuelve por `slug` y no se guarda en el `NewsItem` a propósito:
+        `normalize()` tiene que seguir siendo pura y testeable sin red, y el
+        item viene del parser, que no sabe nada de configuración.
+        """
+        for portal in getattr(self, "portales", ()):
+            if portal.slug == slug and portal.confianza is not None:
+                return portal.confianza
+        return self.confidence
+
     def normalize(self, records: Sequence[ResolvedNews]) -> list[EventCreate]:
         """`ResolvedNews` → `EventCreate`. Pura: sin red y sin base."""
         ahora = datetime.now(UTC)
@@ -1277,7 +1329,7 @@ class LocalNewsCollector(BaseCollector):
                     lon=registro.point.lon if registro.point else None,
                     text=item.texto[:10_000],
                     external_id=external_id_for(item),
-                    confidence=self.confidence,
+                    confidence=self._confianza_de(item.portal),
                     raw_data={
                         "titular": item.titular,
                         "bajada": item.bajada or None,

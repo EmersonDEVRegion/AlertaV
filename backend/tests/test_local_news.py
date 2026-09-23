@@ -208,6 +208,38 @@ def test_parse_portals_rechaza_el_formato_incompleto() -> None:
         parse_portals("sitiodelsuceso|Sitio del Suceso|https://a/feed/")
 
 
+def test_la_confianza_por_portal_es_opcional() -> None:
+    """«Prensa local» dejó de nombrar una sola cosa.
+
+    Un portal con redacción y un agregador que republica lo que le llega por
+    mensaje directo caben los dos en este collector, y la confianza mide
+    exactamente la diferencia. Las filas escritas antes de que existiera el
+    quinto campo siguen valiendo sin tocarlas: `None` = usa la del collector.
+    """
+    portales = parse_portals(
+        "agregador|Agregador|https://a/feed/|https://a/|0.35;"
+        "medio|Medio||https://b/region-valparaiso"
+    )
+
+    assert portales[0].confianza == 0.35
+    assert portales[1].confianza is None
+
+
+def test_una_confianza_fuera_de_rango_revienta() -> None:
+    """Un 60 escrito donde iba 0.60 no se recorta en silencio.
+
+    Recortado a 1.00 convertiría a un portal cualquiera en la única banda que
+    por sí sola marca un incidente como confirmado — el peso de un despacho de
+    la central. Reventar al construir deja la corrida `failed` con el motivo a
+    la vista, que es el fallo correcto.
+    """
+    with pytest.raises(ValueError, match="fuera de"):
+        parse_portals("medio|Medio|https://a/feed/||60")
+
+    with pytest.raises(ValueError, match="no es un número"):
+        parse_portals("medio|Medio|https://a/feed/||alta")
+
+
 # --- Pre-filtro reutilizado --------------------------------------------------
 
 
@@ -748,6 +780,37 @@ def _normalize(records):
     collector.name = "prensa_local"
     collector.confidence = 0.60
     return collector.normalize(records)
+
+
+def test_normalize_respeta_la_confianza_propia_del_portal() -> None:
+    """El agregador no gana peso por entrar a la casa por otra puerta.
+
+    `alertanoticias.cl` es el mismo publicador que la cuenta de Instagram a la
+    que el sistema le da 0.35 por no verificar nada. Leerlo por RSS en vez de por
+    Apify cambia cómo llega el texto, no quién lo escribió, así que la confianza
+    tiene que seguir siendo la misma.
+    """
+    collector = LocalNewsCollector.__new__(LocalNewsCollector)
+    collector.source = EventSource.MEDIA
+    collector.name = "prensa_local"
+    collector.confidence = 0.60
+    collector.portales = [  # type: ignore[attr-defined]
+        NewsPortal(
+            slug="agregador",
+            nombre="Agregador",
+            feed_url="https://a/feed/",
+            portada_url=None,
+            confianza=0.35,
+        )
+    ]
+
+    propio = collector.normalize([_resuelta(item=_item(portal="agregador"))])
+    ajeno = collector.normalize([_resuelta(item=_item(portal="otro"))])
+
+    assert propio[0].confidence == 0.35
+    # Un portal sin confianza declarada sigue con la del collector: el campo es
+    # opcional y no puede cambiar el comportamiento de quien no lo usa.
+    assert ajeno[0].confidence == 0.60
 
 
 def _resuelta(**kwargs) -> ResolvedNews:

@@ -599,20 +599,21 @@ class Settings(BaseSettings):
     #: le llega por mensaje directo, sin verificar.
     INSTAGRAM_CONFIDENCE: float = Field(default=0.35, ge=0.0, le=1.0)
 
-    # -- Prensa local: Sitio del Suceso y Pura Noticia -----------------------
+    # -- Prensa local: Alerta Noticias y Pura Noticia -------------------------
     #: Portales de la V Región, raspados de forma nativa y a costo cero. Formato
-    #: `slug|nombre|feed_url|portada_url`, separando varios con `;` — el mismo
-    #: idioma que `FIRMS_SOURCES` y `OPENMETEO_COMUNAS`. Vacío = collector
-    #: apagado (el constructor lanza y la corrida queda `failed` a la vista).
+    #: `slug|nombre|feed_url|portada_url[|confianza]`, separando varios con `;` —
+    #: el mismo idioma que `FIRMS_SOURCES` y `OPENMETEO_COMUNAS`. Vacío =
+    #: collector apagado (el constructor lanza y la corrida queda `failed` a la
+    #: vista).
     #:
     #: Las dos URL son opcionales por separado, y los valores por defecto usan
-    #: esa asimetría porque los dos portales son distintos de verdad. Verificado
-    #: el 31 de agosto de 2026:
+    #: esa asimetría porque los portales son distintos de verdad:
     #:
-    #: * **Sitio del Suceso** es WordPress 7.1 y `/feed/` devuelve RSS 2.0 con
-    #:   `<guid>` estable, `<pubDate>` con hora y —lo mejor— `<category>` con la
+    #: * **Alerta Noticias** (verificado el 3 de septiembre de 2026) es WordPress
+    #:   7.1 y `category/valparaiso/feed/` devuelve RSS 2.0 ya acotado a la
+    #:   región, con `<guid>` estable, `<pubDate>` con hora y `<category>` con la
     #:   comuna. Se declara feed Y portada: la segunda es el respaldo si el feed
-    #:   cae o llega vacío.
+    #:   cae o llega vacío. Lleva confianza propia — ver la nota de abajo.
     #: * **Pura Noticia** redirige `www.puranoticia.cl` a `puranoticia.pnt.cl`,
     #:   que NO es WordPress y **no publica RSS**: el documento no trae
     #:   `<link rel="alternate">` y `/rss`, `/rss.xml` y `/feed` devuelven cuerpo
@@ -620,12 +621,40 @@ class Settings(BaseSettings):
     #:   inexistente costaría una petición fallida y una advertencia por corrida,
     #:   para siempre. Se lee su sección regional por HTML.
     #:
-    #: Ojo con la portada de Pura Noticia: es `/region-valparaiso` y no la raíz.
-    #: La raíz mezcla nacional, internacional y deportes, y ese filtro por
-    #: sección es lo único que acota geográficamente a un medio que no lo es.
+    #: Ojo con las dos portadas: son la sección regional y no la raíz. La raíz
+    #: mezcla nacional, internacional y deportes, y ese filtro por sección es lo
+    #: único que acota geográficamente a dos medios que no son regionales.
+    #: **Sitio del Suceso salió de rotación el 2026-09-03**, y no por estar
+    #: caído: su feed responde y está al día — verificado desde un navegador el
+    #: mismo día. Lo que devuelve 403 es nuestra petición, y no por las
+    #: cabeceras: ya mandamos `LOCAL_NEWS_USER_AGENT` y `Accept-Language: es-CL`.
+    #: Cloudflare está rechazando por reputación de IP de datacenter y por la
+    #: huella TLS de httpx, que no se arreglan desde el cliente.
+    #:
+    #: Se desregistra como se desregistró Waze: la fila queda escrita y comentada
+    #: en vez de borrada, porque el código sigue siendo correcto y el día que
+    #: aflojen la regla vuelve descomentando una línea. Mantenerlo activo costaba
+    #: una petición fallida y una advertencia cada 15 minutos, para siempre —el
+    #: ruido que enseña a ignorar el amarillo—. La cuenta @sitiodelsuceso ya lo
+    #: cubre parcialmente por la ruta de prensa de X.
+    #:
+    #:     sitiodelsuceso|Sitio del Suceso|https://www.sitiodelsuceso.cl/feed/|
+    #:     https://www.sitiodelsuceso.cl/
+    #:
+    #: `alertanoticias` entró el mismo día y por el hueco que dejó Instagram: es
+    #: el mismo publicador que @alertanoticiasvalparaiso, la cuenta más grande de
+    #: las tres, que lleva semanas en `restricted_page`. Su WordPress publica
+    #: `category/valparaiso/feed/`, ya filtrado a la región, gratis y sin Apify.
+    #:
+    #: Entra con **0.35 propio y no con el 0.60 del resto**, que es el quinto
+    #: campo de la fila. Es el mismo número que el worker de Instagram le da al
+    #: mismo publicador, y por el mismo motivo: republica lo que le llega por
+    #: mensaje directo, sin segunda fuente y sin corrección. Leerlo por RSS en vez
+    #: de por Apify cambia cómo llega el texto, no quién lo escribió.
     LOCAL_NEWS_SOURCES: str = (
-        "sitiodelsuceso|Sitio del Suceso|https://www.sitiodelsuceso.cl/feed/|"
-        "https://www.sitiodelsuceso.cl/;"
+        "alertanoticias|Alerta Noticias|"
+        "https://alertanoticias.cl/category/valparaiso/feed/|"
+        "https://alertanoticias.cl/category/valparaiso/|0.35;"
         "puranoticia|Pura Noticia||https://puranoticia.pnt.cl/region-valparaiso"
     )
     #: Cabeceras de navegador. El `User-Agent` por defecto de httpx
