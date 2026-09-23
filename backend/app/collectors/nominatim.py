@@ -32,12 +32,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
-from app.collectors.geoservices import as_float, request_json
+from app.collectors.geoservices import as_float, normalise_text, request_json
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,18 @@ def get_limiter() -> RateLimiter:
     return _LIMITER
 
 
+#: Precisión del punto devuelto. Viaja a `raw_data._geocoding` porque el punto
+#: de una avenida y el de un cruce **no son el mismo dato**, y el mapa no los
+#: distingue solo: los dos son un pin.
+#:
+#: Hoy sólo se emite `street`. `INTERSECTION` existe declarada y sin usar a
+#: propósito: es la precisión que este sistema querría y que Nominatim no sabe
+#: dar (ver `build_queries`). El día que haya un proveedor que resuelva cruces,
+#: el consumidor ya sabe leer el valor.
+PRECISION_STREET = "street"
+PRECISION_INTERSECTION = "intersection"
+
+
 @dataclass(frozen=True, slots=True)
 class GeocodeResult:
     """Un punto resuelto, con lo necesario para dudar de él.
@@ -103,6 +116,23 @@ class GeocodeResult:
     #: indicar que resolvió algo más genérico que lo pedido.
     importance: float | None = None
     query: str | None = None
+    #: Qué tan fino es el punto. Ver `PRECISION_STREET`.
+    precision: str = PRECISION_STREET
+    #: Cuál de las calles del cruce resolvió: `street_1` o `street_2`. Que un
+    #: punto venga de la transversal no es un defecto —es la única que existía
+    #: en OSM— pero sí cambia dónde cae, y eso hay que poder leerlo después.
+    matched: str | None = None
+    #: Claves que el extractor sí resolvió y el punto NO representa. Sin esto,
+    #: un punto a mitad de una avenida de dos kilómetros se ve idéntico a uno
+    #: puesto en el cruce que la fuente informó.
+    omitted: tuple[str, ...] = ()
+    #: Comuna que Nominatim le asigna al punto. Es contra esto que se verifica
+    #: la guarda, y queda escrito para poder auditar después que un pin cayó
+    #: donde correspondía.
+    comuna: str | None = None
+    #: Caja que sesgó la búsqueda, si hubo. `None` = sin sesgo: la comuna de la
+    #: señal no está en `COMUNA_VIEWBOX`.
+    viewbox: tuple[float, float, float, float] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -112,37 +142,256 @@ class GeocodeResult:
             "osm_type": self.osm_type,
             "importance": self.importance,
             "query": self.query,
+            "precision": self.precision,
+            "matched": self.matched,
+            "omitted": list(self.omitted),
+            "comuna": self.comuna,
+            "viewbox": list(self.viewbox) if self.viewbox else None,
             "provider": "nominatim",
         }
 
 
 #: Región que se añade a toda consulta. El sistema sólo cubre la V, y sin ella
 #: "Av. Argentina" resuelve en Buenos Aires con toda naturalidad.
+#:
+#: **Añadirla NO acota nada, y también está medido.** Es un sesgo de ranking, no
+#: un filtro: Nominatim la usa para ordenar y la ignora si el nombre de calle
+#: gana por otro lado. Sirve para no salir de Chile y para nada más fino. Lo que
+#: acota de verdad es `viewbox` + `bounded=1` — ver `COMUNA_VIEWBOX`.
 DEFAULT_REGION = "Región de Valparaíso"
 
 
-def build_query(streets: dict[str, Any], *, region: str = DEFAULT_REGION) -> str | None:
-    """Arma la cadena de búsqueda desde el diccionario del Paso A.
+# =============================================================================
+#  La guarda de comuna
+# =============================================================================
+#
+# # El problema, medido
+#
+# El 2026-09-03 el CBV despachó una 4-1 en «PRIMERO DE MAYO / 12 DE OCTUBRE»,
+# Valparaíso. Pedirle esa calle a Nominatim daba, de las tres formas posibles:
+#
+#     Primero de Mayo, Región de Valparaíso              → Quillota, a 40 km
+#     Primero de Mayo, Valparaíso, Región de Valparaíso  → Quillota, igual
+#     street=Primero de Mayo&city=Valparaíso&state=…     → Quillota, igual
+#
+# Nombrar la comuna en el texto libre **no acota nada**: es un sesgo de ranking
+# que pierde contra el nombre de la calle. Y la búsqueda estructurada tampoco —
+# `city=` es una pista, no una condición. Las tres formas devuelven Quillota con
+# la misma naturalidad.
+#
+# Eso no es un punto impreciso, es un punto FALSO, y este proyecto ya tiene
+# escrito en cinco archivos por qué eso es peor que no tener ninguno: el mapa
+# dibuja igual el pin correcto y el que está a 40 km, y quien lo mira no tiene
+# cómo distinguirlos. Un cero se puede marcar; un pin equivocado, no.
+#
+# # Lo que sí funciona: `addressdetails=1`
+#
+# Nominatim devuelve la comuna en `address.city`, limpia y separada del ruido:
+#
+#     12 de Octubre → {city: "Viña del Mar",  suburb: "Forestal"}
+#     12 de Octubre → {city: "Valparaíso",    suburb: "Placeres"}
+#
+# Ésa es la guarda: se piden varios resultados y **se elige el primero cuya
+# comuna sea la esperada**. Cuesta una sola petición, igual que antes.
+#
+# Sobre `display_name` no se puede hacer lo mismo, y conviene decir por qué para
+# que nadie lo intente después: la de Viña dice «…, Viña del Mar, Provincia de
+# Valparaíso, Región de Valparaíso, …». Buscar "valparaíso" ahí adentro acepta
+# el resultado de Viña con toda naturalidad. El campo estructurado no tiene esa
+# ambigüedad.
+#
+# # Y el viewbox, ¿para qué queda?
+#
+# Para sesgar el ranking hacia la zona correcta, de modo que los cinco
+# resultados que se piden traigan el bueno. **Sin `bounded=1`**: acotar de
+# verdad con un rectángulo descartaría resultados válidos por un borde mal
+# puesto, y estos bordes no se pueden poner bien — la caja de Valparaíso que
+# incluye Placilla incluye también el sector Forestal de Viña, porque las dos
+# comunas se enredan y un rectángulo no las separa. El rectángulo orienta; la
+# comuna decide.
+#
+# # Por qué las cajas están escritas a mano
+#
+# Porque la caja administrativa de Valparaíso que devuelve OSM es
+# `(-80.12, -33.21, -71.38, -26.27)`: la comuna incluye Rapa Nui y Juan
+# Fernández, así que su rectángulo envolvente cruza el Pacífico. Como sesgo no
+# serviría de nada. Éstas son las de la mancha urbana.
 
-    Formato `calle y calle, ciudad, región`: es el que mejor resuelve Nominatim
-    para intersecciones en Chile. Si no hay vía principal devuelve None — buscar
-    sólo por ciudad daría el centroide comunal, que como ubicación de un
-    accidente es peor que no tener ubicación: parece un dato y no lo es.
+#: Cajas urbanas por comuna, en `(oeste, sur, este, norte)`. Sesgo de búsqueda.
+COMUNA_VIEWBOX: dict[str, tuple[float, float, float, float]] = {
+    "valparaiso": (-71.72, -33.13, -71.53, -32.99),
+    "vina del mar": (-71.59, -33.11, -71.44, -32.94),
+}
 
-    Las claves son `street_1`/`street_2`/`city`, el mismo vocabulario que produce
-    el extractor. La región no viene del extractor a propósito: es una constante
-    del despliegue, no algo que un modelo deba inferir de cada aviso.
+#: Cuántos resultados se piden para poder elegir por comuna. Cinco y no uno:
+#: con `limit=1`, «12 de Octubre» devuelve el de Viña y el de Valparaíso —el
+#: correcto— queda en segundo lugar, invisible. Y no cincuenta: la respuesta se
+#: transporta entera y el bueno, si está, está arriba.
+RESULT_LIMIT = 5
+
+
+def viewbox_for(comuna: str | None) -> tuple[float, float, float, float] | None:
+    """Caja de sesgo de la comuna, o None si no está declarada.
+
+    Que falte no rompe nada: la comuna sigue filtrando por `address.city`, sólo
+    que sin ayudar al ranking. Agregar una comuna es agregar una línea.
+    """
+    if not comuna:
+        return None
+    return COMUNA_VIEWBOX.get(normalise_text(comuna))
+
+
+#: Campos donde Nominatim deja la comuna, en orden de preferencia. Varía con el
+#: tipo de lugar: una calle urbana trae `city`, una rural puede traer sólo
+#: `town` o `municipality`.
+_COMUNA_FIELDS = ("city", "town", "municipality", "village")
+
+
+def result_comuna(payload: Mapping[str, Any]) -> str | None:
+    """La comuna de un resultado de Nominatim, si la declara."""
+    address = payload.get("address")
+    if not isinstance(address, Mapping):
+        return None
+    for field in _COMUNA_FIELDS:
+        valor = address.get(field)
+        if valor and str(valor).strip():
+            return str(valor).strip()
+    return None
+
+
+def comuna_matches(payload: Mapping[str, Any], comuna: str | None) -> bool:
+    """¿El resultado cae en la comuna esperada?
+
+    Sin comuna esperada, todo vale: es el comportamiento anterior y el que
+    corresponde cuando el sistema no sabe dónde debería estar el hecho.
+
+    Un resultado que **no declara** comuna también pasa. Rechazarlo sería
+    convertir un hueco de OSM en una pérdida de señal, y la guarda existe para
+    descartar lo que está demostradamente en otra parte, no lo que no se sabe.
+    """
+    if not comuna:
+        return True
+    encontrada = result_comuna(payload)
+    if encontrada is None:
+        return True
+    return normalise_text(encontrada) == normalise_text(comuna)
+
+
+def build_queries(
+    streets: dict[str, Any], *, region: str = DEFAULT_REGION
+) -> list[str]:
+    """Consultas candidatas, de la más específica a la más general.
+
+    **Nominatim no resuelve intersecciones, y eso está medido.** Su búsqueda de
+    texto libre no tiene ningún concepto de cruce: le pide el nombre a su índice
+    y «Av. Argentina y Pedro Montt» no es el nombre de nada. La respuesta no es
+    un error ni un punto aproximado, es un array vacío. Comprobado el 2026-09-03
+    contra el servicio público, con `countrycodes=cl`:
+
+        Av. Argentina y Pedro Montt, Valparaíso, Región de Valparaíso   → []
+        Avenida España y Avenida Argentina, Valparaíso, Región …        → []
+        Uno Norte y Libertad, Viña del Mar, Región de Valparaíso        → []
+        Av. Argentina, Valparaíso, Región de Valparaíso                 → OK
+
+    Ese último es el punto que este archivo llevaba meses sin pedir. La consulta
+    de intersección era la forma **por defecto** en cuanto el extractor
+    encontraba una transversal, así que todo aviso bien leído —«colisión en Av.
+    Argentina con Pedro Montt», que es la forma canónica de la prensa local—
+    terminaba sin coordenadas. Y sin coordenadas no hay incidente:
+    `cluster_unassigned_events` filtra por `geom IS NOT NULL`. El evento se
+    guardaba entero, con su tipo y su texto, y no llegaba nunca al mapa.
+
+    Es el mismo cero de siempre por una puerta nueva, y con un agravante: el
+    aviso mejor escrito era justamente el que se perdía. Cuanto más completa la
+    fuente, más probable la transversal, más seguro el silencio.
+
+    Por eso la transversal sale de la consulta **como cruce** — pero no se tira:
+    baja a ser una candidata más, por su cuenta. Eso lo obligó el despacho de
+    «PRIMERO DE MAYO / 12 DE OCTUBRE» del 2026-09-03: dentro de la caja de
+    Valparaíso, `Primero de Mayo` no existe en OSM y `12 de Octubre` sí. La
+    calle geocodificable era la SEGUNDA, y quedarse sólo con la primera perdía
+    el despacho igual que antes, ahora por otro motivo.
+
+    Cuál de las dos resolvió queda en `GeocodeResult.matched`, y la que no se
+    usó en `omitted`: un punto sobre una de las dos calles de un cruce no es el
+    cruce, y el mapa dibuja los dos como el mismo pin.
+
+    Lo que se pierde diciéndolo claro: Av. Argentina son ~1,5 km y el punto cae
+    donde OSM ancle el tramo, no en la esquina informada. Es peor que un cruce y
+    es muchísimo mejor que nada — es exactamente la precisión que hoy tiene el
+    accidente de Av. España, el que sí llegó al mapa. Resolver el cruce de
+    verdad pide otro servicio (Overpass sabe intersecar dos `way`); queda anotado
+    y no se hace acá.
+
+    La segunda candidata quita la ciudad. Nominatim a veces no reconoce la
+    comuna tal como la escribe la fuente («Con Con», «Viña»), y la consulta
+    entera se cae por el segmento menos importante. Sólo se pide si la primera
+    falló: un evento que resuelve a la primera sigue costando una petición.
+
+    Sin vía principal no hay ninguna candidata. Buscar sólo por ciudad daría el
+    centroide comunal, que como ubicación de un accidente es peor que no tener
+    ubicación: parece un dato y no lo es.
     """
     primary = (streets.get("street_1") or "").strip()
+    if not primary:
+        return []
+
     secondary = (streets.get("street_2") or "").strip()
     city = (streets.get("city") or "").strip()
+    region = region.strip()
 
-    if not primary:
-        return None
+    def formas(calle: str) -> list[str]:
+        return [
+            ", ".join([calle, *[p for p in (city, region) if p]]),
+            ", ".join([calle, *[p for p in (region,) if p]]),
+        ]
 
-    head = f"{primary} y {secondary}" if secondary else primary
-    parts = [head, *[part for part in (city, region.strip()) if part]]
-    return ", ".join(parts)
+    # El orden agota la calle principal antes de mirar la transversal: la
+    # central escribe primero la vía donde ocurre el hecho.
+    candidatas = formas(primary) + (formas(secondary) if secondary else [])
+
+    # Sin ciudad, las dos formas de una misma calle son la misma cadena.
+    # Deduplicar acá y no en `geocode` evita gastar un segundo del limitador
+    # global en repetir una consulta que ya falló.
+    unicas: list[str] = []
+    for candidata in candidatas:
+        if candidata not in unicas:
+            unicas.append(candidata)
+    return unicas
+
+
+def matched_key(query: str, streets: dict[str, Any]) -> str | None:
+    """¿Cuál de las dos calles resolvió? Se deduce del prefijo de la consulta."""
+    for clave in ("street_1", "street_2"):
+        calle = str(streets.get(clave) or "").strip()
+        if calle and query.startswith(calle):
+            return clave
+    return None
+
+
+def omitted_keys(streets: dict[str, Any], *, matched: str | None = None) -> tuple[str, ...]:
+    """Qué resolvió el extractor y el punto devuelto NO representa.
+
+    `reference` siempre: un punto de referencia no es una calle y nunca entra en
+    la consulta. La calle que no resolvió, también: el punto está sobre una de
+    las dos vías del cruce, no en la esquina.
+    """
+    candidatas = ["street_1", "street_2", "reference"]
+    return tuple(
+        clave
+        for clave in candidatas
+        if clave != matched and str(streets.get(clave) or "").strip()
+    )
+
+
+def build_query(streets: dict[str, Any], *, region: str = DEFAULT_REGION) -> str | None:
+    """La candidata más específica, o None si no hay vía principal.
+
+    Se conserva porque es la superficie que ya usan los tests y el worker de
+    Bomberos. La lógica vive en `build_queries`.
+    """
+    candidatas = build_queries(streets, region=region)
+    return candidatas[0] if candidatas else None
 
 
 async def geocode(
@@ -150,6 +399,7 @@ async def geocode(
     streets: dict[str, Any],
     *,
     limiter: RateLimiter | None = None,
+    comuna: str | None = None,
 ) -> GeocodeResult | None:
     """Resuelve una intersección a lat/lon. None si no hay match o falta calle.
 
@@ -157,54 +407,91 @@ async def geocode(
     ruta ("Ruta 68, km 42") que Nominatim no sabe resolver. El worker registra la
     señal igual, sin coordenadas — no entra al Paso A, pero queda consultable y
     es la métrica que dirá si conviene una capa de rutas propia.
+
+    Prueba las candidatas de `build_queries` en orden y **se queda con la
+    primera que responde**. Cada una sólo se pide si la anterior falló, así que
+    el caso sano sigue costando una petición y un segundo de limitador; el peor
+    caso —dos calles, ninguna reconocida— cuesta cuatro y devuelve None igual.
+
+    `comuna` es la guarda: se descarta todo resultado que Nominatim ubique en
+    otra comuna. Sin ella, «Primero de Mayo» de un despacho de Valparaíso
+    resuelve en Quillota, a 40 km, y el mapa no tiene forma de mostrar que ese
+    pin está mal. Ver el bloque de `COMUNA_VIEWBOX` para el detalle medido.
     """
-    query = build_query(streets)
-    if not query:
+    candidatas = build_queries(streets)
+    if not candidatas:
         return None
 
-    waited = await (limiter or _LIMITER).acquire()
-    if waited > 0:
-        logger.debug(
-            "espera por el rate limit de Nominatim",
-            extra={"waited_s": round(waited, 3), "query": query},
+    esperada = comuna if comuna is not None else streets.get("city")
+    caja = viewbox_for(esperada)
+    extra: dict[str, Any] = {}
+    if caja is not None:
+        # Sesgo de ranking, sin `bounded`: acotar de verdad con un rectángulo
+        # descartaría resultados válidos por un borde mal puesto, y estos bordes
+        # no se pueden poner bien. Ver el bloque de `COMUNA_VIEWBOX`.
+        extra = {"viewbox": ",".join(str(v) for v in caja)}
+
+    for query in candidatas:
+        waited = await (limiter or _LIMITER).acquire()
+        if waited > 0:
+            logger.debug(
+                "espera por el rate limit de Nominatim",
+                extra={"waited_s": round(waited, 3), "query": query},
+            )
+
+        payload = await request_json(
+            client,
+            settings.NOMINATIM_URL,
+            {
+                "q": query,
+                "format": "jsonv2",
+                "limit": RESULT_LIMIT,
+                # Era 0. Sin esto no hay comuna que comparar y la guarda entera
+                # no se puede escribir: `display_name` no sirve, ver el bloque
+                # de `COMUNA_VIEWBOX`.
+                "addressdetails": 1,
+                "countrycodes": settings.NOMINATIM_COUNTRY_CODES,
+                **extra,
+            },
+            origin="nominatim",
+            # Un reintento y no dos: cada uno cuesta otro segundo de rate limit, y
+            # una dirección que no resuelve hoy tampoco resolverá en 1,5 segundos.
+            retries=1,
         )
 
-    payload = await request_json(
-        client,
-        settings.NOMINATIM_URL,
-        {
-            "q": query,
-            "format": "jsonv2",
-            "limit": 1,
-            "addressdetails": 0,
-            "countrycodes": settings.NOMINATIM_COUNTRY_CODES,
-        },
-        origin="nominatim",
-        # Un reintento y no dos: cada uno cuesta otro segundo de rate limit, y
-        # una dirección que no resuelve hoy tampoco resolverá en 1,5 segundos.
-        retries=1,
-    )
+        if not isinstance(payload, list) or not payload:
+            continue
 
-    if not isinstance(payload, list) or not payload:
-        return None
+        for candidato in payload:
+            if not isinstance(candidato, dict):
+                continue
+            if not comuna_matches(candidato, esperada):
+                # Está en otra comuna. Se descarta y se sigue mirando: el bueno
+                # suele venir detrás —«12 de Octubre» devuelve primero el de
+                # Viña y segundo el de Valparaíso— y con `limit=1` era invisible.
+                continue
 
-    first = payload[0]
-    if not isinstance(first, dict):
-        return None
+            lat = as_float(candidato.get("lat"))
+            lon = as_float(candidato.get("lon"))
+            if lat is None or lon is None:
+                continue
 
-    lat = as_float(first.get("lat"))
-    lon = as_float(first.get("lon"))
-    if lat is None or lon is None:
-        return None
+            acertada = matched_key(query, streets)
+            return GeocodeResult(
+                lat=lat,
+                lon=lon,
+                display_name=candidato.get("display_name"),
+                osm_type=candidato.get("osm_type"),
+                importance=as_float(candidato.get("importance")),
+                query=query,
+                precision=PRECISION_STREET,
+                matched=acertada,
+                omitted=omitted_keys(streets, matched=acertada),
+                comuna=result_comuna(candidato),
+                viewbox=caja,
+            )
 
-    return GeocodeResult(
-        lat=lat,
-        lon=lon,
-        display_name=first.get("display_name"),
-        osm_type=first.get("osm_type"),
-        importance=as_float(first.get("importance")),
-        query=query,
-    )
+    return None
 
 
 def build_client(timeout: float | None = None) -> httpx.AsyncClient:
@@ -221,10 +508,20 @@ def build_client(timeout: float | None = None) -> httpx.AsyncClient:
 
 
 __all__ = [
+    "COMUNA_VIEWBOX",
+    "PRECISION_INTERSECTION",
+    "PRECISION_STREET",
+    "RESULT_LIMIT",
     "GeocodeResult",
     "RateLimiter",
     "build_client",
+    "build_queries",
     "build_query",
+    "comuna_matches",
     "geocode",
     "get_limiter",
+    "matched_key",
+    "omitted_keys",
+    "result_comuna",
+    "viewbox_for",
 ]

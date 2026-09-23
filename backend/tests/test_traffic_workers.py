@@ -513,6 +513,39 @@ def test_una_interseccion_de_verdad_sigue_saliendo_como_interseccion():
     assert resultado["reference"] is None
 
 
+def test_altura_de_sin_el_a_la_tambien_es_una_referencia():
+    """La prensa escribe las dos formas y sólo la larga estaba contemplada.
+
+    «Altura del terminal» —sin la preposición— es como se titula y como se
+    escribe un caption. Con la forma corta sin reconocer, la referencia entera
+    se quedaba dentro de `street_1` y la consulta pedía una calle llamada «Av.
+    Argentina, altura del terminal de buses», que no existe en ningún índice.
+    """
+    resultado = extract_streets_heuristic(
+        "Accidente en Av. Argentina, altura del terminal de buses, Valparaíso."
+    )
+
+    assert resultado["street_1"] == "Av. Argentina"
+    assert resultado["reference"] == "terminal de buses"
+    assert resultado["city"] == "Valparaíso"
+
+
+def test_la_barra_sin_espacios_tambien_separa_dos_calles():
+    """«Argentina/Colón» es un cruce; el MTT lo espacia y un caption no.
+
+    Con la barra exigiendo espacios alrededor, `street_1` valía
+    «Avenida Argentina/Colón» y no resolvía. La forma pegada es la de los
+    titulares, que es justo la mitad del corpus que entra por Instagram.
+    """
+    pegado = extract_streets_heuristic("Colisión en Avenida Argentina/Colón, Valparaíso.")
+    espaciado = extract_streets_heuristic("Choque en Av. España / Uno Norte, Viña del Mar.")
+
+    assert pegado["street_1"] == "Avenida Argentina"
+    assert pegado["street_2"] == "Colón"
+    assert espaciado["street_1"] == "Av. España"
+    assert espaciado["street_2"] == "Uno Norte"
+
+
 def test_extraccion_distingue_avisos_que_no_son_siniestros():
     """El MTT publica cortes programados y desvíos: no son accidentes.
 
@@ -613,11 +646,136 @@ def test_extraccion_respeta_el_contrato_de_claves():
 # --- Transporte Informa: Paso B (consulta a Nominatim) -----------------------
 
 
-def test_build_query_arma_la_interseccion():
-    consulta = build_query(
-        {"street_1": "Av. España", "street_2": "Uno Norte", "city": "Viña del Mar"}
-    )
-    assert consulta == "Av. España y Uno Norte, Viña del Mar, Región de Valparaíso"
+def test_la_transversal_no_entra_en_la_consulta():
+    """Nominatim no resuelve intersecciones, y pedírselas costaba el evento.
+
+    Medido el 2026-09-03 contra el servicio público: «Av. España y Uno Norte,
+    Viña del Mar, Región de Valparaíso» devuelve `[]`, igual que las otras tres
+    intersecciones que se probaron. No es un punto impreciso, es ningún punto — y
+    sin coordenadas el evento no llega al mapa, porque
+    `cluster_unassigned_events` filtra por `geom IS NOT NULL`.
+
+    El agravante que hace que esto merezca un test propio: la transversal
+    aparece cuando la fuente escribió BIEN el aviso. El mejor dato era el que se
+    perdía.
+    """
+    streets = {"street_1": "Av. España", "street_2": "Uno Norte", "city": "Viña del Mar"}
+    consulta = build_query(streets)
+
+    assert consulta == "Av. España, Viña del Mar, Región de Valparaíso"
+    assert "uno norte" not in consulta.lower()
+
+
+def test_lo_que_el_punto_no_representa_queda_declarado():
+    """Omitir no es borrar.
+
+    Un punto sobre una de las dos calles de un cruce tiene que poder
+    distinguirse de uno puesto en la esquina: el mapa dibuja los dos como el
+    mismo pin. Y cuál de las dos resolvió cambia dónde cae, así que `matched`
+    decide qué queda declarado como no representado.
+    """
+    from app.collectors.nominatim import omitted_keys
+
+    streets = {
+        "street_1": "Av. España",
+        "street_2": "Uno Norte",
+        "reference": "nudo Barón",
+    }
+
+    assert omitted_keys(streets, matched="street_1") == ("street_2", "reference")
+    # Resolvió la transversal —el caso de «PRIMERO DE MAYO / 12 DE OCTUBRE»,
+    # donde la calle geocodificable era la segunda—: ahora la principal es la
+    # que el punto no representa.
+    assert omitted_keys(streets, matched="street_2") == ("street_1", "reference")
+    assert omitted_keys({"street_1": "Ruta 68", "street_2": None}, matched="street_1") == ()
+
+
+def test_la_transversal_es_la_ultima_candidata_no_un_descarte():
+    """«PRIMERO DE MAYO / 12 DE OCTUBRE»: la calle buena era la segunda.
+
+    Dentro de Valparaíso, `Primero de Mayo` no existe en OSM y `12 de Octubre`
+    sí. Quedarse sólo con la principal perdía el despacho igual que la consulta
+    de intersección, por otro camino. El orden importa igual: la central escribe
+    primero la vía donde ocurre el hecho, así que la transversal se prueba
+    cuando la principal ya falló.
+    """
+    from app.collectors.nominatim import build_queries
+
+    assert build_queries(
+        {"street_1": "PRIMERO DE MAYO", "street_2": "12 DE OCTUBRE"}
+    ) == [
+        "PRIMERO DE MAYO, Región de Valparaíso",
+        "12 DE OCTUBRE, Región de Valparaíso",
+    ]
+
+
+def test_la_guarda_de_comuna_descarta_el_punto_de_otra_comuna():
+    """Un pin a 40 km es peor que ningún pin, y el mapa no los distingue.
+
+    Medido el 2026-09-03: «Primero de Mayo, Valparaíso, Región de Valparaíso»
+    devuelve Quillota, y la búsqueda estructurada con `city=Valparaíso` también.
+    Nombrar la comuna no acota; `address.city` es lo único que la afirma.
+
+    Se compara contra el campo estructurado y NO contra `display_name`, porque
+    el de Viña dice «…, Viña del Mar, Provincia de Valparaíso, Región de
+    Valparaíso, …»: buscar «valparaíso» ahí adentro acepta el resultado de Viña.
+    """
+    from app.collectors.nominatim import comuna_matches, result_comuna
+
+    vina = {"address": {"city": "Viña del Mar", "suburb": "Forestal"}}
+    valpo = {"address": {"city": "Valparaíso", "suburb": "Placeres"}}
+    quillota = {"address": {"city": "Quillota"}}
+
+    assert result_comuna(vina) == "Viña del Mar"
+    assert comuna_matches(valpo, "Valparaíso") is True
+    assert comuna_matches(vina, "Valparaíso") is False
+    assert comuna_matches(quillota, "Valparaíso") is False
+    # Sin comuna esperada no hay nada que afirmar: es el comportamiento previo.
+    assert comuna_matches(quillota, None) is True
+    # Un resultado que no declara comuna pasa. Rechazarlo convertiría un hueco
+    # de OSM en una pérdida de señal, y la guarda existe para descartar lo que
+    # está demostradamente en otra parte, no lo que no se sabe.
+    assert comuna_matches({"address": {"road": "X"}}, "Valparaíso") is True
+
+
+def test_la_comuna_de_la_central_sale_de_su_cuenta():
+    """Quién publica el despacho dice en qué comuna ocurrió.
+
+    Es información gratis y fiable que el sistema tiraba: el decodificador nunca
+    saca la comuna porque la central no la escribe —para ella es obvia— así que
+    `city` llegaba en nulo y la consulta salía sin ninguna guarda.
+    """
+    from app.collectors.traffic.bomberos_10_4_worker import comuna_de_handle
+
+    assert comuna_de_handle("CGI_CBV") == "Valparaíso"
+    assert comuna_de_handle("@cbvm132") == "Viña del Mar"
+    # Una central no declarada no revienta: pierde la guarda, nada más.
+    assert comuna_de_handle("otra_central") is None
+    assert comuna_de_handle(None) is None
+
+
+def test_la_segunda_candidata_deja_caer_la_ciudad():
+    """La comuna es el segmento que más se equivoca y el que menos importa.
+
+    «Con Con», «Viña», una comuna que OSM escribe de otro modo: la consulta
+    entera se caía por ahí. La candidata de respaldo sólo se pide si la primera
+    falló, así que un evento que resuelve a la primera sigue costando una
+    petición y un segundo del limitador global.
+    """
+    from app.collectors.nominatim import build_queries
+
+    candidatas = build_queries({"street_1": "Av. Argentina", "city": "Valparaíso"})
+    assert candidatas == [
+        "Av. Argentina, Valparaíso, Región de Valparaíso",
+        "Av. Argentina, Región de Valparaíso",
+    ]
+
+
+def test_sin_ciudad_no_se_repite_la_misma_consulta():
+    """Las dos candidatas colapsan en una: pedirla dos veces regala un segundo."""
+    from app.collectors.nominatim import build_queries
+
+    assert build_queries({"street_1": "Ruta 68"}) == ["Ruta 68, Región de Valparaíso"]
 
 
 def test_build_query_sin_calle_no_consulta():

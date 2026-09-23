@@ -166,8 +166,15 @@ TRANSPORTE_INFORMA_CONFIDENCE = 0.80
 ROAD_CLOSURE_CONFIDENCE = 0.80
 
 #: Conectores de intersección tal como los escribe el MTT.
+#:
+#: La barra va **sin exigir espacios alrededor**, y no es cosmética. El MTT
+#: escribe «Av. España / Uno Norte» con espacios; las cuentas de Instagram
+#: escriben «Argentina/Colón» pegado, que es como se rotula un cruce en un
+#: titular. Con `\s+/\s+` la segunda forma no separaba nada y `street_1` quedaba
+#: valiendo «Argentina/Colón» — un nombre que no existe en OSM, así que la
+#: consulta no devolvía punto y el evento entraba mudo.
 _INTERSECTION_SPLIT = re.compile(
-    r"\s+(?:con|esquina(?:\s+de)?|/|y)\s+", re.IGNORECASE
+    r"(?:\s*/\s*|\s+(?:con|esquina(?:\s+de)?|y)\s+)", re.IGNORECASE
 )
 
 #: Preposición que introduce el lugar dentro de la oración.
@@ -192,8 +199,14 @@ _PLACE_LEAD = re.compile(
 #:
 #: Es la forma en que escribe la prensa chilena y las cuentas locales, así que
 #: no es un caso de borde: es la mitad del corpus.
+#: El «a la» es OPCIONAL. La prensa chilena escribe las dos formas —«a la altura
+#: del terminal» y «altura del terminal», esta última sobre todo en titulares y
+#: en captions, donde se ahorra la preposición— y sólo la larga estaba
+#: contemplada. Con la corta, la referencia entera se quedaba dentro de
+#: `street_1` («Av. Argentina, altura del terminal de buses») y la consulta
+#: pedía una calle con ese nombre, que no existe.
 _REFERENCE_SPLIT = re.compile(
-    r",?\s+(?:a la altura del?|frente a[l]?|cerca de[l]?|"
+    r",?\s+(?:(?:a la\s+)?altura del?|frente a[l]?|cerca de[l]?|"
     r"en el sector del?|sector del?)\s+",
     re.IGNORECASE,
 )

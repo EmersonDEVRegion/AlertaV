@@ -55,6 +55,7 @@ from app.collectors.geoservices import parse_timestamp, request_json
 from app.collectors.social.apify_client import build_client, describe_items
 from app.collectors.traffic.bomberos_10_4_worker import (
     Dispatch,
+    comuna_de_handle,
     decode_dispatches,
     dispatches_to_events,
     geocode_dispatches,
@@ -372,7 +373,13 @@ async def _process(dataset_id: str, traza: str) -> None:
             # existen. La fuente de confianza 1.00 quedaba consultable en
             # `/events` y ausente del mapa. Ver `geocode_dispatches`.
             ubicados, geocodificados = await geocode_dispatches(
-                decodificados, max_geocodes=settings.BOMBEROS_MAX_GEOCODES
+                decodificados,
+                max_geocodes=settings.BOMBEROS_MAX_GEOCODES,
+                # La central dice en qué comuna ocurrió mejor que cualquier
+                # heurística sobre el texto, y hasta ahora se descartaba. Sin
+                # esto la consulta sale sin guarda geográfica y una calle de
+                # nombre común resuelve en otra comuna. Ver `HANDLE_COMUNA`.
+                comuna=comuna_de_handle(settings.BOMBEROS_SOURCE_HANDLE),
             )
             events, undated = dispatches_to_events(ubicados, collector=COLLECTOR_NAME)
 

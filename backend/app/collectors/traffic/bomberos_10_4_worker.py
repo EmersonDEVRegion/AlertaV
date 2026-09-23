@@ -446,8 +446,36 @@ async def decode_dispatches(
     return (decodificados, por_reglas)
 
 
+#: Jurisdicción de cada central, por su cuenta de X. Es la comuna que la caja
+#: de `nominatim.COMUNA_VIEWBOX` va a acotar.
+#:
+#: Es información **gratis y fiable** que el sistema estaba tirando: quién
+#: publica el despacho dice en qué comuna ocurrió, mucho mejor de lo que ninguna
+#: heurística puede sacar del texto. El decodificador no la produce —la central
+#: no escribe la comuna, porque para ella es obvia— así que `city` llegaba
+#: siempre en nulo y la consulta salía sin ninguna guarda geográfica.
+#:
+#: Lo que costó: el 2026-09-03, «PRIMERO DE MAYO / 12 DE OCTUBRE» de @CGI_CBV
+#: resolvía en Quillota, a 40 km. Ver `nominatim.COMUNA_VIEWBOX`.
+HANDLE_COMUNA: dict[str, str] = {
+    "cgi_cbv": "Valparaíso",
+    "cbvm132": "Viña del Mar",
+}
+
+
+def comuna_de_handle(handle: str | None) -> str | None:
+    """Comuna de la central, o None si la cuenta no está declarada.
+
+    None deja la búsqueda sin acotar, que es el comportamiento anterior: una
+    central nueva no se rompe por no estar en la tabla, sólo pierde la guarda.
+    """
+    if not handle:
+        return None
+    return HANDLE_COMUNA.get(handle.strip().lstrip("@").lower())
+
+
 async def geocode_dispatches(
-    dispatches: Sequence[Dispatch], *, max_geocodes: int
+    dispatches: Sequence[Dispatch], *, max_geocodes: int, comuna: str | None = None
 ) -> tuple[list[Dispatch], int]:
     """Resuelve a punto las calles que aisló el decodificador.
 
@@ -502,7 +530,14 @@ async def geocode_dispatches(
 
             punto: GeocodeResult | None = None
             try:
-                punto = await geocode(client, dict(calles))
+                punto = await geocode(
+                    client,
+                    dict(calles),
+                    # La comuna del despacho si el decodificador la sacó; si no
+                    # —el caso normal, la central no la escribe— la de la
+                    # central. Ver `HANDLE_COMUNA`.
+                    comuna=(calles.get("city") or comuna),
+                )
             except Exception as exc:
                 # Se atrapa `Exception` y no `CollectorError` a propósito: una
                 # esquina que hace reventar a Nominatim no puede costarle el
