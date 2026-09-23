@@ -83,7 +83,9 @@ Lo que este collector NO resuelve
 * **La retrospectiva judicial.** Estos portales cubren tribunales, y una crónica
   de un juicio por el megaincendio de 2024 contiene la palabra "incendio". Ver
   `_RUIDO_PRENSA`: se excinden las formas fechadas, que son las únicas que no
-  pueden describir un hecho presente.
+  pueden describir un hecho presente. Lo que no trae fecha lo veta
+  `vocabulary.es_cobertura_de_secuelas` (tribunales, reconstrucción,
+  aniversarios), y lo que fecha el hecho días atrás, `es_reciente`.
 """
 
 from __future__ import annotations
@@ -102,7 +104,9 @@ import httpx
 from bs4 import BeautifulSoup, Tag
 
 from app.collectors.base import BaseCollector
+from app.collectors.dia_del_hecho import hecho_fuera_de_ventana
 from app.collectors.geoservices import normalise_text, parse_timestamp, request_text
+from app.collectors.lugares import COMUNAS_NORMALIZADAS, anotar_sector, comuna_en_texto
 from app.collectors.nominatim import GeocodeResult, geocode
 from app.collectors.nominatim import build_client as build_geo_client
 from app.collectors.traffic import gemini
@@ -116,7 +120,6 @@ from app.collectors.vocabulary import (
     haystack_prensa,
     tipo_por_verbo,
 )
-from app.collectors.weather.comunas import COMUNAS_V_REGION
 from app.core.config import settings
 from app.core.exceptions import CollectorError
 from app.models.enums import EventSource, EventType
@@ -348,17 +351,10 @@ def external_id_for(item: NewsItem) -> str:
 
 # -- Comunas -------------------------------------------------------------------
 
-#: Nombres normalizados de las 36 comunas continentales, de la más larga a la más
-#: corta. El orden importa al buscar por subcadena: "La Calera" tiene que
-#: probarse antes que "Calera", y "Villa Alemana" antes que "Alemana", o la
-#: comuna detectada sería la equivocada.
-_COMUNAS_NORMALIZADAS: tuple[tuple[str, str], ...] = tuple(
-    sorted(
-        ((normalise_text(comuna.nombre), comuna.nombre) for comuna in COMUNAS_V_REGION),
-        key=lambda par: len(par[0]),
-        reverse=True,
-    )
-)
+#: La tabla y `comuna_en_texto` viven en `app/collectors/lugares.py` desde que
+#: Instagram y X también las necesitan (ver el docstring de ese módulo). El
+#: alias local se conserva para no tocar a quien ya lo importa desde acá.
+_COMUNAS_NORMALIZADAS = COMUNAS_NORMALIZADAS
 
 
 def comuna_en_categorias(categorias: Sequence[str]) -> str | None:
@@ -381,23 +377,6 @@ def comuna_en_categorias(categorias: Sequence[str]) -> str | None:
         for normalizada, nombre in _COMUNAS_NORMALIZADAS:
             if etiqueta == normalizada:
                 return nombre
-    return None
-
-
-def comuna_en_texto(texto: str) -> str | None:
-    """Comuna nombrada en el texto. Respaldo del respaldo, para el camino HTML.
-
-    Acá sí se busca por subcadena, porque la entrada es prosa. Es más frágil que
-    `comuna_en_categorias` —"vecinos de Valparaíso viajaron a Los Andes" devuelve
-    la primera que aparezca— y por eso sólo se consulta cuando no hay categoría,
-    y sólo alimenta un campo que el extractor puede sobrescribir.
-    """
-    haystack = normalise_text(texto)
-    if not haystack:
-        return None
-    for normalizada, nombre in _COMUNAS_NORMALIZADAS:
-        if normalizada in haystack:
-            return nombre
     return None
 
 
@@ -485,7 +464,7 @@ def parse_fecha_es(texto: str, *, ahora: datetime) -> tuple[datetime | None, boo
 def es_reciente(item: NewsItem, *, ahora: datetime, max_age_minutes: int) -> bool:
     """¿La noticia describe el presente?
 
-    Tres reglas, una por cada calidad de fecha:
+    Tres reglas, una por cada calidad de fecha, y una cuarta sobre el texto:
 
     * **Sin fecha** → pasa. Es la decisión menos mala, la misma que toma el
       worker de Instagram: procesar de más una nota vieja cuesta una llamada al
@@ -498,13 +477,29 @@ def es_reciente(item: NewsItem, *, ahora: datetime, max_age_minutes: int) -> boo
       publicada el martes por la tarde en Valparaíso puede estar fechada el
       martes mientras acá ya es miércoles. Comparar con `max_age_minutes` un dato
       cuya resolución es de 24 horas sería fingir una precisión que no existe.
+    * **El texto fecha el hecho antes de la ventana** → no pasa, aunque la nota
+      sea de hace diez minutos. "Atropello … durante la mañana del domingo"
+      publicado un jueves es un hecho de hace cuatro días. Ver
+      `app/collectors/dia_del_hecho.py`: sólo descarta lo que puede probar
+      viejo, y nunca si el texto habla del presente.
     """
     if item.published_at is None:
-        return True
-    if item.resolucion_dia:
+        fresca = True
+    elif item.resolucion_dia:
         dias = (ahora.date() - item.published_at.date()).days
-        return -1 <= dias <= 1
-    return (ahora - item.published_at) <= timedelta(minutes=max_age_minutes)
+        fresca = -1 <= dias <= 1
+    else:
+        fresca = (ahora - item.published_at) <= timedelta(minutes=max_age_minutes)
+    if not fresca:
+        return False
+
+    # Con fecha sin hora, `published_at` es la medianoche UTC —el día anterior
+    # en Chile— y leer "ayer" contra eso envejecería el hecho un día. Se lee
+    # contra `ahora`, que sólo puede hacerlo más reciente.
+    referencia = None if item.resolucion_dia else item.published_at
+    return not hecho_fuera_de_ventana(
+        item.texto, publicado=referencia, ahora=ahora, max_age_minutes=max_age_minutes
+    )
 
 
 # =============================================================================
@@ -855,10 +850,19 @@ async def geocode_noticia(
 
     streets = await extract_streets_via_llm(payload)
     if not streets or not streets.get("street_1"):
-        return ({}, None)
+        streets = {}
 
     if comuna_hint and not (streets.get("city") or "").strip():
         streets = {**streets, "city": comuna_hint, "city_origen": "categoria"}
+
+    # El sector entra DESPUÉS de la comuna de la categoría, para que su clave
+    # la lleve. Y una nota sin calle pero con sector ya no se descarta: "fuego
+    # que consumió una casa en el sector de Miraflores Alto" no nombra ninguna
+    # vía, y el sector es justamente lo que permite ubicarla y reconocerla
+    # cuando otra fuente cuente el mismo incendio (ver `app/collectors/lugares.py`).
+    streets = anotar_sector(streets, payload)
+    if not streets.get("street_1") and not streets.get("sector"):
+        return ({}, None)
 
     point = await geocode(geo_client, streets)
     return (streets, point)

@@ -902,6 +902,14 @@ class Settings(BaseSettings):
     #: Mayor que la ventana de agrupación: un incendio de CONAF vive días y sus
     #: señales de corroboración siguen llegando mucho después del primer racimo.
     CORRELATION_MATCH_WINDOW_HOURS: int = Field(default=12, ge=1, le=336)
+    #: Ventana del vínculo por sector (`link_method = 'sector_text'`): una señal
+    #: se une a un incidente de su misma familia que nombra el mismo sector si
+    #: éste tuvo señales en las últimas N horas. Mucho más corta que
+    #: `CORRELATION_MATCH_WINDOW_HOURS` porque la evidencia es más débil —dos
+    #: textos que dicen "Miraflores Alto", no dos puntos que se tocan— y un
+    #: sector es grande: dos incendios en él con medio día de diferencia son
+    #: dos incendios.
+    CORRELATION_SECTOR_WINDOW_HOURS: int = Field(default=3, ge=1, le=48)
     #: UTM 19S. Proyección métrica que cubre la Región de Valparaíso; permite
     #: usar ST_ClusterDBSCAN con `eps` en metros en vez de grados.
     CORRELATION_UTM_SRID: int = 32719

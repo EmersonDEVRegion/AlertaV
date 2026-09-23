@@ -177,12 +177,6 @@ _INTERSECTION_SPLIT = re.compile(
     r"(?:\s*/\s*|\s+(?:con|esquina(?:\s+de)?|y)\s+)", re.IGNORECASE
 )
 
-#: Preposición que introduce el lugar dentro de la oración.
-_PLACE_LEAD = re.compile(
-    r"\b(?:en|sobre|a la altura del?|frente a[l]?|cerca de[l]?)\s+(?P<place>.+)",
-    re.IGNORECASE,
-)
-
 #: Conectores de PUNTO DE REFERENCIA, que no son lo mismo que una intersección.
 #:
 #: «Av. España **con** Pedro Montt» nombra dos calles que se cruzan y Nominatim
@@ -211,13 +205,54 @@ _REFERENCE_SPLIT = re.compile(
     re.IGNORECASE,
 )
 
+#: Preposición que introduce el lugar dentro de la oración. Se prueban todas, en
+#: orden, hasta que una dé una calle — no sólo la primera.
+#:
+#: Tomar la primera y quedarse con lo que sigue bastaba para un aviso del MTT.
+#: En un titular de prensa, no: "Incendio **en** Viña del Mar: … consumió una
+#: casa **en** el sector de Miraflores Alto" tiene la comuna detrás de la
+#: primera y el lugar detrás de la segunda. Quedarse con la primera producía
+#: `street_1 = "Viña del Mar:"`, y Nominatim devolvía la ciudad entera: un pin
+#: en la plaza para una casa que ardía a 2 km.
+_PLACE_LEADS = re.compile(
+    r"\b(?:en|sobre|a la altura del?|frente a[l]?|cerca de[l]?)\s+",
+    re.IGNORECASE,
+)
+
+#: "Bomberos concurre **hasta** calle Once": la forma en que la prensa escribe
+#: el despacho. Sólo delante de una palabra de vía, porque "hasta las 20 horas"
+#: y "hasta Santiago" también existen; sólo si ninguna preposición de
+#: `_PLACE_LEADS` dio una calle; y nunca detrás de un "desde", porque "desde Av.
+#: España hasta Av. Argentina" es un tramo y su extremo no es el lugar del hecho.
+_PLACE_LEAD_HASTA = re.compile(
+    r"\bhasta\s+(?=(?:la\s+)?(?:calle|avenida|avda|av|pasaje|psje|pje|camino|ruta)\b)",
+    re.IGNORECASE,
+)
+_TRAMO_DESDE = re.compile(r"\bdesde\b", re.IGNORECASE)
+
+#: Lo que el extractor llegó a devolver como `street_1` y no nombra ninguna vía:
+#: un artículo suelto ("en **el** sector de Miraflores Alto" deja "el" delante
+#: de la referencia) o una palabra de lugar genérica. Una consulta con eso
+#: resuelve a cualquier punto de la región, y ese punto parece un dato.
+_NOT_A_STREET = frozenset(
+    {
+        "el", "la", "los", "las", "lo", "un", "una", "unos", "unas", "de", "del",
+        "este", "esta", "dicho", "dicha", "su", "sus", "comuna", "ciudad",
+        "sector", "zona", "lugar", "area", "region", "calle", "via", "domicilio",
+    }
+)
+
 #: Corta el lugar cuando empieza la parte narrativa del aviso.
 #:
 #: `sentido` entra porque «Ruta 68, sentido a Santiago» es una dirección de
 #: circulación, no un lugar: dejarla dentro ensucia la consulta a Nominatim con
 #: un nombre de ciudad que está a 100 km del hecho.
+#:
+#: Los dos puntos cortan igual que el punto: "Incendio en Viña del Mar: equipos
+#: de emergencia…" es la forma de un titular, y lo que sigue a los dos puntos es
+#: la bajada, no más lugar.
 _PLACE_STOP = re.compile(
-    r"\s*[.;]|\s+(?:transito|tránsito|se recomienda|precaucion|precaución|"
+    r"\s*[.;:]|\s+(?:transito|tránsito|se recomienda|precaucion|precaución|"
     r"personal|carabineros|equipos|sentido)\b",
     re.IGNORECASE,
 )
@@ -399,6 +434,12 @@ def extract_streets_heuristic(text: str) -> dict[str, Any] | None:
     mayoría de los avisos del MTT. Devuelve None cuando no reconoce una vía —el
     fallo correcto: una calle inventada geocodifica a un punto plausible y falso,
     peor que no tener ubicación.
+
+    Prueba cada preposición de `_PLACE_LEADS` en orden y se queda con la primera
+    que nombre una vía; recién si ninguna lo hace, prueba `_PLACE_LEAD_HASTA`.
+    Una preposición seguida sólo de una comuna ("Incendio en Viña del Mar: …")
+    no da calle, pero sí da la ciudad, y se guarda para la vía que aparezca
+    después.
     """
     cleaned = " ".join(str(text or "").split())
     if not cleaned:
@@ -408,11 +449,64 @@ def extract_streets_heuristic(text: str) -> dict[str, Any] | None:
     # se restauran al construir el resultado.
     protected = _protect_abbreviations(cleaned)
 
-    place_match = _PLACE_LEAD.search(protected)
-    if not place_match:
-        return None
+    hastas = [
+        lead
+        for lead in _PLACE_LEAD_HASTA.finditer(protected)
+        if not _TRAMO_DESDE.search(protected[: lead.start()])
+    ]
+    ciudad_vista: str | None = None
+    for orden, lead in enumerate((*_PLACE_LEADS.finditer(protected), *hastas)):
+        streets, ciudad = _streets_from_place(protected[lead.end():])
+        # La primera preposición se acepta como siempre —es lo que el MTT ya
+        # resolvía y no se toca—. Las siguientes tienen que PARECER una vía:
+        # detrás de un "en" cualquiera hay de todo ("envuelta en llamas,
+        # existiendo además riesgo…"), y una calle inventada es peor que
+        # ninguna.
+        if streets is not None and (orden == 0 or _starts_like_street(streets["street_1"])):
+            if not streets["city"] and ciudad_vista:
+                streets["city"] = ciudad_vista
+            return streets
+        ciudad_vista = ciudad_vista or ciudad
+    return None
 
-    place = place_match.group("place")
+
+#: Palabras con que empieza una vía escrita en minúscula ("hasta calle once").
+_STREET_WORDS = frozenset(
+    {
+        "calle", "avenida", "av", "avda", "pasaje", "psje", "pje", "ptje",
+        "camino", "ruta", "autopista", "carretera", "diagonal", "paseo",
+        "subida", "bajada", "callejon", "escala", "escalera", "troncal",
+    }
+)
+
+
+def _starts_like_street(value: str | None) -> bool:
+    """¿Empieza como una vía? Nombre propio, número o palabra de `_STREET_WORDS`."""
+    texto = (value or "").strip()
+    if not texto:
+        return False
+    if texto[:1].isupper() or texto[:1].isdigit():
+        return True
+    primera = normalise_text(texto).split()[0].strip(".")
+    return primera in _STREET_WORDS
+
+
+def _is_street_name(value: str | None) -> bool:
+    """¿`value` puede ser el nombre de una vía? Ver `_NOT_A_STREET`."""
+    palabras = normalise_text(value or "").strip(" ,.:;").split()
+    if not palabras:
+        return False
+    if " ".join(palabras) in _KNOWN_CITIES:
+        return False
+    return not set(palabras) <= _NOT_A_STREET
+
+
+def _streets_from_place(place: str) -> tuple[dict[str, Any] | None, str | None]:
+    """Lo que sigue a una preposición → `(calles|None, ciudad|None)`.
+
+    La ciudad se devuelve aparte y aunque no haya calle: "en Viña del Mar" no
+    nombra una vía, pero dice dónde buscar la que venga después.
+    """
     stop = _PLACE_STOP.search(place)
     if stop:
         place = place[: stop.start()]
@@ -430,7 +524,10 @@ def extract_streets_heuristic(text: str) -> dict[str, Any] | None:
 
     street_part = ", ".join(segments).strip()
     if not street_part:
-        return None
+        return (None, _restore_abbreviations(city))
+    if normalise_text(street_part) in _KNOWN_CITIES:
+        # "en Viña del Mar": una comuna, no una calle.
+        return (None, _restore_abbreviations(city or street_part))
 
     # El punto de referencia se separa ANTES que la intersección: «Av. España, a
     # la altura del nudo Barón y Pedro Montt» tiene las dos formas, y la
@@ -453,13 +550,13 @@ def extract_streets_heuristic(text: str) -> dict[str, Any] | None:
         street, city = _split_trailing_city(street)
 
     street_1 = _restore_abbreviations(street)
-    if not street_1:
-        return None
+    if not street_1 or not _is_street_name(street_1):
+        return (None, _restore_abbreviations(city))
 
     if city is None and reference:
         reference, city = _split_trailing_city(reference)
 
-    return {
+    streets: dict[str, Any] = {
         "street_1": street_1,
         "street_2": _restore_abbreviations(cross),
         "city": _restore_abbreviations(city),
@@ -476,6 +573,7 @@ def extract_streets_heuristic(text: str) -> dict[str, Any] | None:
         # `raw_data._extraction`, junto al resto del Paso A.
         "reference": _restore_abbreviations(reference),
     }
+    return (streets, streets["city"])
 
 
 def _split_trailing_city(value: str) -> tuple[str | None, str | None]:

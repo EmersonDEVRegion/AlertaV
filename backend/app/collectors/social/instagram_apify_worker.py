@@ -76,7 +76,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.collectors.base import BaseCollector
+from app.collectors.dia_del_hecho import hecho_fuera_de_ventana
 from app.collectors.geoservices import normalise_text, parse_timestamp
+from app.collectors.lugares import anotar_sector
 from app.collectors.nominatim import GeocodeResult, geocode
 from app.collectors.nominatim import build_client as build_geo_client
 from app.collectors.social import apify_client
@@ -333,10 +335,18 @@ def is_fresh(post: InstagramPost, *, now: datetime, max_age_minutes: int) -> boo
     de equivocarse es procesar de más un post viejo —que el filtro por
     `external_id` va a atrapar en la corrida siguiente igual—, mientras que
     descartarlo pierde un accidente por un campo que el Actor no llenó.
+
+    Un post reciente que cuenta un hecho viejo no es fresco: el 2026-09-03, un
+    jueves, esta fuente publicó un atropello "durante la mañana del domingo" y
+    el mapa lo mostró como activo. Ver `app/collectors/dia_del_hecho.py`.
     """
-    if post.published_at is None:
-        return True
-    return (now - post.published_at) <= timedelta(minutes=max_age_minutes)
+    if post.published_at is not None and (now - post.published_at) > timedelta(
+        minutes=max_age_minutes
+    ):
+        return False
+    return not hecho_fuera_de_ventana(
+        post.caption, publicado=post.published_at, ahora=now, max_age_minutes=max_age_minutes
+    )
 
 
 # --- Acople al Geocodificador LLM --------------------------------------------
@@ -371,6 +381,14 @@ async def geocode_text(
     """
     streets = await extract_streets_via_llm(text)
     if not streets or not streets.get("street_1"):
+        streets = {}
+
+    # Un post sin calle pero con sector ("… en el sector de Miraflores Alto") ya
+    # no se descarta: el sector se geocodifica solo si no hay vía, y su clave
+    # es lo que deja al motor reconocer el mismo hecho contado por otra fuente.
+    # Ver `app/collectors/lugares.py`.
+    streets = anotar_sector(streets, text)
+    if not streets.get("street_1") and not streets.get("sector"):
         return ({}, None)
 
     point = await geocode(geo_client, streets)

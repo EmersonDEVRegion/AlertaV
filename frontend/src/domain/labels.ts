@@ -60,6 +60,7 @@ export const STATUS_LABEL: Record<IncidentStatus, string> = {
 export const LINK_METHOD_LABEL: Record<LinkMethod, string> = {
   spatial: 'Coincidencia geográfica',
   commune_text: 'Coincidencia por comuna',
+  sector_text: 'Coincidencia por sector',
   manual: 'Vínculo manual',
 }
 

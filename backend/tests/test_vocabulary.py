@@ -505,3 +505,120 @@ def test_la_prensa_ya_no_depende_de_las_redes_sociales() -> None:
         for linea in fuente.splitlines()
     )
     assert not importa_social
+
+
+# --- Fuego con una edificación nombrada --------------------------------------
+#
+# El 2026-09-03 un mismo incendio en Miraflores Alto llegó por dos fuentes. El
+# tuit decía "incendio estructural" y quedó en la familia `fire`; la nota de
+# Pura Noticia decía "fuego que consumió una casa" y quedó en `OTHER`. El motor
+# no fusiona entre familias, así que el mapa mostró dos incidentes para una sola
+# casa quemada y ninguno subió de confianza.
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        # La nota que quedó en `OTHER`, tal como la publicó Pura Noticia.
+        "Incendio en Viña del Mar: equipos de emergencia combatieron fuego que "
+        "consumió una casa en el sector de Miraflores Alto",
+        "Incendio afecta a un departamento en Reñaca",
+        "Vivienda consumida por las llamas en el cerro Barón",
+        "Amago de incendio en un local comercial de avenida Valparaíso",
+        "Incendio en bodega moviliza a tres compañías",
+    ],
+)
+def test_fuego_con_edificacion_es_incendio_estructural(texto: str) -> None:
+    assert classify_event_type(texto) is EventType.STRUCTURAL_FIRE
+    assert clasificar_noticia(texto) is EventType.STRUCTURAL_FIRE
+
+
+def test_la_edificacion_no_le_gana_a_lo_forestal() -> None:
+    """Un pastizal que amenaza casas sigue siendo un incendio forestal: la regla
+    corre después de `_WILDFIRE`, con la prioridad de las frases estructurales."""
+    texto = "Incendio de pastizal amenaza viviendas en Quilpué"
+    assert classify_event_type(texto) is EventType.WILDFIRE
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        # "casa" vive dentro de "Casablanca": por subcadena, cualquier incendio
+        # en esa comuna habría pasado por estructural.
+        "Incendio en Casablanca moviliza a Bomberos",
+        "Incendio en el sector de Casablanca alto",
+    ],
+)
+def test_la_edificacion_se_busca_por_palabra_completa(texto: str) -> None:
+    assert classify_event_type(texto) is EventType.OTHER
+
+
+def test_el_fuego_de_un_arma_no_es_un_incendio() -> None:
+    """Con la regla de vivienda, "arma de fuego" + "domicilio" se habría rotulado
+    incendio estructural y habría corroborado al incendio real de al lado."""
+    texto = "Disparos con arma de fuego contra un domicilio en Placeres"
+    assert classify_event_type(texto) is not EventType.STRUCTURAL_FIRE
+    assert clasificar_noticia(texto) is not EventType.STRUCTURAL_FIRE
+
+
+def test_el_verbo_de_fuego_con_vivienda_es_estructural() -> None:
+    """"se incendia" no es término crítico (sólo lo ve la prensa, por
+    `HEADLINE_VERBS`), así que su versión con vivienda se resuelve ahí y no en
+    `classify_event_type`: la invariante con `is_emergency` queda intacta."""
+    texto = "Se incendia vivienda en el cerro Cordillera"
+    assert classify_event_type(texto) is None
+    assert clasificar_noticia(texto) is EventType.STRUCTURAL_FIRE
+
+
+# --- Cobertura de secuelas: el siniestro ya pasó -------------------------------
+#
+# El 2026-09-03 el mapa mostró como emergencia activa en Viña del Mar una nota
+# sobre los recursos judiciales por la reconstrucción de El Olivar, dos años y
+# medio después del megaincendio. La nota no traía fecha, así que ninguna frase
+# de `PRESS_NOISE_PHRASES` la atrapaba.
+
+TITULAR_EL_OLIVAR = (
+    "Megaincendio en Viña del Mar: Corte escuchó argumentos y dejó pendiente "
+    "resolución de ocho recursos por reconstrucción de El Olivar"
+)
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        TITULAR_EL_OLIVAR,
+        "A dos años del megaincendio, vecinos exigen avances en la reconstrucción",
+        "Serviu entrega viviendas definitivas a familias afectadas por el incendio",
+        "Corte de Apelaciones acoge querella por el incendio de Canal Beagle",
+    ],
+)
+def test_la_cobertura_de_secuelas_no_es_una_emergencia(texto: str) -> None:
+    assert es_emergencia(texto) is False
+    assert clasificar_noticia(texto) is None
+    # Y la invariante se sostiene también del lado general.
+    assert is_emergency(texto) is False
+    assert classify_event_type(texto) is None
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        # Un megaincendio nuevo se cuenta con lo que está pasando.
+        "Megaincendio forestal avanza sin control en Quilpué",
+        # Una sola "secuela" es coincidencia: el edificio se llama así.
+        "Incendio en la Corte de Apelaciones obliga a evacuar el edificio",
+        # "recursos" y "damnificados" a secas son de hoy y quedaron fuera.
+        "CONAF despliega recursos aéreos para combatir incendio forestal en Limache",
+        "Incendio deja cinco familias damnificadas en el cerro Cordillera",
+    ],
+)
+def test_un_siniestro_en_curso_sigue_pasando(texto: str) -> None:
+    assert es_emergencia(texto) is True
+    assert clasificar_noticia(texto) is not None
+
+
+def test_la_excision_respeta_las_palabras() -> None:
+    """"anos del incendio" (el aniversario) está dentro de "danos del incendio".
+    Por subcadena, la excisión borraba el único "incendio" del texto."""
+    assert es_emergencia("Evalúan los daños del incendio que afectó a tres viviendas") is True
+    assert es_emergencia("A cinco años del incendio de Valparaíso") is False
