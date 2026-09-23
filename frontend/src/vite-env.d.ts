@@ -9,6 +9,9 @@ interface ImportMetaEnv {
   readonly VITE_MAP_STYLE?: string
   readonly VITE_MAP_STYLE_DARK?: string
   readonly VITE_DEV_API_PROXY?: string
+  /** `on`/`off`. Por defecto: encendido en `npm run dev`, apagado en el build. */
+  readonly VITE_VEHICLE_RADAR?: string
+  readonly VITE_VEHICLE_POLL_INTERVAL_MS?: string
 }
 
 interface ImportMeta {

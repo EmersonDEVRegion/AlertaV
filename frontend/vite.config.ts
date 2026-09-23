@@ -144,6 +144,22 @@ export default defineConfig(({ mode }) => {
               },
             },
             {
+              // Radar de vehículos: misma lógica que los incidentes. Servir una
+              // lista vieja sin red es seguro porque el cliente vuelve a filtrar
+              // por la ventana de 48 h con su propio reloj, y todo lo que dice
+              // «hace X» se calcula desde fechas absolutas de la respuesta.
+              // Vence en 6 h: más allá, casi toda la lista cambió.
+              urlPattern: /\/api\/v1\/feed\//,
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'alertav-feed',
+                networkTimeoutSeconds: 6,
+                expiration: { maxEntries: 8, maxAgeSeconds: 60 * 60 * 6 },
+                cacheableResponse: { statuses: [0, 200] },
+                matchOptions: { ignoreVary: true },
+              },
+            },
+            {
               /*
                * Capas de referencia: un modelo probabilístico que cambia cada
                * varios años. `CacheFirst` con vencimiento largo porque volver a

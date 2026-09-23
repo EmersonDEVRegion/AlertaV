@@ -18,6 +18,9 @@ const dateTimeFmt = new Intl.DateTimeFormat('es-CL', {
 
 const relativeFmt = new Intl.RelativeTimeFormat('es-CL', { numeric: 'auto' })
 
+/** «hace 5 h», «hace 24 min». Para filas densas donde «horas» no cabe. */
+const relativeShortFmt = new Intl.RelativeTimeFormat('es-CL', { numeric: 'auto', style: 'short' })
+
 export function formatTime(iso: string | number | Date): string {
   return timeFmt.format(new Date(iso))
 }
@@ -26,8 +29,7 @@ export function formatDateTime(iso: string | number | Date): string {
   return dateTimeFmt.format(new Date(iso))
 }
 
-/** "hace 4 minutos", "hace 2 horas". */
-export function formatRelative(iso: string | number | Date, now = Date.now()): string {
+function relative(fmt: Intl.RelativeTimeFormat, iso: string | number | Date, now: number): string {
   const deltaMs = new Date(iso).getTime() - now
   const abs = Math.abs(deltaMs)
   const minute = 60_000
@@ -35,9 +37,19 @@ export function formatRelative(iso: string | number | Date, now = Date.now()): s
   const day = 24 * hour
 
   if (abs < minute) return 'recién'
-  if (abs < hour) return relativeFmt.format(Math.round(deltaMs / minute), 'minute')
-  if (abs < day) return relativeFmt.format(Math.round(deltaMs / hour), 'hour')
-  return relativeFmt.format(Math.round(deltaMs / day), 'day')
+  if (abs < hour) return fmt.format(Math.round(deltaMs / minute), 'minute')
+  if (abs < day) return fmt.format(Math.round(deltaMs / hour), 'hour')
+  return fmt.format(Math.round(deltaMs / day), 'day')
+}
+
+/** "hace 4 minutos", "hace 2 horas". */
+export function formatRelative(iso: string | number | Date, now = Date.now()): string {
+  return relative(relativeFmt, iso, now)
+}
+
+/** "hace 4 min", "hace 2 h", "ayer". Mismos tramos que `formatRelative`. */
+export function formatRelativeShort(iso: string | number | Date, now = Date.now()): string {
+  return relative(relativeShortFmt, iso, now)
 }
 
 /** 0.964 -> "96 %". Se trunca hacia abajo: redondear 0.996 a 100 % mentiria. */
