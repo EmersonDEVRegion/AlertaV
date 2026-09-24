@@ -151,9 +151,41 @@ def estado_de_collector(
     return _clasificar(run, _intervalo(nombre), ahora=ahora or datetime.now(UTC))
 
 
+#: Cuánto puede esperar una entrega del webhook en el inbox antes de que la
+#: espera misma sea la noticia. El inbox se mira cada `APIFY_INBOX_POLL_SECONDS`
+#: (10 s): quince minutos sin reclamarla es el proceso de workers caído o con
+#: `ENABLE_COLLECTORS=0`, y los despachos de la fuente de peso 1.00 no entran.
+INBOX_ATASCADO_SECONDS = 900
+
+#: Lo que `/collectors/health` muestra como detalle de una entrega atascada.
+INBOX_ATASCADO_DETALLE = (
+    "entregas del webhook esperando en el inbox sin procesar: "
+    "¿el proceso de workers está caído o con ENABLE_COLLECTORS=0?"
+)
+
+
+def inbox_atascado(run: CollectorRun | None, *, ahora: datetime) -> bool:
+    """¿La última corrida es una entrega que nadie reclamó a tiempo?"""
+    if run is None or run.status != CollectorStatus.RUNNING.value:
+        return False
+    params = getattr(run, "params", None) or {}
+    # "pendiente" es `apify_webhook_service.INBOX_PENDIENTE`; literal para no
+    # importar medio árbol de collectors desde acá (lo fija un test).
+    if params.get("inbox") != "pendiente" or run.started_at is None:
+        return False
+    llegada = run.started_at
+    if llegada.tzinfo is None:
+        llegada = llegada.replace(tzinfo=UTC)
+    return (ahora - llegada).total_seconds() > INBOX_ATASCADO_SECONDS
+
+
 def _clasificar(run: CollectorRun | None, intervalo: int, *, ahora: datetime) -> str:
     if run is None:
         return "never"
+    # Una entrega atascada es reciente por definición —acaba de llegar otra—
+    # y sin esta regla se leería como `ok` mientras nada entra al mapa.
+    if inbox_atascado(run, ahora=ahora):
+        return "failing"
 
     # El orden importa: `degraded` gana sobre cualquier cuenta de recencia,
     # porque es la fuente diciendo que no ve. Una corrida ciega es reciente por
@@ -257,7 +289,11 @@ def build_health(
                     else None
                 ),
                 expected_interval_seconds=intervalo,
-                detail=(run.error or None) if run else None,
+                detail=(
+                    INBOX_ATASCADO_DETALLE
+                    if inbox_atascado(run, ahora=momento)
+                    else ((run.error or None) if run else None)
+                ),
             )
         )
 

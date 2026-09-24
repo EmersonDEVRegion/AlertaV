@@ -324,3 +324,49 @@ def test_la_cadencia_del_webhook_sigue_al_schedule_declarado(monkeypatch):
 
     assert webhook.expected_interval_seconds == 180 * 60
     assert webhook.status == "ok"
+
+
+# --- El inbox del webhook (auditoría 2026-09-23) ------------------------------
+
+
+def entrega_pendiente(hace_minutos: float) -> CollectorRun:
+    run = corrida(
+        "bomberos_apify_webhook", estado=CollectorStatus.RUNNING, hace_minutos=hace_minutos
+    )
+    run.finished_at = None
+    run.params = {"inbox": "pendiente", "dataset_id": "abc"}
+    return run
+
+
+def test_una_entrega_recien_llegada_al_inbox_no_es_un_problema():
+    salud, _ = build_health({"bomberos_apify_webhook": entrega_pendiente(1)}, ahora=AHORA)
+    webhook = next(s for s in salud if s.collector == "bomberos_apify_webhook")
+    assert webhook.status == "ok"
+
+
+def test_una_entrega_que_nadie_reclama_marca_la_fuente_como_caida():
+    """Workers caídos o `ENABLE_COLLECTORS=0`: el aviso llegó y no entra al mapa.
+
+    Antes del inbox, el webhook se procesaba en la API y esto no podía pasar.
+    Ahora puede, y sin esta regla la fila `running` recién llegada se leería
+    como salud.
+    """
+    salud, _ = build_health({"bomberos_apify_webhook": entrega_pendiente(20)}, ahora=AHORA)
+    webhook = next(s for s in salud if s.collector == "bomberos_apify_webhook")
+    assert webhook.status == "failing"
+    assert "workers" in (webhook.detail or "")
+
+
+def test_una_entrega_reclamada_no_cuenta_como_atascada():
+    run = entrega_pendiente(20)
+    run.params = {"inbox": "en_proceso"}
+    salud, _ = build_health({"bomberos_apify_webhook": run}, ahora=AHORA)
+    webhook = next(s for s in salud if s.collector == "bomberos_apify_webhook")
+    assert webhook.status == "ok"
+
+
+def test_el_literal_del_inbox_coincide_con_el_del_servicio():
+    from app.services import apify_webhook_service, collector_health
+
+    assert apify_webhook_service.INBOX_PENDIENTE == "pendiente"
+    assert collector_health.inbox_atascado(entrega_pendiente(20), ahora=AHORA)

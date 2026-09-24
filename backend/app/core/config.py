@@ -151,6 +151,11 @@ class Settings(BaseSettings):
     #: reconocible y para que dos collectors no vuelvan a alinearse, y demasiado
     #: poco para mover la latencia de una capa que se mide en minutos.
     COLLECTOR_JITTER_RATIO: float = Field(default=0.10, ge=0.0, le=0.5)
+    #: Collectors corriendo A LA VEZ en el proceso de workers. Acota tres
+    #: presupuestos que comparten: conexiones (el pool de producción es de 2+3),
+    #: memoria (512 MB) y CPU (0,1 vCPU). Quien espera no pierde su turno: sólo
+    #: se atrasa unos segundos, y la dispersión de arriba ya los separa.
+    COLLECTOR_MAX_CONCURRENCY: int = Field(default=4, ge=1, le=20)
 
     # -- NASA FIRMS ----------------------------------------------------------
     FIRMS_MAP_KEY: str = ""
@@ -428,7 +433,7 @@ class Settings(BaseSettings):
     #:
     #: Mismo mecanismo y mismo motivo que `TRANSPORTE_INFORMA_MAX_GEOCODES`: el
     #: geocodificador respeta 1 req/s, así que un lote grande podría tener la
-    #: tarea de fondo ocupada durante minutos. Lo que exceda el tope entra sin
+    #: entrega del inbox ocupada durante minutos. Lo que exceda el tope entra sin
     #: coordenadas, que es el estado en el que entraban todos los despachos
     #: antes de que este paso existiera.
     #:
@@ -646,6 +651,11 @@ class Settings(BaseSettings):
     #: este corte, la primera llamada del webhook ingeriría meses de despachos
     #: con la hora de hoy y llenaría el mapa de siniestros que ya se resolvieron.
     APIFY_WEBHOOK_MAX_AGE_MINUTES: int = Field(default=180, ge=5, le=1440)
+    #: Cada cuánto el proceso de workers mira el inbox del webhook. Es la
+    #: latencia máxima entre el aviso de Apify y el despacho en el mapa: una
+    #: consulta indexada cada 10 s cuesta nada y mantiene la promesa de
+    #: «segundos, no minutos» del webhook.
+    APIFY_INBOX_POLL_SECONDS: int = Field(default=10, ge=2, le=300)
 
     # -- Prensa local: Alerta Noticias y Pura Noticia -------------------------
     #: Portales de la V Región, raspados de forma nativa y a costo cero. Formato

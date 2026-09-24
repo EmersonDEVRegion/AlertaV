@@ -55,6 +55,20 @@ hasta acá significa un fallo estructural —el event loop, el pool, un bug—, 
 ante eso este proceso no intenta ser heroico: registra, pide el término del otro
 motor y sale con código 1. `start.sh` lo reinicia con backoff. Reiniciar un
 proceso limpio es más confiable que reparar uno en estado desconocido.
+
+Medir si algo bloquea el event loop
+-----------------------------------
+Todo lo de arriba descansa en que ningún motor bloquee el loop: una llamada
+síncrona de dos segundos en un collector congela la correlación y el push
+durante esos dos segundos. Para comprobarlo en Render sin tocar código:
+
+    ALERTAV_MEDIR_LOOP=1
+
+enciende el modo depuración de asyncio (cada callback que tarde más de
+`_UMBRAL_LOOP_S` se registra con su nombre: dice QUIÉN bloqueó) y una sonda que
+registra cuánto se atrasó un `sleep` de un segundo (dice CUÁNTO). Apagado por
+defecto: el modo depuración cuesta CPU, y la instancia tiene una décima de
+núcleo.
 """
 
 from __future__ import annotations
@@ -62,6 +76,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from collections.abc import Sequence
 
@@ -70,7 +85,12 @@ from app.collectors.registry import available_collectors
 from app.core.config import settings
 from app.core.database import dispose_engine
 from app.core.logging import configure_logging
-from app.core.shutdown import install_signal_handlers, request_shutdown
+from app.core.shutdown import (
+    install_signal_handlers,
+    is_shutting_down,
+    request_shutdown,
+    sleep_unless_stopped,
+)
 from app.services.correlation import runner as correlation_runner
 from app.services.push import runner as push_runner
 
@@ -80,6 +100,44 @@ logger = logging.getLogger("alertav.workers")
 #: concede 30 segundos antes del SIGKILL; se dejan 5 de holgura para alcanzar a
 #: cerrar el pool de conexiones después de que ambos paren.
 _GRACE_SECONDS = 25.0
+
+
+#: Umbral del diagnóstico de `ALERTAV_MEDIR_LOOP`. Un cuarto de segundo es lo
+#: que un ciudadano nota en la API... que corre en OTRO proceso; acá es lo que
+#: tarda en notarse un collector que retiene a la correlación y al push.
+_UMBRAL_LOOP_S = 0.25
+
+
+async def _medir_loop(periodo: float = 1.0) -> None:
+    """Sonda de `ALERTAV_MEDIR_LOOP`: registra los atrasos del event loop."""
+    loop = asyncio.get_running_loop()
+    peor = 0.0
+    while not is_shutting_down():
+        inicio = loop.time()
+        if not await sleep_unless_stopped(periodo):
+            break
+        atraso = loop.time() - inicio - periodo
+        if atraso > _UMBRAL_LOOP_S:
+            peor = max(peor, atraso)
+            logger.warning(
+                "event loop bloqueado",
+                extra={"atraso_ms": round(atraso * 1000), "peor_ms": round(peor * 1000)},
+            )
+
+
+def _activar_medicion(tasks: dict[str, asyncio.Task[None]]) -> None:
+    if os.environ.get("ALERTAV_MEDIR_LOOP", "").strip() != "1":
+        return
+    loop = asyncio.get_running_loop()
+    loop.set_debug(True)
+    loop.slow_callback_duration = _UMBRAL_LOOP_S
+    # El modo depuración escribe en el logger `asyncio` a nivel WARNING.
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
+    tasks["medir_loop"] = asyncio.create_task(_medir_loop(), name="medir_loop")
+    logger.warning(
+        "ALERTAV_MEDIR_LOOP activo: modo depuración de asyncio encendido",
+        extra={"umbral_ms": round(_UMBRAL_LOOP_S * 1000)},
+    )
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -192,6 +250,7 @@ async def _main(argv: Sequence[str] | None = None) -> int:
         logger.error("no hay nada que ejecutar: se desactivaron todos los motores")
         return 2
 
+    _activar_medicion(tasks)
     logger.info("workers iniciados", extra={"motores": sorted(tasks)})
 
     failed = False

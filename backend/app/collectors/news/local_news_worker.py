@@ -1144,6 +1144,8 @@ class LocalNewsCollector(BaseCollector):
 
         ids = [external_id_for(item) for item in items]
         conocidos = await self.service.repo.ids_by_external_id(self.source, ids)
+        # Lo que sigue es Gemini y Nominatim: la conexión no espera con ellos.
+        await self.liberar_conexion()
         return [item for item in items if external_id_for(item) not in conocidos]
 
     # -- Orquestación ---------------------------------------------------------

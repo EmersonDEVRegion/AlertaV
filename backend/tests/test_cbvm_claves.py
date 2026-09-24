@@ -323,6 +323,16 @@ class _Sesion:
     async def __aexit__(self, *_exc) -> None:
         return None
 
+    async def commit(self) -> None:
+        return None
+
+
+class _RepoVacio:
+    """El delta del webhook no conoce ningún despacho."""
+
+    async def puntos_conocidos(self, _source, _external_ids):
+        return {}
+
 
 class _Servicio:
     ultimo: _Servicio | None = None
@@ -331,6 +341,7 @@ class _Servicio:
         self.eventos: list = []
         self.status = None
         self.error = None
+        self.repo = _RepoVacio()
         _Servicio.ultimo = self
 
     async def start_run(self, *, source, collector, params):

@@ -103,6 +103,27 @@ class IngestService:
         self.session.add(run)
         await self.session.commit()
         await self.session.refresh(run)
+        # `refresh` es un SELECT, y un SELECT abre una transacción nueva
+        # (autobegin). Sin este commit, la conexión quedaba «idle in transaction»
+        # durante todo el `fetch()` del collector —minutos, en los que llaman a
+        # Gemini y a Nominatim— y cinco collectors así agotaban el pool.
+        # `expire_on_commit=False`: el objeto conserva sus atributos.
+        await self.session.commit()
+        return run
+
+    async def resume_run(self, run_id: int, params: dict[str, Any]) -> CollectorRun:
+        """Retoma una corrida que otro proceso abrió, sumándole `params`.
+
+        La usa el inbox del webhook de Apify: la API deja la fila `running` al
+        recibir el aviso y el proceso de workers la completa. Lanza `LookupError`
+        si la fila no existe, que sólo puede pasar si alguien la borró a mano.
+        """
+        run = await self.session.get(CollectorRun, run_id)
+        if run is None:
+            raise LookupError(f"collector_runs.id={run_id} no existe")
+        # JSONB no detecta mutaciones en el lugar: se reasigna un dict nuevo.
+        run.params = {**(run.params or {}), **params}
+        await self.session.commit()
         return run
 
     async def finish_run(

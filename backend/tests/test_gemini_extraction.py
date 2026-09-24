@@ -484,3 +484,38 @@ def test_el_extractor_completo_atraviesa_las_partes(monkeypatch):
     )
     resultado = asyncio.run(gemini.extract_streets("Choque en Av. España, Valparaíso"))
     assert resultado == {"street_1": "Av. España", "street_2": None, "city": "Valparaíso"}
+
+
+# --- Consumo de tokens (auditoría 2026-09-23) --------------------------------
+
+
+def test_cada_llamada_deja_su_consumo_en_el_log(monkeypatch, caplog):
+    """Los topes cuentan llamadas; el costo son tokens, y el razonamiento no se ve."""
+    import logging
+    from types import SimpleNamespace
+
+    respuesta = RespuestaFalsa('{"street_1": "Av. España", "street_2": null, "city": null}')
+    respuesta.usage_metadata = SimpleNamespace(
+        prompt_token_count=310,
+        candidates_token_count=24,
+        thoughts_token_count=180,
+        total_token_count=514,
+    )
+    montar_gemini(monkeypatch, respuesta=respuesta)
+
+    with caplog.at_level(logging.INFO, logger=gemini.logger.name):
+        asyncio.run(gemini.extract_streets("Accidente en Av. España"))
+
+    usos = [r for r in caplog.records if r.getMessage() == "gemini_uso"]
+    assert len(usos) == 1
+    assert usos[0].operacion == "extract_streets"
+    assert usos[0].tokens_razonamiento == 180
+    assert usos[0].tokens_total == 514
+
+
+def test_sin_metadatos_de_uso_no_se_rompe_nada(monkeypatch):
+    montar_gemini(
+        monkeypatch,
+        respuesta=RespuestaFalsa('{"street_1": "Av. España", "street_2": null, "city": null}'),
+    )
+    assert asyncio.run(gemini.extract_streets("Accidente en Av. España")) is not None

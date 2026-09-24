@@ -29,9 +29,11 @@ Las tres decisiones de esta ruta
 backoff ante cualquier respuesta que no sea 2xx. Leer el dataset, llamar al
 modelo por cada despacho y escribir en la base tarda bastante más que eso, así
 que hacerlo dentro de la petición garantizaría timeouts, reintentos y el mismo
-lote procesado varias veces. Se extrae el `dataset_id`, se responde 200 y el
-trabajo va a una `BackgroundTask`. Lo que se afirma con ese 200 es "recibí el
-aviso y sé qué dataset leer", no "ya está ingerido".
+lote procesado varias veces. Se extrae el `dataset_id`, se **encola** en
+`collector_runs` (un INSERT, milisegundos) y se responde 200; el proceso de
+workers lo procesa. Lo que se afirma con ese 200 es "el aviso quedó escrito en
+la base", no "ya está ingerido". Si la base no responde, 503: Apify reintenta y
+el aviso no se pierde. Ver «El inbox» en `apify_webhook_service`.
 
 **2. Casi todo responde 200.** Un webhook que devuelve 4xx ante un aviso que
 nunca va a poder procesar —un evento de prueba, un payload sin dataset— provoca
@@ -42,12 +44,11 @@ deliberadas: un secreto incorrecto es 401 —quien llama tiene que saber que fue
 rechazado— y un cuerpo que ni siquiera es un objeto JSON es 422, porque eso no
 lo manda Apify.
 
-**3. La idempotencia no se resuelve acá.** Apify puede entregar el mismo aviso
-dos veces y esta ruta no lleva registro de lo que ya vio. No hace falta: el
-`external_id` de cada despacho es determinista y `EventRepository.upsert_many`
-actualiza en vez de duplicar. Reprocesar un dataset entero cuesta unas llamadas
-al modelo y cero filas de más. Un candado acá sería un segundo mecanismo de
-idempotencia que puede desincronizarse del primero.
+**3. La idempotencia de las filas no se resuelve acá.** El `external_id` de
+cada despacho es determinista y `EventRepository.upsert_many` actualiza en vez
+de duplicar. Lo que sí se evita es encolar dos veces el mismo `dataset_id`
+(`encolar_dataset` responde `duplicate`): no por las filas, sino por las
+llamadas al modelo y a Nominatim que costaría procesarlo de nuevo.
 
 Sobre la autenticación
 ----------------------
@@ -81,13 +82,13 @@ import secrets
 from collections.abc import Sequence
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException, status
+from fastapi import APIRouter, Body, Header, HTTPException, status
 
 from app.core.config import settings
 from app.services.apify_webhook_service import (
+    encolar_dataset,
     extract_actor_ids,
     extract_dataset_id,
-    process_dataset,
 )
 
 logger = logging.getLogger(__name__)
@@ -185,6 +186,7 @@ def _authorised(secret_header: str | None, authorization: str | None) -> bool:
     summary="Aviso de Apify: una corrida del Actor terminó",
     response_description=(
         "Acuse de recibo. `accepted` = el dataset quedó encolado para lectura; "
+        "`duplicate` = ese dataset ya estaba encolado; "
         "`ignored` = el aviso llegó bien pero no había nada que leer."
     ),
 )
@@ -195,7 +197,6 @@ async def apify_webhook(
     # el momento correcto —ninguna entrega llega a procesarse— pero por un
     # motivo imposible de adivinar leyendo el log de Apify, que sólo ve un 422.
     payload: Annotated[Any, Body()],
-    background_tasks: BackgroundTasks,
     x_alertav_apify_secret: Annotated[str | None, Header()] = None,
     authorization: Annotated[str | None, Header()] = None,
 ) -> dict[str, Any]:
@@ -355,7 +356,23 @@ async def apify_webhook(
             "reason": "el payload no trae resource.defaultDatasetId",
         }
 
-    background_tasks.add_task(process_dataset, dataset_id, payload)
+    try:
+        encolado = await encolar_dataset(dataset_id, payload)
+    except Exception as exc:
+        # 503 y no 200: que Apify reintente. Es la diferencia con la
+        # `BackgroundTask` de antes, que ya había respondido 200 cuando
+        # descubría que la base no estaba.
+        logger.error(
+            "no se pudo encolar el webhook de Apify; Apify reintentará",
+            extra={"dataset_id": dataset_id, "error": type(exc).__name__},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="no se pudo encolar el aviso; reintentar",
+        ) from None
+
+    if not encolado:
+        return {"status": "duplicate", "dataset_id": dataset_id}
 
     logger.info(
         "webhook de Apify aceptado",

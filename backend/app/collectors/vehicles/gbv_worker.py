@@ -187,10 +187,13 @@ class GbvCollector(BaseCollector):
         total = await self.service.repo.count_containing(
             EventSource.GBV, {"gbv": {"seccion": seccion.clave}}
         )
+        await self.liberar_conexion()
         return total == 0
 
     async def _claves_conocidas(self, claves: Sequence[str]) -> set[str]:
         conocidas = await self.service.repo.ids_by_external_id(EventSource.GBV, claves)
+        # Lo que sigue son las fichas de detalle, con pausas entre una y otra.
+        await self.liberar_conexion()
         return set(conocidas)
 
     # -- Lectura --------------------------------------------------------------

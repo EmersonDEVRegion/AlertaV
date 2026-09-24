@@ -63,6 +63,13 @@ def _sin_esperas(monkeypatch):
 # --- Dobles de prueba --------------------------------------------------------
 
 
+class FakeRepo:
+    """Base vacía: el delta no conoce ningún aviso."""
+
+    async def puntos_conocidos(self, _source, _external_ids):
+        return {}
+
+
 class FakeIngestService:
     """Sustituye a `IngestService` para no necesitar base de datos.
 
@@ -74,6 +81,7 @@ class FakeIngestService:
         self.status: CollectorStatus | None = None
         self.error: str | None = None
         self.inserted = 0
+        self.repo = FakeRepo()
 
     async def start_run(self, **_kwargs) -> object:
         return object()
