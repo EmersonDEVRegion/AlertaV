@@ -78,8 +78,11 @@ async def list_active_incidents(
     return await service.read_with_outages(incidents)
 
 
+# `/geojson` y `/stats` no los consume la PWA (usa `/active`); quedan para
+# integraciones y para `scripts/smoke_test.py`, fuera del esquema público.
 @router.get(
     "/geojson",
+    include_in_schema=False,
     response_model=GeoJSONFeatureCollection,
     summary="Incidentes activos como GeoJSON",
     description=(
@@ -109,6 +112,7 @@ async def active_incidents_geojson(
 
 @router.get(
     "/stats",
+    include_in_schema=False,
     response_model=IncidentStats,
     summary="Resumen de la correlación",
 )

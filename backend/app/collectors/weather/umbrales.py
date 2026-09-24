@@ -256,15 +256,6 @@ PRIORIDAD_AMENAZA: dict[str, int] = {
 }
 
 
-def peor_severidad(*valores: str) -> str:
-    """La más grave de las severidades dadas. Ignora las desconocidas."""
-    return max(
-        (valor for valor in valores if valor in ORDEN_SEVERIDAD),
-        key=lambda valor: ORDEN_SEVERIDAD[valor],
-        default=SEVERIDAD_NINGUNA,
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class Disparo:
     """Una regla que se cumplió, con la cifra que la cumplió.

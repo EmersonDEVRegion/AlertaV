@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from itertools import pairwise
 from pathlib import Path
 
 import httpx
@@ -308,7 +309,7 @@ def test_las_celdas_vecinas_de_una_fila_se_tocan():
         (f for f in coleccion["features"] if f["properties"]["lat"] == pytest.approx(-33.0)),
         key=lambda f: f["properties"]["lon"],
     )
-    for izquierda, derecha in zip(fila_sur, fila_sur[1:]):
+    for izquierda, derecha in pairwise(fila_sur):
         este = max(v[0] for v in izquierda["geometry"]["coordinates"][0])
         oeste = min(v[0] for v in derecha["geometry"]["coordinates"][0])
         # Un hueco menor al 2 % del paso es la tolerancia del redondeo de

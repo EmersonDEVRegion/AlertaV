@@ -89,12 +89,3 @@ class SeismicEventRead(BaseModel):
         return cls.model_validate(row, from_attributes=True)
 
 
-class SeismicStats(BaseModel):
-    """Resumen de la ventana consultada."""
-
-    total: int
-    max_magnitude: float | None
-    felt_count: int = Field(
-        ..., description="Sismos con al menos un reporte ciudadano al USGS."
-    )
-    tsunami_flagged: int

@@ -1,12 +1,7 @@
 /** Endpoints de incidentes. Una funcion por ruta del backend. */
 
 import { apiGet, buildQuery } from './client'
-import type {
-  ActiveIncidentsQuery,
-  Incident,
-  IncidentDetail,
-  IncidentStats,
-} from './types'
+import type { ActiveIncidentsQuery, Incident, IncidentDetail } from './types'
 
 /**
  * `GET /api/v1/incidents/active`
@@ -30,12 +25,4 @@ export function fetchIncidentDetail(
   signal?: AbortSignal,
 ): Promise<IncidentDetail> {
   return apiGet<IncidentDetail>(`/incidents/${encodeURIComponent(code)}`, signal)
-}
-
-/** `GET /api/v1/incidents/stats` */
-export function fetchIncidentStats(
-  hours?: number,
-  signal?: AbortSignal,
-): Promise<IncidentStats> {
-  return apiGet<IncidentStats>(`/incidents/stats${buildQuery({ hours })}`, signal)
 }

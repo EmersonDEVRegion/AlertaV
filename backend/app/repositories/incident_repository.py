@@ -539,27 +539,6 @@ class IncidentRepository:
         )
         return (await self.session.execute(stmt)).scalars().all()
 
-    async def signals_of_many(
-        self, incident_ids: Sequence[int]
-    ) -> dict[int, list[RawEvent]]:
-        """Señales de varios incidentes en una sola consulta.
-
-        Existe para que recalcular la confianza de N incidentes no dispare N
-        consultas: durante una temporada activa el motor recorre decenas de
-        incidentes en cada pasada.
-        """
-        if not incident_ids:
-            return {}
-        stmt = (
-            select(IncidentEvent.incident_id, RawEvent)
-            .join(RawEvent, RawEvent.id == IncidentEvent.raw_event_id)
-            .where(IncidentEvent.incident_id.in_(list(incident_ids)))
-            .order_by(RawEvent.confidence.desc(), RawEvent.timestamp.asc())
-        )
-        grouped: dict[int, list[RawEvent]] = {index: [] for index in incident_ids}
-        for incident_id, event in (await self.session.execute(stmt)).all():
-            grouped.setdefault(incident_id, []).append(event)
-        return grouped
 
     # -- Paso B: alertas sin geometría ---------------------------------------
 
@@ -851,19 +830,6 @@ class IncidentRepository:
         )
         return (await self.session.execute(stmt)).scalars().all()
 
-    async def count_incidents(self, **filters: Any) -> int:
-        stmt = self._apply_filters(
-            select(func.count()).select_from(Incident),
-            since=filters.get("since"),
-            statuses=filters.get("statuses"),
-            types=filters.get("types"),
-            min_confidence=filters.get("min_confidence"),
-            commune=filters.get("commune"),
-            bbox=filters.get("bbox"),
-            confirmed_only=bool(filters.get("confirmed_only")),
-            with_alert_only=bool(filters.get("with_alert_only")),
-        )
-        return int((await self.session.execute(stmt)).scalar_one())
 
     async def get_by_code(self, code: str) -> Incident | None:
         stmt = select(Incident).where(Incident.code == code)
@@ -873,13 +839,6 @@ class IncidentRepository:
         stmt = select(Incident).where(Incident.public_id == public_id)
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
-    async def links_of(self, incident_id: int) -> Sequence[IncidentEvent]:
-        stmt = (
-            select(IncidentEvent)
-            .where(IncidentEvent.incident_id == incident_id)
-            .order_by(IncidentEvent.linked_at.asc())
-        )
-        return (await self.session.execute(stmt)).scalars().all()
 
     async def links_with_events(
         self, incident_id: int

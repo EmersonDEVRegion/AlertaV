@@ -19,7 +19,6 @@ from app.models.enums import (
 from app.schemas.event import (
     CITIZEN_INITIAL_CONFIDENCE,
     CitizenReportCreate,
-    EventBatchCreate,
     EventCreate,
     ReportCategory,
 )
@@ -249,22 +248,6 @@ class TestCitizenReport:
             CitizenReportCreate(
                 lat=-33.0, lon=-71.5, text="a", category=ReportCategory.OTHER
             )
-
-
-class TestBatch:
-    def test_rechaza_lote_vacio(self) -> None:
-        with pytest.raises(ValidationError):
-            EventBatchCreate(events=[])
-
-    def test_acepta_lote_valido(self) -> None:
-        batch = EventBatchCreate(
-            events=[
-                EventCreate(
-                    timestamp=_now(), source=EventSource.NASA_FIRMS, lat=-33.0, lon=-71.5
-                )
-            ]
-        )
-        assert len(batch.events) == 1
 
 
 def _incident(confidence: float, *, confirmed: bool = False) -> IncidentRead:

@@ -312,24 +312,6 @@ class CitizenReportCreate(BaseModel):
         )
 
 
-class EventBatchCreate(BaseModel):
-    """Ingesta por lote — lo que usan los collectors."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    events: list[EventCreate] = Field(..., min_length=1)
-
-    @field_validator("events")
-    @classmethod
-    def _max_batch(cls, value: list[EventCreate]) -> list[EventCreate]:
-        if len(value) > settings.INGEST_MAX_BATCH_SIZE:
-            raise ValueError(
-                f"lote de {len(value)} eventos excede el máximo "
-                f"({settings.INGEST_MAX_BATCH_SIZE})"
-            )
-        return value
-
-
 # --- Salida ------------------------------------------------------------------
 
 

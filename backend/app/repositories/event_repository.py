@@ -324,30 +324,6 @@ class EventRepository:
         stmt = stmt.order_by(RawEvent.timestamp.desc()).limit(limit).offset(offset)
         return (await self.session.execute(stmt)).scalars().all()
 
-    async def count_events(
-        self,
-        *,
-        since: datetime | None = None,
-        until: datetime | None = None,
-        sources: Sequence[EventSource] | None = None,
-        types: Sequence[EventType] | None = None,
-        min_confidence: float | None = None,
-        bbox: tuple[float, float, float, float] | None = None,
-        near: tuple[float, float, float] | None = None,
-        only_unprocessed: bool = False,
-    ) -> int:
-        stmt = self._apply_filters(
-            select(func.count()).select_from(RawEvent),
-            since=since,
-            until=until,
-            sources=sources,
-            types=types,
-            min_confidence=min_confidence,
-            bbox=bbox,
-            near=near,
-            only_unprocessed=only_unprocessed,
-        )
-        return int((await self.session.execute(stmt)).scalar_one())
 
     def _apply_filters(
         self,

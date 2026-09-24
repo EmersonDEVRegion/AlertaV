@@ -5,18 +5,11 @@ description = "AlertaV — Fire Data Collector: recolección y correlación de s
 requires-python = ">=3.11"
 readme = "README.md"
 
-dependencies = [
-    "fastapi>=0.115,<1.0",
-    "uvicorn[standard]>=0.34,<1.0",
-    "pydantic>=2.10,<3.0",
-    "pydantic-settings>=2.7,<3.0",
-    "SQLAlchemy>=2.0.36,<2.1",
-    "asyncpg>=0.30,<1.0",
-    "psycopg2-binary>=2.9,<3.0",
-    "GeoAlchemy2>=0.16,<1.0",
-    "alembic>=1.14,<2.0",
-    "httpx>=0.28,<1.0",
-]
+# Las dependencias de runtime se declaran UNA vez, en requirements-prod.txt (lo
+# que instala la imagen Docker). Antes se repetían acá y se desfasaron: faltaban
+# cryptography, feedparser, beautifulsoup4, lxml y google-genai, así que un
+# `pip install .` dejaba una app que no arrancaba.
+dynamic = ["dependencies"]
 
 [project.optional-dependencies]
 dev = [
@@ -36,6 +29,9 @@ alertav-workers = "app.workers:main"
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements-prod.txt"] }
 
 [tool.setuptools.packages.find]
 include = ["app*"]

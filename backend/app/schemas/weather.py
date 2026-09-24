@@ -459,20 +459,3 @@ class TacticalWeatherRead(BaseModel):
             return None
 
 
-class WeatherStats(BaseModel):
-    """Resumen de la capa vigente. Lo que cabe en una tarjeta de estado."""
-
-    comunas: int = Field(..., description="Comunas con lluvia pronosticada.")
-    en_riesgo: int = Field(..., description="Comunas con `riesgo_inundacion`.")
-    mm_total_max: float | None = Field(
-        default=None, description="El acumulado más alto de la ventana."
-    )
-    mm_hora_max: float | None = Field(
-        default=None, description="La intensidad horaria más alta de la ventana."
-    )
-    comunas_en_riesgo: list[str] = Field(
-        default_factory=list,
-        description="Nombres, ordenados por acumulado descendente.",
-    )
-    ventana_inicio: datetime | None = None
-    ventana_fin: datetime | None = None

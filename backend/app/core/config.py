@@ -55,7 +55,6 @@ class Settings(BaseSettings):
     VERSION: str = "0.1.0"
     API_V1_PREFIX: str = "/api/v1"
     ENVIRONMENT: Literal["local", "staging", "production"] = "local"
-    DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
     CORS_ORIGINS: CsvList = Field(default_factory=lambda: ["http://localhost:5173"])
     #: Vercel publica cada rama en un subdominio distinto
@@ -329,21 +328,6 @@ class Settings(BaseSettings):
     CSN_TIMEOUT_SECONDS: float = 30.0
     CSN_POLL_INTERVAL_SECONDS: int = 300  # 5 min
 
-    # -- Accidentes viales: Waze ---------------------------------------------
-    # Feed del Waze for Cities / CCP. Es un endpoint privado que Waze entrega a
-    # cada municipio o gobierno con convenio: NO hay una URL pública que sirva
-    # para todos, y por eso no hay valor por defecto. Vacío = collector apagado.
-    WAZE_FEED_URL: str = ""
-    #: Tipos de alerta a conservar. El feed trae ACCIDENT, JAM, ROAD_CLOSED,
-    #: WEATHERHAZARD, HAZARD y POLICE; sólo el primero es un siniestro.
-    WAZE_ALERT_TYPES: CsvList = Field(default_factory=lambda: ["ACCIDENT"])
-    WAZE_TIMEOUT_SECONDS: float = 30.0
-    WAZE_POLL_INTERVAL_SECONDS: int = 300  # 5 min
-    #: Antigüedad máxima de un reporte. Waze mantiene alertas vivas mientras los
-    #: conductores las confirmen; una de hace seis horas ya no describe el
-    #: presente del tránsito.
-    WAZE_MAX_AGE_MINUTES: int = Field(default=120, ge=5, le=1440)
-
     # -- Accidentes viales: despachos de Bomberos ----------------------------
     #
     # `BOMBEROS_DISPATCH_URL` fue eliminada. Apuntaba a un puente tipo RSSHub
@@ -435,13 +419,11 @@ class Settings(BaseSettings):
     #: pocos despachos: el resto de los items del dataset son tuits de la cuenta
     #: que el filtro por clave ya descartó.
     BOMBEROS_MAX_GEOCODES: int = Field(default=25, ge=0, le=200)
-    BOMBEROS_TIMEOUT_SECONDS: float = 30.0
-    BOMBEROS_POLL_INTERVAL_SECONDS: int = 180  # 3 min
     #: Cuenta de RESPALDO para citar y decodificar un despacho cuyo tuit no dice
     #: quién lo publicó. Desde que el Task raspa dos centrales, cada despacho
     #: usa la cuenta que trae el propio tuit (`author.userName` o la URL) y el
     #: diccionario de su Cuerpo; esto sólo rige para Actors que no informan el
-    #: autor y para el camino RSS.
+    #: autor.
     BOMBEROS_SOURCE_HANDLE: str = "@CGI_CBV"
     #: Tope de decodificaciones por corrida. Un despacho es una llamada al
     #: modelo; una noche de temporal con 200 avisos no puede convertirse en 200
@@ -574,25 +556,13 @@ class Settings(BaseSettings):
     #: Pausa entre peticiones consecutivas al sitio. Cortesía, no rate limit.
     GBV_PAUSA_SEGUNDOS: float = Field(default=0.5, ge=0.0, le=10.0)
 
-    # -- Apify: qué capas siguen en uso -------------------------------------
+    # -- Apify ----------------------------------------------------------------
     #
     # Desde 2026-09-22 Apify queda para UNA cosa: el Task de X que raspa a las
     # centrales de Bomberos (@CGI_CBV y @CBVM132) y entrega por
-    # `/apify/webhook`. La cuota gratuita no alcanzaba para tres Tasks, y lo que
-    # hacían los otros dos lo cubre ahora la prensa local por RSS, sin costo.
+    # `/apify/webhook`. Las capas de Instagram y de prensa por X se borraron el
+    # 2026-09-23: lo que cubrían lo toma la prensa local por RSS, sin costo.
     #
-    # Las dos capas retiradas NO se borran —su código y sus tests siguen siendo
-    # correctos— sino que se apagan acá. Apagadas no se registran, no cuentan
-    # para la salud de ninguna familia y no dejan filas en `collector_runs`: una
-    # capa que se sabe apagada y sigue «fallando» cada cinco minutos es el ruido
-    # que enseña a ignorar el rojo.
-    #
-    #: Collector de Instagram (pull sobre el dataset del Actor de Instagram).
-    APIFY_INSTAGRAM_ENABLED: bool = False
-    #: Segunda puerta de X (`/apify/webhook/prensa`). Apagada responde
-    #: `ignored` con el motivo, para que un webhook olvidado en el panel no
-    #: ingiera nada ni reviente.
-    APIFY_PRENSA_ENABLED: bool = False
     #: Cada cuántos minutos corre el Schedule del Task de X en el panel de
     #: Apify. **No lo dispara**: es lo que la salud espera, y con él decide
     #: cuándo el webhook de Bomberos lleva demasiado callado. Tres cadencias sin
@@ -600,48 +570,19 @@ class Settings(BaseSettings):
     #: subirlo acá también, o las tres familias quedan marcadas en falso.
     APIFY_X_SCHEDULE_MINUTES: int = Field(default=60, ge=5, le=1440)
 
-    # -- Redes sociales: Instagram vía Apify ---------------------------------
     #: Token de la API de Apify. Viaja SIEMPRE en la cabecera `Authorization`,
     #: nunca en la query: una URL con el token dentro termina en los logs de
     #: acceso y en el mensaje de cualquier `CollectorError`, que se serializa a
-    #: `collector_runs.error`. Vacío = collector apagado (el constructor lanza).
+    #: `collector_runs.error`. Vacío = el webhook no puede leer los datasets.
     APIFY_TOKEN: str = ""
     APIFY_BASE_URL: str = "https://api.apify.com/v2"
-    #: Actor a leer. El separador entre usuario y actor es una **tilde**, no una
-    #: barra: `apify~instagram-scraper`. `apify_client` normaliza las barras,
-    #: pero conviene escribirlo bien acá.
-    #:
-    #: Es lo único que hay que cambiar para migrar a otro Actor del marketplace
-    #: —el parser acepta los alias de campo de los tres más usados—, cosa que
-    #: pasa más seguido de lo que parece: estos Actors suben de precio o dejan
-    #: de funcionar cuando Instagram cambia algo.
-    APIFY_INSTAGRAM_ACTOR_ID: str = "apify~instagram-scraper"
-    #: Cuentas que el Actor raspa. **Este backend NO se las pasa a Apify**: la
-    #: entrada del Actor se configura en su Schedule, en el panel de Apify, que
-    #: es también donde se paga. Acá están para que `collector_runs.params` diga
-    #: de dónde se supone que vienen los datos que se leyeron.
-    APIFY_INSTAGRAM_ACCOUNTS: CsvList = Field(default_factory=lambda: ["alertanoticiasvalparaiso"])
     APIFY_TIMEOUT_SECONDS: float = 30.0
-    APIFY_POLL_INTERVAL_SECONDS: int = 300  # 5 min
-    #: Items a leer del dataset por corrida, del más nuevo al más viejo. No es
-    #: cuántos posts se raspan —eso lo fija `resultsLimit` en el Schedule del
-    #: Actor y es lo único que mueve la factura—: es cuántos se miran.
-    APIFY_MAX_ITEMS: int = Field(default=50, ge=1, le=1000)
-    #: Antigüedad máxima tolerada de la última corrida EXITOSA del Actor antes de
-    #: avisar. Cubre el fallo silencioso de esta arquitectura: si el Schedule se
-    #: rompe, Apify sigue sirviendo el dataset de la última corrida buena y el
-    #: collector reportaría `success` con 0 eventos para siempre. Debe ser
-    #: holgadamente mayor que la cadencia del Schedule.
-    APIFY_MAX_RUN_AGE_MINUTES: int = Field(default=45, ge=5, le=1440)
 
     # -- Apify: webhook de entrada -------------------------------------------
     #
-    # El collector de Instagram **pregunta** (CRON cada 5 min → `runs/last`). El
-    # webhook es al revés: Apify **avisa** al terminar una corrida y nosotros
-    # leemos el dataset que nos nombra. Los dos caminos coexisten a propósito —
-    # el pull tolera que se pierda un aviso, el push llega en segundos — y es la
-    # diferencia entre enterarse de una 10-4 a los 30 segundos o a los 5
-    # minutos.
+    # Apify **avisa** al terminar una corrida y nosotros leemos el dataset que
+    # nos nombra. El endpoint sólo encola el aviso en `collector_runs`; lo
+    # procesa el proceso de workers (ver `apify_webhook_service`).
     #
     #: Secreto compartido con Apify. Se compara con la cabecera
     #: `X-AlertaV-Apify-Secret` (o `Authorization: Bearer …`) de cada llamada.
@@ -674,46 +615,20 @@ class Settings(BaseSettings):
     #: webhook?", y un Actor ajeno disparando cada media hora la falsifica: la
     #: tabla se ve viva mientras los despachos de X llevan días sin entrar.
     #:
-    #: **El valor NO es `usuario~actor`.** Esa forma sirve para la ruta de la API
-    #: (`APIFY_INSTAGRAM_ACTOR_ID`), pero el webhook manda el id corto
-    #: (`nfp1fpt5gUlBwPcor`). Se saca del rechazo: el log del `ignored` cita los
-    #: ids que llegaron, listos para pegar acá. Admite varios separados por coma
+    #: **El valor NO es `usuario~actor`.** Esa forma sirve para las rutas de la
+    #: API, pero el webhook manda el id corto (`nfp1fpt5gUlBwPcor`). Se saca del
+    #: rechazo: el log del `ignored` cita los ids que llegaron, listos para
+    #: pegar acá. Admite varios separados por coma
     #: —el del Actor y el del Task son distintos— y se compara contra ambos.
     APIFY_BOMBEROS_ACTOR_IDS: CsvList = Field(default_factory=list)
-    #: Tasks autorizados a entregar por `/apify/webhook/prensa`. Vacío = cualquiera.
-    #:
-    #: Lista aparte de la de Bomberos y no la misma: son dos puertas con bandas
-    #: de confianza distintas —1.00 contra 0.45–0.80— y compartir la lista
-    #: significaría que autorizar una autoriza la otra.
-    #:
-    #: **Acá va el id del TASK, no el del Actor.** Los dos Tasks salen del mismo
-    #: Actor de X, así que comparten `actId` y ése no los distingue.
-    #: `extract_actor_ids` lee también `actorTaskId` justamente para esto.
-    APIFY_PRENSA_ACTOR_IDS: CsvList = Field(default_factory=list)
-    #: Items a leer del dataset que anuncia el webhook. Independiente de
-    #: `APIFY_MAX_ITEMS`: una corrida de X/Twitter trae muchos menos tuits que
-    #: una de Instagram trae posts, y el webhook llega una vez por corrida en
-    #: vez de cada cinco minutos.
+    #: Items a leer del dataset que anuncia el webhook, del más nuevo al más
+    #: viejo.
     APIFY_WEBHOOK_MAX_ITEMS: int = Field(default=100, ge=1, le=1000)
     #: Antigüedad máxima de un tuit para tomarlo como descripción del presente.
     #: Una corrida del Actor puede arrastrar el timeline entero de la cuenta; sin
     #: este corte, la primera llamada del webhook ingeriría meses de despachos
     #: con la hora de hoy y llenaría el mapa de siniestros que ya se resolvieron.
     APIFY_WEBHOOK_MAX_AGE_MINUTES: int = Field(default=180, ge=5, le=1440)
-    #: Antigüedad máxima de un post para considerarlo descripción del presente.
-    #: Estas cuentas publican recuerdos y resúmenes; tres horas es el corte.
-    INSTAGRAM_MAX_AGE_MINUTES: int = Field(default=180, ge=5, le=1440)
-    #: Tope de geocodificaciones por corrida. Mismo motivo que en el MTT: a 1 s
-    #: por llamada, sin tope una jornada movida deja al worker colgado del rate
-    #: limit de Nominatim. Ojo: ese presupuesto es COMPARTIDO entre los dos
-    #: collectors, porque el limitador es global al proceso.
-    INSTAGRAM_MAX_GEOCODES: int = Field(default=15, ge=1, le=200)
-    #: Confianza de una señal de Instagram. 0.35 es el techo de la banda de
-    #: `SOCIAL_MEDIA` en `confidence.py` (`max_weight`): emitir más alto no la
-    #: sube, sólo archiva en `raw_events` un número que el motor no respeta.
-    #: Que la cuenta se llame "noticias" no la hace un medio: republica lo que
-    #: le llega por mensaje directo, sin verificar.
-    INSTAGRAM_CONFIDENCE: float = Field(default=0.35, ge=0.0, le=1.0)
 
     # -- Prensa local: Alerta Noticias y Pura Noticia -------------------------
     #: Portales de la V Región, raspados de forma nativa y a costo cero. Formato
@@ -820,10 +735,10 @@ class Settings(BaseSettings):
     #: horas, más holgado que las tres de Instagram: un medio publica después de
     #: confirmar, y esa demora editorial es justamente lo que lo hace valer 0.60.
     LOCAL_NEWS_MAX_AGE_MINUTES: int = Field(default=240, ge=5, le=1440)
-    #: Tope de geocodificaciones por corrida. El más bajo de las tres capas que
-    #: comparten el limitador global de Nominatim (MTT 20, Instagram 15, prensa
-    #: 10): una noticia llega después que el aviso oficial y que el post de la
-    #: cuenta hiperlocal, así que si hay que recortar algo, que sea esto.
+    #: Tope de geocodificaciones por corrida. El más bajo de las capas que
+    #: comparten el limitador de Nominatim (MTT 20, Bomberos 25, prensa 10): una
+    #: noticia llega después que el aviso oficial, así que si hay que recortar
+    #: algo, que sea esto.
     LOCAL_NEWS_MAX_GEOCODES: int = Field(default=10, ge=1, le=200)
     #: Confianza de una señal de prensa. 0.60 es el techo de la banda de `MEDIA`
     #: en `confidence.py` (`max_weight`), aunque `SOURCE_BASE_CONFIDENCE[MEDIA]`
@@ -1157,7 +1072,6 @@ class Settings(BaseSettings):
     )
 
     # -- Ingesta -------------------------------------------------------------
-    INGEST_MAX_BATCH_SIZE: int = 1000
     # Tolerancia para eventos con timestamp futuro (desfase de reloj de fuentes)
     INGEST_FUTURE_TOLERANCE_SECONDS: int = 300
 
@@ -1168,12 +1082,9 @@ class Settings(BaseSettings):
         "CONAF_REGIONS",
         "SENAPRED_REGIONS",
         "USGS_EVENT_TYPES",
-        "WAZE_ALERT_TYPES",
         "BOMBEROS_ACCIDENT_KEYS",
         "BOMBEROS_CBVM_KEYS",
-        "APIFY_INSTAGRAM_ACCOUNTS",
         "APIFY_BOMBEROS_ACTOR_IDS",
-        "APIFY_PRENSA_ACTOR_IDS",
         "PUSH_ALLOWED_ENDPOINT_HOSTS",
         mode="before",
     )

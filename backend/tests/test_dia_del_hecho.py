@@ -205,35 +205,3 @@ def test_la_prensa_descarta_la_nota_reciente_de_un_hecho_viejo() -> None:
     )
 
 
-def test_x_descarta_el_tuit_reciente_de_un_hecho_viejo() -> None:
-    from app.services.apify_press_service import Tuit, is_fresh
-
-    def tuit(texto: str) -> Tuit:
-        return Tuit(
-            tweet_id="1",
-            handle="sitiodelsuceso",
-            text=texto,
-            published_at=AHORA - timedelta(minutes=30),
-            raw={},
-        )
-
-    assert not is_fresh(tuit(ATROPELLO), now=AHORA, max_age_minutes=VENTANA)
-    assert is_fresh(tuit("Choque en Av. España con Uno Norte"), now=AHORA, max_age_minutes=VENTANA)
-
-
-def test_instagram_descarta_el_post_reciente_de_un_hecho_viejo() -> None:
-    from app.collectors.social.instagram_apify_worker import InstagramPost, is_fresh
-
-    def post(caption: str) -> InstagramPost:
-        return InstagramPost(
-            short_code="abc",
-            username="alertanoticiasvalparaiso",
-            caption=caption,
-            image_url=None,
-            published_at=AHORA - timedelta(hours=3),
-            permalink="https://www.instagram.com/p/abc/",
-            raw={},
-        )
-
-    assert not is_fresh(post(ATROPELLO), now=AHORA, max_age_minutes=VENTANA)
-    assert is_fresh(post("Choque en Av. España con Uno Norte"), now=AHORA, max_age_minutes=VENTANA)

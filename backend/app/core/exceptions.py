@@ -30,11 +30,6 @@ class ConfigurationError(AlertaVError):
     code = "configuration_error"
 
 
-class NotFoundError(AlertaVError):
-    status_code = status.HTTP_404_NOT_FOUND
-    code = "not_found"
-
-
 class ValidationError(AlertaVError):
     status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
     code = "validation_error"

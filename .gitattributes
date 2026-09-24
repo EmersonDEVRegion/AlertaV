@@ -6,3 +6,10 @@
 Dockerfile text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
+
+# Todo lo demás que Git reconozca como texto se guarda con LF en el repositorio
+# y se entrega con LF. Sin esta línea, las herramientas de Windows dejaban 44
+# archivos «modificados» sólo por el fin de línea (CRLF) en el working tree.
+* text=auto eol=lf
+# Los scripts de PowerShell se usan en Windows: ahí van con CRLF.
+*.ps1 text eol=crlf

@@ -10,13 +10,12 @@ payload por defecto ya trae `resource.defaultDatasetId`, que es lo único que
 esta ruta necesita: **no** hay que personalizar la plantilla.
 
 **Sólo el Actor de X/Twitter.** Esta ruta NO es genérica: ingiere como Bomberos,
-con `EventSource.BOMBEROS` y `parse_tweet` buscando claves 10-x. El Actor de
-Instagram no va acá — lo lee `InstagramApifyCollector` por su cuenta, cada cinco
-minutos, con `runs/last`. Apuntarlo a esta URL no da error: sus posts no traen
-claves, la corrida cierra en `success` con 0 insertados y la fila verde que deja
-en `collector_runs` hace parecer que el webhook de Bomberos está llegando cuando
-no llega nada. `APIFY_BOMBEROS_ACTOR_IDS` existe para que eso se anuncie en vez
-de ocurrir en silencio.
+con `EventSource.BOMBEROS` y `parse_tweet` buscando claves 10-x. Apuntar otro
+Actor a esta URL no da error: sus items no traen claves, la corrida cierra en
+`success` con 0 insertados y la fila verde que deja en `collector_runs` hace
+parecer que el webhook de Bomberos está llegando cuando no llega nada.
+`APIFY_BOMBEROS_ACTOR_IDS` existe para que eso se anuncie en vez de ocurrir en
+silencio.
 
 **Y en un solo nivel.** Un webhook colgado del Actor dispara también para las
 corridas que lanza un Task suyo. Si está en los dos, cada corrida entrega dos
@@ -85,7 +84,6 @@ from typing import Annotated, Any
 from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException, status
 
 from app.core.config import settings
-from app.services.apify_press_service import process_dataset as process_press_dataset
 from app.services.apify_webhook_service import (
     extract_actor_ids,
     extract_dataset_id,
@@ -104,13 +102,7 @@ SECRET_HEADER = "X-AlertaV-Apify-Secret"
 
 
 def _autorizado_en(ids_recibidos: list[str], permitidos: Sequence[str]) -> bool:
-    """Versión genérica de `_actor_autorizado`, para la segunda puerta.
-
-    Las dos rutas comparten la regla —lista vacía deja pasar, un cuerpo sin
-    identidad no pasa— y difieren sólo en CUÁL lista consultan. Escribirla dos
-    veces garantizaría que dentro de seis meses una de las dos se relaje sin que
-    nadie lo note.
-    """
+    """¿Alguno de los ids recibidos está en la lista? Lista vacía deja pasar."""
     limpios = [i.strip() for i in permitidos if i.strip()]
     if not limpios:
         return True
@@ -185,109 +177,6 @@ def _authorised(secret_header: str | None, authorization: str | None) -> bool:
         secrets.compare_digest(candidato.encode("utf-8"), esperado_bytes)
         for candidato in _candidatos(secret_header, authorization)
     )
-
-
-@router.post(
-    "/webhook/prensa",
-    status_code=status.HTTP_200_OK,
-    summary="Aviso de Apify: corrida del Task de prensa y transporte",
-    description=(
-        "Segunda puerta de X, para las cuentas que NO son la central de "
-        "Bomberos: el MTT, la concesionaria de la Ruta 68, prensa local y la "
-        "red ciudadana. Mismo Actor, otro Task, otras bandas de confianza.\n\n"
-        "Existe porque `/webhook` está cableado a Bomberos: filtra por claves "
-        "`10-x` e ingiere con confianza 1.00, la única banda que por sí sola "
-        "confirma un incidente. Un tuit de prensa por ahí o se descarta entero "
-        "o entra con el peso de un despacho oficial, y ninguna de las dos "
-        "sirve.\n\n"
-        "**Sólo entran las cuentas declaradas en `HANDLES`**, con la confianza "
-        "que se les declara ahí. Es lo que impide que un término de búsqueda "
-        "mal puesto en el Task convierta a cualquier vecino en fuente."
-    ),
-)
-async def apify_webhook_prensa(
-    payload: Annotated[Any, Body()],
-    background_tasks: BackgroundTasks,
-    x_alertav_apify_secret: Annotated[str | None, Header()] = None,
-    authorization: Annotated[str | None, Header()] = None,
-) -> dict[str, Any]:
-    """Gemela de `apify_webhook`, con otra lista blanca y otro procesador.
-
-    El secreto es el MISMO —es de cuenta, no de ruta— así que por sí solo no
-    distingue una puerta de la otra. Lo que las separa es
-    `APIFY_PRENSA_ACTOR_IDS`: como los dos Tasks salen del mismo Actor,
-    comparten `actId` y hay que autorizar el **id del Task**. `extract_actor_ids`
-    lee también `actorTaskId` justamente para esto.
-    """
-    if not _authorised(x_alertav_apify_secret, authorization):
-        recibidos = _candidatos(x_alertav_apify_secret, authorization)
-        logger.log(
-            logging.INFO if not recibidos else logging.WARNING,
-            "webhook de prensa rechazado: %s",
-            "sin credencial" if not recibidos else "secreto inválido",
-            extra={"cabecera_esperada": SECRET_HEADER},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=(
-                f"secreto de webhook inválido. Configura en Apify la cabecera "
-                f"{SECRET_HEADER} con el valor de APIFY_WEBHOOK_SECRET."
-            ),
-        )
-
-    if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="el cuerpo del webhook debe ser un objeto JSON",
-        )
-
-    if not settings.APIFY_PRENSA_ENABLED:
-        # Puerta retirada (ver `APIFY_PRENSA_ENABLED`). 200 y no 4xx por lo de
-        # siempre: un webhook que quedó en el panel reintentaría once veces y
-        # Apify deshabilitaría la integración. INFO y no WARNING: no hay nada
-        # roto, sólo un webhook de más que conviene borrar del panel.
-        logger.info(
-            "webhook de prensa ignorado: la puerta está apagada",
-            extra={"remedio": "borrar el webhook del Task de prensa en Apify"},
-        )
-        return {
-            "status": "ignored",
-            "reason": "la puerta de prensa está apagada (APIFY_PRENSA_ENABLED=false)",
-        }
-
-    ids_actor = extract_actor_ids(payload)
-    if not _autorizado_en(ids_actor, settings.APIFY_PRENSA_ACTOR_IDS):
-        # Mismo criterio que en la puerta de Bomberos: 200 para que Apify no
-        # reintente once veces y deshabilite la integración, WARNING porque
-        # llegó CON el secreto correcto y por lo tanto es configuración nuestra.
-        logger.warning(
-            "webhook de prensa ignorado: la corrida no viene de un Task autorizado",
-            extra={
-                "ids_recibidos": ids_actor,
-                "ids_autorizados": list(settings.APIFY_PRENSA_ACTOR_IDS),
-                "remedio": (
-                    "los dos Tasks comparten actId; hay que autorizar el "
-                    "actorTaskId del Task de prensa en APIFY_PRENSA_ACTOR_IDS"
-                ),
-            },
-        )
-        return {
-            "status": "ignored",
-            "reason": "la corrida no viene de un Task autorizado en APIFY_PRENSA_ACTOR_IDS",
-            "actor_ids": ids_actor,
-        }
-
-    dataset_id = extract_dataset_id(payload)
-    if dataset_id is None:
-        logger.warning("webhook de prensa sin `resource.defaultDatasetId`")
-        return {"status": "ignored", "reason": "el payload no trae resource.defaultDatasetId"}
-
-    background_tasks.add_task(process_press_dataset, dataset_id, payload)
-    logger.info(
-        "webhook de prensa aceptado",
-        extra={"dataset_id": dataset_id, "ids_actor": ids_actor},
-    )
-    return {"status": "accepted", "dataset_id": dataset_id}
 
 
 @router.post(

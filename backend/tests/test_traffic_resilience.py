@@ -1,15 +1,14 @@
 """Resiliencia de los workers de tránsito ante fuentes ajenas que fallan.
 
-Las dos fuentes calibradas en este hito son las más frágiles del sistema y no
-por casualidad: una es un puente público sin SLA (`rsshub.app`) y la otra es un
-WordPress que puede rediseñarse cualquier martes. El requisito operativo es
-categórico: **bajo ninguna circunstancia una caída de estas fuentes puede tumbar
-el orquestador**.
+El portal del MTT es un WordPress que puede rediseñarse cualquier martes. El
+requisito operativo es categórico: **bajo ninguna circunstancia una caída de
+esta fuente puede tumbar el orquestador**. (El lector RSS de Bomberos, que
+compartía estos tests, se borró el 2026-09-23.)
 
 Esa garantía tiene dos mitades y las dos se prueban acá:
 
 1. `fetch()` convierte *cualquier* fallo en `CollectorError`. Ni un timeout, ni
-   un 500, ni un XML patológico, ni un bug de feedparser escapan con otro tipo.
+   un 500, ni un HTML patológico escapan con otro tipo.
 2. `BaseCollector.run()` atrapa esa excepción, la registra en `collector_runs` y
    devuelve un `CollectorResult` con estado `failed` y cero eventos. El llamador
    —el runner, y por encima `app/workers.py`— nunca ve una excepción.
@@ -33,7 +32,6 @@ import httpx
 import pytest
 import respx
 
-from app.collectors.traffic.bomberos_10_4_worker import Bomberos104Collector
 from app.collectors.traffic.transporteinforma_worker import (
     TransporteInformaCollector,
     page_looks_broken,
@@ -42,7 +40,6 @@ from app.collectors.traffic.transporteinforma_worker import (
 from app.core.exceptions import CollectorError
 from app.models.enums import CollectorStatus
 
-FEED_URL = "https://rsshub.test/twitter/user/CentralCBV"
 PORTAL_URL = "https://portal.test/valparaiso/"
 
 
@@ -91,14 +88,6 @@ class FakeIngestService:
         return type("Ingest", (), {"inserted": len(events), "duplicated": 0})()
 
 
-def bomberos(url: str = FEED_URL) -> Bomberos104Collector:
-    collector = Bomberos104Collector.__new__(Bomberos104Collector)
-    collector.url = url
-    collector.keys = ["10-4"]
-    collector.service = FakeIngestService()
-    return collector
-
-
 def mtt(url: str = PORTAL_URL) -> TransporteInformaCollector:
     collector = TransporteInformaCollector.__new__(TransporteInformaCollector)
     collector.url = url
@@ -111,107 +100,6 @@ def mtt(url: str = PORTAL_URL) -> TransporteInformaCollector:
 def correr(collector):
     """Ejecuta el ciclo completo del collector, como lo haría el runner."""
     return asyncio.run(collector.run())
-
-
-# --- 1. Fallos de red: el feed de Bomberos -----------------------------------
-
-
-@respx.mock
-@pytest.mark.parametrize("status_code", [500, 502, 503])
-def test_bomberos_un_5xx_no_escapa_como_excepcion(status_code):
-    """RSSHub devuelve 503 con frecuencia. Es su estado normal, casi."""
-    respx.get(FEED_URL).mock(return_value=httpx.Response(status_code))
-
-    resultado = correr(bomberos())
-
-    assert resultado.status is CollectorStatus.FAILED
-    assert resultado.inserted == 0
-    assert resultado.error and str(status_code) in resultado.error
-
-
-@respx.mock
-def test_bomberos_un_429_queda_registrado_sin_reintentar():
-    """Un 429 es un contrato: reintentarlo empeora el rate limit ajeno."""
-    ruta = respx.get(FEED_URL).mock(return_value=httpx.Response(429))
-
-    resultado = correr(bomberos())
-
-    assert resultado.status is CollectorStatus.FAILED
-    assert ruta.call_count == 1, "un 4xx no debe reintentarse"
-
-
-@respx.mock
-def test_bomberos_un_timeout_no_escapa_como_excepcion():
-    respx.get(FEED_URL).mock(side_effect=httpx.ConnectTimeout("agotado"))
-
-    resultado = correr(bomberos())
-
-    assert resultado.status is CollectorStatus.FAILED
-    assert "ConnectTimeout" in (resultado.error or "")
-
-
-@respx.mock
-def test_bomberos_un_fallo_de_conexion_no_escapa_como_excepcion():
-    respx.get(FEED_URL).mock(side_effect=httpx.ConnectError("sin DNS"))
-
-    resultado = correr(bomberos())
-    assert resultado.status is CollectorStatus.FAILED
-
-
-@respx.mock
-def test_bomberos_una_pagina_de_error_con_http_200_se_detecta():
-    """El modo de fallo más traicionero: RSSHub sirve HTML de error con 200.
-
-    Sin la comprobación de `feed_is_broken`, esto pasaría como una corrida
-    exitosa con cero despachos — o sea, como una noche tranquila.
-    """
-    respx.get(FEED_URL).mock(
-        return_value=httpx.Response(200, text="<html><body>Rate limited</body></html>")
-    )
-
-    resultado = correr(bomberos())
-
-    assert resultado.status is CollectorStatus.PARTIAL
-    assert resultado.inserted == 0
-    assert "sin ítems interpretables" in (resultado.error or "")
-
-
-@respx.mock
-def test_bomberos_una_respuesta_vacia_es_un_error():
-    respx.get(FEED_URL).mock(return_value=httpx.Response(200, text="   "))
-
-    resultado = correr(bomberos())
-    assert resultado.status is CollectorStatus.FAILED
-    assert "vacía" in (resultado.error or "")
-
-
-@respx.mock
-def test_bomberos_un_xml_a_medias_no_pierde_lo_que_si_se_leyo():
-    """feedparser es tolerante por diseño; se aprovecha esa tolerancia."""
-    roto = """<?xml version="1.0"?><rss version="2.0"><channel>
-      <item><title>Clave 10-4 en Ruta 68</title><guid>x1</guid></item>
-      <item><title>Clave 10-4 en Av. Brasil"""
-    respx.get(FEED_URL).mock(return_value=httpx.Response(200, text=roto))
-
-    resultado = correr(bomberos())
-
-    assert resultado.status in (CollectorStatus.SUCCESS, CollectorStatus.PARTIAL)
-    assert resultado.inserted >= 1, "el ítem completo debe sobrevivir"
-
-
-@respx.mock
-def test_bomberos_un_feed_sano_termina_en_success():
-    """El caso feliz, para que los tests de fallo signifiquen algo."""
-    feed = """<?xml version="1.0"?><rss version="2.0"><channel><title>C</title>
-      <item><title>Clave 10-4 en Ruta 68 km 42</title><guid>x1</guid>
-      <pubDate>Wed, 19 Aug 2026 14:30:00 GMT</pubDate></item>
-      </channel></rss>"""
-    respx.get(FEED_URL).mock(return_value=httpx.Response(200, text=feed))
-
-    resultado = correr(bomberos())
-
-    assert resultado.status is CollectorStatus.SUCCESS
-    assert resultado.inserted == 1
 
 
 # --- 2. Fallos del portal del MTT --------------------------------------------
@@ -286,23 +174,22 @@ def test_ningun_fallo_de_red_escapa_de_fetch(fallo):
     de último recurso— pero el error llegaría a `collector_runs` sin el contexto
     que este módulo sabe agregar.
     """
-    respx.get(FEED_URL).mock(side_effect=fallo)
+    respx.get(PORTAL_URL).mock(side_effect=fallo)
 
     with pytest.raises(CollectorError):
-        asyncio.run(bomberos().fetch())
+        asyncio.run(mtt().fetch())
 
 
 @respx.mock
-def test_el_orquestador_sobrevive_a_las_dos_fuentes_caidas():
+def test_el_orquestador_sobrevive_a_la_fuente_caida():
     """La prueba que importa operativamente.
 
-    Aunque las dos fuentes estén caídas al mismo tiempo, `run()` devuelve
-    normalmente y el runner puede seguir con el resto de los collectors.
+    Con la fuente caída, `run()` devuelve normalmente y el runner puede seguir
+    con el resto de los collectors.
     """
-    respx.get(FEED_URL).mock(side_effect=httpx.ConnectError("caída"))
-    respx.get(PORTAL_URL).mock(return_value=httpx.Response(500))
+    respx.get(PORTAL_URL).mock(side_effect=httpx.ConnectError("caída"))
 
-    resultados = [correr(bomberos()), correr(mtt())]
+    resultados = [correr(mtt())]
 
     assert all(r.status is CollectorStatus.FAILED for r in resultados)
     assert all(r.inserted == 0 for r in resultados)
@@ -401,60 +288,3 @@ def test_mtt_las_palabras_clave_son_la_red_gruesa_no_el_filtro_final():
 
     assert looks_like_accident(restriccion.text) is False
     assert looks_like_accident(accidente.text) is True
-
-
-@respx.mock
-def test_bomberos_un_feed_valido_y_vacio_no_es_una_noche_tranquila():
-    """El modo de fallo que costó días de silencio, y el más traicionero de todos.
-
-    Un feed **válido** y **vacío** pasa las dos comprobaciones anteriores —es RSS
-    de verdad, el XML está bien— y produce cero despachos, exactamente igual que
-    una madrugada sin rescates. Durante días la fuente estuvo caída y
-    `collector_runs` la declaró `success`, que es la peor mentira que puede
-    contar un tablero: la de que todo está bien.
-
-    Una central de despacho de una región de dos millones de habitantes no pasa
-    días sin publicar nada. Cero entradas **totales** es una fuente caída, no un
-    turno sin novedad.
-    """
-    respx.get(FEED_URL).mock(
-        return_value=httpx.Response(
-            200,
-            text="""<?xml version="1.0"?><rss version="2.0"><channel>
-              <title>Central CBV</title></channel></rss>""",
-        )
-    )
-
-    resultado = correr(bomberos())
-
-    assert resultado.status is CollectorStatus.PARTIAL
-    assert "no trae ninguna entrada" in (resultado.error or "")
-
-
-@respx.mock
-def test_bomberos_un_feed_con_avisos_pero_sin_rescates_si_es_una_noche_tranquila():
-    """La otra mitad, y la que evita que el aviso se vuelva ruido.
-
-    Si el feed publica y ninguna publicación es una 10-4, eso **sí** es un turno
-    sin rescates: la fuente está viva y no hay nada que reportar. Avisar acá
-    entrenaría a todo el mundo a ignorar el aviso, que es exactamente como se
-    pierde la señal que importa.
-    """
-    respx.get(FEED_URL).mock(
-        return_value=httpx.Response(
-            200,
-            text="""<?xml version="1.0"?><rss version="2.0"><channel>
-              <title>Central CBV</title>
-              <item><title>Compañías en instrucción mensual</title>
-                <pubDate>Tue, 25 Aug 2026 03:00:00 GMT</pubDate></item>
-              <item><title>Aviso de corte de agua sector Recreo</title>
-                <pubDate>Tue, 25 Aug 2026 02:00:00 GMT</pubDate></item>
-            </channel></rss>""",
-        )
-    )
-
-    resultado = correr(bomberos())
-
-    assert resultado.status is CollectorStatus.SUCCESS
-    assert resultado.inserted == 0
-    assert not resultado.error

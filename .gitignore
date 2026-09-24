@@ -1,0 +1,5 @@
+# Material de trabajo local que no va al repositorio: bundles, patches, capturas
+# y logs de migraciones que generan las sesiones de trabajo, y la copia local
+# del plan (la versión viva está en el proyecto).
+/Claude outputs/
+/plan.md

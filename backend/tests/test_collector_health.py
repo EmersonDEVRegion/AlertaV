@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import pytest
-
 from app.core.config import settings
 from app.models.enums import CollectorStatus
 from app.models.event import CollectorRun
@@ -44,21 +42,10 @@ def familia(ultimas: dict[str, CollectorRun], nombre: str) -> str:
     return por_familia[nombre]
 
 
-@pytest.fixture
-def instagram_encendido(monkeypatch):
-    """La capa de Instagram tal como estaba el 2026-09-02, cuando corría.
-
-    Desde el 2026-09-22 viene apagada por defecto (`APIFY_INSTAGRAM_ENABLED`),
-    pero los casos que motivaron este módulo se escribieron con ella viva y
-    siguen siendo la mejor prueba de la regla: se reconstruyen encendiéndola.
-    """
-    monkeypatch.setattr(settings, "APIFY_INSTAGRAM_ENABLED", True)
-
-
 # --- 1. El caso que motivó el módulo -----------------------------------------
 
 
-def test_una_corrida_reciente_pero_ciega_no_es_salud(instagram_encendido):
+def test_una_corrida_reciente_pero_ciega_no_es_salud():
     """El corazón del asunto.
 
     La corrida terminó hace un minuto: cualquier chequeo de recencia la daría
@@ -66,20 +53,20 @@ def test_una_corrida_reciente_pero_ciega_no_es_salud(instagram_encendido):
     horas. Sólo el propio collector puede saberlo, y por eso lo declara.
     """
     ultimas = {
-        "instagram_apify": corrida(
-            "instagram_apify",
+        "prensa_local": corrida(
+            "prensa_local",
             estado=CollectorStatus.DEGRADED,
             hace_minutos=1,
-            error="datos rancios: la última corrida exitosa del Actor terminó hace 136 min",
+            error="datos rancios: la portada no cambia desde hace 136 min",
         )
     }
 
     salud, _ = build_health(ultimas, ahora=AHORA)
-    instagram = next(s for s in salud if s.collector == "instagram_apify")
+    prensa = next(s for s in salud if s.collector == "prensa_local")
 
-    assert instagram.status == "degraded"
-    assert instagram.age_seconds is not None and instagram.age_seconds < 120
-    assert "136 min" in (instagram.detail or ""), "el motivo tiene que llegar a la ficha"
+    assert prensa.status == "degraded"
+    assert prensa.age_seconds is not None and prensa.age_seconds < 120
+    assert "136 min" in (prensa.detail or ""), "el motivo tiene que llegar a la ficha"
 
 
 def test_partial_permanente_no_ensucia_la_salud():
@@ -100,26 +87,24 @@ def test_partial_permanente_no_ensucia_la_salud():
 # --- 2. La regla de agregación ----------------------------------------------
 
 
-def test_el_escenario_exacto_del_2_de_septiembre(instagram_encendido):
+def test_el_escenario_exacto_del_2_de_septiembre():
     """La reconstrucción del día que motivó todo esto.
 
-    Instagram ciego, Transporte Informa publicando con normalidad, prensa
-    corriendo. La primera versión de este módulo daba `traffic: ok` acá —tomaba
-    el estado de la fuente más sana— y por lo tanto NO habría atrapado el caso
-    para el que se escribió. Este test existe para que eso no vuelva.
+    La fuente principal de accidentes ciega y Transporte Informa publicando
+    con normalidad. Ese día la ciega era Instagram (hoy retirada); la regla es
+    la misma con la prensa local, que tomó su lugar. La primera versión de este
+    módulo daba `traffic: ok` acá —tomaba el estado de la fuente más sana— y por
+    lo tanto NO habría atrapado el caso para el que se escribió.
     """
     ultimas = {
-        "instagram_apify": corrida(
-            "instagram_apify", estado=CollectorStatus.DEGRADED, hace_minutos=1
-        ),
+        "prensa_local": corrida("prensa_local", estado=CollectorStatus.DEGRADED, hace_minutos=1),
         "transporte_informa": corrida("transporte_informa", hace_minutos=2),
-        "prensa_local": corrida("prensa_local", estado=CollectorStatus.PARTIAL),
     }
 
     assert familia(ultimas, "traffic") == "degraded"
 
 
-def test_una_fuente_de_apoyo_sana_no_rescata_a_la_familia(instagram_encendido):
+def test_una_fuente_de_apoyo_sana_no_rescata_a_la_familia():
     """El MTT emite sobre todo `road_closure`, que no crea incidentes.
 
     Que publique con normalidad no significa que un choque se vaya a ver, así
@@ -127,7 +112,6 @@ def test_una_fuente_de_apoyo_sana_no_rescata_a_la_familia(instagram_encendido):
     """
     ultimas = {
         "transporte_informa": corrida("transporte_informa"),
-        "instagram_apify": corrida("instagram_apify", estado=CollectorStatus.FAILED),
         "prensa_local": corrida("prensa_local", estado=CollectorStatus.FAILED),
     }
 
@@ -158,7 +142,7 @@ def test_una_fuente_de_apoyo_caida_no_ensucia_a_la_familia():
     ultimas = {
         "conaf_incendios": corrida("conaf_incendios"),
         "nasa_firms_area": corrida("nasa_firms_area", estado=CollectorStatus.FAILED),
-        "instagram_apify": corrida("instagram_apify", estado=CollectorStatus.DEGRADED),
+        "prensa_local": corrida("prensa_local", estado=CollectorStatus.DEGRADED),
     }
 
     assert familia(ultimas, "fire") == "ok"
@@ -271,17 +255,17 @@ def test_toda_familia_tiene_al_menos_una_fuente_principal():
 def test_toda_puerta_que_escribe_en_collector_runs_esta_declarada():
     """El olvido que este test impide que se repita.
 
-    `prensa_x_webhook` se construyó, se desplegó y escribió en `collector_runs`
-    durante horas sin estar en `COLLECTOR_ROLES`. Consecuencia: su caída no
+    `prensa_x_webhook` (hoy retirada) se construyó, se desplegó y escribió en
+    `collector_runs` durante horas sin estar en `COLLECTOR_ROLES`. Consecuencia: su caída no
     movía el estado de ninguna familia, o sea que la fuente podía morir en
     silencio — exactamente lo que este módulo existe para impedir.
 
-    La lista se declara a mano y no se deriva de `COLLECTORS` porque las dos
-    puertas de webhook no están ahí: no las dispara el runner, las empuja Apify.
+    La lista se declara a mano y no se deriva de `COLLECTORS` porque la puerta
+    de webhook no está ahí: no la dispara el runner, la empuja Apify.
     """
     from app.services.collector_health import COLLECTOR_ROLES
 
-    puertas_por_webhook = {"bomberos_apify_webhook", "prensa_x_webhook"}
+    puertas_por_webhook = {"bomberos_apify_webhook"}
 
     for nombre in puertas_por_webhook:
         assert nombre in COLLECTOR_ROLES, (
@@ -299,15 +283,15 @@ def test_los_roles_declarados_son_los_dos_que_existen():
             assert rol in ("principal", "apoyo"), f"{nombre}/{familia_}: rol {rol!r}"
 
 
-# --- 5. Capas apagadas por configuración -------------------------------------
+# --- 5. Capas retiradas -------------------------------------------------------
 
 
-def test_una_capa_apagada_no_marca_a_su_familia():
-    """El Task de Instagram salió de Apify el 2026-09-22.
+def test_las_capas_retiradas_no_estan_en_el_cuadro():
+    """Instagram y la prensa por X se borraron el 2026-09-23.
 
     Su última corrida queda para siempre en `collector_runs`, cada vez más
-    vieja. Si siguiera pesando, `traffic` quedaría `stale` —es principal ahí— y
-    el contador de accidentes se marcaría como sospechoso para siempre.
+    vieja. Si siguieran declaradas, `traffic` quedaría `stale` —eran principal
+    ahí— y el contador de accidentes se marcaría como sospechoso para siempre.
     """
     ultimas = {
         "instagram_apify": corrida(
@@ -323,16 +307,6 @@ def test_una_capa_apagada_no_marca_a_su_familia():
     assert "instagram_apify" not in nombres
     assert "prensa_x_webhook" not in nombres
     assert por_familia["traffic"] == "ok"
-
-
-def test_encender_la_capa_la_devuelve_al_cuadro(monkeypatch):
-    monkeypatch.setattr(settings, "APIFY_INSTAGRAM_ENABLED", True)
-    monkeypatch.setattr(settings, "APIFY_PRENSA_ENABLED", True)
-
-    salud, _ = build_health({}, ahora=AHORA)
-
-    nombres = {s.collector for s in salud}
-    assert {"instagram_apify", "prensa_x_webhook"} <= nombres
 
 
 def test_la_cadencia_del_webhook_sigue_al_schedule_declarado(monkeypatch):

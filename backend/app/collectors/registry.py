@@ -6,8 +6,6 @@ cambia: el runner, la traza y el endpoint de disparo manual la recogen solos.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.collectors.base import BaseCollector
@@ -19,15 +17,11 @@ from app.collectors.power.cge_worker import CgeCollector
 from app.collectors.power.chilquinta_worker import ChilquintaCollector
 from app.collectors.seismic.sismologia_worker import SismologiaCollector
 from app.collectors.senapred.collector import SenapredCollector
-from app.collectors.social.instagram_apify_worker import InstagramApifyCollector
 from app.collectors.traffic.transporteinforma_worker import TransporteInformaCollector
 from app.collectors.usgs.collector import UsgsCollector
 from app.collectors.vehicles.gbv_worker import GbvCollector
 from app.collectors.water.esval_worker import EsvalCollector
 from app.collectors.weather.openmeteo_worker import OpenMeteoCollector
-from app.core.config import settings
-
-CollectorFactory = Callable[[AsyncSession], BaseCollector]
 
 COLLECTORS: dict[str, type[BaseCollector]] = {
     # -- Incendios y emergencias ---------------------------------------------
@@ -91,54 +85,20 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     # cabeceras, pero no se pudo probar desde una IP de datacenter.
     EsvalCollector.name: EsvalCollector,
     # -- Accidentes viales ----------------------------------------------------
-    # Los dos emiten `type=accident` y quedan aislados de la familia `fire` por
-    # la partición del motor. Ninguno arranca sin su URL configurada: si falta,
-    # el constructor lanza y el runner deja una corrida `failed` visible en
-    # `collector_runs` en vez de fallar en silencio.
+    # Transporte Informa emite `type=accident` y queda aislado de la familia
+    # `fire` por la partición del motor. No arranca sin su URL configurada: si
+    # falta, el constructor lanza y el runner deja una corrida `failed` visible
+    # en `collector_runs` en vez de fallar en silencio.
     #
-    # WAZE: FUERA DE ROTACIÓN, a la espera del convenio.
+    # Los despachos de Bomberos NO pasan por acá: entran por
+    # `POST /api/v1/apify/webhook`, que los encola en `collector_runs` y los
+    # procesa el bucle del inbox de este mismo runner (ver `run_loop`). Su
+    # decodificación vive en las funciones libres de
+    # `app/collectors/traffic/bomberos_10_4_worker.py`.
     #
-    # `WazeCollector` está implementado y con tests (`tests/test_traffic_workers.py`),
-    # pero `WAZE_FEED_URL` sólo la entrega Waze for Cities y la solicitud no fue
-    # aprobada. Registrado con la variable vacía, su constructor lanzaba
-    # `CollectorError` en CADA corrida: una fila `failed` y una traza cada cinco
-    # minutos por una causa ya conocida y sin acción posible.
-    #
-    # Esa es exactamente la diferencia con CGE. Un collector registrado que falla
-    # se mantiene a la vista porque el fallo es información —el formato cambió,
-    # el archivo se movió, algo hay que mirar—. Acá no hay nada que mirar: falta
-    # una credencial que depende de un trámite externo. Un error repetido que
-    # nadie puede accionar entrena al equipo a ignorar el rojo del log, y esa
-    # costumbre es la que después se traga el error nuevo de otra fuente.
-    #
-    # Reactivarlo son dos líneas —el import de arriba y la entrada de acá— más
-    # `WAZE_FEED_URL` en el entorno. El módulo no necesita ningún cambio: fue
-    # escrito contra el esquema del feed CCP, que es el que llega con el convenio.
-    # Ver el encabezado de `app/collectors/traffic/waze_worker.py`.
-    #
-    # BOMBEROS: FUERA DE ROTACIÓN — cambió de puerta, no de estado.
-    #
-    # Es el tercer módulo de esta sección fuera del CRON y el único que NO está
-    # esperando nada: los despachos **entran igual**, por
-    # `POST /api/v1/apify/webhook`, y con menos latencia que antes. Lo que se
-    # apagó es la forma de traerlos, no la fuente.
-    #
-    # `Bomberos104Collector` leía la cuenta de la central a través de un puente
-    # RSSHub, y ese puente está muerto sin reemplazo: la ruta de Twitter de
-    # RSSHub desapareció con la API de X y el espejo de xcancel tampoco
-    # responde. Registrarlo hoy sería pedirle a cada corrida que fallara contra
-    # un 404 — el mismo ruido inaccionable que sacó a Waze de acá.
-    #
-    # Ojo con la diferencia de mecánica, que es lo que hay que entender para
-    # operar esta capa: los demás collectors **preguntan** cada N minutos; el
-    # webhook **espera** a que Apify avise. Un despacho perdido acá no se
-    # recupera en la corrida siguiente, porque no hay corrida siguiente. Por eso
-    # el endpoint escribe en `collector_runs` igual que un collector: es el
-    # único lugar donde se ve si el webhook está llegando.
-    #
-    # Su decodificación —claves, resumen canónico, construcción del evento— no
-    # se movió: vive en las funciones libres de
-    # `app/collectors/traffic/bomberos_10_4_worker.py` y la usan las dos puertas.
+    # Waze y el lector RSS de Bomberos se borraron el 2026-09-23: el convenio
+    # de Waze for Cities nunca se aprobó y el puente RSSHub murió sin reemplazo.
+    # Si alguno vuelve, `git log -- app/collectors/traffic/` tiene el código.
     TransporteInformaCollector.name: TransporteInformaCollector,
     # -- Meteorología ---------------------------------------------------------
     # La única capa que habla del futuro: emite `weather_observation`, que está
@@ -166,20 +126,6 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     # Cadencia horaria y no de cinco minutos: el propio servicio declara que se
     # actualiza los lunes ~15:00, y a diario sólo durante eventos de emergencia.
     MopVialidadCollector.name: MopVialidadCollector,
-    # -- Redes sociales -------------------------------------------------------
-    # INSTAGRAM: FUERA DE ROTACIÓN por defecto desde el 2026-09-22 — se
-    # registra más abajo sólo con `APIFY_INSTAGRAM_ENABLED=true`.
-    #
-    # El motivo es de cuota, no de código: el plan gratuito de Apify no alcanza
-    # para tres Tasks y el único que se conserva es el de X para las centrales
-    # de Bomberos. Sin el Task de Instagram corriendo, este collector leería
-    # para siempre el dataset de la última corrida —datos válidos y viejos— y
-    # se declararía ciego cada cinco minutos: el mismo ruido inaccionable que
-    # sacó a Waze de acá. Lo que cubría lo toma la prensa local por RSS.
-    #
-    # Cuentas hiperlocales de Instagram, leídas a través de Apify porque el WAF
-    # de Meta bloquea cualquier intento directo. Emite `SOCIAL_MEDIA`, la banda
-    # más baja del catálogo. Ver `app/collectors/social/apify_client.py`.
     # -- Prensa local ---------------------------------------------------------
     # Alerta Noticias, Pura Noticia, Prensa Marga Marga y Quinta Prensa,
     # raspados de forma nativa y sin intermediario: portales abiertos, con RSS
@@ -217,10 +163,6 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     # Próximos hitos:
     #   BroadcastifyCollector.name: BroadcastifyCollector,  # STT → evento
 }
-
-if settings.APIFY_INSTAGRAM_ENABLED:
-    COLLECTORS[InstagramApifyCollector.name] = InstagramApifyCollector
-
 
 def collector_class(name: str) -> type[BaseCollector]:
     """Clase de un collector sin instanciarla.

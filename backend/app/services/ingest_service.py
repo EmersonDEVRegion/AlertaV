@@ -7,7 +7,6 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -78,35 +77,6 @@ class IngestService:
             collapsed=outcome.collapsed_count,
         )
 
-    async def ingest_raw(self, payloads: Sequence[dict[str, Any]]) -> IngestResult:
-        """Ingesta tolerante a fallos: valida fila por fila.
-
-        Un payload malformado de una fuente externa no debe tumbar el lote
-        completo. Se descarta esa fila, se registra el motivo y el resto entra.
-        """
-        valid: list[EventCreate] = []
-        errors: list[str] = []
-
-        for index, payload in enumerate(payloads):
-            try:
-                valid.append(EventCreate.model_validate(payload))
-            except PydanticValidationError as exc:
-                errors.append(f"[{index}] {exc.errors()[0].get('msg', str(exc))}")
-
-        if not valid:
-            return IngestResult(
-                received=len(payloads),
-                inserted=0,
-                duplicated=0,
-                rejected=len(payloads),
-                errors=errors[:50],
-            )
-
-        result = await self.ingest_batch(valid)
-        result.received = len(payloads)
-        result.rejected = len(errors)
-        result.errors = errors[:50]
-        return result
 
     async def ingest_citizen_report(self, report: CitizenReportCreate) -> RawEvent:
         """Reporte desde la PWA.

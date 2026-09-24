@@ -8,15 +8,13 @@ GeoJSON.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.repositories.seismic_repository import SeismicRepository
-from app.schemas.event import GeoJSONFeature, GeoJSONFeatureCollection
-from app.schemas.seismic import SeismicEventRead, SeismicStats
+from app.schemas.seismic import SeismicEventRead
 
 
 class SeismicService:
@@ -57,47 +55,4 @@ class SeismicService:
         )
         return [SeismicEventRead.from_row(row) for row in rows]
 
-    @staticmethod
-    def to_geojson(events: Sequence[SeismicEventRead]) -> GeoJSONFeatureCollection:
-        """FeatureCollection para la capa sísmica de MapLibre.
 
-        Sólo viajan escalares: MapLibre serializa los objetos anidados de las
-        propiedades de un feature, así que anidar el detalle no serviría de nada
-        del otro lado.
-        """
-        features = [
-            GeoJSONFeature(
-                geometry={"type": "Point", "coordinates": [event.lon, event.lat]},
-                properties={
-                    "public_id": str(event.public_id),
-                    "usgs_id": event.usgs_id,
-                    "timestamp": event.timestamp.isoformat(),
-                    "magnitude": event.magnitude,
-                    "mag_type": event.mag_type,
-                    "depth_km": event.depth_km,
-                    "place": event.place,
-                    "commune": event.commune,
-                    "felt_reports": event.felt_reports,
-                    "tsunami": event.tsunami,
-                    "pager_alert": event.pager_alert,
-                    "review_status": event.review_status,
-                    "usgs_url": event.usgs_url,
-                    # Un sismo es un hecho medido, no una emergencia declarada.
-                    # El mismo recordatorio que lleva el GeoJSON de señales
-                    # crudas, por el mismo motivo.
-                    "is_confirmed_incident": False,
-                },
-            )
-            for event in events
-        ]
-        return GeoJSONFeatureCollection(features=features)
-
-    @staticmethod
-    def stats(events: Sequence[SeismicEventRead]) -> SeismicStats:
-        magnitudes = [e.magnitude for e in events if e.magnitude is not None]
-        return SeismicStats(
-            total=len(events),
-            max_magnitude=max(magnitudes) if magnitudes else None,
-            felt_count=sum(1 for e in events if (e.felt_reports or 0) > 0),
-            tsunami_flagged=sum(1 for e in events if e.tsunami),
-        )

@@ -434,8 +434,8 @@ def test_la_nota_y_el_tuit_caen_en_el_mismo_punto() -> None:
     """El caso del 2026-09-03 completo, con los textos reales y el extractor de
     reglas (sin Gemini): las dos señales terminan en el mismo punto y con la
     misma clave de sector, que es lo que el motor necesita para unirlas."""
+    from app.collectors.geocoding import geocode_text
     from app.collectors.news.local_news_worker import geocode_noticia
-    from app.collectors.social.instagram_apify_worker import geocode_text
 
     en_recreo = _resultado(
         PUNTO_OTRO_SECTOR, addresstype="road", name="Calle Once", suburb="Recreo"

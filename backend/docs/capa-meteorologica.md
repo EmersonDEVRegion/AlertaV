@@ -2,7 +2,12 @@
 
 **Fecha:** 2026-08-25
 **Backend:** `app/collectors/weather/`, `app/services/weather_service.py`, `app/schemas/weather.py`
-**Rutas:** `GET /api/v1/events/weather`, `/weather/geojson`, `/weather/stats`
+**Rutas:** `GET /api/v1/events/weather/geojson`, `/weather/tactical`
+
+> **Actualización 2026-09-23:** `GET /api/v1/events/weather` (lista) y
+> `/weather/stats` se borraron porque la PWA no las consumía. Lo que este
+> documento dice de ellas queda como historia; la capa se sirve por `/geojson`,
+> que lleva las mismas propiedades por comuna.
 
 Este documento es el hand-off. Todo lo que hace falta para construir la capa de lluvia y
 superponerla a los cortes de ruta está acá; el backend ya está desplegable y con tests.
