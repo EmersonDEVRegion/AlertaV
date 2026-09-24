@@ -11,7 +11,7 @@ from functools import lru_cache
 from typing import Annotated, Literal
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import Field, PostgresDsn, computed_field, field_validator
+from pydantic import Field, PostgresDsn, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 #: Lista que se declara en el .env como CSV en vez de JSON.
@@ -24,6 +24,17 @@ CsvList = Annotated[list[str], NoDecode]
 #: proveedor. Se normalizan al driver que corresponde en cada caso: la app habla
 #: asyncpg, Alembic habla psycopg2.
 _DSN_SCHEMES = {"postgres", "postgresql", "postgresql+asyncpg", "postgresql+psycopg2"}
+
+
+#: Marcas de un valor de plantilla que nunca debió llegar a producción. Las
+#: revisa `Settings._produccion_sin_huecos` y los tests de User-Agent.
+PLACEHOLDERS: tuple[str, ...] = (
+    "example.cl",
+    "example.com",
+    "TU_CORREO",
+    "github.com/alertav",
+    "<",
+)
 
 
 class BoundingBox(BaseSettings):
@@ -66,6 +77,12 @@ class Settings(BaseSettings):
     #: credenciales. Dejarlo en False evita además la trampa silenciosa de
     #: `allow_origins=["*"]`, que el navegador ignora si hay credenciales.
     CORS_ALLOW_CREDENTIALS: bool = False
+    #: Token de las rutas de operación (`/collectors/*` salvo `/health`,
+    #: `/incidents/correlate`): `Authorization: Bearer <token>`. Ver
+    #: `app.api.deps.require_operator`. Vacío en producción = esas rutas
+    #: responden 503 (fallan cerradas). Si se define, mínimo 32 caracteres ASCII:
+    #: `python -c "import secrets; print(secrets.token_hex(32))"`.
+    OPERATOR_TOKEN: str = ""
 
     # -- Base de datos -------------------------------------------------------
     #: DSN completo. Si viene definido, **manda sobre los `POSTGRES_*`**: es lo
@@ -1094,6 +1111,53 @@ class Settings(BaseSettings):
         if isinstance(v, str) and not v.strip().startswith("["):
             return [item.strip() for item in v.split(",") if item.strip()]
         return v
+
+    @model_validator(mode="after")
+    def _produccion_sin_huecos(self) -> Settings:
+        """En producción, la app no arranca con un secreto flojo o un placeholder.
+
+        Existe porque la auditoría del 2026-09-23 encontró que todo lo de abajo
+        tenía un valor por defecto que dejaba la puerta abierta en silencio: un
+        webhook sin secreto acepta despachos de peso 1.00 de cualquiera, y un
+        User-Agent con `TU_CORREO` le miente a Nominatim sobre a quién escribir
+        antes de bloquear la IP.
+
+        Si el arranque falla, Render deja corriendo el despliegue anterior: un
+        error de configuración se ve en el panel en vez de llegar a producción.
+        Sólo se exige lo que ya está configurado hoy; `OPERATOR_TOKEN` vacío NO
+        impide arrancar (las rutas de operación responden 503), pero si se
+        define tiene que ser largo.
+        """
+        if self.ENVIRONMENT != "production":
+            return self
+
+        errores: list[str] = []
+
+        secreto = self.APIFY_WEBHOOK_SECRET.strip()
+        if len(secreto) < 32 or not secreto.isascii():
+            errores.append("APIFY_WEBHOOK_SECRET: mínimo 32 caracteres ASCII")
+        if not [actor for actor in self.APIFY_BOMBEROS_ACTOR_IDS if actor.strip()]:
+            errores.append(
+                "APIFY_BOMBEROS_ACTOR_IDS vacío: el webhook aceptaría cualquier Actor"
+            )
+
+        token = self.OPERATOR_TOKEN.strip()
+        if token and (len(token) < 32 or not token.isascii()):
+            errores.append("OPERATOR_TOKEN: mínimo 32 caracteres ASCII")
+
+        revisar = ["NOMINATIM_USER_AGENT", "FIRMS_MAP_KEY"]
+        if self.PUSH_ENABLED:
+            revisar.append("VAPID_SUBJECT")
+        for nombre in revisar:
+            valor = str(getattr(self, nombre)).strip()
+            if not valor or any(marca in valor for marca in PLACEHOLDERS):
+                errores.append(f"{nombre} vacío o con un placeholder ({valor!r})")
+
+        if errores:
+            raise ValueError(
+                "configuración de producción inválida: " + "; ".join(errores)
+            )
+        return self
 
     @computed_field  # type: ignore[prop-decorator]
     @property

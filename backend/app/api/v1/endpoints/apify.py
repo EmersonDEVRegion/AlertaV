@@ -215,9 +215,9 @@ async def apify_webhook(
         # depurarlo desde el panel de Apify, que sólo ve un 401, es adivinar.
         #
         # La longitud y no el valor: una diferencia de largo delata al instante
-        # el error más común (comillas o espacios pegados al copiar), y no
-        # revela el secreto. El valor entero jamás va al log — quedaría escrito
-        # en claro en el sistema de registro del proveedor.
+        # el error más común (comillas o espacios pegados al copiar). El valor
+        # entero jamás va al log — quedaría escrito en claro en el sistema de
+        # registro del proveedor.
         recibidos = _candidatos(x_alertav_apify_secret, authorization)
 
         # El NIVEL del registro depende de si venía alguna credencial, y la
@@ -249,17 +249,23 @@ async def apify_webhook(
                 "trae_cabecera_propia": x_alertav_apify_secret is not None,
                 "trae_authorization": authorization is not None,
                 "largos_recibidos": [len(valor) for valor in recibidos],
-                "largo_esperado": len(settings.APIFY_WEBHOOK_SECRET.strip()),
+                # Si el largo coincide, el valor está mal copiado; si no, suele
+                # ser una comilla o un espacio pegado. Se registra la
+                # comparación y no el largo esperado: eso no hace falta
+                # escribirlo en el log del proveedor.
+                "largo_coincide": any(
+                    len(valor) == len(settings.APIFY_WEBHOOK_SECRET.strip())
+                    for valor in recibidos
+                ),
                 "cabecera_esperada": SECRET_HEADER,
             },
         )
+        # Genérico a propósito: el nombre de la cabecera y de la variable están
+        # en el log (arriba) y en este docstring, no en la respuesta a quien
+        # sondea la URL.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=(
-                f"secreto de webhook inválido. Configura en Apify la cabecera "
-                f"{SECRET_HEADER} con el valor de APIFY_WEBHOOK_SECRET, o "
-                f"Authorization: Bearer <valor>."
-            ),
+            detail="no autorizado",
         )
 
     if not settings.APIFY_WEBHOOK_SECRET.strip():
@@ -272,7 +278,7 @@ async def apify_webhook(
     if not isinstance(payload, dict):
         # Apify manda un objeto. Otra cosa no viene de Apify.
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="el cuerpo del webhook debe ser un objeto JSON",
         )
 

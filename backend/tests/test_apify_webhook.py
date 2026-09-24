@@ -979,15 +979,20 @@ def test_authorization_sin_el_esquema_bearer_tambien_sirve(cliente):
     assert respuesta.status_code == 200
 
 
-def test_el_401_dice_que_cabecera_hay_que_poner(cliente):
-    """Depurar esto desde Apify es leer un 401 y adivinar. El cuerpo ayuda."""
+def test_el_401_es_generico_y_la_pista_va_al_log(cliente, caplog):
+    """Desde el 2026-09-23 el 401 no le dice a quien sondea la URL qué cabecera
+    ni qué variable faltan: eso queda en el log, que es donde lo lee el operador."""
     settings.APIFY_WEBHOOK_SECRET = "secreto-compartido"
-    respuesta = cliente.post(WEBHOOK, json=payload_apify())
+    with caplog.at_level(logging.INFO, logger="app.api.v1.endpoints.apify"):
+        respuesta = cliente.post(WEBHOOK, json=payload_apify())
 
     assert respuesta.status_code == 401
     detalle = respuesta.json()["detail"]
-    assert "X-AlertaV-Apify-Secret" in detalle
-    assert "secreto-compartido" not in detalle, "el secreto no se devuelve nunca"
+    assert detalle == "no autorizado"
+    assert "X-AlertaV-Apify-Secret" not in detalle
+    registro = next(r for r in caplog.records if "rechazado" in r.getMessage())
+    assert registro.cabecera_esperada == "X-AlertaV-Apify-Secret"
+    assert not hasattr(registro, "largo_esperado"), "el largo del secreto no va al log"
 
 
 # --- 8. El nivel del log del rechazo -----------------------------------------

@@ -22,7 +22,7 @@ from app.api.deps import (
 )
 from app.api.v1.params import parse_bbox
 from app.core.config import settings
-from app.core.ratelimit import RateLimiter, client_ip
+from app.core.ratelimit import RateLimiter, client_ip_de
 from app.models.enums import EventSource, EventType
 from app.schemas.event import (
     CitizenReportCreate,
@@ -41,8 +41,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/events", tags=["events"])
 
 #: Limitador del endpoint ciudadano. Vive a nivel de módulo —una instancia por
-#: proceso— y sólo protege ese endpoint: los demás son de lectura, o requieren
-#: credenciales de operador.
+#: proceso— y sólo protege ese endpoint: el resto de este router es de lectura.
+#: (`POST /events` y `POST /events/batch`, que dejaban a cualquiera inyectar
+#: señales con cualquier fuente y confianza, se borraron el 2026-09-23.)
 citizen_report_limiter = RateLimiter(
     interval_seconds=settings.CITIZEN_REPORT_MIN_INTERVAL_SECONDS
 )
@@ -71,11 +72,7 @@ citizen_report_limiter = RateLimiter(
 async def create_citizen_report(
     report: CitizenReportCreate, request: Request, service: IngestServiceDep
 ) -> EventRead:
-    ip = client_ip(
-        forwarded_for=request.headers.get("x-forwarded-for"),
-        real_ip=request.headers.get("x-real-ip"),
-        peer=request.client.host if request.client else None,
-    )
+    ip = client_ip_de(request.headers, request.client.host if request.client else None)
 
     decision = citizen_report_limiter.check(ip)
     if not decision.allowed:
@@ -209,7 +206,7 @@ async def event_neighbours(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="evento no encontrado")
     if event.lat is None or event.lon is None:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="el evento no tiene coordenadas",
         )
 
@@ -574,7 +571,7 @@ def _parse_near(
         return None
     if not all(provided):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="lat, lon y radius_m deben usarse juntos",
         )
     return (lat, lon, radius_m)  # type: ignore[return-value]

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -133,26 +134,36 @@ class RateLimiter:
 
 
 def client_ip(
-    *, forwarded_for: str | None, real_ip: str | None, peer: str | None
+    *,
+    forwarded_for: str | None,
+    real_ip: str | None,
+    peer: str | None,
+    true_client_ip: str | None = None,
+    cf_connecting_ip: str | None = None,
 ) -> str:
     """Dirección del cliente detrás del proxy de la plataforma.
 
-    Se toma el **primer** elemento de `X-Forwarded-For`. La cabecera es una lista
-    en la que cada proxy anexa a la derecha, así que el cliente original es el de
-    más a la izquierda y los de la derecha son la cadena de intermediarios.
+    Orden de preferencia, de la cabecera que el cliente NO puede falsificar a la
+    que sí:
 
-    Aquí hay una advertencia que merece estar escrita: **esa cabecera la puede
-    falsificar cualquiera**. Un cliente que mande su propio `X-Forwarded-For`
-    inyecta un valor arbitrario a la izquierda y se salta el límite cambiándolo
-    en cada petición. Sólo es fiable porque el edge de la plataforma —Koyeb o
-    Render— reescribe la cabecera antes de que llegue acá; si algún día el
-    servicio quedara expuesto directamente a internet, este valor pasaría a ser
-    una entrada del usuario y habría que dejar de confiar en él.
+    1. **`True-Client-IP` / `CF-Connecting-IP`.** Render atiende detrás de
+       Cloudflare, y Cloudflare **reemplaza** estas dos cabeceras con la IP que
+       ve en la conexión: lo que mande el cliente se pisa.
+    2. **El primer elemento de `X-Forwarded-For`.** Es el cliente original
+       según la cadena de proxies, pero esta cabecera la puede escribir
+       cualquiera: el proxy **anexa** a la derecha en vez de reemplazar, así que
+       un `X-Forwarded-For: 1.2.3.4` enviado por el cliente queda primero. Por
+       eso quedó en segundo lugar el 2026-09-23 — con ella al frente, rotar el
+       valor en cada petición se saltaba el límite de reportes ciudadanos.
+    3. `X-Real-IP`, luego la dirección del socket.
 
-    Cae a `X-Real-IP` y luego a la dirección del socket. Cuando no hay ninguna
-    —tests, llamadas locales— devuelve un centinela en vez de `None` para que el
-    limitador nunca reciba una clave vacía que agrupe a todo el mundo.
+    Cuando no hay ninguna —tests, llamadas locales— devuelve un centinela en vez
+    de `None` para que el limitador nunca reciba una clave vacía que agrupe a
+    todo el mundo.
     """
+    for confiable in (true_client_ip, cf_connecting_ip):
+        if confiable and confiable.strip():
+            return confiable.strip()
     if forwarded_for:
         primera = forwarded_for.split(",")[0].strip()
         if primera:
@@ -164,4 +175,15 @@ def client_ip(
     return "desconocida"
 
 
-__all__ = ["RateLimitDecision", "RateLimiter", "client_ip"]
+def client_ip_de(headers: Mapping[str, str], peer: str | None) -> str:
+    """`client_ip` leyendo las cabeceras de una petición de Starlette."""
+    return client_ip(
+        forwarded_for=headers.get("x-forwarded-for"),
+        real_ip=headers.get("x-real-ip"),
+        peer=peer,
+        true_client_ip=headers.get("true-client-ip"),
+        cf_connecting_ip=headers.get("cf-connecting-ip"),
+    )
+
+
+__all__ = ["RateLimitDecision", "RateLimiter", "client_ip", "client_ip_de"]

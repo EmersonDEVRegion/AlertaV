@@ -280,27 +280,43 @@ publicar una alerta oficial — hay un test que lo comprueba.
 
 ## Endpoints
 
-| Método | Ruta | Propósito |
-|---|---|---|
-| POST | `/api/v1/events` | Ingesta unitaria |
-| POST | `/api/v1/events/batch` | Ingesta idempotente por lote (collectors) |
-| POST | `/api/v1/events/citizen-report` | Reporte desde la PWA |
-| GET | `/api/v1/events` | Listado con filtros de tiempo, fuente, tipo, bbox y radio |
-| GET | `/api/v1/events/geojson` | FeatureCollection para MapLibre GL JS |
-| GET | `/api/v1/events/stats` | Resumen de la ventana de recolección |
-| GET | `/api/v1/events/{public_id}/neighbours` | Señales cercanas en espacio y tiempo |
-| GET | `/api/v1/events/seismic` | **Sismos del USGS** con magnitud y profundidad (JOIN con `seismic_details`) |
-| GET | `/api/v1/events/seismic/geojson` | Los mismos, como FeatureCollection para la capa sísmica |
-| GET | `/api/v1/events/seismic/stats` | Resumen de la ventana sísmica |
-| GET | `/api/v1/incidents/active` | **Incidentes consolidados para el mapa** |
-| GET | `/api/v1/incidents/geojson` | Los mismos, como FeatureCollection |
-| GET | `/api/v1/incidents/stats` | Resumen de la correlación |
-| GET | `/api/v1/incidents/{code}` | Detalle con todas sus señales y el motivo de cada vínculo |
-| POST | `/api/v1/incidents/correlate` | Disparo manual del motor |
-| GET | `/api/v1/collectors` | Collectors registrados |
-| POST | `/api/v1/collectors/{name}/run` | Disparo manual |
-| GET | `/api/v1/collectors/runs` | Historial de ejecuciones |
-| GET | `/api/v1/health/ready` | Readiness (verifica PostGIS, 503 si falta) |
+**Operador** = exige `Authorization: Bearer <OPERATOR_TOKEN>`. En producción,
+sin `OPERATOR_TOKEN` configurado esas rutas responden 503: fallan cerradas.
+**Oculta** = activa, pero fuera del esquema OpenAPI público (`/docs`): no la
+consume la PWA, sirve para calibrar y para `scripts/smoke_test.py`.
+
+| Método | Ruta | Acceso | Propósito |
+|---|---|---|---|
+| POST | `/api/v1/events/citizen-report` | pública, 1 por IP cada N min | Reporte desde la PWA |
+| GET | `/api/v1/events` | oculta | Listado con filtros de tiempo, fuente, tipo, bbox y radio |
+| GET | `/api/v1/events/geojson` | oculta | FeatureCollection de señales crudas |
+| GET | `/api/v1/events/stats` | oculta | Resumen de la ventana de recolección |
+| GET | `/api/v1/events/{public_id}` | oculta | Detalle de una señal |
+| GET | `/api/v1/events/{public_id}/neighbours` | oculta | Señales cercanas en espacio y tiempo (calibración) |
+| GET | `/api/v1/events/seismic` | pública | **Sismos** con magnitud y profundidad (JOIN con `seismic_details`) |
+| GET | `/api/v1/events/seismic/hazard` | pública | Capa de amenaza sísmica del CSN |
+| GET | `/api/v1/events/weather/geojson` | pública | Lluvia pronosticada por comuna |
+| GET | `/api/v1/events/weather/tactical` | pública | Estado meteorológico de la región (widget) |
+| GET | `/api/v1/events/road-closures/geojson` | pública | Cortes de ruta (MOP + MTT) |
+| GET | `/api/v1/incidents/active` | pública | **Incidentes consolidados para el mapa** |
+| GET | `/api/v1/incidents/{code}` | pública | Detalle con todas sus señales y el motivo de cada vínculo |
+| GET | `/api/v1/incidents/geojson` | oculta | Incidentes como FeatureCollection |
+| GET | `/api/v1/incidents/stats` | oculta | Resumen de la correlación |
+| POST | `/api/v1/incidents/correlate` | operador | Disparo manual del motor |
+| GET | `/api/v1/collectors/health` | pública | Salud por familia (la lee el mapa) |
+| GET | `/api/v1/collectors` | operador | Collectors registrados |
+| GET | `/api/v1/collectors/runs` | operador | Historial de ejecuciones (trae el `error` completo) |
+| POST | `/api/v1/collectors/{name}/run` | operador | Disparo manual |
+| POST | `/api/v1/collectors/backfill-geocoding` | operador | Reintenta geocodificar señales sin punto |
+| POST | `/api/v1/apify/webhook` | secreto de Apify | Encola la corrida del Task de X (despachos de Bomberos) |
+| GET | `/api/v1/feed/vehiculos` | pública | Feed de vehículos de GBV |
+| GET/POST | `/api/v1/push/*` | pública | Suscripciones push |
+| GET | `/api/v1/health`, `/api/v1/health/ready` | pública | Liveness y readiness |
+
+Se borraron el 2026-09-23 porque nadie las consumía: `POST /events` y
+`POST /events/batch` (dejaban a cualquiera inyectar señales con cualquier fuente
+y confianza), `POST /apify/webhook/prensa`, `GET /events/seismic/geojson`,
+`/events/seismic/stats`, `/events/weather` y `/events/weather/stats`.
 
 Las rutas `/events/seismic*` van declaradas **antes** de `/events/{public_id}`:
 FastAPI resuelve por orden de registro y, puestas después, "seismic" entraría
@@ -547,7 +563,7 @@ geocodificador ubica la misma casa quemada en dos puntos a kilómetros de
 distancia. Lo que sí repiten con las mismas palabras es el sector: "en el sector
 de Miraflores Alto".
 
-Los collectors de texto libre (prensa, Instagram, X) extraen ese sector
+Los collectors de texto libre (prensa y despachos de X) extraen ese sector
 (`app/collectors/lugares.py`) y lo guardan en `raw_data._extraction.sector_clave`
 junto con la comuna (`vina del mar|miraflores alto`). El geocodificador lo usa
 para descartar una calle que OSM ubica en otro sector y, si no hay calle, para

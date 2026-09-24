@@ -1,7 +1,8 @@
 """Disparo manual y estado de los collectors.
 
-En producción estos endpoints deben quedar detrás de autenticación de operador:
-lanzan tráfico saliente hacia APIs de terceros con cuota.
+Todo salvo `/health` exige `OPERATOR_TOKEN` (`require_operator`): lanzan
+tráfico saliente hacia APIs de terceros con cuota, o exponen el `error`
+completo de cada corrida. `/health` queda pública porque la lee el mapa.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import desc, select
 
-from app.api.deps import IngestServiceDep, SessionDep
+from app.api.deps import IngestServiceDep, OperatorDep, SessionDep
 from app.collectors.registry import available_collectors, get_collector
 from app.models.event import CollectorRun
 from app.services.backfill import backfill_geocoding
@@ -65,7 +66,7 @@ class HealthRead(BaseModel):
     collectors: list[CollectorHealthRead]
 
 
-@router.get("", summary="Collectors disponibles")
+@router.get("", summary="Collectors disponibles", dependencies=[OperatorDep])
 async def list_collectors() -> dict[str, list[str]]:
     return {"collectors": available_collectors()}
 
@@ -80,6 +81,7 @@ class BackfillRead(BaseModel):
 
 @router.post(
     "/backfill-geocoding",
+    dependencies=[OperatorDep],
     response_model=BackfillRead,
     summary="Reintenta geocodificar los eventos que quedaron sin coordenadas",
     description=(
@@ -155,6 +157,7 @@ async def collectors_health(session: SessionDep) -> HealthRead:
 
 @router.post(
     "/{name}/run",
+    dependencies=[OperatorDep],
     response_model=CollectorRunResult,
     summary="Ejecutar un collector ahora",
 )
@@ -179,6 +182,7 @@ async def run_collector(name: str, service: IngestServiceDep) -> CollectorRunRes
 
 @router.get(
     "/runs",
+    dependencies=[OperatorDep],
     response_model=list[CollectorRunRead],
     summary="Últimas ejecuciones",
     description=(

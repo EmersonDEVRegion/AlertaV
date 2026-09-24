@@ -31,7 +31,7 @@ class ConfigurationError(AlertaVError):
 
 
 class ValidationError(AlertaVError):
-    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
     code = "validation_error"
 
 

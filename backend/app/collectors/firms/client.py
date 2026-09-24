@@ -79,16 +79,23 @@ class FirmsClient:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(url)
                 response.raise_for_status()
+        # `from None` y el texto de la excepción limpiado a mano: la MAP_KEY
+        # viaja en la RUTA de la URL (FIRMS no la acepta en otro lado), y tanto
+        # el mensaje de `HTTPStatusError` como el traceback encadenado la
+        # llevaban completa a los logs de Render y, por `collector_runs.error`,
+        # a `/collectors/runs`.
         except httpx.HTTPStatusError as exc:
             raise CollectorError(
                 f"FIRMS respondió {exc.response.status_code} para {sensor}",
                 detail={"url": safe_url},
-            ) from exc
+            ) from None
         except httpx.HTTPError as exc:
+            detalle = str(exc).replace(self.map_key, "***")
             raise CollectorError(
-                f"error de red consultando FIRMS ({sensor}): {exc}",
+                f"error de red consultando FIRMS ({sensor}): "
+                f"{type(exc).__name__}: {detalle}",
                 detail={"url": safe_url},
-            ) from exc
+            ) from None
 
         return self.parse_csv(response.text, sensor=sensor)
 
