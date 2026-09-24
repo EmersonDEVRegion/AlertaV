@@ -66,6 +66,7 @@ from app.collectors.seismic.csn_parser import (
 )
 from app.core.config import settings
 from app.core.exceptions import CollectorError
+from app.core.identidad import user_agent
 from app.models.enums import EventSource, EventType
 from app.repositories.seismic_repository import SeismicRepository
 from app.schemas.event import EventCreate
@@ -182,7 +183,7 @@ class SismologiaCollector(BaseCollector):
         async with httpx.AsyncClient(
             timeout=settings.CSN_TIMEOUT_SECONDS,
             follow_redirects=True,
-            headers={"User-Agent": settings.NOMINATIM_USER_AGENT},
+            headers={"User-Agent": user_agent("sismos")},
         ) as client:
             for ruta in rutas:
                 url = f"{self.base_url}/{ruta}"

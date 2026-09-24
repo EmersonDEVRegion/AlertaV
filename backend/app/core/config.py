@@ -7,6 +7,7 @@ entorno.
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Annotated, Literal
 from urllib.parse import urlsplit, urlunsplit
@@ -34,6 +35,19 @@ PLACEHOLDERS: tuple[str, ...] = (
     "TU_CORREO",
     "github.com/alertav",
     "<",
+)
+
+
+#: Un correo dentro de un texto libre («AlertaV/1.0 (x@y.cl)», «mailto:x@y.cl»).
+_CORREO = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+#: Anulaciones de User-Agent: cualquiera con tildes rompe httpx al construirse.
+_AGENTES: tuple[str, ...] = (
+    "NOMINATIM_USER_AGENT",
+    "TRANSPORTE_INFORMA_USER_AGENT",
+    "GBV_USER_AGENT",
+    "ESVAL_USER_AGENT",
+    "LOCAL_NEWS_USER_AGENT",
 )
 
 
@@ -83,6 +97,11 @@ class Settings(BaseSettings):
     #: responden 503 (fallan cerradas). Si se define, mínimo 32 caracteres ASCII:
     #: `python -c "import secrets; print(secrets.token_hex(32))"`.
     OPERATOR_TOKEN: str = ""
+    #: Identidad ante los servicios que se consultan. Ver `app/core/identidad.py`.
+    #: El correo es opcional: vacío, se toma el `mailto:` de `VAPID_SUBJECT` o el
+    #: correo de `NOMINATIM_USER_AGENT` (ver `contacto_email`).
+    CONTACT_EMAIL: str = ""
+    CONTACT_URL: str = "https://github.com/EmersonDEVRegion/AlertaV"
 
     # -- Base de datos -------------------------------------------------------
     #: DSN completo. Si viene definido, **manda sobre los `POSTGRES_*`**: es lo
@@ -314,12 +333,9 @@ class Settings(BaseSettings):
     ESVAL_REGION_KML: int = 5
     #: Navegador + identificación, el criterio de `TRANSPORTE_INFORMA_USER_AGENT`.
     #: Sin tildes: las cabeceras HTTP van en latin-1.
-    ESVAL_USER_AGENT: str = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 "
-        "AlertaV/1.0 (+https://github.com/alertav; cortes de agua "
-        "Region de Valparaiso)"
-    )
+    #: Vacío = navegador + identidad de `app.core.identidad` (repo y correo de
+    #: contacto). Con valor, se manda tal cual: ASCII, sin tildes.
+    ESVAL_USER_AGENT: str = ""
     ESVAL_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0, le=120)
     #: 10 minutos. Son dos GET livianos por corrida; un corte de emergencia se
     #: publica en cualquier momento, pero no cambia minuto a minuto.
@@ -505,12 +521,9 @@ class Settings(BaseSettings):
     #: `UnicodeEncodeError` antes de abrir la conexión. El collector no habría
     #: fallado al raspar sino al construirse — cada corrida, sin llegar nunca a
     #: la red, con un mensaje que no menciona la cabecera por ninguna parte.
-    TRANSPORTE_INFORMA_USER_AGENT: str = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 "
-        "AlertaV/1.0 (+https://github.com/alertav; monitoreo de siniestros "
-        "Region de Valparaiso)"
-    )
+    #: Vacío = navegador + identidad de `app.core.identidad` (repo y correo de
+    #: contacto). Con valor, se manda tal cual: ASCII, sin tildes.
+    TRANSPORTE_INFORMA_USER_AGENT: str = ""
     #: Tope de geocodificaciones por corrida. A 1 s por llamada (ver
     #: NOMINATIM_MIN_INTERVAL_SECONDS), 20 avisos son 20 segundos de corrida.
     #: Sin tope, un día de temporal con 300 avisos dejaría al worker cinco
@@ -555,12 +568,9 @@ class Settings(BaseSettings):
     #: `TRANSPORTE_INFORMA_USER_AGENT`: un WAF trata a un UA sin navegador como
     #: bot, y quien opera el sitio —una ONG— tiene derecho a saber quién le pega
     #: y a quién escribirle. Sin tildes: las cabeceras HTTP van en latin-1.
-    GBV_USER_AGENT: str = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 "
-        "AlertaV/1.0 (+https://github.com/alertav; feed de vehiculos "
-        "Region de Valparaiso)"
-    )
+    #: Vacío = navegador + identidad de `app.core.identidad` (repo y correo de
+    #: contacto). Con valor, se manda tal cual: ASCII, sin tildes.
+    GBV_USER_AGENT: str = ""
     GBV_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0, le=120)
     #: 30 minutos. GBV publica unas pocas denuncias al día y la primera página
     #: del listado cubre semanas: consultar más seguido sólo le pegaría más a un
@@ -747,10 +757,9 @@ class Settings(BaseSettings):
     #: Esto NO resuelve un desafío JavaScript de verdad, y no pretende hacerlo:
     #: si alguno de los portales lo activa, lo correcto es dejar de raspar y
     #: pedir acceso, no perseguirlo.
-    LOCAL_NEWS_USER_AGENT: str = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-    )
+    #: Vacío = navegador + identidad de `app.core.identidad` (repo y correo de
+    #: contacto). Con valor, se manda tal cual: ASCII, sin tildes.
+    LOCAL_NEWS_USER_AGENT: str = ""
     LOCAL_NEWS_TIMEOUT_SECONDS: float = 30.0
     #: Cadencia. 15 minutos: un medio redacta y publica, no transmite. Consultar
     #: cada cinco devolvería tres veces la misma portada y golpearía a un
@@ -963,8 +972,9 @@ class Settings(BaseSettings):
     NOMINATIM_MIN_INTERVAL_SECONDS: float = Field(default=1.0, ge=1.0, le=60.0)
     NOMINATIM_TIMEOUT_SECONDS: float = 20.0
     #: Nominatim exige un User-Agent identificable con contacto real; las
-    #: peticiones anónimas se rechazan. Cambiar el correo por el del operador.
-    NOMINATIM_USER_AGENT: str = "AlertaV/0.1 (contacto: alertav@example.cl)"
+    #: peticiones anónimas se rechazan. Vacío = `AlertaV/1.0 (+<repo>; <correo>)`
+    #: de `app.core.identidad`; con valor, se manda tal cual.
+    NOMINATIM_USER_AGENT: str = ""
     #: Sesgo de la búsqueda hacia Chile. Evita que "Avenida Argentina" resuelva
     #: en Buenos Aires, que es exactamente lo que hace Nominatim sin esto.
     NOMINATIM_COUNTRY_CODES: str = "cl"
@@ -1155,7 +1165,7 @@ class Settings(BaseSettings):
         if token and (len(token) < 32 or not token.isascii()):
             errores.append("OPERATOR_TOKEN: mínimo 32 caracteres ASCII")
 
-        revisar = ["NOMINATIM_USER_AGENT", "FIRMS_MAP_KEY"]
+        revisar = ["FIRMS_MAP_KEY"]
         if self.PUSH_ENABLED:
             revisar.append("VAPID_SUBJECT")
         for nombre in revisar:
@@ -1163,11 +1173,45 @@ class Settings(BaseSettings):
             if not valor or any(marca in valor for marca in PLACEHOLDERS):
                 errores.append(f"{nombre} vacío o con un placeholder ({valor!r})")
 
+        # El User-Agent de Nominatim puede ir vacío (se arma solo), pero si se
+        # define no puede ser una plantilla, y en cualquier caso tiene que haber
+        # un correo real a quién escribir: es la condición de uso del servicio.
+        agente = self.NOMINATIM_USER_AGENT.strip()
+        if agente and any(marca in agente for marca in PLACEHOLDERS):
+            errores.append(f"NOMINATIM_USER_AGENT con un placeholder ({agente!r})")
+        if not self.contacto_email:
+            errores.append(
+                "sin correo de contacto: definir CONTACT_EMAIL (o un mailto: en "
+                "VAPID_SUBJECT, o un correo en NOMINATIM_USER_AGENT)"
+            )
+        for nombre in _AGENTES:
+            if not str(getattr(self, nombre)).isascii():
+                errores.append(f"{nombre}: las cabeceras HTTP sólo admiten ASCII")
+
         if errores:
             raise ValueError(
                 "configuración de producción inválida: " + "; ".join(errores)
             )
         return self
+
+    @property
+    def contacto_email(self) -> str | None:
+        """Correo a quién escribir, para los User-Agent. None si no hay uno real.
+
+        Por orden: `CONTACT_EMAIL`, el `mailto:` de `VAPID_SUBJECT`, el correo
+        que traiga `NOMINATIM_USER_AGENT`. Los dos últimos son los que Render ya
+        tiene configurados; el primero existe para no depender de ellos.
+        """
+        candidatos = (
+            self.CONTACT_EMAIL,
+            self.VAPID_SUBJECT.removeprefix("mailto:"),
+            self.NOMINATIM_USER_AGENT,
+        )
+        for texto in candidatos:
+            encontrado = _CORREO.search(texto or "")
+            if encontrado and not any(m in encontrado.group(0) for m in PLACEHOLDERS):
+                return encontrado.group(0)
+        return None
 
     @computed_field  # type: ignore[prop-decorator]
     @property

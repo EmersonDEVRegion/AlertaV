@@ -27,6 +27,7 @@ from typing import Any, Literal
 import httpx
 
 from app.core.exceptions import CollectorError
+from app.core.identidad import user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -868,7 +869,11 @@ class ArcGisFeatureClient:
         offset = 0
 
         async with httpx.AsyncClient(
-            timeout=self.timeout, follow_redirects=True
+            timeout=self.timeout,
+            follow_redirects=True,
+            # Servicios del Estado (CONAF, SENAPRED): sin esto iban con el
+            # agente de httpx, anónimos.
+            headers={"User-Agent": user_agent()},
         ) as client:
             for page in range(_MAX_PAGES):
                 params: dict[str, Any] = {
@@ -962,7 +967,11 @@ class WfsClient:
             params.update(extra_params)
 
         async with httpx.AsyncClient(
-            timeout=self.timeout, follow_redirects=True
+            timeout=self.timeout,
+            follow_redirects=True,
+            # Servicios del Estado (CONAF, SENAPRED): sin esto iban con el
+            # agente de httpx, anónimos.
+            headers={"User-Agent": user_agent()},
         ) as client:
             payload = await request_json(client, spec.url, params, origin=spec.label)
         return parse_feature_collection(payload, origin=spec.label)
@@ -978,7 +987,11 @@ class GeoJsonClient:
         self, spec: SourceSpec, *, extra_params: Mapping[str, Any] | None = None
     ) -> list[GeoFeature]:
         async with httpx.AsyncClient(
-            timeout=self.timeout, follow_redirects=True
+            timeout=self.timeout,
+            follow_redirects=True,
+            # Servicios del Estado (CONAF, SENAPRED): sin esto iban con el
+            # agente de httpx, anónimos.
+            headers={"User-Agent": user_agent()},
         ) as client:
             payload = await request_json(
                 client, spec.url, {**spec.params, **(extra_params or {})}, origin=spec.label

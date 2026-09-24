@@ -82,6 +82,7 @@ from app.collectors.power.outage_parser import (
 )
 from app.core.config import settings
 from app.core.exceptions import CollectorError
+from app.core.identidad import user_agent
 from app.models.enums import EventType
 from app.schemas.event import EventCreate
 
@@ -165,7 +166,7 @@ class BasePowerOutageCollector(BaseCollector):
         credencial en la traza es una credencial filtrada a cualquiera que
         consulte el historial de corridas.
         """
-        return {"User-Agent": settings.NOMINATIM_USER_AGENT}
+        return {"User-Agent": user_agent("cortes de luz")}
 
     def request_payload(self) -> dict[str, Any]:
         """Filtros que la fuente espera recibir. Vacío = pedir el feed entero.

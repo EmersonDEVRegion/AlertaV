@@ -41,6 +41,7 @@ import httpx
 from app.collectors.geoservices import as_float, normalise_text, request_json
 from app.collectors.lugares import sectores_compatibles
 from app.core.config import settings
+from app.core.identidad import nominatim_user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -730,7 +731,7 @@ def build_client(timeout: float | None = None) -> httpx.AsyncClient:
     """
     return httpx.AsyncClient(
         timeout=timeout or settings.NOMINATIM_TIMEOUT_SECONDS,
-        headers={"User-Agent": settings.NOMINATIM_USER_AGENT},
+        headers={"User-Agent": nominatim_user_agent()},
         follow_redirects=True,
     )
 

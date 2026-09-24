@@ -145,6 +145,7 @@ from app.collectors.vocabulary import (
 )
 from app.core.config import settings
 from app.core.exceptions import CollectorError
+from app.core.identidad import user_agent_o
 from app.models.enums import EventSource, EventType
 from app.schemas.event import EventCreate
 
@@ -984,7 +985,13 @@ class TransporteInformaCollector(BaseCollector):
                 # falso: le decía al portal del Ministerio que quien lo visitaba
                 # era el cliente de OpenStreetMap. Ver
                 # `TRANSPORTE_INFORMA_USER_AGENT` en `core/config.py`.
-                headers={"User-Agent": settings.TRANSPORTE_INFORMA_USER_AGENT},
+                headers={
+                    "User-Agent": user_agent_o(
+                        settings.TRANSPORTE_INFORMA_USER_AGENT,
+                        "monitoreo de siniestros Region de Valparaiso",
+                        navegador=True,
+                    )
+                },
             ) as client:
                 html = await request_text(
                     client, self.url, origin="transporte_informa"

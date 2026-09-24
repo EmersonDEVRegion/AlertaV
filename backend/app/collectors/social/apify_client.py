@@ -31,6 +31,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.exceptions import CollectorError
+from app.core.identidad import user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ def build_client(timeout: float | None = None) -> httpx.AsyncClient:
             "Accept": "application/json",
             # Apify no lo exige, pero identificarse es barato y aparece en su
             # panel de uso cuando hay que averiguar quién consumió qué.
-            "User-Agent": settings.NOMINATIM_USER_AGENT,
+            "User-Agent": user_agent(),
         },
     )
 

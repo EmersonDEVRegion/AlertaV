@@ -86,6 +86,7 @@ from app.collectors.vehicles.gbv_parser import (
 )
 from app.core.config import settings
 from app.core.exceptions import CollectorError
+from app.core.identidad import user_agent_o
 from app.models.enums import (
     SOURCE_BASE_CONFIDENCE,
     EventSource,
@@ -154,7 +155,11 @@ class GbvCollector(BaseCollector):
             timeout=settings.GBV_TIMEOUT_SECONDS,
             follow_redirects=True,
             headers={
-                "User-Agent": settings.GBV_USER_AGENT,
+                "User-Agent": user_agent_o(
+                    settings.GBV_USER_AGENT,
+                    "feed de vehiculos Region de Valparaiso",
+                    navegador=True,
+                ),
                 "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "es-CL,es;q=0.9",
             },

@@ -26,6 +26,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.exceptions import CollectorError, ConfigurationError
+from app.core.identidad import user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,9 @@ class FirmsClient:
         safe_url = url.replace(self.map_key, "***")
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(
+                timeout=self.timeout, headers={"User-Agent": user_agent("focos de calor")}
+            ) as client:
                 response = await client.get(url)
                 response.raise_for_status()
         # `from None` y el texto de la excepción limpiado a mano: la MAP_KEY

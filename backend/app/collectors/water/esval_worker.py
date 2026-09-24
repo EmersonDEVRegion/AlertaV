@@ -79,6 +79,7 @@ from app.collectors.water.esval_parser import (
 )
 from app.core.config import settings
 from app.core.exceptions import CollectorError
+from app.core.identidad import user_agent_o
 from app.models.enums import EventSource, EventType
 from app.schemas.event import EventCreate
 
@@ -92,6 +93,13 @@ WATER_CUT_CONFIDENCE = 1.0
 #: para el KML. Son los que manda un navegador que usa esas páginas.
 API_REFERER = "https://ov.esval.cl/"
 KML_REFERER = "https://tupuntodeagua.esval.cl/"
+
+
+def _agente() -> str:
+    """Navegador + identidad; `ESVAL_USER_AGENT` lo anula si tiene valor."""
+    return user_agent_o(
+        settings.ESVAL_USER_AGENT, "cortes de agua Region de Valparaiso", navegador=True
+    )
 
 
 def _ahora() -> datetime:
@@ -145,7 +153,7 @@ class EsvalCollector(BaseCollector):
         `_seleccionar`.
         """
         return {
-            "User-Agent": settings.ESVAL_USER_AGENT,
+            "User-Agent": _agente(),
             "XCodempresa": str(settings.ESVAL_EMPRESA_ID),
             "Referer": API_REFERER,
             "Accept": "application/json, text/plain, */*",
@@ -153,7 +161,7 @@ class EsvalCollector(BaseCollector):
 
     def kml_headers(self) -> dict[str, str]:
         return {
-            "User-Agent": settings.ESVAL_USER_AGENT,
+            "User-Agent": _agente(),
             "Referer": KML_REFERER,
             "Accept": (
                 "application/vnd.google-earth.kml+xml, application/xml;q=0.9, "
