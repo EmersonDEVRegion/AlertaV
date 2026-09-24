@@ -984,6 +984,13 @@ class Settings(BaseSettings):
     # calibran contra la ventana de recolección con `/events/{id}/neighbours`.
     #: Radio de agrupación espacial, en metros reales.
     CORRELATION_RADIUS_M: float = Field(default=1500.0, ge=100.0, le=20_000.0)
+    #: Radio, brecha temporal y edad máxima POR FAMILIA
+    #: (`app/services/correlation/perfiles.py`), filtro temporal al adherir una
+    #: señal a un incidente y ventana por hora de ingesta para lo que llega
+    #: tarde. En `false`, el motor vuelve exactamente a lo anterior: un solo
+    #: `CORRELATION_RADIUS_M` y ventana por `timestamp`. Es el interruptor de
+    #: emergencia si la calibración nueva agrupa peor.
+    CORRELATION_PERFILES: bool = True
     #: Ventana hacia atrás de señales que el motor considera en cada pasada.
     CORRELATION_WINDOW_HOURS: int = Field(default=4, ge=1, le=168)
     #: Antigüedad máxima de un incidente para que una señal nueva se le adhiera.

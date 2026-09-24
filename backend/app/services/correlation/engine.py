@@ -54,6 +54,19 @@ Paso A no sirviera de nada.
 Lo que NO separa: los grados de certeza sobre un mismo fenómeno. `smoke`,
 `thermal_anomaly` y `wildfire` caen todos en la familia `fire` y se corroboran
 entre sí. Eso es el sistema funcionando, no una fuga.
+
+Perfiles por familia (desde el 2026-09-23)
+------------------------------------------
+Con `CORRELATION_PERFILES` (encendido por defecto) cada familia tiene su radio,
+su brecha temporal y su edad máxima (`perfiles.py`): el DBSCAN agrupa con el
+radio de la familia, el racimo se corta donde se abre el tiempo, una señal sólo
+se adhiere a un incidente que estuvo vivo cerca de su hora, el radio de
+adhesión crece con la imprecisión del punto (`street`, `sector`), y lo que llega
+tarde (por `ingested_at`) todavía se agrupa. En `false`, todo vuelve a lo de
+antes: un radio y una ventana por `timestamp`.
+
+La comuna tiene además un último recurso: el polígono comunal que contiene al
+incidente (`comunas_region`, migración 0015). Ese sí no depende del interruptor.
 """
 
 from __future__ import annotations
@@ -99,6 +112,12 @@ from app.services.correlation.confidence import (
     resolve_type,
     rule_for,
     score,
+)
+from app.services.correlation.perfiles import (
+    PERFILES,
+    holgura,
+    partir_por_brecha,
+    perfil,
 )
 
 logger = logging.getLogger(__name__)
@@ -147,9 +166,13 @@ class CorrelationPass:
     #: Descartados por no conseguir corroboración a tiempo. Es la métrica que
     #: dirá si el TTL de 5 minutos está bien calibrado o mata reportes válidos.
     incidents_dismissed: int = 0
-    #: Incidentes que el Paso B no pudo alcanzar por no tener comuna. Es la
-    #: métrica que dirá cuándo hace falta la capa de polígonos comunales.
+    #: Incidentes que el Paso B no pudo alcanzar por no tener comuna. Desde la
+    #: 0015 debería quedar en cero para todo lo que cae dentro de la región.
     incidents_without_commune: int = 0
+    #: Incidentes cuya comuna salió del polígono y no de una señal.
+    communes_by_polygon: int = 0
+    #: Tramos extra que salieron de cortar racimos por su brecha temporal.
+    clusters_split: int = 0
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -178,6 +201,8 @@ class CorrelationPass:
             "incidents_stale": self.incidents_stale,
             "incidents_dismissed": self.incidents_dismissed,
             "incidents_without_commune": self.incidents_without_commune,
+            "communes_by_polygon": self.communes_by_polygon,
+            "clusters_split": self.clusters_split,
             "warnings": list(self.warnings),
         }
 
@@ -225,6 +250,7 @@ class CorrelationEngine:
         min_signals: int | None = None,
         attach_regional_alerts: bool | None = None,
         max_events: int | None = None,
+        perfiles: bool | None = None,
     ) -> None:
         self.session = session
         self.repo = IncidentRepository(session)
@@ -255,18 +281,27 @@ class CorrelationEngine:
             else attach_regional_alerts
         )
         self.max_events = max_events or settings.CORRELATION_MAX_EVENTS_PER_PASS
+        self.perfiles = settings.CORRELATION_PERFILES if perfiles is None else perfiles
+        #: ¿Existe `comunas_region`? Se pregunta una vez por pasada.
+        self._hay_comunas: bool | None = None
+        self._comunas_por_poligono = 0
 
     # -- Orquestación ---------------------------------------------------------
 
-    async def run(self) -> CorrelationPass:
+    async def run(self, now: datetime | None = None) -> CorrelationPass:
         """Una pasada completa. Commit único al final.
 
         La pasada es atómica a propósito: un fallo a mitad del Paso B no puede
         dejar el mapa con incidentes creados pero sin sus alertas, ni con los
         enlaces del Paso B borrados y no reconstruidos.
+
+        `now` existe para `scripts/replay_correlacion.py`, que reproduce días
+        de señales con un reloj simulado. En producción se omite.
         """
-        now = datetime.now(UTC)
+        now = now or datetime.now(UTC)
         result = CorrelationPass(started_at=now)
+        self._hay_comunas = None
+        self._comunas_por_poligono = 0
 
         if not await self.repo.try_advisory_lock():
             # Dos pasadas concurrentes leen `incident_id IS NULL` antes de que la
@@ -284,6 +319,7 @@ class CorrelationEngine:
             await self._merge_converged(result, now=now)
             await self._step_b_commune(result, now=now)
             await self._expire(result, now=now)
+            result.communes_by_polygon = self._comunas_por_poligono
             await self.session.commit()
         except Exception:
             await self.session.rollback()
@@ -301,9 +337,18 @@ class CorrelationEngine:
         since = now - timedelta(hours=self.window_hours)
         match_since = now - timedelta(hours=self.match_window_hours)
 
-        clustered = await self.repo.cluster_unassigned_events(
-            since=since, radius_m=self.radius_m, limit=self.max_events
-        )
+        if self.perfiles:
+            clustered = await self.repo.cluster_unassigned_events(
+                since=since,
+                radius_m=self.radius_m,
+                limit=self.max_events,
+                radios={familia: p.radio_m for familia, p in PERFILES.items()},
+                edades_desde={familia: now - p.edad_max for familia, p in PERFILES.items()},
+            )
+        else:
+            clustered = await self.repo.cluster_unassigned_events(
+                since=since, radius_m=self.radius_m, limit=self.max_events
+            )
         result.events_considered = len(clustered)
         if not clustered:
             return
@@ -317,9 +362,47 @@ class CorrelationEngine:
             clusters[event.cluster_key].append(event)
         result.clusters = len(clusters)
 
-        for (family, _), members in clusters.items():
-            lat, lon = weighted_centroid(members)
+        for (family, _), racimo in clusters.items():
+            # DBSCAN con `minpoints=1` encadena: A–B–C a 1,4 km cada uno forman
+            # un racimo aunque A y C estén a 4 km y a tres horas. Se corta donde
+            # se abre el tiempo; sin perfiles, el racimo va entero como antes.
+            tramos = (
+                partir_por_brecha(racimo, perfil(family).brecha) if self.perfiles else [racimo]
+            )
+            result.clusters_split += len(tramos) - 1
+            for members in tramos:
+                await self._absorb_cluster(
+                    members, family=family, result=result, now=now, match_since=match_since
+                )
 
+    async def _absorb_cluster(
+        self,
+        members: Sequence[ClusteredEvent],
+        *,
+        family: str,
+        result: CorrelationPass,
+        now: datetime,
+        match_since: datetime,
+    ) -> None:
+        """Un racimo (o tramo) → al incidente cercano, al de su sector, o a uno nuevo."""
+        lat, lon = weighted_centroid(members)
+
+        if self.perfiles:
+            p = perfil(family)
+            horas = [member.timestamp for member in members]
+            nearby = await self.repo.find_nearest_open_incident(
+                lat=lat,
+                lon=lon,
+                # Un punto `street` puede estar en cualquier parte de una avenida
+                # de dos kilómetros: el radio crece con la imprecisión del peor.
+                radius_m=p.radio_m + holgura(member.precision for member in members),
+                since=match_since,
+                family=family,
+                # El incidente tuvo que estar vivo cerca de la hora de la señal.
+                desde=min(horas) - p.brecha,
+                hasta=max(horas) + p.brecha,
+            )
+        else:
             nearby = await self.repo.find_nearest_open_incident(
                 lat=lat,
                 lon=lon,
@@ -328,68 +411,68 @@ class CorrelationEngine:
                 family=family,
             )
 
-            method = LinkMethod.SPATIAL
-            by_sector: Incident | None = None
-            if nearby is None:
-                by_sector = await self._incident_by_sector(
-                    [member.sector_clave for member in members], family=family, now=now
-                )
-
-            if nearby is not None:
-                incident = nearby.incident
-            elif by_sector is not None:
-                # Nada a menos de `radius_m`, pero un incidente de la misma
-                # familia nombra el mismo sector. Uno de los dos puntos está mal
-                # —la prensa no da esquinas y OSM tiene calles homónimas— y lo
-                # que las dos fuentes sí dicen igual es el sector.
-                incident = by_sector
-                method = LinkMethod.SECTOR_TEXT
-                result.clusters_joined_by_sector += 1
-            else:
-                if not self._should_open_incident(members):
-                    # Señal aislada de una fuente no confirmatoria: se deja sin
-                    # incidente. No se pierde —sigue siendo una `raw_event`
-                    # consultable— y la próxima pasada volverá a evaluarla junto
-                    # a la corroboración que pueda haber llegado entretanto.
-                    result.clusters_deferred += 1
-                    continue
-                incident = await self._open_incident(members, lat=lat, lon=lon)
-                result.incidents_created += 1
-
-            links = [
-                EventLink(
-                    raw_event_id=member.event_id,
-                    link_method=method,
-                    link_confidence=(
-                        1.0 if method is LinkMethod.SPATIAL else LINK_CONFIDENCE_SECTOR
-                    ),
-                    # En el vínculo por sector la distancia también se guarda:
-                    # es lo que muestra, al auditar, cuánto discrepaban los
-                    # dos puntos que el sector unió.
-                    distance_m=round(
-                        haversine_m(incident.lat, incident.lon, member.lat, member.lon),
-                        2,
-                    ),
-                    note=(
-                        f"sector: {member.sector_clave}"
-                        if method is LinkMethod.SECTOR_TEXT
-                        else None
-                    ),
-                )
-                for member in members
-            ]
-            written = await self.repo.link_events(incident_id=incident.id, links=links)
-            if method is LinkMethod.SPATIAL:
-                result.spatial_links += written
-            else:
-                result.sector_links += written
-            await self.repo.assign_events_to_incident(
-                incident_id=incident.id,
-                event_ids=[member.event_id for member in members],
-                processed_at=now,
+        method = LinkMethod.SPATIAL
+        by_sector: Incident | None = None
+        if nearby is None:
+            by_sector = await self._incident_by_sector(
+                [member.sector_clave for member in members], family=family, now=now
             )
-            await self._refresh(incident, now=now)
-            result.incidents_updated += 1
+
+        if nearby is not None:
+            incident = nearby.incident
+        elif by_sector is not None:
+            # Nada a menos del radio, pero un incidente de la misma familia
+            # nombra el mismo sector. Uno de los dos puntos está mal —la prensa
+            # no da esquinas y OSM tiene calles homónimas— y lo que las dos
+            # fuentes sí dicen igual es el sector.
+            incident = by_sector
+            method = LinkMethod.SECTOR_TEXT
+            result.clusters_joined_by_sector += 1
+        else:
+            if not self._should_open_incident(members):
+                # Señal aislada de una fuente no confirmatoria: se deja sin
+                # incidente. No se pierde —sigue siendo una `raw_event`
+                # consultable— y la próxima pasada volverá a evaluarla junto a
+                # la corroboración que pueda haber llegado entretanto.
+                result.clusters_deferred += 1
+                return
+            incident = await self._open_incident(members, lat=lat, lon=lon)
+            result.incidents_created += 1
+
+        links = [
+            EventLink(
+                raw_event_id=member.event_id,
+                link_method=method,
+                link_confidence=(
+                    1.0 if method is LinkMethod.SPATIAL else LINK_CONFIDENCE_SECTOR
+                ),
+                # En el vínculo por sector la distancia también se guarda: es lo
+                # que muestra, al auditar, cuánto discrepaban los dos puntos que
+                # el sector unió.
+                distance_m=round(
+                    haversine_m(incident.lat, incident.lon, member.lat, member.lon),
+                    2,
+                ),
+                note=(
+                    f"sector: {member.sector_clave}"
+                    if method is LinkMethod.SECTOR_TEXT
+                    else None
+                ),
+            )
+            for member in members
+        ]
+        written = await self.repo.link_events(incident_id=incident.id, links=links)
+        if method is LinkMethod.SPATIAL:
+            result.spatial_links += written
+        else:
+            result.sector_links += written
+        await self.repo.assign_events_to_incident(
+            incident_id=incident.id,
+            event_ids=[member.event_id for member in members],
+            processed_at=now,
+        )
+        await self._refresh(incident, now=now)
+        result.incidents_updated += 1
 
     def _should_open_incident(self, members: Sequence[ClusteredEvent]) -> bool:
         """¿Este racimo merece un incidente propio?
@@ -536,7 +619,15 @@ class CorrelationEngine:
         Sobrevive el más antiguo: es el que ya tiene folio circulando por radio.
         """
         since = now - timedelta(hours=self.match_window_hours)
-        pairs = await self.repo.find_mergeable(radius_m=self.radius_m, since=since)
+        if self.perfiles:
+            pairs = await self.repo.find_mergeable(
+                radius_m=self.radius_m,
+                since=since,
+                radios={familia: p.radio_m for familia, p in PERFILES.items()},
+                brechas={familia: p.brecha for familia, p in PERFILES.items()},
+            )
+        else:
+            pairs = await self.repo.find_mergeable(radius_m=self.radius_m, since=since)
         if not pairs:
             return
 
@@ -707,9 +798,6 @@ class CorrelationEngine:
             "event_count": len(signals),
             "source_count": len(scored.sources),
             "sources": [source.value for source in scored.sources],
-            "commune": commune,
-            "province": province,
-            "title": build_title(incident_type, commune),
             "first_seen_at": min(timestamps),
             "last_seen_at": max(timestamps),
             "correlated_at": now,
@@ -719,12 +807,40 @@ class CorrelationEngine:
         if geometry is not None:
             values["lat"], values["lon"] = geometry
 
+        if commune is None:
+            # Último recurso: el polígono que contiene al incidente. Ninguna
+            # señal dijo la comuna —FIRMS, CGE sin localidad, un reporte con
+            # GPS— pero el punto sí sabe dónde está.
+            por_poligono, provincia = await self._commune_by_polygon(
+                values.get("lat", incident.lat), values.get("lon", incident.lon)
+            )
+            if por_poligono is not None:
+                commune = por_poligono
+                province = province or provincia
+                self._comunas_por_poligono += 1
+
+        values["commune"] = commune
+        values["province"] = province
+        values["title"] = build_title(incident_type, commune)
+
         if incident.status in _MUTABLE_STATUSES:
             status, resolved_at = resolve_status(views)
             values["status"] = status
             values["resolved_at"] = resolved_at
 
         await self.repo.update_incident(incident.id, **values)
+
+    async def _commune_by_polygon(
+        self, lat: object, lon: object
+    ) -> tuple[str | None, str | None]:
+        """`comuna_por_punto`, si la tabla existe (migración 0015) y hay punto."""
+        if not isinstance(lat, int | float) or not isinstance(lon, int | float):
+            return (None, None)
+        if self._hay_comunas is None:
+            self._hay_comunas = await self.repo.comunas_disponibles()
+        if not self._hay_comunas:
+            return (None, None)
+        return await self.repo.comuna_por_punto(float(lat), float(lon))
 
     @staticmethod
     def _resolve_territory(

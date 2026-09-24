@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import delete, select, text
@@ -235,3 +235,196 @@ def test_reingerir_sin_punto_conserva_el_punto_anterior():
     assert raw["otra"] == 1, "el resto del raw_data nuevo sí entra"
     assert set(conocidos) == {"integracion:1"}
     assert conocidos["integracion:1"].lat == -33.02
+
+
+# --- El motor calibrado (perfiles, comuna por polígono) ------------------------
+
+#: Dos puntos de Viña del Mar a ~1 km: Av. Libertad con 5 Norte y con 15 Norte.
+LIBERTAD_5_NORTE = (-33.01700, -71.55320)
+LIBERTAD_15_NORTE = (-33.00800, -71.55120)
+#: Centro de Quilpué, lejos de cualquier borde comunal.
+QUILPUE = (-33.04720, -71.44250)
+
+
+async def _vaciar_motor() -> None:
+    from app.core.database import AsyncSessionLocal
+    from app.models.event import RawEvent
+    from app.models.incident import Incident
+
+    tabla_ev = RawEvent.__table__.fullname
+    tabla_inc = Incident.__table__.fullname
+    async with AsyncSessionLocal() as session:
+        await session.execute(text(f"TRUNCATE {tabla_inc}, {tabla_ev} RESTART IDENTITY CASCADE"))
+        await session.commit()
+
+
+async def _ingerir(*eventos) -> None:
+    from app.core.database import AsyncSessionLocal
+    from app.repositories.event_repository import EventRepository
+
+    async with AsyncSessionLocal() as session:
+        await EventRepository(session).upsert_many(list(eventos))
+        await session.commit()
+
+
+def _evento(
+    external_id: str,
+    punto: tuple[float, float] | None,
+    *,
+    hace: timedelta,
+    fuente: str = "transporte_informa",
+    tipo: str = "accident",
+    raw: dict | None = None,
+):
+    from app.models.enums import EventSource, EventType
+    from app.schemas.event import EventCreate
+
+    lat, lon = punto if punto else (None, None)
+    return EventCreate(
+        timestamp=datetime.now(UTC) - hace,
+        source=EventSource(fuente),
+        type=EventType(tipo),
+        lat=lat,
+        lon=lon,
+        text=f"señal de integración {external_id}",
+        external_id=f"integracion:{external_id}",
+        raw_data=raw or {},
+    )
+
+
+async def _pasada(*, perfiles: bool, window_hours: int = 4):
+    from app.core.database import AsyncSessionLocal
+    from app.models.incident import Incident
+    from app.services.correlation.engine import CorrelationEngine
+
+    async with AsyncSessionLocal() as session:
+        resultado = await CorrelationEngine(
+            session, perfiles=perfiles, window_hours=window_hours
+        ).run()
+    async with AsyncSessionLocal() as session:
+        incidentes = (
+            await session.execute(select(Incident).order_by(Incident.id))
+        ).scalars().all()
+    return resultado, incidentes
+
+
+@pytest.mark.parametrize(("perfiles", "esperados"), [(True, 2), (False, 1)])
+def test_dos_choques_a_un_kilometro_son_dos_incidentes(perfiles, esperados):
+    """C1: 1500 m para todo juntaba dos choques de la misma avenida."""
+    from datetime import timedelta as td
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(
+            _evento("a", LIBERTAD_5_NORTE, hace=td(minutes=30)),
+            _evento("b", LIBERTAD_15_NORTE, hace=td(minutes=20)),
+        )
+        return await _pasada(perfiles=perfiles)
+
+    _, incidentes = correr(caso)
+    assert len(incidentes) == esperados
+
+
+@pytest.mark.parametrize(("perfiles", "incidentes_esperados"), [(True, 2), (False, 1)])
+def test_una_senal_horas_despues_no_se_pega_al_choque_de_la_manana(perfiles, incidentes_esperados):
+    """C3: el incidente tuvo que estar vivo cerca de la hora de la señal."""
+    from datetime import timedelta as td
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(_evento("choque", LIBERTAD_5_NORTE, hace=td(hours=5, minutes=30)))
+        await _pasada(perfiles=perfiles, window_hours=8)
+        await _ingerir(
+            _evento("nota", (-33.01650, -71.55250), hace=td(minutes=30), fuente="media")
+        )
+        return await _pasada(perfiles=perfiles, window_hours=8)
+
+    _, incidentes = correr(caso)
+    assert len(incidentes) == incidentes_esperados
+
+
+@pytest.mark.parametrize(("perfiles", "agrupada"), [(True, True), (False, False)])
+def test_lo_que_llega_tarde_todavia_se_agrupa(perfiles, agrupada):
+    """C4: FIRMS publica horas después de la pasada; la ventana era por `timestamp`."""
+    from datetime import timedelta as td
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(
+            _evento(
+                "firms", QUILPUE, hace=td(hours=10), fuente="nasa_firms", tipo="thermal_anomaly"
+            )
+        )
+        return await _pasada(perfiles=perfiles)
+
+    resultado, incidentes = correr(caso)
+    assert (resultado.events_considered == 1) is agrupada
+    assert (len(incidentes) == 1) is agrupada
+
+
+def test_la_comuna_sale_del_poligono_cuando_ninguna_senal_la_dice():
+    """C5: 211 incidentes de CGE sin comuna en 30 días (consulta del 2026-09-23)."""
+    from datetime import timedelta as td
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(
+            _evento("cge", QUILPUE, hace=td(minutes=10), fuente="cge", tipo="power_outage")
+        )
+        return await _pasada(perfiles=True)
+
+    resultado, (incidente,) = correr(caso)
+    assert incidente.commune == "Quilpué"
+    assert incidente.province == "Marga Marga"
+    assert incidente.title.endswith("— Quilpué")
+    assert resultado.communes_by_polygon == 1
+    assert resultado.incidents_without_commune == 0
+
+
+def test_la_comuna_geocodificada_gana_al_poligono():
+    """C5: `_geocoding.comuna` ya estaba guardada y no se leía."""
+    from datetime import timedelta as td
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(
+            _evento(
+                "mtt",
+                LIBERTAD_5_NORTE,
+                hace=td(minutes=10),
+                raw={"_geocoding": {"comuna": "Vina del Mar", "precision": "street"}},
+            )
+        )
+        return await _pasada(perfiles=True)
+
+    resultado, (incidente,) = correr(caso)
+    assert incidente.commune == "Viña del Mar", "nombre canónico, con tilde"
+    assert resultado.communes_by_polygon == 0
+
+
+def test_el_indice_geography_sirve_a_la_consulta_del_motor():
+    """La expresión del índice tiene que ser idéntica a la del `ST_DWithin`."""
+    from sqlalchemy import func
+    from sqlalchemy.dialects import postgresql
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.incident import Incident
+    from app.repositories.incident_repository import _GEOGRAPHY
+
+    punto = func.ST_SetSRID(func.ST_MakePoint(-71.55, -33.02), 4326)
+    consulta = (
+        select(Incident.id)
+        .where(Incident.status.in_(["active", "controlled"]))
+        .where(func.ST_DWithin(func.cast(Incident.geom, _GEOGRAPHY), func.cast(punto, _GEOGRAPHY), 700))
+    )
+    sql = str(consulta.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+
+    async def caso():
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("SET LOCAL enable_seqscan = off"))
+            plan = (await session.execute(text(f"EXPLAIN {sql}"))).scalars().all()
+            await session.rollback()
+            return "\n".join(plan)
+
+    plan = correr(caso)
+    assert "ix_incidents_open_geog" in plan, plan

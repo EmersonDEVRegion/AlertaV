@@ -19,18 +19,32 @@ Dos primitivas geométricas, cada una para lo suyo:
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 from geoalchemy2 import Geography
-from sqlalchemy import Case, ColumnElement, Select, Text, case, delete, func, select, update
+from sqlalchemy import (
+    Case,
+    ColumnElement,
+    Select,
+    Text,
+    and_,
+    case,
+    delete,
+    func,
+    literal,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.comuna import ComunaRegion
 from app.models.enums import (
     CORRELATABLE_EVENT_TYPES,
     DEFAULT_FAMILY,
@@ -92,6 +106,28 @@ def incident_family_sql(column: ColumnElement[Any]) -> Case:
     )
 
 
+def por_familia_sql(
+    familia: ColumnElement[Any], valores: Mapping[str, Any], *, defecto: Any
+) -> Case:
+    """`CASE familia WHEN 'fire' THEN … END` con un valor por familia.
+
+    Constante dentro de cada partición del DBSCAN, que es lo que permite darle a
+    cada familia su propio `eps` en una sola consulta (probado en PostGIS 3.4).
+    Ordenado por familia por la misma razón que `event_family_sql`: el texto de
+    la consulta no cambia entre arranques y la caché de planes lo reconoce.
+    """
+    return case(
+        {nombre: literal(valor) for nombre, valor in sorted(valores.items())},
+        value=familia,
+        else_=literal(defecto),
+    )
+
+
+def geocoding_precision_sql() -> ColumnElement[Any]:
+    """`raw_data._geocoding.precision`: `street`, `sector`… o NULL sin geocodificar."""
+    return RawEvent.raw_data["_geocoding"]["precision"].astext
+
+
 def sector_clave_sql() -> ColumnElement[Any]:
     """`raw_data._extraction.sector_clave` de una señal, como texto.
 
@@ -120,6 +156,9 @@ class ClusteredEvent:
     family: str = DEFAULT_FAMILY
     #: Sector que nombró la fuente, si lo nombró. Ver `sector_clave_sql`.
     sector_clave: str | None = None
+    #: Precisión del punto geocodificado (`street`, `sector`…). None = el punto
+    #: vino de la fuente (FIRMS, CONAF, GPS) y cuenta como exacto.
+    precision: str | None = None
 
     @property
     def cluster_key(self) -> tuple[str, int | None]:
@@ -195,6 +234,8 @@ class IncidentRepository:
         radius_m: float,
         limit: int,
         utm_srid: int | None = None,
+        radios: Mapping[str, float] | None = None,
+        edades_desde: Mapping[str, datetime] | None = None,
     ) -> list[ClusteredEvent]:
         """Agrupa con DBSCAN las señales georreferenciadas aún sin incidente.
 
@@ -223,8 +264,35 @@ class IncidentRepository:
         **`ST_ClusterDBSCAN` reinicia la numeración en cada partición.** El
         `cluster_id` sólo es único dentro de su familia; quien consuma esto debe
         agrupar por `ClusteredEvent.cluster_key`.
+
+        Perfiles por familia (`CORRELATION_PERFILES`)
+        ---------------------------------------------
+        Con `radios`, cada familia agrupa con su propio `eps` (el `CASE` es
+        constante dentro de la partición). Con `edades_desde`, además de lo que
+        OCURRIÓ en la ventana entra lo que LLEGÓ en la ventana (`ingested_at`),
+        siempre que no sea más viejo que la edad máxima de su familia: FIRMS
+        publica ~3 h tarde, y antes eso quedaba sin incidente para siempre. Sin
+        los dos parámetros, la consulta es exactamente la de antes.
         """
         srid = utm_srid or settings.CORRELATION_UTM_SRID
+        familia_evento = event_family_sql(RawEvent.type)
+
+        if edades_desde:
+            # Lo que llegó tarde también entra, con su edad acotada por familia.
+            # Los valores del CASE son instantes (ahora - edad_max), así que la
+            # comparación es una sola y el índice de `ingested_at` hace el resto.
+            ventana = or_(
+                RawEvent.timestamp >= since,
+                and_(
+                    RawEvent.ingested_at >= since,
+                    RawEvent.timestamp
+                    >= por_familia_sql(
+                        familia_evento, edades_desde, defecto=min(edades_desde.values())
+                    ),
+                ),
+            )
+        else:
+            ventana = RawEvent.timestamp >= since
 
         candidates = (
             select(
@@ -236,12 +304,13 @@ class IncidentRepository:
                 RawEvent.source.label("source"),
                 RawEvent.type.label("type"),
                 RawEvent.geom.label("geom"),
-                event_family_sql(RawEvent.type).label("family"),
+                familia_evento.label("family"),
                 sector_clave_sql().label("sector_clave"),
+                geocoding_precision_sql().label("precision"),
             )
             .where(RawEvent.geom.isnot(None))
             .where(RawEvent.incident_id.is_(None))
-            .where(RawEvent.timestamp >= since)
+            .where(ventana)
             .where(RawEvent.type.in_(sorted(CORRELATABLE_EVENT_TYPES, key=lambda t: t.value)))
             # Las señales más creíbles primero: si el tope de la pasada corta la
             # lista, que lo que se quede afuera sea lo menos informativo.
@@ -250,8 +319,13 @@ class IncidentRepository:
             .cte("candidatos")
         )
 
+        eps: Any = (
+            por_familia_sql(candidates.c.family, radios, defecto=radius_m)
+            if radios
+            else radius_m
+        )
         cluster_id = func.ST_ClusterDBSCAN(
-            func.ST_Transform(candidates.c.geom, srid), radius_m, 1
+            func.ST_Transform(candidates.c.geom, srid), eps, 1
         ).over(partition_by=candidates.c.family)
 
         stmt = select(
@@ -264,6 +338,7 @@ class IncidentRepository:
             candidates.c.type,
             candidates.c.family,
             candidates.c.sector_clave,
+            candidates.c.precision,
             cluster_id.label("cluster_id"),
         )
 
@@ -280,6 +355,7 @@ class IncidentRepository:
                 type=EventType(getattr(row.type, "value", row.type)),
                 family=str(row.family),
                 sector_clave=row.sector_clave or None,
+                precision=row.precision or None,
             )
             for row in rows
         ]
@@ -377,8 +453,15 @@ class IncidentRepository:
         radius_m: float,
         since: datetime,
         family: str | None = None,
+        desde: datetime | None = None,
+        hasta: datetime | None = None,
     ) -> NearbyIncident | None:
         """Incidente abierto más cercano dentro del radio y aún vivo.
+
+        Con `desde`/`hasta`, además, el incidente tuvo que estar vivo CERCA DEL
+        MOMENTO de la señal —`last_seen_at >= desde` y `first_seen_at <= hasta`—
+        y no sólo «en las últimas horas». Sin esto, una nota de prensa de las
+        15:00 se adhería a un choque de las 09:00 a 900 m (auditoría 2026-09-23).
 
         `family` es la segunda mitad del aislamiento entre fenómenos. Particionar
         el DBSCAN separa los racimos nuevos entre sí, pero un racimo de
@@ -414,6 +497,10 @@ class IncidentRepository:
         )
         if family is not None:
             stmt = stmt.where(incident_family_sql(Incident.type) == family)
+        if desde is not None:
+            stmt = stmt.where(Incident.last_seen_at >= desde)
+        if hasta is not None:
+            stmt = stmt.where(Incident.first_seen_at <= hasta)
         row = (await self.session.execute(stmt)).first()
         if row is None:
             return None
@@ -426,6 +513,32 @@ class IncidentRepository:
             .execution_options(populate_existing=True)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    # -- Territorio -------------------------------------------------------------
+
+    async def comunas_disponibles(self) -> bool:
+        """¿Existe `comunas_region`? Sin la migración 0015 el motor sigue igual."""
+        tabla = f"{ComunaRegion.__table__.schema}.{ComunaRegion.__tablename__}"
+        stmt = select(func.to_regclass(tabla).isnot(None))
+        return bool((await self.session.execute(stmt)).scalar_one())
+
+    async def comuna_por_punto(self, lat: float, lon: float) -> tuple[str | None, str | None]:
+        """`(comuna, provincia)` del polígono que contiene el punto, o `(None, None)`.
+
+        El último recurso de `CorrelationEngine._refresh`: sólo se consulta
+        cuando ninguna señal dijo la comuna. En los bordes la capa tiene solapes
+        de decenas de metros (Los Andes); gana el menor CUT, igual que en el
+        relleno de la migración 0015, para que el resultado no dependa del plan.
+        """
+        punto = func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326)
+        stmt = (
+            select(ComunaRegion.nombre, ComunaRegion.provincia)
+            .where(func.ST_Covers(ComunaRegion.geom, punto))
+            .order_by(ComunaRegion.cut)
+            .limit(1)
+        )
+        fila = (await self.session.execute(stmt)).first()
+        return (fila.nombre, fila.provincia) if fila else (None, None)
 
     # -- Escritura de incidentes ---------------------------------------------
 
@@ -678,7 +791,12 @@ class IncidentRepository:
         return int(result.rowcount or 0)
 
     async def find_mergeable(
-        self, *, radius_m: float, since: datetime
+        self,
+        *,
+        radius_m: float,
+        since: datetime,
+        radios: Mapping[str, float] | None = None,
+        brechas: Mapping[str, timedelta] | None = None,
     ) -> list[tuple[int, int]]:
         """Pares de incidentes abiertos que convergieron.
 
@@ -690,9 +808,18 @@ class IncidentRepository:
         que nacieron separados —porque la partición del Paso A hizo su trabajo—
         se reunirían igual acá al crecer uno hacia el otro, y el resultado sería
         idéntico a no haber particionado nada.
+
+        Con `radios`, el radio es el de la familia; con `brechas`, además, los
+        dos incidentes tienen que haberse solapado en el tiempo (con esa
+        tolerancia): dos choques en la misma esquina con cinco horas de
+        diferencia son dos choques, aunque los dos sigan «abiertos».
         """
         left = Incident.__table__.alias("a")
         right = Incident.__table__.alias("b")
+        familia = incident_family_sql(left.c.type)
+        radio: Any = (
+            por_familia_sql(familia, radios, defecto=radius_m) if radios else radius_m
+        )
 
         # `keep_id`/`drop_id` y no `keep`/`drop`: `drop` como alias desnudo es
         # pedirle problemas al parser por una comodidad de dos caracteres.
@@ -704,7 +831,7 @@ class IncidentRepository:
                     func.ST_DWithin(
                         func.cast(left.c.geom, _GEOGRAPHY),
                         func.cast(right.c.geom, _GEOGRAPHY),
-                        radius_m,
+                        radio,
                     ),
                 )
             )
@@ -713,9 +840,13 @@ class IncidentRepository:
             .where(right.c.status.in_(_open_statuses()))
             .where(left.c.last_seen_at >= since)
             .where(right.c.last_seen_at >= since)
-            .where(incident_family_sql(left.c.type) == incident_family_sql(right.c.type))
+            .where(familia == incident_family_sql(right.c.type))
             .order_by(left.c.id.asc(), right.c.id.asc())
         )
+        if brechas:
+            brecha = por_familia_sql(familia, brechas, defecto=max(brechas.values()))
+            stmt = stmt.where(left.c.last_seen_at >= right.c.first_seen_at - brecha)
+            stmt = stmt.where(right.c.last_seen_at >= left.c.first_seen_at - brecha)
         rows = (await self.session.execute(stmt)).all()
         return [(row.keep_id, row.drop_id) for row in rows]
 

@@ -144,6 +144,7 @@ backend/
 ├── sql/                           # el mismo DDL, legible de corrido
 ├── scripts/
 │   ├── smoke_test.py              # e2e contra PostGIS real
+│   ├── replay_correlacion.py      # reproduce días reales con el motor, antes/después
 │   └── check_sources.py           # chequeo en vivo de las fuentes, sin escribir
 └── tests/
 ```

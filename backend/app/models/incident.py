@@ -237,6 +237,16 @@ class Incident(Base):
             postgresql_using="gist",
             postgresql_where=sa_text("status IN ('active', 'controlled')"),
         ),
+        # El del motor para `ST_DWithin` en metros (migración 0015). La expresión
+        # es idéntica a la que genera `func.cast(geom, Geography(POINT, 4326))`
+        # en `incident_repository`: con otro tipo o sin SRID, el planificador
+        # no reconoce el índice.
+        Index(
+            "ix_incidents_open_geog",
+            sa_text("(geom::geography(Point,4326))"),
+            postgresql_using="gist",
+            postgresql_where=sa_text("status IN ('active', 'controlled')"),
+        ),
         Index("ix_incidents_status_last_seen", "status", sa_text("last_seen_at DESC")),
         Index("ix_incidents_commune", "commune"),
         Index("ix_incidents_merged_into_id", "merged_into_id"),

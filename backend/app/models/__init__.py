@@ -1,4 +1,5 @@
 from app.models.base import Base
+from app.models.comuna import ComunaRegion
 from app.models.enums import (
     CONFIRMED_LABEL_BY_FAMILY,
     CORRELATABLE_EVENT_TYPES,
@@ -37,6 +38,7 @@ __all__ = [
     "Base",
     "CollectorRun",
     "CollectorStatus",
+    "ComunaRegion",
     "EventSource",
     "EventType",
     "Incident",
