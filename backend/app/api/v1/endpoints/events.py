@@ -18,6 +18,7 @@ from app.api.deps import (
     HazardServiceDep,
     IngestServiceDep,
     SeismicServiceDep,
+    WaterCutServiceDep,
     WeatherServiceDep,
 )
 from app.api.v1.params import parse_bbox
@@ -32,6 +33,7 @@ from app.schemas.event import (
     GeoJSONFeatureCollection,
 )
 from app.schemas.seismic import SeismicEventRead
+from app.schemas.water_cut import WaterCutCollection
 from app.schemas.weather import (
     TacticalWeatherRead,
 )
@@ -540,6 +542,35 @@ async def road_closures_geojson(
     return GeoJSONFeatureCollection(
         features=[_road_closure_feature(event) for event in events]
     )
+
+
+# --- Cortes de agua (Esval) ----------------------------------------------------
+#
+# Igual que los cortes de ruta, va antes de `/{public_id}`: "water-cuts"
+# entraría por la ruta del detalle.
+
+
+@router.get(
+    "/water-cuts/geojson",
+    response_model=WaterCutCollection,
+    summary="Cortes de agua vigentes de Esval como GeoJSON",
+    description=(
+        "Los cortes de agua potable de **Esval** (V Región) que la última "
+        "lectura de su API todavía lista. Esval no avisa cuándo termina un "
+        "corte —deja de listarlo— y su hora de término es referencial, así que "
+        "vigente = visto en la última corrida que leyó la API.\n\n"
+        "**No son siniestros.** `water_cut` está fuera del motor de correlación: "
+        "no crea incidentes ni manda push.\n\n"
+        "Un corte sin coordenadas (el visor de Esval no respondió) viaja con "
+        "`geometry: null`. `fuente.ultima_lectura = null` significa que la API "
+        "nunca se pudo leer: la capa todavía no tiene datos. `fuente.estado` "
+        "distinto de `ok` significa que una lista vacía NO quiere decir que no "
+        "haya cortes.\n\n"
+        "Esval no publica cuántos clientes afecta cada corte: ese dato no existe."
+    ),
+)
+async def water_cuts_geojson(service: WaterCutServiceDep) -> WaterCutCollection:
+    return await service.vigentes()
 
 
 @router.get(

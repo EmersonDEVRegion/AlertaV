@@ -712,6 +712,12 @@ def _suavizar(texto: str) -> str:
     return texto.capitalize() if texto.isupper() else texto
 
 
+def motivo_legible(motivo: str | None) -> str | None:
+    """El motivo como lo muestran el texto del evento y el mapa: sin gritar."""
+    texto = (motivo or "").strip()
+    return _suavizar(texto) if texto else None
+
+
 def _recortar(texto: str, limite: int) -> str:
     return texto if len(texto) <= limite else texto[: limite - 1].rstrip(" ,;") + "…"
 
@@ -751,8 +757,9 @@ def build_text(corte: CorteAgua, comuna: str | None) -> str:
     if horario:
         partes.append(horario)
 
-    if api.motivo:
-        partes.append(_suavizar(api.motivo))
+    motivo = motivo_legible(api.motivo)
+    if motivo:
+        partes.append(motivo)
 
     return " — ".join(partes)
 
@@ -843,6 +850,7 @@ __all__ = [
     "detalle_del_corte",
     "es_programado",
     "fecha_hora_local",
+    "motivo_legible",
     "muestra_registro",
     "parse_corte",
     "parse_ficha",

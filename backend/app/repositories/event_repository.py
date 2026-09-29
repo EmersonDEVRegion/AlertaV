@@ -9,11 +9,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID
 
 from geoalchemy2 import Geography
-from sqlalchemy import Select, and_, case, cast, func, literal_column, or_, select
+from sqlalchemy import DateTime, Select, and_, case, cast, func, literal_column, or_, select
 from sqlalchemy import text as sa_text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,16 @@ from app.models.enums import EventSource, EventType, VehicleLocation, VehicleSta
 from app.models.event import RawEvent
 from app.repositories.confidence_filters import confidence_at_least
 from app.schemas.event import EventCreate
+
+
+class BoundingBoxLike(Protocol):
+    """Lo que se necesita de una caja: `settings.region_bbox` lo cumple."""
+
+    west: float
+    south: float
+    east: float
+    north: float
+
 
 #: Geografía usada para distancias en metros reales.
 _GEOGRAPHY = Geography(geometry_type="POINT", srid=4326)
@@ -362,6 +372,46 @@ class EventRepository:
             commune=commune,
             limit=limit,
         )
+        return (await self.session.execute(stmt)).scalars().all()
+
+    def water_cuts_stmt(
+        self,
+        *,
+        vistos_desde: datetime,
+        bbox: BoundingBoxLike,
+        limit: int = 200,
+    ) -> Select:
+        """Cortes de agua de Esval vistos desde `vistos_desde`.
+
+        La vigencia la decide `_esval.visto_en` (lo reescribe cada corrida), no
+        `timestamp`: ése es el inicio del corte y un corte largo empezó hace
+        días. Los que no traen punto (el KML falló) entran igual: cuentan en el
+        panel aunque no se dibujen. Los que traen punto tienen que caer en la
+        caja regional.
+        """
+        visto_en = cast(
+            RawEvent.raw_data["_esval"]["visto_en"].astext, DateTime(timezone=True)
+        )
+        en_la_caja = and_(
+            RawEvent.lat.between(bbox.south, bbox.north),
+            RawEvent.lon.between(bbox.west, bbox.east),
+        )
+        return (
+            select(RawEvent)
+            .where(
+                RawEvent.source == EventSource.ESVAL,
+                RawEvent.type == EventType.WATER_CUT,
+                visto_en >= vistos_desde,
+                or_(RawEvent.lat.is_(None), RawEvent.lon.is_(None), en_la_caja),
+            )
+            .order_by(RawEvent.timestamp.desc(), RawEvent.id.desc())
+            .limit(limit)
+        )
+
+    async def list_water_cuts(
+        self, *, vistos_desde: datetime, bbox: BoundingBoxLike, limit: int = 200
+    ) -> Sequence[RawEvent]:
+        stmt = self.water_cuts_stmt(vistos_desde=vistos_desde, bbox=bbox, limit=limit)
         return (await self.session.execute(stmt)).scalars().all()
 
     async def add(self, event: EventCreate) -> RawEvent:

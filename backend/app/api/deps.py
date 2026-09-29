@@ -17,6 +17,7 @@ from app.services.ingest_service import IngestService
 from app.services.push.subscriptions import PushSubscriptionService
 from app.services.seismic_service import SeismicService
 from app.services.vehicle_feed_service import VehicleFeedService
+from app.services.water_cut_service import WaterCutService
 from app.services.weather_service import WeatherService
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,10 @@ async def get_vehicle_feed_service(session: SessionDep) -> VehicleFeedService:
     return VehicleFeedService(session)
 
 
+async def get_water_cut_service(session: SessionDep) -> WaterCutService:
+    return WaterCutService(session)
+
+
 def get_hazard_service() -> SeismicHazardService:
     """La capa de amenaza no toca la base: es un artefacto en disco.
 
@@ -111,3 +116,4 @@ WeatherServiceDep = Annotated[WeatherService, Depends(get_weather_service)]
 HazardServiceDep = Annotated[SeismicHazardService, Depends(get_hazard_service)]
 PushServiceDep = Annotated[PushSubscriptionService, Depends(get_push_service)]
 VehicleFeedServiceDep = Annotated[VehicleFeedService, Depends(get_vehicle_feed_service)]
+WaterCutServiceDep = Annotated[WaterCutService, Depends(get_water_cut_service)]

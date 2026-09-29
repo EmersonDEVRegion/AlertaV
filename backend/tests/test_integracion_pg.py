@@ -464,3 +464,85 @@ def test_solo_se_agrupan_senales_de_la_v_region(punto, solo_region, incidentes):
             return (await session.execute(select(Incident))).scalars().all()
 
     assert len(correr(caso)) == incidentes
+
+
+# --- Cortes de agua: del collector a la capa ------------------------------------------
+
+
+async def _limpiar_esval() -> None:
+    from app.collectors.water.esval_worker import EsvalCollector
+    from app.core.database import AsyncSessionLocal
+    from app.models.enums import EventSource
+    from app.models.event import CollectorRun, RawEvent
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(delete(CollectorRun).where(CollectorRun.collector == EsvalCollector.name))
+        await session.execute(delete(RawEvent).where(RawEvent.source == EventSource.ESVAL))
+        await session.commit()
+
+
+def test_la_capa_de_agua_ve_lo_que_el_collector_escribio_y_suelta_lo_que_salio(monkeypatch):
+    """Dos corridas reales por `BaseCollector.run()` contra Postgres.
+
+    La primera ve los cortes de la captura; la segunda, sólo Viña. Quilpué
+    sigue en la base (Esval no avisa cuándo termina un corte), pero ya no es
+    vigente: `visto_en` quedó atrás de la última lectura. Valida el `CAST` de
+    `visto_en` y la ventana de la vigencia, que los dobles no pueden probar.
+    """
+    import json
+
+    import httpx
+    import respx
+
+    from app.collectors.water.esval_worker import EsvalCollector
+    from app.core.config import settings
+    from app.core.database import AsyncSessionLocal
+    from app.services import water_cut_service
+    from app.services.water_cut_service import WaterCutService
+    from tests.test_esval_water import API_CORTES, KML_ZONAS
+
+    # Las dos corridas pasan en milisegundos: sin margen, la segunda ya deja
+    # atrás lo que la primera vio.
+    monkeypatch.setattr(water_cut_service, "MARGEN_VIGENCIA", timedelta(0))
+    solo_vina = {"data": [r for r in json.loads(API_CORTES)["data"] if r["sisda"] == "2916567"]}
+
+    async def corrida(api: str) -> str:
+        with respx.mock:
+            respx.get(settings.ESVAL_CORTES_URL).mock(return_value=httpx.Response(200, text=api))
+            respx.get(settings.ESVAL_ZONAS_KML_URL).mock(
+                return_value=httpx.Response(200, text=KML_ZONAS)
+            )
+            async with AsyncSessionLocal() as session:
+                resultado = await EsvalCollector(session).run()
+        return resultado.status.value
+
+    async def capa():
+        async with AsyncSessionLocal() as session:
+            return await WaterCutService(session).vigentes()
+
+    async def caso():
+        await _limpiar_esval()
+        try:
+            antes = await capa()
+            primera = await corrida(API_CORTES)
+            despues_de_la_primera = await capa()
+            segunda = await corrida(json.dumps(solo_vina))
+            despues_de_la_segunda = await capa()
+            return antes, primera, despues_de_la_primera, segunda, despues_de_la_segunda
+        finally:
+            await _limpiar_esval()
+
+    antes, primera, uno, segunda, dos = correr(caso)
+
+    assert antes.total == 0 and antes.fuente.ultima_lectura is None
+    assert primera in {"success", "partial"} and segunda in {"success", "partial"}
+
+    sisdas_uno = {f.properties["sisda"] for f in uno.features}
+    assert {"2916567", "2912217"} <= sisdas_uno
+    assert "6261154" not in sisdas_uno, "Aguas del Valle (IV Región) no es de Esval"
+    assert uno.fuente.estado == "ok"
+    assert all(f.geometry is not None for f in uno.features), "el KML ubicó los cortes"
+
+    assert {f.properties["sisda"] for f in dos.features} == {"2916567"}
+    assert dos.fuente.ultima_lectura is not None
+    assert dos.fuente.ultima_lectura > uno.fuente.ultima_lectura
