@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { ReactNode } from 'react'
 import { LEVEL, LEVEL_ORDER } from '@/domain/symbology'
 import { WeatherWidget } from '@/components/ui/WeatherWidget'
@@ -121,7 +122,7 @@ function Stat({
   )
 }
 
-export function AppHeader({
+export const AppHeader = memo(function AppHeader({
   total,
   byLevel,
   withAlert,
@@ -228,4 +229,4 @@ export function AppHeader({
       </div>
     </header>
   )
-}
+})

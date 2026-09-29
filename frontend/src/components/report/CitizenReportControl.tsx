@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { Button } from '@/components/ui/primitives'
 import { cn } from '@/lib/cn'
 import { CitizenReportModal } from './CitizenReportModal'
@@ -30,7 +30,7 @@ interface CitizenReportControlProps {
  * fijo que no responde al tema y sin alineación fiable con el texto. El
  * triángulo vectorial hereda `currentColor` y mide siempre lo mismo.
  */
-export function CitizenReportControl({ hiddenOnMobile = false }: CitizenReportControlProps) {
+export const CitizenReportControl = memo(function CitizenReportControl({ hiddenOnMobile = false }: CitizenReportControlProps) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -92,4 +92,4 @@ export function CitizenReportControl({ hiddenOnMobile = false }: CitizenReportCo
       {open && <CitizenReportModal onClose={() => setOpen(false)} />}
     </>
   )
-}
+})

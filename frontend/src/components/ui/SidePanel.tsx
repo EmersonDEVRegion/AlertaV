@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import type { SeismicEvent } from '@/api/seismicTypes'
 import type { Incident, OutageProvider } from '@/api/types'
 import {
@@ -19,6 +19,7 @@ import { MAGNITUDE, bandOf } from '@/domain/seismicSymbology'
 import { LEVEL } from '@/domain/symbology'
 import { TRAFFIC_LEVEL } from '@/domain/trafficSymbology'
 import { cn } from '@/lib/cn'
+import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { formatRelative } from '@/lib/format'
 import { IncidentListItem } from './IncidentListItem'
 
@@ -153,6 +154,8 @@ export function IncidentFilters({
   health,
 }: SidePanelProps) {
   const [expanded, setExpanded] = useState<keyof LayerVisibility | null>(null)
+  // Un solo reloj para todas las filas: las edades avanzan aunque no llegue nada.
+  const now = useNow(RELATIVE_TIME_TICK_MS)
   const toggleExpanded = (key: keyof LayerVisibility) =>
     setExpanded((current) => (current === key ? null : key))
 
@@ -304,6 +307,7 @@ export function IncidentFilters({
                     incident={incident}
                     selected={incident.code === selectedCode}
                     onSelect={onFocusIncident}
+                    now={now}
                   />
                 ))}
 
@@ -338,7 +342,7 @@ export function IncidentFilters({
                           </span>
                           <span className="block truncate text-[10px] text-ink-muted">
                             {event.commune ?? event.place ?? 'sin referencia'} ·{' '}
-                            {formatRelative(event.timestamp)}
+                            {formatRelative(event.timestamp, now)}
                           </span>
                         </span>
                       </button>
@@ -354,10 +358,10 @@ export function IncidentFilters({
 }
 
 /** El panel de escritorio: el mismo contenido dentro de la hoja lateral. */
-export function SidePanel(props: SidePanelProps) {
+export const SidePanel = memo(function SidePanel(props: SidePanelProps) {
   return (
     <Sheet>
       <IncidentFilters {...props} />
     </Sheet>
   )
-}
+})

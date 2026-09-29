@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
 import { env } from '@/config/env'
+import { useNow } from './useNow'
 
 export interface Freshness {
   /** Milisegundos desde la última respuesta exitosa del servidor. */
@@ -11,20 +11,24 @@ export interface Freshness {
 }
 
 /**
+ * Cada cuánto se reevalúa la edad. El umbral es de minutos
+ * (`VITE_STALE_AFTER_MS`, 3 min por defecto) y el texto dice «hace X min»: un
+ * tic por segundo no mostraba nada distinto.
+ */
+const FRESHNESS_TICK_MS = 5_000
+
+/**
  * Edad real del dato en pantalla.
  *
  * Es el mecanismo que sostiene la decisión de cachear offline: el service worker
  * puede servir una respuesta de hace minutos, y esto obliga a que la interfaz lo
- * diga en vez de presentarla como si fuera de ahora. Se recalcula cada segundo
- * porque el dato envejece aunque no pase nada más en la aplicacion.
+ * diga en vez de presentarla como si fuera de ahora.
+ *
+ * **Se llama sólo desde `StalenessBanner`.** Vivía en `App`, y su tic repintaba
+ * la aplicación entera —mapa incluido— sesenta veces por minuto.
  */
 export function useFreshness(dataUpdatedAt: number | undefined): Freshness {
-  const [now, setNow] = useState(() => Date.now())
-
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => window.clearInterval(id)
-  }, [])
+  const now = useNow(FRESHNESS_TICK_MS)
 
   if (!dataUpdatedAt) {
     return { ageMs: 0, isStale: false, isUnknown: true }

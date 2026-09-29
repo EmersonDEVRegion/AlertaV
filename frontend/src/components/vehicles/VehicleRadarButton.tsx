@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { Ref } from 'react'
 import type { VehicleFeedState } from '@/hooks/useVehicleFeed'
 import { cn } from '@/lib/cn'
@@ -54,7 +55,7 @@ function radarLabel(feed: Pick<VehicleFeedState, 'status' | 'count' | 'recentCou
   }
 }
 
-export function VehicleRadarButton({ feed, open, onToggle, ref }: VehicleRadarButtonProps) {
+export const VehicleRadarButton = memo(function VehicleRadarButton({ feed, open, onToggle, ref }: VehicleRadarButtonProps) {
   const badge = badgeFor(feed)
   const hot = feed.status === 'ready' && feed.recentCount > 0
   const label = radarLabel(feed)
@@ -99,4 +100,4 @@ export function VehicleRadarButton({ feed, open, onToggle, ref }: VehicleRadarBu
       )}
     </button>
   )
-}
+})

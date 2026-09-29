@@ -44,8 +44,6 @@ import { levelOf } from '@/domain/symbology'
 import { useActiveIncidents } from '@/hooks/useActiveIncidents'
 import { useCollectorHealth } from '@/hooks/useCollectorHealth'
 import { useSeismicEvents } from '@/hooks/useSeismicEvents'
-import { useFreshness } from '@/hooks/useFreshness'
-import { useOnlineStatus } from '@/hooks/useOnlineStatus'
 import { useNotificationDeepLink } from '@/hooks/useNotificationDeepLink'
 import { useVehicleFeed } from '@/hooks/useVehicleFeed'
 import { VehicleRadarButton } from '@/components/vehicles/VehicleRadarButton'
@@ -175,9 +173,6 @@ export default function App() {
 
   const anyIncidentLayer =
     visibility.fire || visibility.traffic || visibility.power || visibility.otros
-
-  const isOnline = useOnlineStatus()
-  const freshness = useFreshness(dataUpdatedAt || undefined)
 
   const all = incidents ?? NO_INCIDENTS
 
@@ -368,39 +363,85 @@ export default function App() {
    * propiedades dos veces es garantía de que una de las dos se quede atrás
    * cuando se añada un filtro. Acá se declaran una vez y cada rama las derrama.
    */
-  const incidentControls = {
-    visibility,
-    onChange: setVisibility,
-    counts: { ...countsByLayer, seismic: seismicList.length },
-    incidentsByLayer,
-    seismicEvents: seismicList,
-    selectedCode,
-    selectedUsgsId,
-    onFocusIncident: focusIncident,
-    onFocusSeismic: focusSeismic,
-    seismicFilter,
-    onSeismicFilterChange: setSeismicFilter,
-    providers,
-    onProvidersChange: setProviders,
-    // Va acá y no en cada rama por el mismo motivo que el resto: declarar las
-    // propiedades dos veces garantiza que una se quede atrás.
-    health: health.data,
-  }
+  const incidentControls = useMemo(
+    () => ({
+      visibility,
+      onChange: setVisibility,
+      counts: { ...countsByLayer, seismic: seismicList.length },
+      incidentsByLayer,
+      seismicEvents: seismicList,
+      selectedCode,
+      selectedUsgsId,
+      onFocusIncident: focusIncident,
+      onFocusSeismic: focusSeismic,
+      seismicFilter,
+      onSeismicFilterChange: setSeismicFilter,
+      providers,
+      onProvidersChange: setProviders,
+      // Va acá y no en cada rama por el mismo motivo que el resto: declarar las
+      // propiedades dos veces garantiza que una se quede atrás.
+      health: health.data,
+    }),
+    [
+      visibility,
+      countsByLayer,
+      seismicList,
+      incidentsByLayer,
+      selectedCode,
+      selectedUsgsId,
+      focusIncident,
+      focusSeismic,
+      seismicFilter,
+      providers,
+      health.data,
+    ],
+  )
 
-  const referenceControls = {
-    hazardEnabled: hazard.enabled,
-    hazardStatus: hazard.status,
-    hazardError: hazard.errorMessage,
-    onHazardToggle: hazard.toggle,
-    onHazardRetry: hazard.retry,
-    closureEnabled: closures.enabled,
-    closureStatus: closures.status,
-    closureCount: closures.count,
-    closureCutCount: closures.cutCount,
-    onClosureToggle: closures.toggle,
-    onClosureRetry: closures.retry,
-    theme,
-  }
+  const referenceControls = useMemo(
+    () => ({
+      hazardEnabled: hazard.enabled,
+      hazardStatus: hazard.status,
+      hazardError: hazard.errorMessage,
+      onHazardToggle: hazard.toggle,
+      onHazardRetry: hazard.retry,
+      closureEnabled: closures.enabled,
+      closureStatus: closures.status,
+      closureCount: closures.count,
+      closureCutCount: closures.cutCount,
+      onClosureToggle: closures.toggle,
+      onClosureRetry: closures.retry,
+      theme,
+    }),
+    [hazard, closures, theme],
+  )
+
+  /*
+   * Todo lo que baja a un componente memorizado tiene que conservar su
+   * identidad entre renders: un objeto, una función o un elemento JSX nuevo en
+   * cada render anula el `memo` del hijo sin que nada avise.
+   */
+  const closeIncident = useCallback(() => setSelectedCode(null), [])
+  const closeSeismic = useCallback(() => setSelectedUsgsId(null), [])
+  const retryIncidents = useCallback(() => void refetch(), [refetch])
+  const themeToggle = useMemo(
+    () => <ThemeToggle theme={theme} onToggle={toggleTheme} />,
+    [theme, toggleTheme],
+  )
+  const notifications = useMemo(() => <NotificationBell />, [])
+  const radarButton = useMemo(
+    () =>
+      // Con 404 el servidor todavía no tiene el feed: un botón que abre
+      // «no disponible» es cromo muerto, así que no se muestra.
+      radarEnabled && vehicles.status !== 'unavailable' ? (
+        <VehicleRadarButton
+          ref={radarButtonRef}
+          feed={vehicles}
+          open={radarOpen}
+          onToggle={toggleRadar}
+        />
+      ) : undefined,
+    [radarEnabled, vehicles, radarOpen, toggleRadar],
+  )
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-app">
@@ -410,29 +451,15 @@ export default function App() {
         withAlert={withAlert}
         confirmedOnly={confirmedOnly}
         onToggleConfirmedOnly={setConfirmedOnly}
-        themeToggle={<ThemeToggle theme={theme} onToggle={toggleTheme} />}
-        notifications={<NotificationBell />}
-        radar={
-          // Con 404 el servidor todavía no tiene el feed: un botón que abre
-          // «no disponible» es cromo muerto, así que no se muestra.
-          radarEnabled && vehicles.status !== 'unavailable' ? (
-            <VehicleRadarButton
-              ref={radarButtonRef}
-              feed={vehicles}
-              open={radarOpen}
-              onToggle={toggleRadar}
-            />
-          ) : undefined
-        }
+        themeToggle={themeToggle}
+        notifications={notifications}
+        radar={radarButton}
       />
 
       <StalenessBanner
-        freshness={freshness}
-        isOnline={isOnline}
-        isFetching={isFetching}
         dataUpdatedAt={dataUpdatedAt || undefined}
         hasError={isError}
-        onRetry={() => void refetch()}
+        onRetry={retryIncidents}
       />
 
       <main className="relative flex-1">
@@ -535,7 +562,7 @@ export default function App() {
         {selected && (
           <IncidentSheet
             incident={selected}
-            onClose={() => setSelectedCode(null)}
+            onClose={closeIncident}
             wind={selectedFire ? (wind ?? null) : null}
             windCone={cone}
             windLoading={selectedFire !== null && windLoading}
@@ -546,7 +573,7 @@ export default function App() {
         {!selected && selectedSeismic && (
           <SeismicCard
             event={selectedSeismic}
-            onClose={() => setSelectedUsgsId(null)}
+            onClose={closeSeismic}
           />
         )}
 

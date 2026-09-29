@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { ALERT, LEVEL, LEVEL_ORDER, MUTED_LEVEL } from '@/domain/symbology'
 import { LAYER_LABEL } from '@/domain/families'
 import type { IncidentLayerKey } from '@/domain/families'
@@ -19,7 +19,7 @@ import { cn } from '@/lib/cn'
  * verificación institucional como textura. Sin este cuadro, un pin rojo se lee
  * exactamente al revés de lo que significa.
  */
-export function MapLegend() {
+export const MapLegend = memo(function MapLegend() {
   const [open, setOpen] = useState(false)
 
   return (
@@ -68,7 +68,7 @@ export function MapLegend() {
       )}
     </div>
   )
-}
+})
 
 /**
  * El cuerpo de la leyenda, sin superficie ni control de apertura.

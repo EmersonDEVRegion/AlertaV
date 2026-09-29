@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { Incident } from '@/api/types'
 import { STATUS_LABEL, TYPE_LABEL } from '@/domain/labels'
 import { styleFor } from '@/domain/palette'
@@ -7,13 +8,16 @@ interface IncidentListItemProps {
   incident: Incident
   selected: boolean
   onSelect: (incident: Incident) => void
+  /** Reloj con que se calcula «hace X». Lo pide la lista una vez para todas las filas. */
+  now: number
 }
 
 /** Fila del acordeón: lo mínimo para decidir si vale la pena volar hasta allá. */
-export function IncidentListItem({
+export const IncidentListItem = memo(function IncidentListItem({
   incident,
   selected,
   onSelect,
+  now,
 }: IncidentListItemProps) {
   const style = styleFor(incident)
 
@@ -41,7 +45,7 @@ export function IncidentListItem({
           </span>
           <span className="block truncate text-[10px] text-ink-muted">
             {incident.commune ?? 'sin comuna'} · {formatPercent(incident.confidence)} ·{' '}
-            {formatRelative(incident.last_seen_at)}
+            {formatRelative(incident.last_seen_at, now)}
           </span>
           {incident.status !== 'active' && (
             <span className="block text-[10px] text-ink-faint">
@@ -59,4 +63,4 @@ export function IncidentListItem({
       </button>
     </li>
   )
-}
+})

@@ -101,17 +101,26 @@ export function useVehicleFeed(enabled = env.vehicleRadarEnabled): VehicleFeedSt
     void refetchQuery()
   }, [refetchQuery])
 
-  return {
-    status,
-    items,
-    count: items.length,
-    recentCount,
-    source,
-    sourceStatus,
-    now,
-    refreshFailed: data !== undefined && query.isError,
-    truncated: (data?.items.length ?? 0) >= FEED_LIMIT,
-    isFetching: query.isFetching,
-    refetch,
-  }
+  const refreshFailed = data !== undefined && query.isError
+  const truncated = (data?.items.length ?? 0) >= FEED_LIMIT
+  const isFetching = query.isFetching
+
+  // Memorizado: el botón del radar vive en la barra, que está detrás de un
+  // `memo`, y un objeto nuevo en cada render de `App` lo anularía.
+  return useMemo(
+    () => ({
+      status,
+      items,
+      count: items.length,
+      recentCount,
+      source,
+      sourceStatus,
+      now,
+      refreshFailed,
+      truncated,
+      isFetching,
+      refetch,
+    }),
+    [status, items, recentCount, source, sourceStatus, now, refreshFailed, truncated, isFetching, refetch],
+  )
 }

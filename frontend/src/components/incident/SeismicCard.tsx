@@ -1,6 +1,7 @@
-import { useEffect } from 'react'
+import { memo, useEffect } from 'react'
 import type { SeismicEvent } from '@/api/seismicTypes'
 import { MAGNITUDE, bandOf } from '@/domain/seismicSymbology'
+import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { formatDateTime, formatRelative } from '@/lib/format'
 
 /**
@@ -10,13 +11,15 @@ import { formatDateTime, formatRelative } from '@/lib/format'
  * confianza y sin fuentes. Un sismo es un dato medido por una sola red, no un
  * hecho reconstruido a partir de señales, así que no tiene nada que auditar.
  */
-export function SeismicCard({
+export const SeismicCard = memo(function SeismicCard({
   event,
   onClose,
 }: {
   event: SeismicEvent
   onClose: () => void
 }) {
+  const now = useNow(RELATIVE_TIME_TICK_MS)
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', onKey)
@@ -56,7 +59,7 @@ export function SeismicCard({
             )}
           </h2>
           <p className="mt-0.5 text-xs text-ink-muted">
-            {formatDateTime(event.timestamp)} · {formatRelative(event.timestamp)}
+            {formatDateTime(event.timestamp)} · {formatRelative(event.timestamp, now)}
           </p>
         </div>
         <button
@@ -132,4 +135,4 @@ export function SeismicCard({
       )}
     </section>
   )
-}
+})

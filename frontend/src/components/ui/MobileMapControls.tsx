@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { LegendBody } from '@/components/map/MapLegend'
 import { Panel } from '@/components/ui/primitives'
@@ -114,7 +114,7 @@ function Chevron({ open }: { open: boolean }) {
   )
 }
 
-export function MobileMapControls({
+export const MobileMapControls = memo(function MobileMapControls({
   incidents,
   reference,
   incidentCount,
@@ -221,4 +221,4 @@ export function MobileMapControls({
       )}
     </div>
   )
-}
+})

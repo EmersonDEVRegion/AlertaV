@@ -5,6 +5,7 @@ import {
   usePushNotifications,
   type PushNotificationsState,
 } from '@/hooks/usePushNotifications'
+import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { formatRelative } from '@/lib/format'
 import { dismissInvite, inviteDismissed } from '@/lib/push'
 import { cn } from '@/lib/cn'
@@ -155,6 +156,7 @@ function PrimaryButton({
 
 export function NotificationPanel({ push }: { push: PushNotificationsState }) {
   const { phase } = push
+  const now = useNow(RELATIVE_TIME_TICK_MS)
   const paused = Boolean(push.server && !push.server.enabled && push.server.public_key)
 
   return (
@@ -245,7 +247,7 @@ export function NotificationPanel({ push }: { push: PushNotificationsState }) {
 
           <p className="mt-2.5 text-[10.5px] leading-snug text-ink-muted">
             {push.locationSyncedAt
-              ? `Ubicación informada ${formatRelative(push.locationSyncedAt)}.`
+              ? `Ubicación informada ${formatRelative(push.locationSyncedAt, now)}.`
               : 'Ubicación informada.'}{' '}
             <button
               type="button"

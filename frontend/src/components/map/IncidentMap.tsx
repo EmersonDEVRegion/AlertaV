@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import {
   AttributionControl,
@@ -11,6 +11,7 @@ import {
 } from 'react-map-gl/maplibre'
 import type {
   ErrorEvent,
+  MapEvent,
   MapLayerMouseEvent,
   MapRef,
 } from 'react-map-gl/maplibre'
@@ -113,7 +114,25 @@ interface IncidentMapProps {
   closures: RoadClosureState
 }
 
-export function IncidentMap({
+/*
+ * Props del `<Map>` que no dependen de nada: constantes de módulo para que su
+ * identidad no cambie entre renders. react-map-gl compara las opciones con
+ * `deepEqual` en cada render; con un objeto nuevo compara de balde.
+ */
+const MAP_STYLE_BOX = { position: 'absolute', inset: 0 } as const
+const TOUCH_ZOOM_ROTATE = { around: 'center' } as const
+const GEOLOCATE_OPTIONS = { enableHighAccuracy: true } as const
+const SEISMIC_ICON_COLOR = MAGNITUDE_COLOR_EXPRESSION as unknown as ExpressionSpecification
+
+/**
+ * El lienzo GIS, detrás de un `memo`.
+ *
+ * Todo lo que recibe tiene identidad estable (arreglos memorizados en `App`,
+ * setters de estado y colecciones que react-query comparte cuando el sondeo
+ * trae lo mismo), así que sólo se vuelve a renderizar cuando cambia un dato
+ * que dibuja. Antes lo hacía una vez por segundo por un reloj que ni usaba.
+ */
+export const IncidentMap = memo(function IncidentMap({
   mapRef,
   incidents,
   outages,
@@ -131,8 +150,6 @@ export function IncidentMap({
   rain,
   closures,
 }: IncidentMapProps) {
-  const [hovering, setHovering] = useState(false)
-
   /*
    * La instancia nativa, en ESTADO y no leída del ref durante el render.
    *
@@ -150,7 +167,6 @@ export function IncidentMap({
    * error por cada punto y no dibuje nada.
    */
   const iconsReady = useEmergencyIcons(instance)
-  const [dragging, setDragging] = useState(false)
 
   // Se recalcula solo cuando cambia el arreglo de incidentes, no en cada
   // repintado: el polling entrega un arreglo nuevo cada minuto, no cada frame.
@@ -244,6 +260,47 @@ export function IncidentMap({
     console.error('[AlertaV/mapa] error', event.error ?? event)
   }, [])
 
+  const handleLoad = useCallback((event: MapEvent) => setInstance(event.target), [])
+
+  /*
+   * El cursor se escribe directo en el lienzo, no en estado de React.
+   *
+   * Como estado, cada entrada o salida de un incidente y cada arrastre
+   * repintaban el árbol entero del mapa. `grab` y `grabbing` los pone la hoja de
+   * estilos de MapLibre (`.maplibregl-interactive` y su `:active`); acá sólo se
+   * agrega `pointer` sobre lo clicable, y nunca durante un arrastre: el puntero
+   * pasa por encima de incidentes y no debe parpadear.
+   */
+  const dragging = useRef(false)
+  const handleMouseEnter = useCallback((event: MapLayerMouseEvent) => {
+    if (!dragging.current) event.target.getCanvas().style.cursor = 'pointer'
+  }, [])
+  const handleMouseLeave = useCallback((event: MapLayerMouseEvent) => {
+    event.target.getCanvas().style.cursor = ''
+  }, [])
+  const handleDragStart = useCallback((event: MapEvent) => {
+    dragging.current = true
+    event.target.getCanvas().style.cursor = ''
+  }, [])
+  const handleDragEnd = useCallback(() => {
+    dragging.current = false
+  }, [])
+
+  // Especificaciones de capa que dependen de una prop: se arman sólo cuando
+  // cambia esa prop, no en cada render.
+  const incidentIcons = useMemo(() => incidentIconLayer(theme), [theme])
+  const seismicIcons = useMemo(() => seismicIconLayer(theme, SEISMIC_ICON_COLOR), [theme])
+  const selectedIncident = useMemo(() => selectedLayer(selectedCode), [selectedCode])
+  const selectedQuake = useMemo(() => seismicSelectedLayer(selectedUsgsId), [selectedUsgsId])
+
+  const handleSelectOutage = useCallback(
+    (code: string) => {
+      onSelectSeismic(null)
+      onSelect(code)
+    },
+    [onSelect, onSelectSeismic],
+  )
+
   return (
     <Map
       ref={setMapRef}
@@ -258,43 +315,28 @@ export function IncidentMap({
       maxBounds={MAP_MAX_BOUNDS}
       minZoom={7}
       maxZoom={17}
-      style={{ position: 'absolute', inset: 0 }}
+      style={MAP_STYLE_BOX}
       interactiveLayerIds={interactiveLayers}
       onClick={handleClick}
-      onLoad={(event) => setInstance(event.target)}
+      onLoad={handleLoad}
       onError={handleError}
-      onMouseEnter={() => setHovering(true)}
-      onMouseLeave={() => setHovering(false)}
-      onDragStart={() => setDragging(true)}
-      onDragEnd={() => setDragging(false)}
-      /*
-       * Tres estados, en orden de prioridad:
-       *
-       *   grabbing  mientras se arrastra — gana sobre todo lo demás, porque
-       *             durante un arrastre el puntero pasa por encima de
-       *             incidentes y el cursor no debe parpadear a `pointer`.
-       *   pointer   sobre un incidente clicable.
-       *   grab      por defecto: el mapa se puede tomar y mover.
-       *
-       * MapLibre trae `default` en reposo, que no comunica que el mapa sea
-       * arrastrable. `grab`/`grabbing` es la convención de todo mapa web y
-       * además da un contraste mucho mayor que la flecha del sistema sobre una
-       * cartografía clara.
-       */
-      cursor={dragging ? 'grabbing' : hovering ? 'pointer' : 'grab'}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
       attributionControl={false}
       // Un mapa de emergencias se consulta en la calle y con una mano: los
       // gestos que rotan o inclinan solo estorban.
       dragRotate={false}
       pitchWithRotate={false}
-      touchZoomRotate={{ around: 'center' }}
+      touchZoomRotate={TOUCH_ZOOM_ROTATE}
     >
       <AttributionControl compact customAttribution={MAP_ATTRIBUTION} />
       <NavigationControl position="top-right" showCompass={false} />
       <GeolocateControl
         position="top-right"
         trackUserLocation
-        positionOptions={{ enableHighAccuracy: true }}
+        positionOptions={GEOLOCATE_OPTIONS}
       />
       <ScaleControl position="bottom-left" unit="metric" />
 
@@ -368,14 +410,9 @@ export function IncidentMap({
           <Layer {...seismicRingLayer} />
           <Layer {...seismicCoreLayer} />
           {iconsReady && (
-            <Layer
-              {...seismicIconLayer(
-                theme,
-                MAGNITUDE_COLOR_EXPRESSION as unknown as ExpressionSpecification,
-              )}
-            />
+            <Layer {...seismicIcons} />
           )}
-          <Layer {...seismicSelectedLayer(selectedUsgsId)} />
+          <Layer {...selectedQuake} />
           <Layer {...seismicHitLayer} />
         </Source>
       )}
@@ -388,10 +425,7 @@ export function IncidentMap({
       <OutagePinLayer
         outages={outages}
         selectedCode={selectedCode}
-        onSelect={(code) => {
-          onSelectSeismic(null)
-          onSelect(code)
-        }}
+        onSelect={handleSelectOutage}
       />
 
       {showIncidents && (
@@ -410,13 +444,13 @@ export function IncidentMap({
           apareciendo de la nada en vez de afinarse.
         */}
         {!iconsReady && <Layer {...coreLayer} />}
-        {iconsReady && <Layer {...incidentIconLayer(theme)} />}
+        {iconsReady && <Layer {...incidentIcons} />}
         <Layer {...closedRingLayer} />
         <Layer {...unverifiedLayer} />
-        <Layer {...selectedLayer(selectedCode)} />
+        <Layer {...selectedIncident} />
         <Layer {...hitLayer} />
       </Source>
       )}
     </Map>
   )
-}
+})

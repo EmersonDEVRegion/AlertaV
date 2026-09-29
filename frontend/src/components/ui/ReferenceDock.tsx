@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Button, Panel, Switch } from '@/components/ui/primitives'
 import { HAZARD_LEGEND, HAZARD_RAMP } from '@/domain/hazardSymbology'
@@ -470,7 +470,7 @@ export function ReferenceLayers({
  * El riel izquierdo de escritorio: las mismas tarjetas, dentro de una superficie
  * flotante plegable.
  */
-export function ReferenceDock(props: ReferenceDockProps) {
+export const ReferenceDock = memo(function ReferenceDock(props: ReferenceDockProps) {
   const [open, setOpen] = useState(true)
   // Dos y no tres: la lluvia se cuenta sola en el widget de la barra superior.
   const activeCount = Number(props.hazardEnabled) + Number(props.closureEnabled)
@@ -523,5 +523,5 @@ export function ReferenceDock(props: ReferenceDockProps) {
       </div>
     </Panel>
   )
-}
+})
 
