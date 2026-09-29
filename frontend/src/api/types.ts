@@ -155,6 +155,14 @@ export interface OutageDetail {
   estimated_restoration: string | null
   sector: string | null
   outage_count: number
+  /** Última vez que la empresa publicó alguno de sus cortes (ISO 8601). */
+  visto_en?: string | null
+  /**
+   * ¿La empresa lo sigue listando? `true`/`false` según su última lectura;
+   * `null` (o ausente, con un backend anterior) si no se sabe. Las empresas no
+   * avisan cuándo reponen: dejan de listar el corte.
+   */
+  vigente?: boolean | null
 }
 
 /** `IncidentRead` — lo que devuelve `GET /api/v1/incidents/active`. */
