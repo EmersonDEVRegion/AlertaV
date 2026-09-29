@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react'
+import { Suspense, lazy, memo, useCallback } from 'react'
 import type { RefObject } from 'react'
 import type { VehicleFeedState } from '@/hooks/useVehicleFeed'
 import {
@@ -9,7 +9,11 @@ import {
   useRadarOpen,
 } from '@/lib/selectionStore'
 import { VehicleRadarButton } from './VehicleRadarButton'
-import { VehicleRadarPanel } from './VehicleRadarPanel'
+
+// El panel (lista, filtros, tarjetas, placas) se descarga al abrirlo.
+const VehicleRadarPanel = lazy(() =>
+  import('./VehicleRadarPanel').then((m) => ({ default: m.VehicleRadarPanel })),
+)
 
 /*
  * El radar conectado al store de selección.
@@ -47,5 +51,10 @@ export const RadarPanelHost = memo(function RadarPanelHost({ feed, buttonRef }: 
     buttonRef.current?.focus()
   }, [buttonRef])
 
-  return open ? <VehicleRadarPanel feed={feed} onClose={close} /> : null
+  if (!open) return null
+  return (
+    <Suspense fallback={null}>
+      <VehicleRadarPanel feed={feed} onClose={close} />
+    </Suspense>
+  )
 })

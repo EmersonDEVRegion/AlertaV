@@ -2,7 +2,11 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { fetchActiveIncidents } from '@/api/incidents'
 import type { ActiveIncidentsQuery } from '@/api/types'
 import { env } from '@/config/env'
+import { pollEvery } from '@/lib/polling'
 import { queryKeys } from '@/lib/queryClient'
+
+/** Cadencia base; se frena sola con una racha de errores. Ver `lib/polling`. */
+const refetchInterval = pollEvery(env.pollIntervalMs)
 
 /**
  * Polling de `/incidents/active`.
@@ -15,7 +19,7 @@ export function useActiveIncidents(params: ActiveIncidentsQuery = {}) {
   return useQuery({
     queryKey: queryKeys.incidents.active(params),
     queryFn: ({ signal }) => fetchActiveIncidents(params, signal),
-    refetchInterval: env.pollIntervalMs,
+    refetchInterval,
     placeholderData: keepPreviousData,
   })
 }

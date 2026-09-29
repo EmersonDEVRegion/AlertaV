@@ -1,8 +1,11 @@
-import { memo, useState } from 'react'
+import { Suspense, lazy, memo, useState } from 'react'
 import { Button } from '@/components/ui/primitives'
 import { cn } from '@/lib/cn'
 import { useSelection } from '@/lib/selectionStore'
-import { CitizenReportModal } from './CitizenReportModal'
+
+// El formulario (categorías, geolocalización, envío) se descarga al abrirlo.
+const CitizenReportModal = lazy(loadCitizenReportModal)
+import { loadCitizenReportModal } from '@/lib/lazyChunks'
 
 interface CitizenReportControlProps {
   /**
@@ -99,7 +102,11 @@ export const CitizenReportControl = memo(function CitizenReportControl({
         Reportar emergencia
       </Button>
 
-      {open && <CitizenReportModal onClose={() => setOpen(false)} />}
+      {open && (
+        <Suspense fallback={null}>
+          <CitizenReportModal onClose={() => setOpen(false)} />
+        </Suspense>
+      )}
     </>
   )
 })

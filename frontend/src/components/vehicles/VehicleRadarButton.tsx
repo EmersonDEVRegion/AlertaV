@@ -3,7 +3,7 @@ import type { Ref } from 'react'
 import type { VehicleFeedState } from '@/hooks/useVehicleFeed'
 import { cn } from '@/lib/cn'
 import { RadarGlyph } from './RadarGlyph'
-import { RADAR_PANEL_ID } from './VehicleRadarPanel'
+import { RADAR_PANEL_ID } from './radarIds'
 
 /**
  * Botón del radar en la barra superior, con su contador.

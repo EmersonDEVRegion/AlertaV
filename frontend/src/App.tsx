@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { MapRef } from 'react-map-gl/maplibre'
 import type { SeismicEvent } from '@/api/seismicTypes'
 import type { ActiveIncidentsQuery, Incident } from '@/api/types'
@@ -44,9 +44,24 @@ import { useCollectorHealth } from '@/hooks/useCollectorHealth'
 import { useSeismicEvents } from '@/hooks/useSeismicEvents'
 import { useNotificationDeepLink } from '@/hooks/useNotificationDeepLink'
 import { useVehicleFeed } from '@/hooks/useVehicleFeed'
-import { RadarPanelHost, RadarToggle } from '@/components/vehicles/RadarControls'
 import { env } from '@/config/env'
+import {
+  loadCitizenReportModal,
+  loadIncidentSheet,
+  loadRadarControls,
+  loadSeismicCard,
+  prefetchWhenIdle,
+} from '@/lib/lazyChunks'
 import { usgsIdOf } from '@/lib/push'
+
+/*
+ * El radar entero va en un chunk aparte: con `VITE_VEHICLE_RADAR` apagado —así
+ * está en producción hasta avisarle a GBV— no se descarga nunca.
+ */
+const RadarToggle = lazy(() => loadRadarControls().then((m) => ({ default: m.RadarToggle })))
+const RadarPanelHost = lazy(() =>
+  loadRadarControls().then((m) => ({ default: m.RadarPanelHost })),
+)
 
 /**
  * Arreglo vacío compartido. `incidents ?? []` creaba uno nuevo en cada render
@@ -121,6 +136,17 @@ export default function App() {
   const radarEnabled = env.vehicleRadarEnabled
   const vehicles = useVehicleFeed(radarEnabled)
   const radarButtonRef = useRef<HTMLButtonElement>(null)
+
+  // Lo que aparece al primer toque —la ficha, la tarjeta del sismo, el modal de
+  // reporte y el radar— se adelanta cuando el navegador queda libre.
+  useEffect(() => {
+    prefetchWhenIdle([
+      loadIncidentSheet,
+      loadSeismicCard,
+      loadCitizenReportModal,
+      ...(radarEnabled ? [loadRadarControls] : []),
+    ])
+  }, [radarEnabled])
 
   const [confirmedOnly, setConfirmedOnly] = useState(false)
   const [visibility, setVisibility] = useState<LayerVisibility>(DEFAULT_LAYER_VISIBILITY)
@@ -386,7 +412,9 @@ export default function App() {
       // Con 404 el servidor todavía no tiene el feed: un botón que abre
       // «no disponible» es cromo muerto, así que no se muestra.
       radarEnabled && vehicles.status !== 'unavailable' ? (
-        <RadarToggle feed={vehicles} buttonRef={radarButtonRef} />
+        <Suspense fallback={null}>
+          <RadarToggle feed={vehicles} buttonRef={radarButtonRef} />
+        </Suspense>
       ) : undefined,
     [radarEnabled, vehicles],
   )
@@ -504,7 +532,11 @@ export default function App() {
 
         <SelectionDetails incidents={list} seismic={seismicList} />
 
-        {radarEnabled && <RadarPanelHost feed={vehicles} buttonRef={radarButtonRef} />}
+        {radarEnabled && (
+          <Suspense fallback={null}>
+            <RadarPanelHost feed={vehicles} buttonRef={radarButtonRef} />
+          </Suspense>
+        )}
       </main>
     </div>
   )

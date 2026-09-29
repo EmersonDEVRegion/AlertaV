@@ -19,7 +19,12 @@ export const queryClient = new QueryClient({
         if (error instanceof ApiError && !error.isRetryable) return false
         return failureCount < 3
       },
-      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 15_000),
+      // Si el servidor dijo cuánto esperar (429/503 con `Retry-After`), se le
+      // hace caso, con un tope de un minuto. Si no, backoff exponencial.
+      retryDelay: (attempt, error) =>
+        error instanceof ApiError && error.retryAfterMs !== null
+          ? Math.min(error.retryAfterMs, 60_000)
+          : Math.min(1000 * 2 ** attempt, 15_000),
     },
   },
 })

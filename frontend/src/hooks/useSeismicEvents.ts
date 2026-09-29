@@ -2,7 +2,10 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { fetchSeismicEvents } from '@/api/seismic'
 import type { SeismicQuery } from '@/api/seismicTypes'
 import { env } from '@/config/env'
+import { pollEvery } from '@/lib/polling'
 import { queryKeys } from '@/lib/queryClient'
+
+const refetchInterval = pollEvery(env.seismicPollIntervalMs)
 
 /**
  * Polling de `/events/seismic`.
@@ -19,7 +22,7 @@ export function useSeismicEvents(params: SeismicQuery = {}, enabled = true) {
   return useQuery({
     queryKey: queryKeys.seismic.list(params),
     queryFn: ({ signal }) => fetchSeismicEvents(params, signal),
-    refetchInterval: env.seismicPollIntervalMs,
+    refetchInterval,
     placeholderData: keepPreviousData,
     enabled,
   })

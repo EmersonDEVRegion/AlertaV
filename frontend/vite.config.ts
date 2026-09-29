@@ -71,7 +71,9 @@ export default defineConfig(({ mode }) => {
 
     build: {
       target: 'es2022',
-      sourcemap: true,
+      // Sin mapas de fuente en el despliegue: son ~4 MB que nadie usa sin un
+      // rastreador de errores. `npm run analyze` los genera cuando hacen falta.
+      sourcemap: false,
       // maplibre-gl pesa cerca de 1 MB y no hay como evitarlo: es el motor de
       // render del mapa. El aviso por defecto (500 kB) solo agrega ruido.
       chunkSizeWarningLimit: 1100,
@@ -138,13 +140,27 @@ export default defineConfig(({ mode }) => {
           navigateFallback: '/index.html',
           navigateFallbackDenylist: [/^\/api\//, /^\/docs/, /^\/redoc/],
 
+          /*
+           * Las reglas de la API se reconocen con FUNCIONES, no con RegExp.
+           *
+           * En producción la API vive en otro origen (Render) que la PWA
+           * (Vercel). Workbox sólo aplica una RegExp a una URL de otro origen si
+           * calza desde el primer carácter (`workbox-routing/RegExpRoute.js`), y
+           * `/\/api\/v1\/incidents\//` calza en la mitad. Resultado: estas
+           * reglas nunca guardaron nada en producción y la app no abría sin
+           * señal. Un matcher de función no tiene esa restricción y sirve igual
+           * con la API en el mismo origen (desarrollo) o en otro.
+           *
+           * Las funciones se serializan dentro de `sw.js`: no pueden usar nada
+           * de este archivo.
+           */
           runtimeCaching: [
             {
               // Incidentes: la red manda siempre. La cache solo existe para que
               // la app abra en una quebrada sin señal, y con fecha de vencimiento
               // corta: un incendio de hace una hora ya no describe el presente.
               // La UI además rotula la antiguedad (ver StalenessBanner).
-              urlPattern: /\/api\/v1\/incidents\//,
+              urlPattern: ({ url }) => url.pathname.startsWith('/api/v1/incidents/'),
               handler: 'NetworkFirst',
               options: {
                 cacheName: 'alertav-incidents',
@@ -160,7 +176,7 @@ export default defineConfig(({ mode }) => {
               // por la ventana de 48 h con su propio reloj, y todo lo que dice
               // «hace X» se calcula desde fechas absolutas de la respuesta.
               // Vence en 6 h: más allá, casi toda la lista cambió.
-              urlPattern: /\/api\/v1\/feed\//,
+              urlPattern: ({ url }) => url.pathname.startsWith('/api/v1/feed/'),
               handler: 'NetworkFirst',
               options: {
                 cacheName: 'alertav-feed',
@@ -171,8 +187,25 @@ export default defineConfig(({ mode }) => {
               },
             },
             {
-              // Tiles y sprites del mapa base: inmutables, cachear agresivo.
-              urlPattern: /^https:\/\/basemaps\.cartocdn\.com\/.*/i,
+              /*
+               * Amenaza sísmica: un modelo probabilístico que cambia cada varios
+               * años. Se sirve la copia guardada al instante y se revalida
+               * detrás: sin señal, la capa sigue disponible.
+               */
+              urlPattern: ({ url }) => url.pathname === '/api/v1/events/seismic/hazard',
+              handler: 'StaleWhileRevalidate',
+              options: {
+                cacheName: 'alertav-hazard',
+                expiration: { maxEntries: 2, maxAgeSeconds: 60 * 60 * 24 * 30 },
+                cacheableResponse: { statuses: [0, 200] },
+              },
+            },
+            {
+              // Estilo, teselas, glifos y sprites del mapa base: inmutables,
+              // cachear agresivo. El estilo está en `basemaps.cartocdn.com`,
+              // pero las teselas y los glifos vienen de subdominios
+              // (`tiles.basemaps.cartocdn.com`): la regla los cubre a todos.
+              urlPattern: /^https:\/\/([a-z0-9-]+\.)*basemaps\.cartocdn\.com\/.*/i,
               handler: 'CacheFirst',
               options: {
                 cacheName: 'alertav-basemap',

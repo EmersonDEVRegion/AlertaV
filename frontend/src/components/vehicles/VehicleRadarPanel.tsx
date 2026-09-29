@@ -7,6 +7,7 @@ import type { VehicleFeedState } from '@/hooks/useVehicleFeed'
 import { cn } from '@/lib/cn'
 import { formatRelative } from '@/lib/format'
 import { RadarGlyph } from './RadarGlyph'
+import { RADAR_PANEL_ID } from './radarIds'
 import { VehicleCard } from './VehicleCard'
 
 /**
@@ -31,8 +32,6 @@ import { VehicleCard } from './VehicleCard'
  * Al abrir, el foco entra al panel (el lector de pantalla anuncia su nombre) y
  * Escape lo cierra.
  */
-
-export const RADAR_PANEL_ID = 'vehicle-radar-panel'
 
 type Filter = 'todos' | VehicleStatus
 

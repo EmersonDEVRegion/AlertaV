@@ -7,6 +7,7 @@ import {
 } from '@/api/roadClosures'
 import type { RoadClosureCollection, RoadClosureQuery } from '@/api/roadClosureTypes'
 import { env } from '@/config/env'
+import { pollEvery } from '@/lib/polling'
 import { queryKeys } from '@/lib/queryClient'
 
 /**
@@ -74,6 +75,7 @@ export interface RoadClosureState {
  * tanto también la clave de caché.
  */
 const CLOSURE_PARAMS: RoadClosureQuery = {}
+const refetchInterval = pollEvery(env.roadClosurePollIntervalMs)
 
 export function useRoadClosures(): RoadClosureState {
   const [enabled, setEnabled] = useState(false)
@@ -86,7 +88,7 @@ export function useRoadClosures(): RoadClosureState {
     // cada arranque aunque nadie la encienda nunca.
     enabled,
     staleTime: env.roadClosurePollIntervalMs,
-    refetchInterval: env.roadClosurePollIntervalMs,
+    refetchInterval,
   })
 
   const toggle = useCallback(() => {

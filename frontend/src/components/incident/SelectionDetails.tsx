@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react'
+import { Suspense, lazy, memo, useMemo } from 'react'
 import type { SeismicEvent } from '@/api/seismicTypes'
 import type { Incident } from '@/api/types'
 import { useSelectedFire } from '@/hooks/useSelectedFire'
@@ -7,8 +7,12 @@ import {
   useSelectedIncidentCode,
   useSelectedSeismicId,
 } from '@/lib/selectionStore'
-import { IncidentSheet } from './IncidentSheet'
-import { SeismicCard } from './SeismicCard'
+import { loadIncidentSheet, loadSeismicCard } from '@/lib/lazyChunks'
+
+// Chunks aparte: sólo se descargan cuando alguien toca algo (o antes, en un
+// momento libre; ver `prefetchWhenIdle` en `App`).
+const IncidentSheet = lazy(loadIncidentSheet)
+const SeismicCard = lazy(loadSeismicCard)
 
 interface SelectionDetailsProps {
   /** Los incidentes que se están mostrando: con las capas y empresas encendidas. */
@@ -49,18 +53,26 @@ export const SelectionDetails = memo(function SelectionDetails({
 
   if (incident) {
     return (
-      <IncidentSheet
-        incident={incident}
-        onClose={closeIncident}
-        wind={wind}
-        windCone={cone}
-        windLoading={windLoading}
-        windError={windError}
-      />
+      <Suspense fallback={null}>
+        <IncidentSheet
+          incident={incident}
+          onClose={closeIncident}
+          wind={wind}
+          windCone={cone}
+          windLoading={windLoading}
+          windError={windError}
+        />
+      </Suspense>
     )
   }
 
-  if (quake) return <SeismicCard event={quake} onClose={closeSeismic} />
+  if (quake) {
+    return (
+      <Suspense fallback={null}>
+        <SeismicCard event={quake} onClose={closeSeismic} />
+      </Suspense>
+    )
+  }
 
   return null
 })

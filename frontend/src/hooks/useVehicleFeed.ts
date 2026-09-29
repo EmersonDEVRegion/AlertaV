@@ -7,6 +7,7 @@ import type { VehicleFeedItem, VehicleFeedQuery, VehicleFeedSource } from '@/api
 import { shouldWarn } from '@/components/ui/LayerHealth'
 import { env } from '@/config/env'
 import { FEED_LIMIT, FEED_WINDOW_HOURS, isRecent, visibleItems } from '@/domain/vehicleFeed'
+import { pollEvery } from '@/lib/polling'
 import { queryKeys } from '@/lib/queryClient'
 import { useNow } from './useNow'
 
@@ -63,6 +64,7 @@ function isNotFound(error: unknown): boolean {
 }
 
 const NO_ITEMS: VehicleFeedItem[] = []
+const pollFeed = pollEvery(env.vehiclePollIntervalMs)
 
 export function useVehicleFeed(enabled = env.vehicleRadarEnabled): VehicleFeedState {
   const now = useNow(60_000)
@@ -74,7 +76,7 @@ export function useVehicleFeed(enabled = env.vehicleRadarEnabled): VehicleFeedSt
     staleTime: env.vehiclePollIntervalMs / 2,
     // Un 404 apaga el sondeo: la ruta no va a aparecer sola dentro de cinco
     // minutos, aparece con un despliegue, y ahí se recarga la app.
-    refetchInterval: (q) => (isNotFound(q.state.error) ? false : env.vehiclePollIntervalMs),
+    refetchInterval: (q) => (isNotFound(q.state.error) ? false : pollFeed(q)),
   })
 
   const data = query.data
