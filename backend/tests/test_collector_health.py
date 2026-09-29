@@ -370,3 +370,22 @@ def test_el_literal_del_inbox_coincide_con_el_del_servicio():
 
     assert apify_webhook_service.INBOX_PENDIENTE == "pendiente"
     assert collector_health.inbox_atascado(entrega_pendiente(20), ahora=AHORA)
+
+
+def test_el_webhook_de_bomberos_ciego_pinta_sus_tres_familias():
+    """El mes de septiembre de 2026, mirado desde la salud.
+
+    El Actor de X entregaba relleno cada hora y la corrida cerraba `success`:
+    fuego, tránsito y otros se veían sanos sin un solo despacho. Desde el
+    2026-09-29 esa entrega cierra `degraded`, y eso tiene que llegar al mapa.
+    """
+    ultimas = {
+        "bomberos_apify_webhook": corrida(
+            "bomberos_apify_webhook",
+            estado=CollectorStatus.DEGRADED,
+            hace_minutos=2,
+            error="el Actor no trajo ningún tuit de @cgi_cbv, @cbvm132 (10 items en el dataset)",
+        )
+    }
+    for nombre in ("fire", "traffic", "otros"):
+        assert familia(ultimas, nombre) == "degraded"

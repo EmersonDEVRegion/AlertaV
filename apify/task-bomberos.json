@@ -1,15 +1,6 @@
 {
-  "twitterHandles": ["CBVM132", "CGI_CBV"],
-  "searchTerms": [],
-  "startUrls": [],
-  "conversationIds": [],
-  "maxItems": 15,
-  "sort": "Latest",
-  "includeSearchTerms": false,
-  "onlyImage": false,
-  "onlyQuote": false,
-  "onlyTwitterBlue": false,
-  "onlyVerifiedUsers": false,
-  "onlyVideo": false,
-  "customMapFunction": "(object) => { return {...object} }"
+  "twitterHandles": ["CGI_CBV", "CBVM132"],
+  "maxItemsPerTarget": 6,
+  "maxItems": 12,
+  "queryType": "Latest"
 }

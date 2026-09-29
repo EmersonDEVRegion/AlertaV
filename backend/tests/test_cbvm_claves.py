@@ -366,6 +366,10 @@ def servicio(monkeypatch):
     monkeypatch.setattr(settings, "BOMBEROS_MAX_LLM_CALLS", 0)
     monkeypatch.setattr(settings, "APIFY_WEBHOOK_MAX_AGE_MINUTES", 180)
     monkeypatch.setattr(settings, "BOMBEROS_SOURCE_HANDLE", "@CGI_CBV")
+    # La exigencia de ver a las dos centrales en cada entrega se prueba aparte
+    # (`test_apify_webhook.py`, bloque «Ceguera»). Acá cada test arma el lote que
+    # le interesa, y con una sola cuenta quedaría `partial` por ese motivo.
+    monkeypatch.setattr(settings, "APIFY_X_CUENTAS_ESPERADAS", [])
     return _Servicio
 
 
