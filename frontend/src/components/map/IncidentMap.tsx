@@ -28,17 +28,30 @@ import {
   MAP_MAX_BOUNDS,
   mapStyleFor,
 } from '@/config/map'
+import type { IncidentLayerKey } from '@/domain/families'
 import type { Theme } from '@/hooks/useTheme'
-import type { ConeCollection, ReachCollection } from '@/lib/overlayGeojson'
-import { toFeatureCollection } from '@/lib/geojson'
-import { OutagePinLayer } from './OutagePinLayer'
+import { toConeCollection, type ReachCollection } from '@/lib/overlayGeojson'
+import { toFeatureCollection, toOutageFeatureCollection } from '@/lib/geojson'
+import {
+  clearSelection,
+  selectIncident,
+  selectSeismic,
+  useSelectedIncidentCode,
+  useSelectedSeismicId,
+} from '@/lib/selectionStore'
 import {
   incidentIconLayer,
   seismicIconLayer,
 } from './emergencyIconLayers'
 import { useEmergencyIcons } from '@/hooks/useEmergencyIcons'
+import { useSelectedFire } from '@/hooks/useSelectedFire'
 import { MAGNITUDE_COLOR_EXPRESSION } from '@/domain/seismicSymbology'
-import type { ExpressionSpecification, Map as MapLibreMap } from 'maplibre-gl'
+import type {
+  ExpressionSpecification,
+  FilterSpecification,
+  GeoJSONSource,
+  Map as MapLibreMap,
+} from 'maplibre-gl'
 import { RainLayer } from './RainLayer'
 import { RoadClosureLayer } from './RoadClosureLayer'
 import { SeismicHazardLayer } from './SeismicHazardLayer'
@@ -58,6 +71,21 @@ import {
   selectedLayer,
   unverifiedLayer,
 } from './incidentLayers'
+import {
+  OUTAGE_CLUSTER_LAYER_ID,
+  OUTAGE_CLUSTER_MAX_ZOOM,
+  OUTAGE_CLUSTER_PROPERTIES,
+  OUTAGE_CLUSTER_RADIUS,
+  OUTAGE_HIT_LAYER_ID,
+  OUTAGE_SELECTED_LAYER_ID,
+  OUTAGE_SOURCE_ID,
+  outageClusterCountLayer,
+  outageClusterLayer,
+  outageGlyphLayer,
+  outageHitLayer,
+  outagePinLayer,
+  outageSelectedLayer,
+} from './outageLayers'
 import {
   SEISMIC_HIT_LAYER_ID,
   SEISMIC_SOURCE_ID,
@@ -83,23 +111,25 @@ interface IncidentMapProps {
    * mapa ni recurrir a un contexto.
    */
   mapRef: RefObject<MapRef | null>
-  /** Incidentes que van a las capas GeoJSON. Excluye los cortes. */
+  /**
+   * TODOS los incidentes que van a la fuente GeoJSON, sin filtrar por capa.
+   * Excluye los cortes de luz, que tienen su fuente propia.
+   *
+   * Apagar una capa no cambia este arreglo: cambia `visibleFamilies`, que es un
+   * `filter` de MapLibre. Así apagar «Tránsito» no vuelve a subir los datos al
+   * worker ni lo obliga a reindexar cada punto.
+   */
   incidents: readonly Incident[]
-  /** Cortes de suministro: se dibujan como pines DOM, no como círculos. */
+  /** Familias encendidas de las que viven en `incidents` (no incluye `power`). */
+  visibleFamilies: readonly IncidentLayerKey[]
+  /** Cortes de luz ya filtrados por capa y por empresa. Van agrupados. */
   outages: readonly Incident[]
   seismic: readonly SeismicEvent[]
-  /** Capas encendidas desde el control de capas. */
-  showIncidents: boolean
   showSeismic: boolean
-  selectedCode: string | null
-  selectedUsgsId: string | null
-  onSelect: (code: string | null) => void
-  onSelectSeismic: (usgsId: string | null) => void
   /** Tema activo: decide el estilo del mapa base. */
   theme: Theme
-  /** Polígonos derivados. Fuentes propias, separadas de la señal observada. */
+  /** Radio de percepción sísmica. Polígonos derivados, en fuente propia. */
   reach: ReachCollection
-  cone: ConeCollection
   /** Capa de referencia de amenaza sísmica, con su propia carga diferida. */
   hazard: SeismicHazardState
   /** Lluvia pronosticada. También diferida: no se pide hasta el primer encendido. */
@@ -124,28 +154,102 @@ const TOUCH_ZOOM_ROTATE = { around: 'center' } as const
 const GEOLOCATE_OPTIONS = { enableHighAccuracy: true } as const
 const SEISMIC_ICON_COLOR = MAGNITUDE_COLOR_EXPRESSION as unknown as ExpressionSpecification
 
+/** Desplazamiento que saca el punto de detrás de la ficha, que en teléfono ocupa el tercio inferior. */
+const sheetOffset = (): [number, number] => [0, -Math.min(window.innerHeight * 0.18, 160)]
+
+type WithFilter = { filter?: FilterSpecification }
+
+/**
+ * Suma el filtro de familias al filtro propio de la capa.
+ *
+ * Es lo que reemplaza a volver a filtrar el arreglo en `App`: cambiar el filtro
+ * de una capa es un `setFilter`, sin datos nuevos para el worker.
+ */
+function withFamilies<T extends WithFilter>(spec: T, families: FilterSpecification): T {
+  return {
+    ...spec,
+    filter: spec.filter ? (['all', families, spec.filter] as FilterSpecification) : families,
+  }
+}
+
+/*
+ * Lo efímero, en componentes que se suscriben solos.
+ *
+ * La selección vive en `lib/selectionStore`. Estos tres componentes son los
+ * únicos del mapa que la leen, así que tocar un pin repinta un anillo —una
+ * capa— y no el lienzo con todas sus fuentes.
+ *
+ * `<Source>` les inyecta `source` con `cloneElement` porque son hijos directos;
+ * como componentes intermedios, tienen que reenviarlo a su `<Layer>` o MapLibre
+ * rechaza la capa por no tener fuente.
+ */
+interface SourceChild {
+  source?: string
+}
+
+const SelectedIncidentLayer = memo(function SelectedIncidentLayer({
+  source,
+  families,
+}: SourceChild & { families: FilterSpecification }) {
+  const code = useSelectedIncidentCode()
+  const spec = useMemo(() => withFamilies(selectedLayer(code), families), [code, families])
+  return <Layer {...spec} source={source} />
+})
+
+const SelectedOutageLayer = memo(function SelectedOutageLayer({
+  source,
+  theme,
+}: SourceChild & { theme: Theme }) {
+  const code = useSelectedIncidentCode()
+  const spec = useMemo(() => outageSelectedLayer(theme, code), [theme, code])
+  return <Layer {...spec} source={source} />
+})
+
+const SelectedQuakeLayer = memo(function SelectedQuakeLayer({ source }: SourceChild) {
+  const usgsId = useSelectedSeismicId()
+  const spec = useMemo(() => seismicSelectedLayer(usgsId), [usgsId])
+  return <Layer {...spec} source={source} />
+})
+
+/**
+ * El cono de viento del incendio seleccionado.
+ *
+ * Está SIEMPRE montado, aunque vacío: la lluvia y los cortes de ruta se anclan
+ * con `beforeId` a `wind-cone-fill` (ver más abajo). Pide el viento con la misma
+ * clave que la ficha, así que es una sola llamada a Open-Meteo.
+ */
+const WindConeSource = memo(function WindConeSource({
+  incidents,
+}: {
+  incidents: readonly Incident[]
+}) {
+  const { fire, cone } = useSelectedFire(incidents)
+  const data = useMemo(() => toConeCollection(fire, cone), [fire, cone])
+  return (
+    <Source id={CONE_SOURCE_ID} type="geojson" data={data}>
+      <Layer {...coneFillLayer} />
+      <Layer {...coneLineLayer} />
+    </Source>
+  )
+})
+
 /**
  * El lienzo GIS, detrás de un `memo`.
  *
- * Todo lo que recibe tiene identidad estable (arreglos memorizados en `App`,
- * setters de estado y colecciones que react-query comparte cuando el sondeo
- * trae lo mismo), así que sólo se vuelve a renderizar cuando cambia un dato
- * que dibuja. Antes lo hacía una vez por segundo por un reloj que ni usaba.
+ * Todo lo que recibe tiene identidad estable (arreglos memorizados en `App` y
+ * colecciones que react-query comparte cuando el sondeo trae lo mismo), así que
+ * sólo se vuelve a renderizar cuando cambia un dato que dibuja o una capa se
+ * enciende. La selección no pasa por acá: la leen los componentes de arriba.
  */
 export const IncidentMap = memo(function IncidentMap({
   mapRef,
   incidents,
+  visibleFamilies,
   outages,
   seismic,
-  showIncidents,
   showSeismic,
-  selectedCode,
-  selectedUsgsId,
-  onSelect,
-  onSelectSeismic,
   theme,
   reach,
-  cone,
   hazard,
   rain,
   closures,
@@ -168,58 +272,76 @@ export const IncidentMap = memo(function IncidentMap({
    */
   const iconsReady = useEmergencyIcons(instance)
 
-  // Se recalcula solo cuando cambia el arreglo de incidentes, no en cada
-  // repintado: el polling entrega un arreglo nuevo cada minuto, no cada frame.
+  // Se recalcula sólo cuando cambia el arreglo, no al encender o apagar una
+  // capa: eso ahora es un filtro. El sondeo que trae lo mismo devuelve el mismo
+  // arreglo (structural sharing de react-query) y acá no pasa nada.
   const data = useMemo(() => toFeatureCollection(incidents), [incidents])
+  const outageData = useMemo(() => toOutageFeatureCollection(outages), [outages])
   const seismicData = useMemo(() => toSeismicFeatureCollection(seismic), [seismic])
+
+  const showIncidents = visibleFamilies.length > 0
+  const showOutages = outages.length > 0
+
+  const families = useMemo<FilterSpecification>(
+    () => ['in', ['get', 'layer'], ['literal', [...visibleFamilies]]],
+    [visibleFamilies],
+  )
 
   // Sólo las capas visibles reciben el toque. Si no se filtrara, un sismo
   // oculto seguiría capturando el clic sobre el incidente que hay debajo.
   const interactiveLayers = useMemo(() => {
     const ids: string[] = []
     if (showIncidents) ids.push(INCIDENT_HIT_LAYER_ID)
+    if (showOutages) ids.push(OUTAGE_HIT_LAYER_ID, OUTAGE_CLUSTER_LAYER_ID)
     if (showSeismic) ids.push(SEISMIC_HIT_LAYER_ID)
     return ids
-  }, [showIncidents, showSeismic])
+  }, [showIncidents, showOutages, showSeismic])
 
   const handleClick = useCallback(
     (event: MapLayerMouseEvent) => {
-      // Los incidentes tienen prioridad sobre los sismos: si ambos caen bajo el
-      // dedo, gana la emergencia. El orden de `interactiveLayerIds` no lo
-      // garantiza, así que se resuelve explícitamente.
+      // Prioridad explícita, porque el orden de `interactiveLayerIds` no la
+      // garantiza: una emergencia (incidente o corte) gana sobre un racimo de
+      // cortes, y un racimo gana sobre un sismo, que es contexto.
       const features = event.features ?? []
       const incident = features.find((f) => typeof f.properties?.['code'] === 'string')
+      const cluster = features.find((f) => typeof f.properties?.['cluster_id'] === 'number')
       const quake = features.find((f) => typeof f.properties?.['usgs_id'] === 'string')
+      const map = event.target
 
-      if (!incident && quake) {
-        onSelect(null)
-        onSelectSeismic(String(quake.properties!['usgs_id']))
+      if (incident) {
+        selectIncident(String(incident.properties!['code']))
+        map.easeTo({ center: event.lngLat, offset: sheetOffset(), duration: 450 })
         return
       }
 
-      const code = incident?.properties?.['code']
-      if (typeof code !== 'string') {
-        onSelect(null)
-        onSelectSeismic(null)
+      if (cluster && cluster.geometry.type === 'Point') {
+        // Un racimo no se selecciona: se abre. Se acerca la cámara hasta el
+        // zoom en el que MapLibre lo separa.
+        //
+        // Al menos un nivel y medio por toque: el zoom de expansión de un
+        // racimo apretado puede ser apenas unas décimas más, y abrir un
+        // enjambre de sesenta cortes no debería pedir cinco toques. Nunca más
+        // allá del primer zoom sin agrupar.
+        const center = cluster.geometry.coordinates as [number, number]
+        const unclustered = OUTAGE_CLUSTER_MAX_ZOOM + 1
+        const target = (zoom: number) =>
+          Math.min(Math.max(zoom, map.getZoom() + 1.5), unclustered)
+        const source = map.getSource<GeoJSONSource>(OUTAGE_SOURCE_ID)
+        void source
+          ?.getClusterExpansionZoom(cluster.properties!['cluster_id'] as number)
+          .then((zoom) => map.easeTo({ center, zoom: target(zoom) }))
+          .catch(() => map.easeTo({ center, zoom: unclustered }))
         return
       }
 
-      onSelectSeismic(null)
-      onSelect(code)
-
-      // La tarjeta ocupa el tercio inferior en teléfono. Centrar el incidente
-      // sin compensar lo dejaria justo debajo de la tarjeta, que es donde no se
-      // ve. El desplazamiento vertical lo saca de ahi.
-      const map = mapRef.current
-      if (map) {
-        map.easeTo({
-          center: event.lngLat,
-          offset: [0, -Math.min(window.innerHeight * 0.18, 160)],
-          duration: 450,
-        })
+      if (quake) {
+        selectSeismic(String(quake.properties!['usgs_id']))
+        return
       }
+
+      clearSelection()
     },
-    [mapRef, onSelect, onSelectSeismic],
+    [],
   )
 
   /**
@@ -288,17 +410,27 @@ export const IncidentMap = memo(function IncidentMap({
 
   // Especificaciones de capa que dependen de una prop: se arman sólo cuando
   // cambia esa prop, no en cada render.
-  const incidentIcons = useMemo(() => incidentIconLayer(theme), [theme])
+  const incidentSpecs = useMemo(
+    () => ({
+      halo: withFamilies(alertHaloLayer, families),
+      casing: withFamilies(casingLayer, families),
+      core: withFamilies(coreLayer, families),
+      icon: withFamilies(incidentIconLayer(theme), families),
+      closed: withFamilies(closedRingLayer, families),
+      unverified: withFamilies(unverifiedLayer, families),
+      hit: withFamilies(hitLayer, families),
+    }),
+    [families, theme],
+  )
   const seismicIcons = useMemo(() => seismicIconLayer(theme, SEISMIC_ICON_COLOR), [theme])
-  const selectedIncident = useMemo(() => selectedLayer(selectedCode), [selectedCode])
-  const selectedQuake = useMemo(() => seismicSelectedLayer(selectedUsgsId), [selectedUsgsId])
-
-  const handleSelectOutage = useCallback(
-    (code: string) => {
-      onSelectSeismic(null)
-      onSelect(code)
-    },
-    [onSelect, onSelectSeismic],
+  const outageSpecs = useMemo(
+    () => ({
+      cluster: outageClusterLayer(theme),
+      count: outageClusterCountLayer(),
+      pin: outagePinLayer(theme),
+      glyph: outageGlyphLayer(),
+    }),
+    [theme],
   )
 
   return (
@@ -361,10 +493,7 @@ export const IncidentMap = memo(function IncidentMap({
         </Source>
       )}
 
-      <Source id={CONE_SOURCE_ID} type="geojson" data={cone}>
-        <Layer {...coneFillLayer} />
-        <Layer {...coneLineLayer} />
-      </Source>
+      <WindConeSource incidents={incidents} />
 
       {/*
         Lluvia pronosticada. Va DESPUÉS del cono en el árbol a propósito, no por
@@ -409,48 +538,66 @@ export const IncidentMap = memo(function IncidentMap({
         <Source id={SEISMIC_SOURCE_ID} type="geojson" data={seismicData}>
           <Layer {...seismicRingLayer} />
           <Layer {...seismicCoreLayer} />
-          {iconsReady && (
-            <Layer {...seismicIcons} />
-          )}
-          <Layer {...selectedQuake} />
+          {iconsReady && <Layer {...seismicIcons} />}
+          <SelectedQuakeLayer />
           <Layer {...seismicHitLayer} />
         </Source>
       )}
 
       {/*
-        Los cortes se interceptan antes de llegar a la fuente GeoJSON: `App` ya
-        los separó del arreglo `incidents`. Acá se dibujan como marcadores DOM,
-        que es lo que permite darles forma de gota y acento por empresa.
+        Cortes de luz: fuente propia, la única agrupada (ver `outageLayers.ts`).
+        Encima de los sismos y debajo de los incidentes: un incendio o un choque
+        tapan a un corte, nunca al revés. Siempre montada: sin cortes visibles
+        recibe una colección vacía, que es un `setData` y no un remontaje.
       */}
-      <OutagePinLayer
-        outages={outages}
-        selectedCode={selectedCode}
-        onSelect={handleSelectOutage}
-      />
+      <Source
+        id={OUTAGE_SOURCE_ID}
+        type="geojson"
+        data={outageData}
+        promoteId="code"
+        cluster
+        clusterRadius={OUTAGE_CLUSTER_RADIUS}
+        clusterMaxZoom={OUTAGE_CLUSTER_MAX_ZOOM}
+        clusterProperties={OUTAGE_CLUSTER_PROPERTIES}
+      >
+        <Layer {...outageSpecs.cluster} />
+        <Layer {...outageSpecs.count} />
+        <Layer {...outageSpecs.pin} />
+        {/*
+          `beforeId`: montado cuando los iconos están listos, sin ancla se
+          agregaría al final del estilo, encima de los incidentes. Así queda
+          sobre su disco y bajo el anillo de selección.
+        */}
+        {iconsReady && <Layer {...outageSpecs.glyph} beforeId={OUTAGE_SELECTED_LAYER_ID} />}
+        <SelectedOutageLayer theme={theme} />
+        <Layer {...outageHitLayer} />
+      </Source>
 
-      {showIncidents && (
+      {/*
+        Siempre montada: las familias apagadas se esconden con `filter`
+        (`visibleFamilies`), no desmontando la fuente.
+      */}
       <Source
         id={INCIDENT_SOURCE_ID}
         type="geojson"
         data={data}
         promoteId="code"
       >
-        <Layer {...alertHaloLayer} />
-        <Layer {...casingLayer} />
+        <Layer {...incidentSpecs.halo} />
+        <Layer {...incidentSpecs.casing} />
         {/*
           El disco sólo se dibuja mientras los iconos no estén listos. Es el
           estado de un puñado de milisegundos entre el primer cuadro del mapa y
           el registro de las imágenes: sin él, los incidentes parpadearían
           apareciendo de la nada en vez de afinarse.
         */}
-        {!iconsReady && <Layer {...coreLayer} />}
-        {iconsReady && <Layer {...incidentIcons} />}
-        <Layer {...closedRingLayer} />
-        <Layer {...unverifiedLayer} />
-        <Layer {...selectedIncident} />
-        <Layer {...hitLayer} />
+        {!iconsReady && <Layer {...incidentSpecs.core} />}
+        {iconsReady && <Layer {...incidentSpecs.icon} />}
+        <Layer {...incidentSpecs.closed} />
+        <Layer {...incidentSpecs.unverified} />
+        <SelectedIncidentLayer families={families} />
+        <Layer {...incidentSpecs.hit} />
       </Source>
-      )}
     </Map>
   )
 })

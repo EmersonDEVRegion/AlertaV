@@ -2,7 +2,9 @@ import { memo } from 'react'
 import type { Incident } from '@/api/types'
 import { STATUS_LABEL, TYPE_LABEL } from '@/domain/labels'
 import { styleFor } from '@/domain/palette'
+import { iconFor } from '@/domain/emergencyIcons'
 import { formatPercent, formatRelative } from '@/lib/format'
+import { GlyphIcon } from './GlyphIcon'
 
 interface IncidentListItemProps {
   incident: Incident
@@ -34,10 +36,11 @@ export const IncidentListItem = memo(function IncidentListItem({
             : 'hover:bg-hover')
         }
       >
-        <span
-          aria-hidden
-          className="mt-1 size-2.5 shrink-0 rounded-full ring-2 ring-panel"
-          style={{ backgroundColor: style.color }}
+        {/* El mismo glifo que en el mapa, con el color de su confianza. */}
+        <GlyphIcon
+          id={iconFor(incident.type)}
+          className="mt-0.5 size-3.5 shrink-0"
+          color={style.color}
         />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[11px] font-semibold text-ink">

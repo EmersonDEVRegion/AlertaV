@@ -25,6 +25,7 @@ import {
   INCIDENT_TYPE_ICON,
   SEISMIC_ICON,
   CLOSURE_ICON,
+  OUTAGE_ICON,
 } from '@/domain/emergencyIcons'
 import { INCIDENT_TYPES } from '@/api/types'
 import { MAGNITUDE_COLOR_EXPRESSION } from '@/domain/seismicSymbology'
@@ -67,6 +68,7 @@ describe('el diccionario y el `match` no se desincronizan', () => {
       FALLBACK_ICON,
       SEISMIC_ICON,
       CLOSURE_ICON,
+      OUTAGE_ICON,
     ])
     const declared = new Set<string>(ICON_IDS)
     // Un icono referenciado y no registrado hace que MapLibre no dibuje NADA
@@ -122,7 +124,7 @@ describe('el diccionario y el `match` no se desincronizan', () => {
     expect(expr.endsWith(`"${FALLBACK_ICON}"]`)).toBe(true)
   })
 
-  it('no incluye `power_outage`: los cortes de luz son marcadores del DOM', () => {
+  it('no incluye `power_outage`: los cortes de luz tienen su propia fuente', () => {
     expect(INCIDENT_TYPE_ICON['power_outage']).toBeUndefined()
   })
 

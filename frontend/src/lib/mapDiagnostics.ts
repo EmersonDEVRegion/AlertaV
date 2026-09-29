@@ -17,7 +17,8 @@
  * -----------
  * Abrir la app con `?debug=1` (o `?debug=map`). En desarrollo va siempre
  * encendido. Sin el flag el costo es un `URLSearchParams` al arrancar y nada
- * más: no se registra ni un listener.
+ * más: no se registra ni un listener. Con el flag, además, la instancia queda
+ * en `window.__ALERTAV_MAP__` para inspeccionarla desde la consola.
  */
 
 import { getWorkerCount, getWorkerUrl } from 'maplibre-gl'
@@ -164,6 +165,15 @@ export function attachMapDiagnostics(map: MapLibreMap): () => void {
   map.on('load', onLoad)
   map.on('error', onError)
 
+  /*
+   * Con `?debug=1`, la instancia queda a mano en la consola: en terreno es la
+   * diferencia entre adivinar y preguntarle al mapa (`queryRenderedFeatures`,
+   * `getStyle().layers`, `getSource('outages')`…). También la usan las
+   * pruebas de humo con navegador. Sin el flag no se expone nada.
+   */
+  const debugWindow = window as Window & { __ALERTAV_MAP__?: MapLibreMap }
+  debugWindow.__ALERTAV_MAP__ = map
+
   // Instantánea temprana del worker: si su URL da 404 se sabe de inmediato,
   // sin esperar el watchdog.
   void probeWorker().then((report) => {
@@ -178,6 +188,7 @@ export function attachMapDiagnostics(map: MapLibreMap): () => void {
   })
 
   return () => {
+    if (debugWindow.__ALERTAV_MAP__ === map) delete debugWindow.__ALERTAV_MAP__
     window.clearTimeout(watchdog)
     map.off('dataloading', onDataLoading)
     map.off('data', onData)

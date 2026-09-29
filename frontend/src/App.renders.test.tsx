@@ -13,6 +13,7 @@ import { act, render } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { memo } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { resetSelection, select, selectIncident } from '@/lib/selectionStore'
 
 const renders = { map: 0, panel: 0, header: 0 }
 
@@ -85,13 +86,13 @@ describe('App quieta', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+    resetSelection()
   })
 
-  it('no repinta el mapa, el panel ni la barra durante un minuto sin datos nuevos', async () => {
+  async function mountApp() {
     const { default: App } = await import('@/App')
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-
-    render(
+    const view = render(
       <QueryClientProvider client={client}>
         <App />
       </QueryClientProvider>,
@@ -100,6 +101,11 @@ describe('App quieta', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2_000)
     })
+    return { client, view }
+  }
+
+  it('no repinta el mapa, el panel ni la barra durante un minuto sin datos nuevos', async () => {
+    const { client } = await mountApp()
     const base = { ...renders }
 
     // Un segundo por `act`: si React agrupara todo el minuto en un solo lote,
@@ -110,6 +116,23 @@ describe('App quieta', () => {
       })
     }
 
+    expect(renders.map - base.map).toBe(0)
+    expect(renders.panel - base.panel).toBe(0)
+    expect(renders.header - base.header).toBe(0)
+    client.clear()
+  })
+
+  it('seleccionar un incidente, un sismo o el radar no pasa por App', async () => {
+    const { client } = await mountApp()
+    const base = { ...renders }
+
+    act(() => selectIncident('INC-2026-00001'))
+    act(() => select({ kind: 'seismic', usgsId: 'us7000abcd' }))
+    act(() => select({ kind: 'radar' }))
+    act(() => select({ kind: 'none' }))
+
+    // La selección la leen los anillos del mapa, la ficha y la lista por su
+    // cuenta: el lienzo, el panel y la barra no se enteran.
     expect(renders.map - base.map).toBe(0)
     expect(renders.panel - base.panel).toBe(0)
     expect(renders.header - base.header).toBe(0)

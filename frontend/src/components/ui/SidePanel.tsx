@@ -21,6 +21,7 @@ import { TRAFFIC_LEVEL } from '@/domain/trafficSymbology'
 import { cn } from '@/lib/cn'
 import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { formatRelative } from '@/lib/format'
+import { useSelectedIncidentCode, useSelectedSeismicId } from '@/lib/selectionStore'
 import { IncidentListItem } from './IncidentListItem'
 
 /**
@@ -91,8 +92,6 @@ export interface SidePanelProps {
   /** Incidentes visibles, agrupados por capa, para la lista desplegable. */
   incidentsByLayer: Record<IncidentLayerKey, Incident[]>
   seismicEvents: readonly SeismicEvent[]
-  selectedCode: string | null
-  selectedUsgsId: string | null
   onFocusIncident: (incident: Incident) => void
   onFocusSeismic: (event: SeismicEvent) => void
   seismicFilter: SeismicFilterKey
@@ -143,8 +142,6 @@ export function IncidentFilters({
   counts,
   incidentsByLayer,
   seismicEvents,
-  selectedCode,
-  selectedUsgsId,
   onFocusIncident,
   onFocusSeismic,
   seismicFilter,
@@ -156,6 +153,10 @@ export function IncidentFilters({
   const [expanded, setExpanded] = useState<keyof LayerVisibility | null>(null)
   // Un solo reloj para todas las filas: las edades avanzan aunque no llegue nada.
   const now = useNow(RELATIVE_TIME_TICK_MS)
+  // La selección se lee del store y no llega por props: así tocar un pin
+  // repinta la lista (que resalta la fila) sin pasar por `App`.
+  const selectedCode = useSelectedIncidentCode()
+  const selectedUsgsId = useSelectedSeismicId()
   const toggleExpanded = (key: keyof LayerVisibility) =>
     setExpanded((current) => (current === key ? null : key))
 

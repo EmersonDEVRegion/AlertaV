@@ -49,6 +49,7 @@ export const ICON_IDS = [
   'av-alert',
   'av-rescue',
   'av-flood',
+  'av-bolt',
 ] as const
 export type IconId = (typeof ICON_IDS)[number]
 
@@ -151,6 +152,17 @@ export const ICON_GLYPHS: Record<IconId, IconGlyph> = {
       'M1.6 13.6c1.8 0 1.8 2 3.5 2s1.7-2 3.5-2 1.7 2 3.4 2 1.8-2 3.5-2 1.8 2 3.5 2 1.7-2 3.4-2v3.2c-1.7 0-1.7 2-3.4 2s-1.8-2-3.5-2-1.7 2-3.5 2-1.7-2-3.4-2-1.8 2-3.5 2-1.7-2-3.5-2z',
     ],
   },
+  /*
+   * Rayo de un solo trazo, macizo.
+   *
+   * Reemplaza al emoji ⚡ del pin DOM, cuyo color lo ponía la fuente del
+   * sistema y no el tema. El cuello más angosto mide unas tres unidades: a
+   * 14 px sigue siendo un rayo y no dos triángulos sueltos.
+   */
+  'av-bolt': {
+    label: 'Corte de luz',
+    paths: ['M13.8 1.6 4.2 13.4h6.2l-1.2 9 10.6-12.6h-6.4z'],
+  },
 }
 
 /**
@@ -169,8 +181,8 @@ export const INCIDENT_TYPE_ICON: Record<string, IconId> = {
   rescue: 'av-rescue',
   flood: 'av-flood',
   landslide: 'av-flood',
-  // `power_outage` no aparece: los cortes de luz se dibujan como marcadores del
-  // DOM con su propio pin, fuera del lienzo. Ver `OutagePinLayer`.
+  // `power_outage` no aparece: los cortes de luz tienen su propia fuente, con
+  // agrupación y color por empresa. Ver `components/map/outageLayers.ts`.
   other: 'av-alert',
 }
 
@@ -180,3 +192,10 @@ export const FALLBACK_ICON: IconId = 'av-alert'
 /** Icono de las otras dos fuentes, que tienen un único tipo cada una. */
 export const SEISMIC_ICON: IconId = 'av-waves'
 export const CLOSURE_ICON: IconId = 'av-barrier'
+export const OUTAGE_ICON: IconId = 'av-bolt'
+
+/** Glifo de un incidente fuera del mapa (listas, leyenda). */
+export function iconFor(type: string): IconId {
+  if (type === 'power_outage') return OUTAGE_ICON
+  return INCIDENT_TYPE_ICON[type] ?? FALLBACK_ICON
+}

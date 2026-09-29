@@ -33,8 +33,6 @@ function renderControls(
         counts: { fire: 2, traffic: 1, power: 0, otros: 0, seismic: 0 },
         incidentsByLayer: { ...emptyByLayer, fire: [makeIncident()] },
         seismicEvents: [],
-        selectedCode: null,
-        selectedUsgsId: null,
         onFocusIncident: vi.fn(),
         onFocusSeismic: vi.fn(),
         seismicFilter: 'relevant',

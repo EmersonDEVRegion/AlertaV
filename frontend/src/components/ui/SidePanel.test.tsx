@@ -27,8 +27,6 @@ function renderPanel() {
       counts={{ fire: 2, traffic: 1, power: 3, otros: 0, seismic: 4 }}
       incidentsByLayer={{ ...emptyByLayer, fire: [makeIncident()] }}
       seismicEvents={[]}
-      selectedCode={null}
-      selectedUsgsId={null}
       onFocusIncident={vi.fn()}
       onFocusSeismic={vi.fn()}
       seismicFilter="relevant"

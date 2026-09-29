@@ -9,7 +9,13 @@ import {
   MAGNITUDE_ORDER,
   legendRadius,
 } from '@/domain/seismicSymbology'
+import { GlyphIcon } from '@/components/ui/GlyphIcon'
+import { ICON_GLYPHS, ICON_IDS, OUTAGE_ICON } from '@/domain/emergencyIcons'
+import { OUTAGE_CLUSTER, PROVIDER, PROVIDER_ORDER } from '@/domain/powerSymbology'
 import { cn } from '@/lib/cn'
+
+/** El rayo va aparte, en «Cortes de luz», con el color de cada empresa. */
+const LEGEND_ICONS = ICON_IDS.filter((id) => id !== OUTAGE_ICON)
 
 /**
  * Leyenda de la política de confianza v2.0.0.
@@ -193,6 +199,51 @@ export function LegendBody() {
         Son ejes distintos. Puede haber alerta roja vigente sobre un incidente
         de baja confianza, y al revés.
       </p>
+
+      {/* --- Iconos: los mismos trazos que dibuja el lienzo --- */}
+      <p className="mt-4 border-t border-line pt-3 font-semibold text-ink">
+        Iconos: qué pasó
+      </p>
+      <p className="mb-2 text-[11px] leading-snug text-ink-muted">
+        La silueta dice el tipo; el color, la confianza. Son los mismos trazos
+        del mapa.
+      </p>
+      <ul className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+        {LEGEND_ICONS.map((id) => (
+          <li key={id} className="flex items-center gap-2 text-ink-muted">
+            <GlyphIcon id={id} className="size-4 shrink-0 text-ink" />
+            <span className="truncate">{ICON_GLYPHS[id].label}</span>
+          </li>
+        ))}
+      </ul>
+
+      <p className="mt-4 font-semibold text-ink">Cortes de luz</p>
+      <ul className="mt-2 space-y-1.5">
+        {PROVIDER_ORDER.map((provider) => (
+          <li key={provider} className="flex items-center gap-2">
+            <span
+              aria-hidden
+              className="grid size-4 shrink-0 place-items-center rounded-full ring-2 ring-white"
+              style={{ backgroundColor: PROVIDER[provider].color }}
+            >
+              <GlyphIcon id={OUTAGE_ICON} className="size-2.5" color="#ffffff" />
+            </span>
+            <span className="text-ink-muted">{PROVIDER[provider].label}</span>
+          </li>
+        ))}
+        <li className="flex items-center gap-2">
+          <span
+            aria-hidden
+            className="grid size-4 shrink-0 place-items-center rounded-full text-[9px] font-semibold ring-2 ring-white"
+            style={{ backgroundColor: OUTAGE_CLUSTER.color, color: OUTAGE_CLUSTER.onColor }}
+          >
+            12
+          </span>
+          <span className="text-ink-muted">
+            Varios cortes juntos. Tócalo para acercarte.
+          </span>
+        </li>
+      </ul>
 
       {/* --- Capa sísmica: escala propia, sin relación con la anterior --- */}
       <p className="mt-4 border-t border-line pt-3 font-semibold text-ink">

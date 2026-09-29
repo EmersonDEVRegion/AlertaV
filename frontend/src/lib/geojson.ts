@@ -18,6 +18,7 @@
 import type { FeatureCollection, Point } from 'geojson'
 import type { ConfidenceLevel, Incident, IncidentType } from '@/api/types'
 import { type IncidentLayerKey, layerOf } from '@/domain/families'
+import { providerOf } from '@/domain/powerSymbology'
 import { isClosed, levelOf, needsVerificationCaveat } from '@/domain/symbology'
 
 interface IncidentFeatureProps {
@@ -71,6 +72,42 @@ export function toFeatureCollection(
         alert_level: incident.alert_level ?? '',
         confidence: incident.confidence,
         is_official_confirmed: incident.is_official_confirmed,
+      },
+    })),
+  }
+}
+
+/**
+ * Propiedades de un corte de luz en su fuente propia.
+ *
+ * `provider` va resuelto (declarado o inferido de las fuentes) porque la capa
+ * lo usa para el color y una expresión de estilo no puede mirar `sources`.
+ * `affected_clients` va en 0 cuando no se informó: la agrupación los SUMA, y
+ * un `null` en la suma envenenaría el total del racimo. La ficha, que sí
+ * distingue «sin dato» de «cero», lee el objeto tipado, no esto.
+ */
+interface OutageFeatureProps {
+  code: string
+  provider: 'chilquinta' | 'cge' | 'unknown'
+  affected_clients: number
+  is_closed: boolean
+}
+
+export type OutageFeatureCollection = FeatureCollection<Point, OutageFeatureProps>
+
+export function toOutageFeatureCollection(
+  outages: readonly Incident[],
+): OutageFeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: outages.map((incident) => ({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [incident.lon, incident.lat] },
+      properties: {
+        code: incident.code,
+        provider: providerOf(incident) ?? 'unknown',
+        affected_clients: incident.outage?.affected_clients ?? 0,
+        is_closed: isClosed(incident.status),
       },
     })),
   }

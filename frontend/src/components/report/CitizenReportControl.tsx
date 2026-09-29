@@ -1,13 +1,13 @@
 import { memo, useState } from 'react'
 import { Button } from '@/components/ui/primitives'
 import { cn } from '@/lib/cn'
+import { useSelection } from '@/lib/selectionStore'
 import { CitizenReportModal } from './CitizenReportModal'
 
 interface CitizenReportControlProps {
   /**
-   * Oculta el botón solo en teléfono. Existe porque `IncidentSheet` ocupa el
-   * tercio inferior en esa medida y el botón quedaría flotando sobre la ficha.
-   * En `md` la ficha es un panel lateral y no hay colisión.
+   * Oculta el botón solo en teléfono, además de lo que ya lo oculta solo: la
+   * ficha de un incidente o el radar abiertos (ver abajo).
    */
   hiddenOnMobile?: boolean
 }
@@ -30,8 +30,18 @@ interface CitizenReportControlProps {
  * fijo que no responde al tema y sin alineación fiable con el texto. El
  * triángulo vectorial hereda `currentColor` y mide siempre lo mismo.
  */
-export const CitizenReportControl = memo(function CitizenReportControl({ hiddenOnMobile = false }: CitizenReportControlProps) {
+export const CitizenReportControl = memo(function CitizenReportControl({
+  hiddenOnMobile = false,
+}: CitizenReportControlProps) {
   const [open, setOpen] = useState(false)
+  /*
+   * En teléfono la ficha del incidente y el radar ocupan el tercio inferior, y
+   * el botón quedaría flotando encima. En `md` son paneles laterales y no hay
+   * colisión. Se lee del store de selección —no llega por props— para que
+   * abrir una ficha no tenga que pasar por `App`.
+   */
+  const selection = useSelection()
+  const hidden = hiddenOnMobile || selection.kind === 'incident' || selection.kind === 'radar'
 
   return (
     <>
@@ -69,7 +79,7 @@ export const CitizenReportControl = memo(function CitizenReportControl({ hiddenO
           //
           // De ahí que la transición del primitivo nombre `translate` y `scale`
           // por separado: `transform` no lo declara nadie.
-          hiddenOnMobile ? 'hidden md:inline-flex' : 'inline-flex',
+          hidden ? 'hidden md:inline-flex' : 'inline-flex',
         )}
       >
         <svg

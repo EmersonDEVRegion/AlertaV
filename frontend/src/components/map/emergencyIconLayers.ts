@@ -28,6 +28,8 @@ import {
   SEISMIC_ICON,
 } from '@/domain/emergencyIcons'
 import { LEVEL_COLOR_EXPRESSION } from '@/domain/palette'
+import { BY_EVIDENCE } from './incidentLayers'
+import { BY_MAGNITUDE } from './seismicLayers'
 
 export type SymbolLayer = Omit<SymbolLayerSpecification, 'source'>
 
@@ -91,6 +93,8 @@ export function incidentIconLayer(theme: 'light' | 'dark'): SymbolLayer {
        */
       'icon-allow-overlap': true,
       'icon-ignore-placement': true,
+      // Mismo orden que los discos: el de más evidencia encima.
+      'symbol-sort-key': BY_EVIDENCE,
     },
     paint: {
       'icon-color': LEVEL_COLOR_EXPRESSION as unknown as ExpressionSpecification,
@@ -122,6 +126,7 @@ export function seismicIconLayer(
       'icon-size': ['interpolate', ['linear'], ['zoom'], 7, 0.22, 14, 0.36],
       'icon-allow-overlap': true,
       'icon-ignore-placement': true,
+      'symbol-sort-key': BY_MAGNITUDE,
     },
     paint: {
       'icon-color': bandColor,

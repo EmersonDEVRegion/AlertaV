@@ -49,6 +49,12 @@ export const PROVIDER: Record<OutageProvider, ProviderStyle> = {
 
 export const PROVIDER_ORDER: readonly OutageProvider[] = ['chilquinta', 'cge']
 
+/**
+ * Racimo de cortes en el mapa. Neutro a propósito: un racimo mezcla empresas, y
+ * teñirlo con el color de una afirmaría algo que no es cierto.
+ */
+export const OUTAGE_CLUSTER = { color: '#334155', onColor: '#f8fafc' } as const
+
 /** Acento de un proveedor desconocido: gris, nunca el de otra empresa. */
 export const UNKNOWN_PROVIDER: ProviderStyle = {
   color: '#475569',
