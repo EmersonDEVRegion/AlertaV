@@ -7,7 +7,7 @@ más tardía, y un campo ausente nunca se convierte en cero.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -18,7 +18,7 @@ from app.api.deps import get_incident_service
 from app.main import app
 from app.models.enums import EventSource, IncidentStatus, IncidentType
 from app.schemas.incident import OutageDetail
-from app.services.incident_service import IncidentService
+from app.services.incident_service import IncidentService, adosar_vigencia
 
 D = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
 
@@ -53,18 +53,31 @@ def _incident(**over: Any) -> SimpleNamespace:
 
 
 class _Repo:
-    def __init__(self, details: dict[int, dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        details: dict[int, dict[str, Any]],
+        lecturas: dict[str, datetime] | None = None,
+    ) -> None:
         self._details = details
+        self._lecturas = lecturas or {}
         self.asked: list[list[int]] = []
+        self.lecturas_pedidas: list[list[str]] = []
 
     async def outage_details(self, incident_ids: Any) -> dict[int, dict[str, Any]]:
         self.asked.append(list(incident_ids))
-        return {k: v for k, v in self._details.items() if k in set(incident_ids)}
+        return {k: dict(v) for k, v in self._details.items() if k in set(incident_ids)}
+
+    async def ultimas_lecturas(self, collectors: Any) -> dict[str, datetime]:
+        self.lecturas_pedidas.append(list(collectors))
+        return {k: v for k, v in self._lecturas.items() if k in set(collectors)}
 
 
-def _service(details: dict[int, dict[str, Any]]) -> IncidentService:
+def _service(
+    details: dict[int, dict[str, Any]],
+    lecturas: dict[str, datetime] | None = None,
+) -> IncidentService:
     service = IncidentService.__new__(IncidentService)
-    service.repo = _Repo(details)  # type: ignore[attr-defined]
+    service.repo = _Repo(details, lecturas)  # type: ignore[attr-defined]
     return service
 
 
@@ -154,3 +167,73 @@ class TestOutageEndpoint:
         # La clave existe aunque venga vacía: el cliente distingue «no informado»
         # de «campo inexistente» sin tener que adivinar.
         assert payload[0]["outage"]["estimated_restoration"] is None
+
+
+class TestVigenciaDelCorte:
+    """Vigente = la empresa lo volvió a listar en su última lectura.
+
+    Chilquinta y CGE no publican el fin de un corte: lo dejan de listar. El
+    trigger de `raw_events` mueve `updated_at` en cada upsert, así que el
+    `visto_en` del grupo dice cuándo lo publicaron por última vez.
+    """
+
+    LECTURA = D + timedelta(hours=3)
+
+    def _payload(self, visto: datetime | None, **over: Any) -> dict[str, Any]:
+        base = {"provider": "chilquinta", "visto_en": visto, "collector": "chilquinta_cortes"}
+        base.update(over)
+        return base
+
+    def test_listado_en_la_ultima_lectura_es_vigente(self) -> None:
+        payloads = {1: self._payload(self.LECTURA + timedelta(seconds=40))}
+        adosar_vigencia(payloads, {"chilquinta_cortes": self.LECTURA})
+        assert payloads[1]["vigente"] is True
+
+    def test_el_margen_cubre_relojes_desfasados(self) -> None:
+        payloads = {1: self._payload(self.LECTURA - timedelta(seconds=30))}
+        adosar_vigencia(payloads, {"chilquinta_cortes": self.LECTURA})
+        assert payloads[1]["vigente"] is True
+
+    def test_si_la_empresa_ya_no_lo_lista_no_es_vigente(self) -> None:
+        payloads = {1: self._payload(self.LECTURA - timedelta(minutes=10))}
+        adosar_vigencia(payloads, {"chilquinta_cortes": self.LECTURA})
+        assert payloads[1]["vigente"] is False
+
+    def test_sin_lectura_no_se_afirma_nada(self) -> None:
+        """Sin corrida con qué comparar, `null`: ni vigente ni repuesto."""
+        payloads = {1: self._payload(self.LECTURA)}
+        adosar_vigencia(payloads, {})
+        assert payloads[1]["vigente"] is None
+
+    def test_senal_vieja_sin_collector_usa_el_de_su_empresa(self) -> None:
+        payloads = {1: self._payload(self.LECTURA, provider="cge", collector=None)}
+        adosar_vigencia(payloads, {"cge_cortes": self.LECTURA})
+        assert payloads[1]["vigente"] is True
+
+    def test_fechas_sin_zona_se_leen_en_utc(self) -> None:
+        payloads = {1: self._payload(self.LECTURA.replace(tzinfo=None))}
+        adosar_vigencia(payloads, {"chilquinta_cortes": self.LECTURA})
+        assert payloads[1]["vigente"] is True
+
+    async def test_el_listado_trae_vigente_con_una_consulta_por_lote(self) -> None:
+        service = _service(
+            {
+                1: self._payload(self.LECTURA + timedelta(seconds=5)),
+                2: self._payload(D, provider="cge", collector="cge_cortes"),
+            },
+            {"chilquinta_cortes": self.LECTURA, "cge_cortes": self.LECTURA},
+        )
+        models = await service.read_with_outages(
+            [_incident(), _incident(id=2, code="INC-2026-00501")]
+        )
+        assert [m.outage.vigente for m in models if m.outage] == [True, False]
+        assert service.repo.lecturas_pedidas == [["cge_cortes", "chilquinta_cortes"]]  # type: ignore[attr-defined]
+
+    def test_el_esquema_expone_visto_en_y_vigente(self) -> None:
+        detail = OutageDetail.model_validate(
+            {"provider": "cge", "visto_en": self.LECTURA, "vigente": False, "collector": "x"}
+        )
+        dumped = detail.model_dump(mode="json")
+        assert dumped["vigente"] is False
+        assert dumped["visto_en"].startswith("2026-08-20T15:00")
+        assert "collector" not in dumped

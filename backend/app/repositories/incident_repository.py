@@ -53,6 +53,7 @@ from app.models.enums import (
     DEFAULT_FAMILY,
     INCIDENT_FAMILY,
     OPEN_INCIDENT_STATUSES,
+    CollectorStatus,
     EventSource,
     EventType,
     IncidentStatus,
@@ -60,7 +61,7 @@ from app.models.enums import (
     LinkMethod,
     family_of_event,
 )
-from app.models.event import RawEvent
+from app.models.event import CollectorRun, RawEvent
 from app.models.incident import Incident, IncidentEvent
 from app.repositories.confidence_filters import confidence_at_least, confidence_at_most
 
@@ -1043,6 +1044,11 @@ class IncidentRepository:
           resuelto cuando vuelve el último, no el primero.
         * **proveedor: el de la señal más reciente.** Si Chilquinta y CGE
           reportan el mismo corte, gana quien lo actualizó al final.
+        * **visto: el más reciente.** `raw_events.updated_at` lo mueve el
+          trigger en cada upsert, y el collector vuelve a escribir cada corte
+          que la empresa sigue listando. Así que el `updated_at` más nuevo del
+          grupo dice cuándo la empresa lo publicó por última vez. Lo compara
+          con la última lectura del collector `IncidentService` (vigencia).
         """
         if not incident_ids:
             return {}
@@ -1054,6 +1060,7 @@ class IncidentRepository:
                     RawEvent.source,
                     RawEvent.timestamp,
                     RawEvent.raw_data,
+                    RawEvent.updated_at,
                 )
                 .join(RawEvent, RawEvent.id == IncidentEvent.raw_event_id)
                 .where(
@@ -1066,7 +1073,7 @@ class IncidentRepository:
 
         details: dict[int, dict[str, Any]] = {}
 
-        for incident_id, source, _timestamp, raw_data in rows:
+        for incident_id, source, _timestamp, raw_data, updated_at in rows:
             data = raw_data or {}
             entry = details.setdefault(
                 incident_id,
@@ -1076,8 +1083,16 @@ class IncidentRepository:
                     "estimated_restoration": None,
                     "sector": None,
                     "outage_count": 0,
+                    "visto_en": None,
+                    "collector": None,
                 },
             )
+            if isinstance(updated_at, datetime) and (
+                entry["visto_en"] is None or updated_at > entry["visto_en"]
+            ):
+                entry["visto_en"] = updated_at
+                collector = data.get("_collector")
+                entry["collector"] = collector if isinstance(collector, str) else None
             # Las filas vienen ordenadas por timestamp ascendente, así que la
             # última en sobrescribir es la más reciente.
             entry["provider"] = (
@@ -1101,6 +1116,33 @@ class IncidentRepository:
                 entry["sector"] = outage["sector"]
 
         return details
+
+    async def ultimas_lecturas(self, collectors: Sequence[str]) -> dict[str, datetime]:
+        """Inicio de la última corrida que LEYÓ la fuente, por collector.
+
+        `success` y `partial` leyeron; `failed` no. Es la referencia de la
+        vigencia de los cortes de luz: vigente = la empresa lo volvió a listar
+        en esa corrida. Si el collector cae, la referencia no avanza y el mapa
+        sigue mostrando lo último que se supo, igual que el agua.
+        """
+        wanted = sorted({c for c in collectors if c})
+        if not wanted:
+            return {}
+        stmt = (
+            select(CollectorRun.collector, func.max(CollectorRun.started_at))
+            .where(
+                CollectorRun.collector.in_(wanted),
+                CollectorRun.status.in_(
+                    [CollectorStatus.SUCCESS.value, CollectorStatus.PARTIAL.value]
+                ),
+            )
+            .group_by(CollectorRun.collector)
+        )
+        return {
+            collector: started_at
+            for collector, started_at in (await self.session.execute(stmt)).all()
+            if started_at is not None
+        }
 
     async def stats(self, *, since: datetime | None = None) -> dict[str, Any]:
         base = select(Incident)
