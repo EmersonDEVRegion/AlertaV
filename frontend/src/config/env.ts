@@ -203,6 +203,18 @@ export const env = {
    * ahí sin abrir nada.
    */
   vehiclePollIntervalMs: num(import.meta.env.VITE_VEHICLE_POLL_INTERVAL_MS, 300_000),
+  /**
+   * Cortes de agua de Esval. Encendido en todas partes: la fila del panel
+   * aparece sola cuando el backend tiene datos (`fuente.ultima_lectura`), así
+   * que no hace falta apagarla mientras tanto. `off` queda como interruptor de
+   * emergencia, sin tocar el backend.
+   */
+  waterCutsEnabled: flag(import.meta.env.VITE_WATER_CUTS, true),
+  /**
+   * Cadencia de los cortes de agua. El collector de Esval corre cada 10 min, y
+   * un corte no cambia minuto a minuto: cinco minutos basta.
+   */
+  waterCutPollIntervalMs: num(import.meta.env.VITE_WATER_CUT_POLL_INTERVAL_MS, 300_000),
   /** A partir de aquí la UI avisa que el dato puede no describir el presente. */
   staleAfterMs: num(import.meta.env.VITE_STALE_AFTER_MS, 180_000),
   mapStyle: url(

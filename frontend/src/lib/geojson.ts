@@ -17,6 +17,7 @@
 
 import type { FeatureCollection, Point } from 'geojson'
 import type { ConfidenceLevel, Incident, IncidentType } from '@/api/types'
+import type { WaterCut } from '@/api/waterCutTypes'
 import { type IncidentLayerKey, layerOf } from '@/domain/families'
 import { providerOf } from '@/domain/powerSymbology'
 import { isClosed, levelOf, needsVerificationCaveat } from '@/domain/symbology'
@@ -111,4 +112,35 @@ export function toOutageFeatureCollection(
       },
     })),
   }
+}
+
+/**
+ * Propiedades mínimas de un corte de agua en el lienzo.
+ *
+ * `water_id` y no `code` ni `public_id`: el clic distingue qué tocó por el
+ * nombre de la propiedad, y un nombre propio no puede confundirse con un
+ * incidente. `emergencia` es 1 o 0 para ordenar el dibujo (encima, los de
+ * emergencia); un programado o sin dato va debajo.
+ */
+interface WaterCutFeatureProps {
+  water_id: string
+  emergencia: 0 | 1
+}
+
+export type WaterCutFeatureCollection = FeatureCollection<Point, WaterCutFeatureProps>
+
+/** Sólo los que tienen punto: los demás cuentan en el panel pero no se dibujan. */
+export function toWaterCutFeatureCollection(
+  cuts: readonly WaterCut[],
+): WaterCutFeatureCollection {
+  const features: WaterCutFeatureCollection['features'] = []
+  for (const cut of cuts) {
+    if (!cut.coordinates) continue
+    features.push({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: cut.coordinates },
+      properties: { water_id: cut.id, emergencia: cut.programado === false ? 1 : 0 },
+    })
+  }
+  return { type: 'FeatureCollection', features }
 }

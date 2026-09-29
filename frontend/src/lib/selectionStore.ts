@@ -1,5 +1,6 @@
 /**
- * Qué está seleccionado en el visor: un incidente, un sismo, el radar o nada.
+ * Qué está seleccionado en el visor: un incidente, un sismo, un corte de agua,
+ * el radar o nada.
  *
  * # Por qué no vive en `App`
  *
@@ -19,8 +20,8 @@
  * Antes eran dos `useState` más un booleano del radar, y la regla «abrir uno
  * cierra los otros» vivía repartida en tres manejadores y un `useEffect`. Acá es
  * un solo valor: no hay forma de representar un incidente y el radar abiertos
- * a la vez. Una capa nueva que se seleccione (los cortes de agua, por ejemplo)
- * entra como una variante más de `Selection`, no como otro `useState`.
+ * a la vez. Una capa nueva que se seleccione entra como una variante más de
+ * `Selection`, no como otro `useState`: así entraron los cortes de agua.
  */
 
 import { useSyncExternalStore } from 'react'
@@ -30,6 +31,7 @@ export type Selection =
   | { readonly kind: 'incident'; readonly code: string }
   | { readonly kind: 'seismic'; readonly usgsId: string }
   | { readonly kind: 'radar' }
+  | { readonly kind: 'water'; readonly id: string }
 
 const NONE: Selection = Object.freeze({ kind: 'none' })
 
@@ -40,6 +42,7 @@ function same(a: Selection, b: Selection): boolean {
   if (a.kind !== b.kind) return false
   if (a.kind === 'incident' && b.kind === 'incident') return a.code === b.code
   if (a.kind === 'seismic' && b.kind === 'seismic') return a.usgsId === b.usgsId
+  if (a.kind === 'water' && b.kind === 'water') return a.id === b.id
   return true
 }
 
@@ -56,6 +59,11 @@ export function selectIncident(code: string): void {
 
 export function selectSeismic(usgsId: string): void {
   select({ kind: 'seismic', usgsId })
+}
+
+/** Un corte de agua, por su `public_id`. */
+export function selectWaterCut(id: string): void {
+  select({ kind: 'water', id })
 }
 
 export function clearSelection(): void {
@@ -84,6 +92,7 @@ export function useSelection(): Selection {
 const incidentCode = () => (current.kind === 'incident' ? current.code : null)
 const seismicId = () => (current.kind === 'seismic' ? current.usgsId : null)
 const radarOpen = () => current.kind === 'radar'
+const waterId = () => (current.kind === 'water' ? current.id : null)
 
 /** Folio del incidente seleccionado, o `null`. */
 export function useSelectedIncidentCode(): string | null {
@@ -97,6 +106,11 @@ export function useSelectedSeismicId(): string | null {
 
 export function useRadarOpen(): boolean {
   return useSyncExternalStore(subscribe, radarOpen, radarOpen)
+}
+
+/** `public_id` del corte de agua seleccionado, o `null`. */
+export function useSelectedWaterCutId(): string | null {
+  return useSyncExternalStore(subscribe, waterId, waterId)
 }
 
 /** Deja el store como al arrancar. **Sólo para los tests.** */

@@ -21,6 +21,9 @@ interface ImportMetaEnv {
   /** `on`/`off`. Por defecto: encendido en `npm run dev`, apagado en el build. */
   readonly VITE_VEHICLE_RADAR?: string
   readonly VITE_VEHICLE_POLL_INTERVAL_MS?: string
+  /** Cortes de agua (Esval). Encendido por defecto; `off` lo apaga. */
+  readonly VITE_WATER_CUTS?: string
+  readonly VITE_WATER_CUT_POLL_INTERVAL_MS?: string
 }
 
 interface ImportMeta {

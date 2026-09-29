@@ -2,6 +2,7 @@
 
 import type { Incident } from '@/api/types'
 import type { VehicleFeedItem } from '@/api/vehicleFeedTypes'
+import type { WaterCut } from '@/api/waterCutTypes'
 import type { IncidentLayerKey } from '@/domain/families'
 
 export function makeIncident(over: Partial<Incident> = {}): Incident {
@@ -70,6 +71,30 @@ export function makeVehicle(
     fecha_precision: 'dia',
     detectado_en: new Date(VEHICLE_NOW - hoursAgo * 3_600_000).toISOString(),
     url_fuente: 'https://gbvspa.cl/denuncias/auto-robo-desde-via-publica-lkxv55-6784',
+    ...over,
+  }
+}
+
+/**
+ * Un corte de agua como lo entrega `/events/water-cuts/geojson`, ya aplanado.
+ * Es el de Viña del 23-09 de las capturas reales del backend.
+ */
+export function makeWaterCut(over: Partial<WaterCut> = {}): WaterCut {
+  return {
+    id: '5d0c1a2b-0000-4000-8000-000000000001',
+    sisda: '2916567',
+    comuna: 'Viña del Mar',
+    tipo: 'emergencia',
+    programado: false,
+    motivo: 'Vida util vencida',
+    calles: 'LOS PENSAMIENTOS',
+    sector: null,
+    inicio: '2026-09-23T14:00:00+00:00',
+    fin: '2026-09-23T20:00:00+00:00',
+    suministro_alternativo: false,
+    url_mapa: 'https://tupuntodeagua.esval.cl/?sisda=2916567',
+    visto_en: '2026-09-23T18:30:00+00:00',
+    coordinates: [-71.5412, -33.0213],
     ...over,
   }
 }

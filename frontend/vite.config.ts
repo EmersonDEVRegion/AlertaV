@@ -187,6 +187,20 @@ export default defineConfig(({ mode }) => {
               },
             },
             {
+              // Cortes de agua (Esval): misma lógica que los incidentes. Sin red
+              // se ve la última lista, con su «visto hace X» a la vista. Vence
+              // en 6 h: un corte de agua dura horas, no días.
+              urlPattern: ({ url }) => url.pathname.startsWith('/api/v1/events/water-cuts/'),
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'alertav-water',
+                networkTimeoutSeconds: 6,
+                expiration: { maxEntries: 4, maxAgeSeconds: 60 * 60 * 6 },
+                cacheableResponse: { statuses: [0, 200] },
+                matchOptions: { ignoreVary: true },
+              },
+            },
+            {
               /*
                * Amenaza sísmica: un modelo probabilístico que cambia cada varios
                * años. Se sirve la copia guardada al instante y se revalida

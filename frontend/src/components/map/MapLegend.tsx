@@ -10,12 +10,16 @@ import {
   legendRadius,
 } from '@/domain/seismicSymbology'
 import { GlyphIcon } from '@/components/ui/GlyphIcon'
-import { ICON_GLYPHS, ICON_IDS, OUTAGE_ICON } from '@/domain/emergencyIcons'
+import { ICON_GLYPHS, ICON_IDS, OUTAGE_ICON, WATER_ICON } from '@/domain/emergencyIcons'
 import { OUTAGE_CLUSTER, PROVIDER, PROVIDER_ORDER } from '@/domain/powerSymbology'
+import { WATER } from '@/domain/waterSymbology'
 import { cn } from '@/lib/cn'
 
-/** El rayo va aparte, en «Cortes de luz», con el color de cada empresa. */
-const LEGEND_ICONS = ICON_IDS.filter((id) => id !== OUTAGE_ICON)
+/**
+ * El rayo y la gota van aparte, cada uno en su sección («Cortes de luz» y
+ * «Cortes de agua»): no son incidentes y su color no mide confianza.
+ */
+const LEGEND_ICONS = ICON_IDS.filter((id) => id !== OUTAGE_ICON && id !== WATER_ICON)
 
 /**
  * Leyenda de la política de confianza v2.0.0.
@@ -241,6 +245,23 @@ export function LegendBody() {
           </span>
           <span className="text-ink-muted">
             Varios cortes juntos. Tócalo para acercarte.
+          </span>
+        </li>
+      </ul>
+
+      <p className="mt-4 font-semibold text-ink">Cortes de agua</p>
+      <ul className="mt-2 space-y-1.5">
+        <li className="flex items-center gap-2">
+          <span
+            aria-hidden
+            className="grid size-4 shrink-0 place-items-center rounded-full ring-2 ring-white"
+            style={{ backgroundColor: WATER.color }}
+          >
+            <GlyphIcon id={WATER_ICON} className="size-2.5" color={WATER.onColor} />
+          </span>
+          <span className="text-ink-muted">
+            Esval, programados y de emergencia. Es información de servicio, no
+            un siniestro: va debajo de todo lo demás.
           </span>
         </li>
       </ul>

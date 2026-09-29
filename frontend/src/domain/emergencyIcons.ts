@@ -50,6 +50,7 @@ export const ICON_IDS = [
   'av-rescue',
   'av-flood',
   'av-bolt',
+  'av-drop',
 ] as const
 export type IconId = (typeof ICON_IDS)[number]
 
@@ -163,6 +164,22 @@ export const ICON_GLYPHS: Record<IconId, IconGlyph> = {
     label: 'Corte de luz',
     paths: ['M13.8 1.6 4.2 13.4h6.2l-1.2 9 10.6-12.6h-6.4z'],
   },
+  /*
+   * Gota: una sola punta y el fondo redondo.
+   *
+   * Es justo la silueta que la llama evita (ver `av-flame`), y por eso las dos
+   * no se confunden: la llama tiene tres lenguas y la gota ninguna. Además
+   * nunca comparten capa ni color.
+   *
+   * El brillo recortado es decorativo, como el núcleo de la llama: se ve a
+   * 40 px y se cierra a 14 sin que la gota deje de leerse.
+   */
+  'av-drop': {
+    label: 'Corte de agua',
+    paths: [
+      'M12 1.6c-.7 1-7.4 8.8-7.4 13.7a7.4 7.4 0 0 0 14.8 0c0-4.9-6.7-12.7-7.4-13.7zM8.2 15.1a3.8 3.8 0 0 0 3.8 3.8v-1.9a1.9 1.9 0 0 1-1.9-1.9z',
+    ],
+  },
 }
 
 /**
@@ -193,6 +210,7 @@ export const FALLBACK_ICON: IconId = 'av-alert'
 export const SEISMIC_ICON: IconId = 'av-waves'
 export const CLOSURE_ICON: IconId = 'av-barrier'
 export const OUTAGE_ICON: IconId = 'av-bolt'
+export const WATER_ICON: IconId = 'av-drop'
 
 /** Glifo de un incidente fuera del mapa (listas, leyenda). */
 export function iconFor(type: string): IconId {

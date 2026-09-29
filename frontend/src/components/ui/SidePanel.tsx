@@ -1,6 +1,7 @@
 import { memo, useState } from 'react'
 import type { SeismicEvent } from '@/api/seismicTypes'
 import type { Incident, OutageProvider } from '@/api/types'
+import type { WaterCut } from '@/api/waterCutTypes'
 import {
   AccordionRow,
   AccordionTrigger,
@@ -9,7 +10,7 @@ import {
   Sheet,
 } from '@/components/ui/primitives'
 import { LAYER_LABEL } from '@/domain/families'
-import type { CollectorsHealth } from '@/api/health'
+import type { CollectorsHealth, HealthStatus } from '@/api/health'
 import { LayerHealth } from './LayerHealth'
 import type { IncidentLayerKey } from '@/domain/families'
 import { OTHER_LEVEL } from '@/domain/otherSymbology'
@@ -18,11 +19,17 @@ import { SEISMIC_FILTER_OPTIONS, type SeismicFilterKey } from '@/domain/seismicF
 import { MAGNITUDE, bandOf } from '@/domain/seismicSymbology'
 import { LEVEL } from '@/domain/symbology'
 import { TRAFFIC_LEVEL } from '@/domain/trafficSymbology'
+import { WATER } from '@/domain/waterSymbology'
 import { cn } from '@/lib/cn'
 import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { formatRelative } from '@/lib/format'
-import { useSelectedIncidentCode, useSelectedSeismicId } from '@/lib/selectionStore'
+import {
+  useSelectedIncidentCode,
+  useSelectedSeismicId,
+  useSelectedWaterCutId,
+} from '@/lib/selectionStore'
 import { IncidentListItem } from './IncidentListItem'
+import { WaterCutListItem } from './WaterCutListItem'
 
 /**
  * Panel lateral del mapa: **sólo capas de emergencia**.
@@ -58,6 +65,8 @@ export interface LayerVisibility {
   fire: boolean
   traffic: boolean
   power: boolean
+  /** Cortes de agua de Esval. No es una familia de incidentes: ver `WaterPanel`. */
+  water: boolean
   otros: boolean
   seismic: boolean
 }
@@ -66,8 +75,25 @@ export const DEFAULT_LAYER_VISIBILITY: LayerVisibility = {
   fire: true,
   traffic: true,
   power: true,
+  water: true,
   otros: true,
   seismic: true,
+}
+
+/**
+ * La fila de los cortes de agua.
+ *
+ * Es la primera fila del panel que no es un incidente: `water_cut` no pasa por
+ * el motor, así que no tiene familia en `collector_health` ni entra en el
+ * contador de la ficha «Emergencias» del teléfono. Su salud viene en la propia
+ * respuesta (`fuente`), como la del radar. Sin este objeto, la fila no existe:
+ * es lo que pasa hasta que el backend lee a Esval por primera vez.
+ */
+export interface WaterPanel {
+  cuts: readonly WaterCut[]
+  status: HealthStatus | undefined
+  detail: string | null
+  onFocus: (cut: WaterCut) => void
 }
 
 /**
@@ -104,6 +130,8 @@ export interface SidePanelProps {
    * saber si una capa ve no autoriza a afirmar que está ciega.
    */
   health?: CollectorsHealth
+  /** La fila de los cortes de agua, o nada si todavía no hay datos. */
+  water?: WaterPanel | null
 }
 
 interface Row {
@@ -120,9 +148,15 @@ const ROWS: readonly Row[] = [
   { key: 'fire', label: LAYER_LABEL.fire, swatch: LEVEL.confirmed.color },
   { key: 'traffic', label: LAYER_LABEL.traffic, swatch: TRAFFIC_LEVEL.confirmed.color },
   { key: 'power', label: LAYER_LABEL.power, swatch: PROVIDER.chilquinta.color },
+  { key: 'water', label: WATER.label, swatch: WATER.color },
   { key: 'otros', label: LAYER_LABEL.otros, swatch: OTHER_LEVEL.confirmed.color },
   { key: 'seismic', label: 'Sismos', swatch: '#f97316', hollow: true, wide: true },
 ]
+
+/** Las filas cuyo contenido son incidentes de `/incidents/active`. */
+function isIncidentRow(key: keyof LayerVisibility): key is IncidentLayerKey {
+  return key !== 'seismic' && key !== 'water'
+}
 
 /**
  * El contenido, sin la hoja que lo envuelve.
@@ -149,6 +183,7 @@ export function IncidentFilters({
   providers,
   onProvidersChange,
   health,
+  water,
 }: SidePanelProps) {
   const [expanded, setExpanded] = useState<keyof LayerVisibility | null>(null)
   // Un solo reloj para todas las filas: las edades avanzan aunque no llegue nada.
@@ -157,15 +192,23 @@ export function IncidentFilters({
   // repinta la lista (que resalta la fila) sin pasar por `App`.
   const selectedCode = useSelectedIncidentCode()
   const selectedUsgsId = useSelectedSeismicId()
+  const selectedWaterId = useSelectedWaterCutId()
   const toggleExpanded = (key: keyof LayerVisibility) =>
     setExpanded((current) => (current === key ? null : key))
 
   return (
-    <fieldset>
+    /*
+     * `min-w-0`: un `<fieldset>` tiene por defecto `min-width: min-content`, así
+     * que una fila larga con `truncate` (las calles de un corte de agua, por
+     * ejemplo) lo ensanchaba más allá del panel y empujaba los contadores fuera
+     * de la vista en vez de recortarse.
+     */
+    <fieldset className="min-w-0">
       <legend className="sr-only">Capas del mapa</legend>
 
       <ul className="space-y-0.5">
         {ROWS.map((row) => {
+          if (row.key === 'water' && !water) return null
           const isOpen = expanded === row.key
           const count = counts[row.key]
 
@@ -201,7 +244,10 @@ export function IncidentFilters({
                       Los sismos no llevan marca: vienen de `/events/seismic`,
                       con su propio esquema y su propia cadencia, y no son una
                       familia de `collector_health`. */}
-                  {row.key !== 'seismic' && (
+                  {row.key === 'water' && water && (
+                    <LayerHealth status={water.status} count={count} detail={water.detail} />
+                  )}
+                  {isIncidentRow(row.key) && (
                     <LayerHealth
                       status={health?.by_family[row.key]}
                       count={count}
@@ -301,14 +347,24 @@ export function IncidentFilters({
                 </>
               }
             >
-              {row.key !== 'seismic' &&
-                incidentsByLayer[row.key as IncidentLayerKey].map((incident) => (
+              {isIncidentRow(row.key) &&
+                incidentsByLayer[row.key].map((incident) => (
                   <IncidentListItem
                     key={incident.code}
                     incident={incident}
                     selected={incident.code === selectedCode}
                     onSelect={onFocusIncident}
                     now={now}
+                  />
+                ))}
+
+              {row.key === 'water' &&
+                water?.cuts.map((cut) => (
+                  <WaterCutListItem
+                    key={cut.id}
+                    cut={cut}
+                    selected={cut.id === selectedWaterId}
+                    onSelect={water.onFocus}
                   />
                 ))}
 

@@ -44,7 +44,13 @@ export const CitizenReportControl = memo(function CitizenReportControl({
    * abrir una ficha no tenga que pasar por `App`.
    */
   const selection = useSelection()
-  const hidden = hiddenOnMobile || selection.kind === 'incident' || selection.kind === 'radar'
+  // Lo que ocupa el borde inferior del teléfono: la ficha, el radar y la
+  // tarjeta del corte de agua.
+  const hidden =
+    hiddenOnMobile ||
+    selection.kind === 'incident' ||
+    selection.kind === 'radar' ||
+    selection.kind === 'water'
 
   return (
     <>
