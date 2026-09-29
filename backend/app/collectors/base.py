@@ -150,6 +150,24 @@ class BaseCollector(abc.ABC):
         """
         return None
 
+    async def liberar_conexion(self) -> None:
+        """Cierra la transacción de lectura antes de salir a la red.
+
+        Se llama justo después de una consulta delta (`ids_by_external_id` y
+        compañía) cuando lo que sigue es red: Gemini, Nominatim, el detalle de
+        una ficha. Sin esto, la conexión quedaba tomada por una transacción
+        abierta durante toda esa espera.
+
+        `commit` y no `rollback`: con `expire_on_commit=False` el `CollectorRun`
+        de `start_run` conserva sus atributos, y un `rollback` los expiraría (el
+        `finish_run` posterior dispararía una carga perezosa fuera de contexto
+        async). `getattr` porque los tests arman collectors con `__new__`, sin
+        sesión.
+        """
+        session = getattr(self, "session", None)
+        if session is not None and session.in_transaction():
+            await session.commit()
+
     def run_params(self) -> dict[str, Any]:
         """Parámetros de la corrida, guardados en `collector_runs.params`."""
         return {}

@@ -121,9 +121,6 @@ class PushRepository:
         )
         return result.first() is not None
 
-    async def count_subscriptions(self) -> int:
-        stmt = select(func.count()).select_from(PushSubscription)
-        return int((await self.session.execute(stmt)).scalar_one())
 
     # -- Qué avisar -----------------------------------------------------------
 

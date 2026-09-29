@@ -723,7 +723,8 @@ def test_el_user_agent_del_proyecto_va_en_la_peticion():
     asyncio.run(instancia.fetch())
 
     agente = ruta.calls[0].request.headers["User-Agent"]
-    assert agente == settings.NOMINATIM_USER_AGENT
+    assert agente.startswith("AlertaV/")
+    assert settings.CONTACT_URL in agente
     assert "Chrome/" not in agente
 
 

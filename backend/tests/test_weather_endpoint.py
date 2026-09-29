@@ -47,6 +47,13 @@ QUILPUE = Comuna("Quilpué", -33.0472, -71.4425)
 BASE = "/api/v1/events/weather"
 
 
+def listar(client, **params):
+    """La capa comunal tal como la sirve `/geojson` (el listado JSON se borró)."""
+    respuesta = client.get(f"{BASE}/geojson", params=params)
+    assert respuesta.status_code == 200
+    return [feature["properties"] for feature in respuesta.json()["features"]]
+
+
 # --- Fábricas ----------------------------------------------------------------
 
 
@@ -194,9 +201,7 @@ class TestRuteo:
     @pytest.mark.parametrize(
         "ruta",
         [
-            "/events/weather",
             "/events/weather/geojson",
-            "/events/weather/stats",
             "/events/weather/tactical",
         ],
     )
@@ -223,7 +228,7 @@ def test_solo_sobrevive_la_ventana_mas_reciente_de_cada_comuna(cliente):
     ]
     client, _ = cliente(filas)
 
-    cuerpo = client.get(BASE).json()
+    cuerpo = listar(client)
 
     assert [item["comuna"] for item in cuerpo] == ["Valparaíso", "Quilpué"]
     assert cuerpo[0]["mm_total"] == pytest.approx(12.0), "la más reciente, no la vieja"
@@ -236,7 +241,7 @@ def test_el_orden_es_por_acumulado_descendente(cliente):
         [fila(QUILPUE, [2.0], ahora=ahora), fila(VALPO, [30.0], ahora=ahora)]
     )
 
-    cuerpo = client.get(BASE).json()
+    cuerpo = listar(client)
 
     assert [item["comuna"] for item in cuerpo] == ["Valparaíso", "Quilpué"]
 
@@ -255,8 +260,8 @@ def test_solo_riesgo_filtra_sobre_la_foto_y_no_sobre_el_limite(cliente):
         ]
     )
 
-    todas = client.get(BASE).json()
-    con_riesgo = client.get(BASE, params={"solo_riesgo": "true"}).json()
+    todas = listar(client)
+    con_riesgo = listar(client, solo_riesgo="true")
 
     assert len(todas) == 2
     assert [item["comuna"] for item in con_riesgo] == ["Valparaíso"]
@@ -267,7 +272,7 @@ def test_la_consulta_pide_solo_la_capa_meteorologica(cliente):
     ahora = datetime.now(UTC)
     client, repo = cliente([fila(VALPO, [5.0], ahora=ahora)])
 
-    client.get(BASE, params={"hours": 6})
+    client.get(f"{BASE}/geojson", params={"hours": 6})
 
     assert repo.kwargs["sources"] == [EventSource.WEATHER]
     assert repo.kwargs["types"] == [EventType.WEATHER_OBSERVATION]
@@ -279,7 +284,7 @@ def test_el_recorte_es_el_regional_y_no_el_sismico(cliente):
     """Un sismo a 200 km se siente en Valparaíso; una lluvia a 200 km no moja."""
     client, repo = cliente([fila(VALPO, [5.0])])
 
-    client.get(BASE)
+    client.get(f"{BASE}/geojson")
 
     bbox = settings.region_bbox
     assert repo.kwargs["bbox"] == (bbox.west, bbox.south, bbox.east, bbox.north)
@@ -291,7 +296,7 @@ def test_la_ventana_esta_acotada(cliente, horas):
     """`hours` es holgura, no histórico: 3 meses de lluvia no son una capa."""
     client, _ = cliente([])
 
-    assert client.get(BASE, params={"hours": horas}).status_code == 422
+    assert client.get(f"{BASE}/geojson", params={"hours": horas}).status_code == 422
 
 
 # --- 4. GeoJSON: lo que MapLibre puede consumir -----------------------------
@@ -357,7 +362,7 @@ def test_una_fila_sin_payload_no_tumba_la_capa(cliente):
     huerfana.raw_data = {"comuna": "Valparaíso"}  # sin `_weather`
     client, _ = cliente([huerfana, fila(QUILPUE, [4.0], ahora=ahora)])
 
-    cuerpo = client.get(BASE).json()
+    cuerpo = listar(client)
 
     assert [item["comuna"] for item in cuerpo] == ["Quilpué"]
 
@@ -405,10 +410,7 @@ def test_un_payload_incompleto_se_omite(cliente):
     del rota.raw_data[WEATHER_KEY]["riesgo_inundacion"]
     client, _ = cliente([rota, fila(QUILPUE, [4.0], ahora=ahora)])
 
-    respuesta = client.get(BASE)
-
-    assert respuesta.status_code == 200
-    assert [item["comuna"] for item in respuesta.json()] == ["Quilpué"]
+    assert [item["comuna"] for item in listar(client)] == ["Quilpué"]
 
 
 # --- 5 bis. El estado táctico: la ruta del widget ---------------------------
@@ -492,14 +494,11 @@ def test_la_fila_regional_no_se_cuela_en_la_capa_comunal(cliente):
         [fila(VALPO, [9.0, 9.0, 9.0], ahora=ahora), fila_regional(lluvioso, ahora=ahora)]
     )
 
-    comunas = [item["comuna"] for item in client.get(BASE).json()]
+    comunas = [item["comuna"] for item in listar(client)]
     assert comunas == ["Valparaíso"]
 
     geojson = client.get(f"{BASE}/geojson").json()
     assert [f["properties"]["comuna"] for f in geojson["features"]] == ["Valparaíso"]
-
-    # Y el resumen tampoco la cuenta como una comuna más.
-    assert client.get(f"{BASE}/stats").json()["comunas"] == 1
 
 
 def test_el_estado_tactico_ignora_las_filas_comunales(cliente):
@@ -510,40 +509,3 @@ def test_el_estado_tactico_ignora_las_filas_comunales(cliente):
     assert client.get(f"{BASE}/tactical").json()["observado_en"] is None
 
 
-# --- 6. Resumen --------------------------------------------------------------
-
-
-def test_el_resumen_cuenta_lluvia_y_riesgo_por_separado(cliente):
-    """Nunca filtra: "cuántas comunas llueven" y "cuántas en riesgo" son dos."""
-    ahora = datetime.now(UTC)
-    client, _ = cliente(
-        [
-            fila(VALPO, [9.0, 9.0, 9.0], ahora=ahora),
-            fila(QUILPUE, [0.6], ahora=ahora),
-        ]
-    )
-
-    resumen = client.get(f"{BASE}/stats").json()
-
-    assert resumen["comunas"] == 2
-    assert resumen["en_riesgo"] == 1
-    assert resumen["comunas_en_riesgo"] == ["Valparaíso"]
-    assert resumen["mm_total_max"] == pytest.approx(27.0)
-    assert resumen["mm_hora_max"] == pytest.approx(9.0)
-
-
-def test_el_resumen_de_una_capa_vacia_no_revienta(cliente):
-    """Un verano entero devuelve esto, y tiene que ser un 200."""
-    client, _ = cliente([])
-
-    resumen = client.get(f"{BASE}/stats").json()
-
-    assert resumen == {
-        "comunas": 0,
-        "en_riesgo": 0,
-        "mm_total_max": None,
-        "mm_hora_max": None,
-        "comunas_en_riesgo": [],
-        "ventana_inicio": None,
-        "ventana_fin": None,
-    }

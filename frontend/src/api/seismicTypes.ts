@@ -54,14 +54,6 @@ export interface SeismicEvent {
   usgs_url: string | null
 }
 
-/** `SeismicStats` — `GET /api/v1/events/seismic/stats`. */
-export interface SeismicStats {
-  total: number
-  max_magnitude: number | null
-  felt_count: number
-  tsunami_flagged: number
-}
-
 /** Parámetros de `GET /api/v1/events/seismic`. */
 export interface SeismicQuery {
   hours?: number

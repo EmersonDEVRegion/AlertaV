@@ -59,7 +59,7 @@ async def vehicle_feed(
         comuna_canonica = comuna_por_nombre(comuna)
         if comuna_canonica is None:
             raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"'{comuna}' no es una comuna de la Región de Valparaíso",
             )
 

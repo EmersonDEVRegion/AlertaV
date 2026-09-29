@@ -10,18 +10,17 @@ cuando llega ese aviso.
 La diferencia no es de estilo, y conviene tenerla clara antes de tocar nada:
 
 * **No hay corrida siguiente.** Un collector que falla vuelve a intentar en cinco
-  minutos y el hueco se cierra solo. Un webhook perdido —el proceso reiniciando,
-  una excepción no atrapada, Apify reintentando contra un 500— **se pierde para
-  siempre**. De ahí que la tarea de fondo no deje escapar ninguna excepción y
-  que todo, incluido el fracaso, quede escrito en `collector_runs`.
+  minutos y el hueco se cierra solo. Un webhook perdido **se pierde para
+  siempre**. De ahí el inbox (abajo) y que todo, incluido el fracaso, quede
+  escrito en `collector_runs`.
 * **La latencia es el punto.** Una 10-4 llega en segundos en vez de en los hasta
   cinco minutos del pull. Para la fuente de confianza 1.00 del sistema —la única
   que lleva un incidente a certeza por sí sola— esos minutos son la diferencia
   entre avisar y contar.
-* **El disparo no es nuestro.** Igual que en el collector de Instagram: el
-  Schedule vive en el panel de Apify, que es también donde se paga. Si alguien
-  lo pausa, acá no falla nada — simplemente deja de llegar, que es el modo de
-  fallo silencioso que `collector_runs` existe para hacer visible.
+* **El disparo no es nuestro.** El Schedule vive en el panel de Apify, que es
+  también donde se paga. Si alguien lo pausa, acá no falla nada — simplemente
+  deja de llegar, que es el modo de fallo silencioso que `collector_runs`
+  existe para hacer visible.
 
 Qué trae el dataset
 -------------------
@@ -40,6 +39,31 @@ query termina en los logs de acceso del proxy, en el mensaje de cualquier
 en el historial de quien copie la URL para depurar. `apify_client.build_client`
 es la única función del repositorio que toca el token, y esa unicidad es lo que
 permite afirmar que no se filtra.
+
+El inbox (desde el 2026-09-23)
+------------------------------
+Hasta esa fecha el endpoint respondía 200 y procesaba en una `BackgroundTask`
+del proceso de la API. Tres defectos, los tres de la auditoría:
+
+* **Un redeploy perdía la entrega.** Render reinicia el contenedor con cada
+  push; la tarea en vuelo moría con él y Apify no reintenta un 2xx.
+* **Postgres caído también.** El 200 ya se había enviado cuando la tarea
+  intentaba abrir la sesión: el fallo quedaba sólo en el log.
+* **Gemini y Nominatim desde dos procesos.** El limitador de 1 req/s de
+  Nominatim es por proceso; la API y los workers lo duplicaban contra la misma
+  IP de salida.
+
+Ahora el endpoint sólo **encola** (`encolar_dataset`): escribe una fila
+`running` en `collector_runs` con `params.inbox = "pendiente"` y responde. Si la
+base no responde, responde 503 y Apify reintenta — el aviso ya no se pierde. El
+proceso de workers la **reclama** (`procesar_siguiente`, con `FOR UPDATE SKIP
+LOCKED`) y la procesa con la misma lógica de siempre. Una fila reclamada que no
+termina en `INBOX_RECLAMO_VENCE` —el proceso murió a mitad— se vuelve a
+reclamar, hasta `INBOX_MAX_INTENTOS`; después se cierra `failed`.
+
+La misma tabla y no una cola nueva: la fila del inbox ES la corrida, así que
+`/collectors/health` la ve desde que llega el aviso, y una entrega atascada
+(workers apagados) se marca `failing` en vez de verse como «recién llegó».
 """
 
 from __future__ import annotations
@@ -53,10 +77,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
 
+from sqlalchemy import func, select, text
+
 from app.collectors.geoservices import parse_timestamp, request_json
 from app.collectors.social.apify_client import build_client, describe_items
 from app.collectors.traffic.bomberos_10_4_worker import (
     Dispatch,
+    build_external_id,
     comuna_de_handle,
     decode_dispatches,
     dispatches_to_events,
@@ -76,6 +103,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.exceptions import CollectorError
 from app.models.enums import CollectorStatus, EventSource
+from app.models.event import CollectorRun
 from app.services.ingest_service import IngestService
 
 logger = logging.getLogger(__name__)
@@ -85,6 +113,31 @@ logger = logging.getLogger(__name__)
 #: distintos y mezclarlos en la misma etiqueta haría imposible responder "¿está
 #: llegando el webhook?" mirando la tabla.
 COLLECTOR_NAME = "bomberos_apify_webhook"
+
+#: Estados del inbox, en `collector_runs.params["inbox"]`.
+INBOX_PENDIENTE = "pendiente"
+INBOX_EN_PROCESO = "en_proceso"
+INBOX_HECHO = "hecho"
+INBOX_ABANDONADO = "abandonado"
+
+#: Una entrega reclamada que no termina en este plazo se da por huérfana (el
+#: proceso murió a mitad) y se vuelve a reclamar. Holgado a propósito: una
+#: entrega con 25 despachos cuesta 25 llamadas al modelo y hasta 25 s de
+#: Nominatim, y reclamar una que sigue viva duplica ese gasto.
+INBOX_RECLAMO_VENCE = timedelta(minutes=15)
+
+#: Reclamos antes de cerrar la entrega en `failed`. Un dataset que tumba el
+#: proceso tres veces seguidas no lo va a dejar de tumbar a la cuarta.
+INBOX_MAX_INTENTOS = 3
+
+#: Ventana en la que el mismo `dataset_id` se considera reentrega de Apify y
+#: no se vuelve a encolar. Apify reintenta con backoff durante horas cuando no
+#: recibe el 2xx a tiempo; un día cubre eso con margen.
+INBOX_VENTANA_DUPLICADO = timedelta(hours=24)
+
+#: Tabla calificada con el esquema. Constante del código, no dato externo: es
+#: seguro interpolarla en el SQL crudo del reclamo.
+_TABLA_RUNS: str = CollectorRun.__table__.fullname  # type: ignore[attr-defined]
 
 #: Dónde puede venir el texto del tuit según el Actor. El orden importa: el
 #: primero que traiga algo gana, y los completos van antes que los truncados
@@ -190,9 +243,8 @@ async def fetch_dataset_items(dataset_id: str, *, limit: int) -> list[Any]:
     """GET a `/v2/datasets/{id}/items`. Devuelve un array desnudo.
 
     `clean=true` descarta los campos internos del Actor y los items vacíos;
-    `desc=true` + `limit` leen lo nuevo y no el fondo del dataset. Igual que en
-    `apify_client.fetch_items`, este endpoint es de los que **no** envuelven la
-    respuesta en `{"data": ...}`.
+    `desc=true` + `limit` leen lo nuevo y no el fondo del dataset. Este endpoint
+    es de los que **no** envuelven la respuesta en `{"data": ...}`.
     """
     async with build_client() as client:
         payload = await request_json(
@@ -316,10 +368,10 @@ def parse_tweet(payload: Any, keys: Sequence[str]) -> Dispatch | None:
     publica mucho más que despachos y el filtro por clave es lo único que separa
     una cosa de la otra.
 
-    El `guid` sale del id del tuit y no de un hash del texto, por el mismo
-    motivo que en el worker de Instagram: la central corrige un despacho editando
-    el mensaje —la calle mal escrita, la comuna equivocada— y un id derivado del
-    texto convertiría cada corrección en un segundo incidente en el mapa.
+    El `guid` sale del id del tuit y no de un hash del texto: la central
+    corrige un despacho editando el mensaje —la calle mal escrita, la comuna
+    equivocada— y un id derivado del texto convertiría cada corrección en un
+    segundo incidente en el mapa.
     """
     if not isinstance(payload, Mapping):
         return None
@@ -373,19 +425,187 @@ def _run_fingerprint(dataset_id: str, payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(semilla.encode("utf-8")).hexdigest()[:12]
 
 
+async def encolar_dataset(dataset_id: str, payload: Mapping[str, Any]) -> bool:
+    """Deja el aviso en el inbox. False si ese dataset ya estaba encolado.
+
+    Lo llama el endpoint, dentro de la petición: es un INSERT y responde en
+    milisegundos, muy por debajo de la paciencia de Apify. **Sí lanza** si la
+    base no responde, y a propósito: el endpoint lo convierte en 503 y Apify
+    reintenta con backoff, que es exactamente lo que se quiere — antes, con la
+    `BackgroundTask`, el 200 ya había salido y el aviso se perdía.
+
+    La reentrega del mismo dataset (Apify no recibió el 2xx a tiempo, o el
+    webhook está colgado del Actor y del Task a la vez) no se encola dos veces.
+    Un candado consultivo por `dataset_id` serializa dos entregas simultáneas;
+    sin él, las dos verían «no existe» y las dos insertarían.
+    """
+    traza = _run_fingerprint(dataset_id, payload)
+    async with AsyncSessionLocal() as session:
+        await session.execute(select(func.pg_advisory_xact_lock(func.hashtext(dataset_id))))
+        ya_estaba = await session.scalar(
+            select(CollectorRun.id)
+            .where(
+                CollectorRun.source == EventSource.BOMBEROS,
+                CollectorRun.collector == COLLECTOR_NAME,
+                CollectorRun.params["dataset_id"].astext == dataset_id,
+                CollectorRun.started_at > func.now() - INBOX_VENTANA_DUPLICADO,
+            )
+            .limit(1)
+        )
+        if ya_estaba is not None:
+            await session.commit()
+            logger.info(
+                "webhook de Apify repetido; el dataset ya estaba en el inbox",
+                extra={"traza": traza, "dataset_id": dataset_id, "run_id": ya_estaba},
+            )
+            return False
+
+        session.add(
+            CollectorRun(
+                source=EventSource.BOMBEROS,
+                collector=COLLECTOR_NAME,
+                status=CollectorStatus.RUNNING.value,
+                # El `dataset_id` sí, el token jamás. `params` se serializa a la base.
+                params={
+                    "dataset_id": dataset_id,
+                    "traza": traza,
+                    "inbox": INBOX_PENDIENTE,
+                    "intentos": 0,
+                },
+            )
+        )
+        await session.commit()
+    return True
+
+
+async def _abandonar_vencidas(session) -> None:
+    """Cierra en `failed` las entregas que agotaron sus reclamos."""
+    abandonadas = (
+        await session.execute(
+            text(
+                f"""
+                UPDATE {_TABLA_RUNS}
+                SET status = 'failed',
+                    finished_at = now(),
+                    error = 'el proceso murió ' || (params->>'intentos')
+                            || ' veces procesando esta entrega; se abandona',
+                    params = params || jsonb_build_object('inbox', CAST(:abandonado AS text))
+                WHERE source = :source
+                  AND collector = :collector
+                  AND status = 'running'
+                  AND params->>'inbox' = :en_proceso
+                  AND (params->>'reclamado_en')::timestamptz < now() - make_interval(secs => :vence)
+                  AND coalesce((params->>'intentos')::int, 0) >= :max_intentos
+                RETURNING id, params->>'dataset_id' AS dataset_id
+                """
+            ),
+            {
+                "source": EventSource.BOMBEROS.value,
+                "collector": COLLECTOR_NAME,
+                "abandonado": INBOX_ABANDONADO,
+                "en_proceso": INBOX_EN_PROCESO,
+                "vence": INBOX_RECLAMO_VENCE.total_seconds(),
+                "max_intentos": INBOX_MAX_INTENTOS,
+            },
+        )
+    ).all()
+    for fila in abandonadas:
+        logger.error(
+            "entrega del webhook abandonada tras agotar sus reclamos",
+            extra={"run_id": fila.id, "dataset_id": fila.dataset_id},
+        )
+
+
+async def reclamar_siguiente() -> tuple[int, str, str, int] | None:
+    """Toma la entrega pendiente más vieja: `(run_id, dataset_id, traza, intento)`.
+
+    `FOR UPDATE SKIP LOCKED` hace que dos procesos de workers —el modo `split`,
+    o un deploy solapado con el anterior— nunca tomen la misma. El reclamo se
+    confirma en su propia transacción antes de procesar: la conexión no queda
+    tomada mientras se llama al modelo.
+
+    El filtro por `source` no es redundante: es lo que deja usar el índice
+    `ix_collector_runs_source_started`. Sin él, la consulta que corre cada
+    `APIFY_INBOX_POLL_SECONDS` recorrería la tabla entera, que crece con cada
+    corrida de cada collector.
+    """
+    async with AsyncSessionLocal() as session:
+        await _abandonar_vencidas(session)
+        fila = (
+            await session.execute(
+                text(
+                    f"""
+                    UPDATE {_TABLA_RUNS} AS r
+                    SET params = r.params || jsonb_build_object(
+                            'inbox', CAST(:en_proceso AS text),
+                            'reclamado_en', now(),
+                            'intentos', coalesce((r.params->>'intentos')::int, 0) + 1)
+                    WHERE r.id = (
+                        SELECT id FROM {_TABLA_RUNS}
+                        WHERE source = :source
+                          AND collector = :collector
+                          AND status = 'running'
+                          AND (params->>'inbox' = :pendiente
+                               OR (params->>'inbox' = :en_proceso
+                                   AND (params->>'reclamado_en')::timestamptz
+                                       < now() - make_interval(secs => :vence)))
+                        ORDER BY started_at
+                        LIMIT 1
+                        FOR UPDATE SKIP LOCKED
+                    )
+                    RETURNING r.id,
+                              r.params->>'dataset_id' AS dataset_id,
+                              r.params->>'traza' AS traza,
+                              (r.params->>'intentos')::int AS intentos
+                    """
+                ),
+                {
+                    "source": EventSource.BOMBEROS.value,
+                    "collector": COLLECTOR_NAME,
+                    "pendiente": INBOX_PENDIENTE,
+                    "en_proceso": INBOX_EN_PROCESO,
+                    "vence": INBOX_RECLAMO_VENCE.total_seconds(),
+                },
+            )
+        ).first()
+        await session.commit()
+
+    if fila is None:
+        return None
+    return int(fila.id), str(fila.dataset_id), str(fila.traza or ""), int(fila.intentos)
+
+
+async def procesar_siguiente() -> bool:
+    """Procesa UNA entrega del inbox. False si no había ninguna. No lanza por el dataset.
+
+    Lo que falla procesando el dataset ya queda en la fila (`_process` la
+    cierra `failed`). Lo que llega hasta acá es la base cayéndose a mitad: la
+    fila queda `en_proceso` y se vuelve a reclamar al vencer el plazo.
+    """
+    reclamo = await reclamar_siguiente()
+    if reclamo is None:
+        return False
+    run_id, dataset_id, traza, intento = reclamo
+    logger.info(
+        "entrega del webhook reclamada",
+        extra={"run_id": run_id, "dataset_id": dataset_id, "traza": traza, "intento": intento},
+    )
+    try:
+        await _process(dataset_id, traza, run_id=run_id)
+    except Exception:
+        logger.exception(
+            "el inbox del webhook no pudo cerrar la entrega; se reintentará",
+            extra={"run_id": run_id, "dataset_id": dataset_id, "traza": traza},
+        )
+    return True
+
+
 async def process_dataset(dataset_id: str, payload: Mapping[str, Any]) -> None:
-    """Tarea de fondo del webhook. **No lanza nunca.**
+    """Procesa un dataset sin pasar por el inbox. **No lanza nunca.**
 
-    El contrato con FastAPI es absoluto: una excepción escapando de una
-    `BackgroundTask` se registra como error no atrapado y no la ve nadie que esté
-    mirando la salud del sistema. Todo lo que puede salir mal termina en una fila
-    de `collector_runs` con estado `failed` y el motivo dentro, que es donde el
-    resto del proyecto ya sabe mirar.
-
-    La sesión se abre acá y no se hereda de la petición: la de la petición ya se
-    cerró cuando se devolvió el 200. Ese es el bug clásico de este patrón y el
-    síntoma —`InterfaceError: connection is closed`— no aparece hasta que el
-    webhook llega bajo carga.
+    Es el camino directo: abre su propia corrida en `collector_runs`. Lo usan
+    los tests y quien quiera reprocesar un dataset a mano desde una consola; la
+    ruta del webhook ya no lo llama (ver «El inbox» en el docstring del módulo).
     """
     traza = _run_fingerprint(dataset_id, payload)
     try:
@@ -394,17 +614,55 @@ async def process_dataset(dataset_id: str, payload: Mapping[str, Any]) -> None:
         # Última barrera. Lo de adentro ya intenta dejar el fallo en
         # `collector_runs`, pero abrir la sesión y registrar la corrida son ellos
         # mismos operaciones que pueden fallar —Postgres caído, el pool agotado—
-        # y una excepción escapando de acá no la ve absolutamente nadie: el
-        # llamador respondió 200 hace rato y Apify no reintenta un 2xx. El log
-        # es lo único que queda.
+        # y el log es lo único que queda.
         logger.exception(
             "el webhook de Apify falló antes de poder registrar la corrida",
             extra={"traza": traza, "dataset_id": dataset_id},
         )
 
 
-async def _process(dataset_id: str, traza: str) -> None:
-    """El cuerpo de `process_dataset`, con la sesión abierta. Puede lanzar."""
+async def _sin_repetidos(
+    service: IngestService, dispatches: list[Dispatch]
+) -> tuple[list[Dispatch], int]:
+    """Quita los despachos que ya están en la base tal cual. Devuelve `(nuevos, ya_ingeridos)`.
+
+    Cada entrega relee los últimos `APIFY_WEBHOOK_MAX_ITEMS` tuits de la cuenta,
+    así que casi todo lo que trae ya entró en la entrega anterior. Antes se
+    decodificaba y geocodificaba todo de nuevo —una llamada al modelo y una a
+    Nominatim por despacho repetido— para que el upsert terminara descartándolo.
+
+    Sólo se salta lo que está idéntico Y ubicado: un despacho con el aviso
+    corregido se reprocesa (el upsert actualiza), y uno que quedó sin punto
+    tiene otra oportunidad de geocodificarse. Ese reintento está acotado por
+    `is_fresh`: pasado `APIFY_WEBHOOK_MAX_AGE_MINUTES` ya no llega hasta acá.
+    """
+    if not dispatches:
+        return [], 0
+    claves = [build_external_id(d) for d in dispatches]
+    conocidos = await service.repo.puntos_conocidos(EventSource.BOMBEROS, claves)
+    nuevos: list[Dispatch] = []
+    for dispatch, clave in zip(dispatches, claves, strict=True):
+        previo = conocidos.get(clave)
+        if (
+            previo is not None
+            and previo.lat is not None
+            and (previo.raw_data.get("_bomberos") or {}).get("aviso") == dispatch.raw_text
+        ):
+            continue
+        nuevos.append(dispatch)
+    return nuevos, len(dispatches) - len(nuevos)
+
+
+def _marcar_inbox(run: Any, estado: str) -> None:
+    """Deja el estado final del inbox en `params` antes de cerrar la corrida."""
+    run.params = {**(getattr(run, "params", None) or {}), "inbox": estado}
+
+
+async def _process(dataset_id: str, traza: str, run_id: int | None = None) -> None:
+    """El cuerpo del procesamiento, con la sesión abierta. Puede lanzar.
+
+    Con `run_id` retoma la fila que dejó `encolar_dataset`; sin él abre una.
+    """
     async with AsyncSessionLocal() as session:
         service = IngestService(session)
         # Un juego de claves por Cuerpo: la misma `Clave 10` se ingiere en Viña
@@ -415,17 +673,19 @@ async def _process(dataset_id: str, traza: str) -> None:
         keys = claves_por_cuerpo[CBV.slug]
         respaldo = settings.BOMBEROS_SOURCE_HANDLE
 
-        run = await service.start_run(
-            source=EventSource.BOMBEROS,
-            collector=COLLECTOR_NAME,
-            # El `dataset_id` sí, el token jamás. `params` se serializa a la base.
-            params={
-                "dataset_id": dataset_id,
-                "keys": keys,
-                "claves_por_cuerpo": claves_por_cuerpo,
-                "traza": traza,
-            },
-        )
+        # El `dataset_id` sí, el token jamás. `params` se serializa a la base.
+        params = {
+            "dataset_id": dataset_id,
+            "keys": keys,
+            "claves_por_cuerpo": claves_por_cuerpo,
+            "traza": traza,
+        }
+        if run_id is None:
+            run = await service.start_run(
+                source=EventSource.BOMBEROS, collector=COLLECTOR_NAME, params=params
+            )
+        else:
+            run = await service.resume_run(run_id, params)
 
         try:
             if not any(claves_por_cuerpo.values()):
@@ -506,6 +766,14 @@ async def _process(dataset_id: str, traza: str) -> None:
                     descartados_por_edad += 1
                     continue
                 dispatches.append(dispatch)
+
+            leidos = len(dispatches)
+            dispatches, ya_ingeridos = await _sin_repetidos(service, dispatches)
+            # El SELECT del delta abrió una transacción (autobegin). Se cierra
+            # antes del modelo y de Nominatim, que pueden tardar un minuto: una
+            # conexión «idle in transaction» durante ese minuto es una conexión
+            # menos para todos los demás.
+            await session.commit()
 
             decodificados, por_reglas = await decode_dispatches(
                 dispatches,
@@ -612,12 +880,16 @@ async def _process(dataset_id: str, traza: str) -> None:
                 else CollectorStatus.SUCCESS
             )
 
+            if run_id is not None:
+                _marcar_inbox(run, INBOX_HECHO)
             await service.finish_run(
                 run,
                 status=estado,
                 fetched=len(items),
                 inserted=inserted,
-                duplicate=duplicated,
+                # Los que el delta saltó SON duplicados: antes los contaba el
+                # upsert, ahora se cuentan sin haber gastado nada en ellos.
+                duplicate=duplicated + ya_ingeridos,
                 error="; ".join(notas)[:2000] if notas else None,
             )
 
@@ -627,7 +899,8 @@ async def _process(dataset_id: str, traza: str) -> None:
                     "traza": traza,
                     "dataset_id": dataset_id,
                     "items": len(items),
-                    "despachos": len(dispatches),
+                    "despachos": leidos,
+                    "ya_ingeridos": ya_ingeridos,
                     "insertados": inserted,
                     "duplicados": duplicated,
                     "descartados_por_edad": descartados_por_edad,
@@ -652,6 +925,10 @@ async def _process(dataset_id: str, traza: str) -> None:
                 extra={"traza": traza, "dataset_id": dataset_id},
             )
             try:
+                # Si la base es lo que falló, este cierre también falla y la
+                # entrega queda `en_proceso`: el inbox la reclama al vencer.
+                if run_id is not None:
+                    _marcar_inbox(run, INBOX_HECHO)
                 await service.finish_run(run, status=CollectorStatus.FAILED, error=motivo[:2000])
             except Exception:  # pragma: no cover — la base ya no responde
                 logger.exception(
@@ -662,14 +939,23 @@ async def _process(dataset_id: str, traza: str) -> None:
 
 __all__ = [
     "COLLECTOR_NAME",
+    "INBOX_ABANDONADO",
+    "INBOX_EN_PROCESO",
+    "INBOX_HECHO",
+    "INBOX_MAX_INTENTOS",
+    "INBOX_PENDIENTE",
+    "INBOX_RECLAMO_VENCE",
     "claves_de_ingesta",
     "dataset_items_url",
+    "encolar_dataset",
     "es_retuit",
     "extract_dataset_id",
     "fetch_dataset_items",
     "is_fresh",
     "parse_tweet",
+    "procesar_siguiente",
     "process_dataset",
+    "reclamar_siguiente",
     "tweet_handle",
     "tweet_url",
 ]

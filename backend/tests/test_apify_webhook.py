@@ -6,15 +6,17 @@ La ruta tiene dos mitades con garantías distintas y se prueban por separado:
 
 1. **La petición.** Tiene que responder rápido y casi siempre 200, porque Apify
    reintenta ante cualquier otra cosa y acaba deshabilitando la integración. Lo
-   único que se verifica del cuerpo es que se pudo sacar el `dataset_id`.
-2. **La tarea de fondo.** Es la que lee, decodifica e ingiere, y su contrato es
-   que **no lanza nunca**: una excepción escapando de una `BackgroundTask` no la
-   ve nadie. Todo fallo termina en `collector_runs`.
+   único que se verifica del cuerpo es que se pudo sacar el `dataset_id` y que
+   quedó encolado (`encolar_dataset`). Si encolar falla, 503: ahí sí se quiere
+   que Apify reintente.
+2. **El procesamiento.** Es el que lee, decodifica e ingiere, y su contrato es
+   que **no lanza por el dataset**: todo fallo termina en `collector_runs`.
 
-La tarea se ejercita llamándola directamente y no a través del cliente de
-pruebas. `TestClient` sí corre las `BackgroundTasks`, pero entonces un fallo de
-la tarea se confundiría con un fallo de la ruta, que es justo la distinción que
-estos tests existen para sostener.
+El procesamiento se ejercita llamándolo directamente y no a través del cliente
+de pruebas: un fallo suyo se confundiría con un fallo de la ruta, que es justo
+la distinción que estos tests existen para sostener. El SQL del inbox
+(encolar, reclamar, abandonar) se prueba contra Postgres de verdad en
+`test_integracion_pg.py`.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import ClassVar
 
 import httpx
 import pytest
@@ -92,20 +95,19 @@ def tuit(texto: str, *, id_: str = "1", minutos: int = 5) -> dict:
 
 @pytest.fixture
 def tarea(monkeypatch):
-    """Sustituye la tarea de fondo y registra con qué se la encoló.
+    """Sustituye `encolar_dataset` y registra con qué se lo llamó.
 
-    `TestClient` **ejecuta** las `BackgroundTasks` antes de devolver la
-    respuesta. Sin este doble, cada test de la ruta arrastraría la tarea entera
-    —red hacia Apify y una sesión contra Postgres, que no existe en la suite— y
-    un fallo de la tarea se leería como un fallo de la ruta. Que es justo la
-    distinción que separa las dos mitades de este archivo.
+    Encolar es un INSERT en `collector_runs`, y en la suite no hay Postgres.
+    Sin este doble cada test de la ruta necesitaría una base, y un fallo de la
+    base se leería como un fallo de la ruta.
     """
     encoladas: list[tuple] = []
 
     async def falsa(dataset_id, payload):
         encoladas.append((dataset_id, payload))
+        return True
 
-    monkeypatch.setattr("app.api.v1.endpoints.apify.process_dataset", falsa)
+    monkeypatch.setattr("app.api.v1.endpoints.apify.encolar_dataset", falsa)
     return encoladas
 
 
@@ -187,6 +189,35 @@ def test_un_aviso_rechazado_no_encola_nada(cliente, tarea):
     })
 
     assert tarea == []
+
+
+def test_un_dataset_ya_encolado_se_acusa_como_duplicado(cliente, monkeypatch):
+    async def ya_estaba(_dataset_id, _payload):
+        return False
+
+    monkeypatch.setattr("app.api.v1.endpoints.apify.encolar_dataset", ya_estaba)
+    respuesta = cliente.post(WEBHOOK, json=payload_apify())
+
+    assert respuesta.status_code == 200, "un 4xx haría que Apify reintentara"
+    assert respuesta.json() == {"status": "duplicate", "dataset_id": DATASET_ID}
+
+
+def test_si_no_se_puede_encolar_responde_503_para_que_apify_reintente(cliente, monkeypatch):
+    """El defecto que motivó el inbox: antes el 200 salía antes de tocar la base.
+
+    Con la `BackgroundTask`, Postgres caído significaba 200 a Apify y el aviso
+    perdido para siempre, con el fallo sólo en el log. Ahora el aviso queda
+    escrito antes de responder, o no se responde 2xx.
+    """
+
+    async def base_caida(_dataset_id, _payload):
+        raise ConnectionRefusedError("postgres no responde")
+
+    monkeypatch.setattr("app.api.v1.endpoints.apify.encolar_dataset", base_caida)
+    respuesta = cliente.post(WEBHOOK, json=payload_apify())
+
+    assert respuesta.status_code == 503
+    assert "postgres" not in respuesta.text, "el detalle interno no sale a quien llama"
 
 
 def test_un_evento_de_prueba_sin_dataset_no_provoca_un_4xx(cliente):
@@ -547,6 +578,20 @@ class SesionFalsa:
         return None
 
 
+class RepoFalso:
+    """Lo que la base ya tiene. Vacío salvo que el test lo llene."""
+
+    conocidos: ClassVar[dict] = {}
+
+    async def puntos_conocidos(self, _source, external_ids):
+        return {k: v for k, v in RepoFalso.conocidos.items() if k in external_ids}
+
+
+class CorridaFalsa:
+    def __init__(self, params: dict) -> None:
+        self.params = params
+
+
 class ServicioFalso:
     """Registra lo que la tarea de fondo le pide, que es lo que se observa."""
 
@@ -557,19 +602,31 @@ class ServicioFalso:
         self.error: str | None = None
         self.eventos: list = []
         self.params: dict = {}
+        self.retomada: int | None = None
+        self.corrida: CorridaFalsa | None = None
+        self.repo = RepoFalso()
         ServicioFalso.ultimo = self
 
     async def start_run(self, *, source, collector, params):
         self.source = source
         self.collector = collector
         self.params = params
-        return object()
+        self.corrida = CorridaFalsa(params)
+        return self.corrida
+
+    async def resume_run(self, run_id, params):
+        self.retomada = run_id
+        self.source = EventSource.BOMBEROS
+        self.params = params
+        self.corrida = CorridaFalsa({"inbox": svc.INBOX_EN_PROCESO, **params})
+        return self.corrida
 
     async def finish_run(self, _run, *, status, fetched=0, inserted=0, duplicate=0, error=None):
         self.status = status
         self.error = error
         self.fetched = fetched
         self.inserted = inserted
+        self.duplicate = duplicate
 
     async def ingest_batch(self, events):
         self.eventos = list(events)
@@ -580,6 +637,7 @@ class ServicioFalso:
 def servicio(monkeypatch):
     monkeypatch.setattr(svc, "AsyncSessionLocal", SesionFalsa)
     monkeypatch.setattr(svc, "IngestService", ServicioFalso)
+    monkeypatch.setattr(RepoFalso, "conocidos", {})
     # La geocodificación queda APAGADA por defecto en este archivo. No es
     # desinterés: `geocode_dispatches` habla con Nominatim, que respeta 1 req/s,
     # y dejarla encendida en cada test metería una espera real por despacho para
@@ -979,15 +1037,20 @@ def test_authorization_sin_el_esquema_bearer_tambien_sirve(cliente):
     assert respuesta.status_code == 200
 
 
-def test_el_401_dice_que_cabecera_hay_que_poner(cliente):
-    """Depurar esto desde Apify es leer un 401 y adivinar. El cuerpo ayuda."""
+def test_el_401_es_generico_y_la_pista_va_al_log(cliente, caplog):
+    """Desde el 2026-09-23 el 401 no le dice a quien sondea la URL qué cabecera
+    ni qué variable faltan: eso queda en el log, que es donde lo lee el operador."""
     settings.APIFY_WEBHOOK_SECRET = "secreto-compartido"
-    respuesta = cliente.post(WEBHOOK, json=payload_apify())
+    with caplog.at_level(logging.INFO, logger="app.api.v1.endpoints.apify"):
+        respuesta = cliente.post(WEBHOOK, json=payload_apify())
 
     assert respuesta.status_code == 401
     detalle = respuesta.json()["detail"]
-    assert "X-AlertaV-Apify-Secret" in detalle
-    assert "secreto-compartido" not in detalle, "el secreto no se devuelve nunca"
+    assert detalle == "no autorizado"
+    assert "X-AlertaV-Apify-Secret" not in detalle
+    registro = next(r for r in caplog.records if "rechazado" in r.getMessage())
+    assert registro.cabecera_esperada == "X-AlertaV-Apify-Secret"
+    assert not hasattr(registro, "largo_esperado"), "el largo del secreto no va al log"
 
 
 # --- 8. El nivel del log del rechazo -----------------------------------------
@@ -1063,3 +1126,181 @@ def test_una_authorization_vacia_cuenta_como_sin_credencial(cliente, caplog):
         registro for registro in caplog.records if "rechazado" in registro.getMessage()
     ]
     assert rechazos[0].levelno == logging.INFO
+
+
+# --- El delta y el inbox (auditoría 2026-09-23) -------------------------------
+
+
+def _conocido(texto: str, *, id_: str, lat: float | None = -33.04):
+    """Lo que `puntos_conocidos` devolvería para un despacho ya ingerido."""
+    from app.collectors.traffic.bomberos_10_4_worker import build_external_id
+    from app.repositories.event_repository import PuntoConocido
+
+    despacho = svc.parse_tweet(tuit(texto, id_=id_), ["5-1"])
+    assert despacho is not None
+    clave = build_external_id(despacho)
+    return clave, PuntoConocido(
+        texto_md5="x",
+        lat=lat,
+        lon=-71.6 if lat is not None else None,
+        raw_data={"_bomberos": {"aviso": despacho.raw_text}},
+    )
+
+
+@respx.mock
+def test_un_despacho_ya_ingerido_no_gasta_modelo_ni_nominatim(servicio, monkeypatch):
+    """Cada entrega relee el timeline: casi todo ya entró la vez anterior."""
+    import app.services.apify_webhook_service as modulo
+
+    texto = "81 * RUTA 68 KM 42 * CLAVE 5-1"
+    clave, punto = _conocido(texto, id_="1")
+    monkeypatch.setattr(RepoFalso, "conocidos", {clave: punto})
+
+    decodificados: list = []
+    original = modulo.decode_dispatches
+
+    async def espia(dispatches, **kwargs):
+        decodificados.extend(dispatches)
+        return await original(dispatches, **kwargs)
+
+    monkeypatch.setattr(modulo, "decode_dispatches", espia)
+    respx.get(ITEMS_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json=[tuit(texto, id_="1"), tuit("22 * DIEGO COOK / GUACOLDA * CLAVE 5-1", id_="2")],
+        )
+    )
+    settings.BOMBEROS_ACCIDENT_KEYS = ["5-1"]
+
+    asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
+
+    hecho = ServicioFalso.ultimo
+    assert [d.guid for d in decodificados] == ["x:2"], "sólo el nuevo va al modelo"
+    assert len(hecho.eventos) == 1
+    assert hecho.duplicate == 1, "el saltado se cuenta como duplicado"
+    assert hecho.status is CollectorStatus.SUCCESS
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("aviso_guardado", "lat"),
+    [("81 * RUTA 68 KM 40 * CLAVE 5-1", -33.04), ("81 * RUTA 68 KM 42 * CLAVE 5-1", None)],
+    ids=["aviso-corregido", "sin-punto"],
+)
+def test_se_reprocesa_si_el_aviso_cambio_o_quedo_sin_punto(servicio, monkeypatch, aviso_guardado, lat):
+    clave, punto = _conocido(aviso_guardado, id_="1", lat=lat)
+    monkeypatch.setattr(RepoFalso, "conocidos", {clave: punto})
+    respx.get(ITEMS_URL).mock(
+        return_value=httpx.Response(200, json=[tuit("81 * RUTA 68 KM 42 * CLAVE 5-1", id_="1")])
+    )
+    settings.BOMBEROS_ACCIDENT_KEYS = ["5-1"]
+
+    asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
+
+    assert len(ServicioFalso.ultimo.eventos) == 1
+
+
+@respx.mock
+def test_la_entrega_del_inbox_retoma_su_fila_y_la_marca_hecha(servicio):
+    """Con `run_id` no se abre otra corrida: la fila del inbox ES la corrida."""
+    respx.get(ITEMS_URL).mock(
+        return_value=httpx.Response(200, json=[tuit("81 * RUTA 68 * CLAVE 5-1", id_="3")])
+    )
+    settings.BOMBEROS_ACCIDENT_KEYS = ["5-1"]
+
+    asyncio.run(svc._process(DATASET_ID, "traza", run_id=42))
+
+    hecho = ServicioFalso.ultimo
+    assert hecho.retomada == 42
+    assert hecho.status is CollectorStatus.SUCCESS
+    assert hecho.corrida.params["inbox"] == svc.INBOX_HECHO
+    assert hecho.corrida.params["dataset_id"] == DATASET_ID
+
+
+@respx.mock
+def test_una_entrega_del_inbox_que_falla_queda_cerrada_y_no_se_reintenta(servicio, monkeypatch):
+    """Un fallo del dataset no es un proceso muerto: se cierra `failed`."""
+    import app.collectors.geoservices as geoservices
+
+    async def sin_dormir(_s: float) -> None:
+        return None
+
+    monkeypatch.setattr(geoservices.asyncio, "sleep", sin_dormir)
+    respx.get(ITEMS_URL).mock(return_value=httpx.Response(503))
+
+    asyncio.run(svc._process(DATASET_ID, "traza", run_id=7))
+
+    hecho = ServicioFalso.ultimo
+    assert hecho.status is CollectorStatus.FAILED
+    assert hecho.corrida.params["inbox"] == svc.INBOX_HECHO
+
+
+def test_procesar_siguiente_sin_entregas_no_hace_nada(monkeypatch):
+    async def nada():
+        return None
+
+    monkeypatch.setattr(svc, "reclamar_siguiente", nada)
+    assert asyncio.run(svc.procesar_siguiente()) is False
+
+
+def test_procesar_siguiente_no_deja_escapar_un_fallo_de_la_base(monkeypatch, caplog):
+    """La fila queda `en_proceso` y el inbox la vuelve a reclamar al vencer."""
+
+    async def una():
+        return (9, DATASET_ID, "traza", 1)
+
+    async def revienta(*_a, **_k):
+        raise ConnectionResetError("se cayó la conexión")
+
+    monkeypatch.setattr(svc, "reclamar_siguiente", una)
+    monkeypatch.setattr(svc, "_process", revienta)
+
+    with caplog.at_level(logging.ERROR, logger="app.services.apify_webhook_service"):
+        assert asyncio.run(svc.procesar_siguiente()) is True
+    assert any("se reintentará" in r.getMessage() for r in caplog.records)
+
+
+def test_el_bucle_del_inbox_vacia_la_cola_antes_de_dormir(monkeypatch):
+    """Tres entregas pendientes se procesan seguidas, sin esperar entre ellas."""
+    from app.collectors import runner
+
+    cola = [True, True, True, False]
+    llamadas: list[str] = []
+
+    async def siguiente():
+        llamadas.append("procesar")
+        return cola.pop(0)
+
+    async def dormir(_segundos):
+        llamadas.append("dormir")
+        return False  # apagado: el bucle termina
+
+    monkeypatch.setattr(svc, "procesar_siguiente", siguiente)
+    monkeypatch.setattr(runner, "sleep_unless_stopped", dormir)
+    monkeypatch.setattr(runner, "_CUPOS", None)
+
+    asyncio.run(runner._inbox_loop(10))
+
+    assert llamadas == ["procesar"] * 4 + ["dormir"]
+
+
+def test_el_runner_solo_levanta_el_inbox_con_todos_los_collectors(monkeypatch):
+    from app.collectors import runner
+
+    levantados: list[str] = []
+
+    async def inbox(_intervalo):
+        levantados.append("inbox")
+
+    async def collector(nombre, _intervalo):
+        levantados.append(nombre)
+
+    monkeypatch.setattr(runner, "_inbox_loop", inbox)
+    monkeypatch.setattr(runner, "_collector_loop", collector)
+
+    asyncio.run(runner.run_loop(["transporte_informa"]))
+    assert levantados == ["transporte_informa"]
+
+    levantados.clear()
+    asyncio.run(runner.run_loop(None))
+    assert "inbox" in levantados

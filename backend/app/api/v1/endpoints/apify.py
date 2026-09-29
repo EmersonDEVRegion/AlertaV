@@ -10,13 +10,12 @@ payload por defecto ya trae `resource.defaultDatasetId`, que es lo único que
 esta ruta necesita: **no** hay que personalizar la plantilla.
 
 **Sólo el Actor de X/Twitter.** Esta ruta NO es genérica: ingiere como Bomberos,
-con `EventSource.BOMBEROS` y `parse_tweet` buscando claves 10-x. El Actor de
-Instagram no va acá — lo lee `InstagramApifyCollector` por su cuenta, cada cinco
-minutos, con `runs/last`. Apuntarlo a esta URL no da error: sus posts no traen
-claves, la corrida cierra en `success` con 0 insertados y la fila verde que deja
-en `collector_runs` hace parecer que el webhook de Bomberos está llegando cuando
-no llega nada. `APIFY_BOMBEROS_ACTOR_IDS` existe para que eso se anuncie en vez
-de ocurrir en silencio.
+con `EventSource.BOMBEROS` y `parse_tweet` buscando claves 10-x. Apuntar otro
+Actor a esta URL no da error: sus items no traen claves, la corrida cierra en
+`success` con 0 insertados y la fila verde que deja en `collector_runs` hace
+parecer que el webhook de Bomberos está llegando cuando no llega nada.
+`APIFY_BOMBEROS_ACTOR_IDS` existe para que eso se anuncie en vez de ocurrir en
+silencio.
 
 **Y en un solo nivel.** Un webhook colgado del Actor dispara también para las
 corridas que lanza un Task suyo. Si está en los dos, cada corrida entrega dos
@@ -30,9 +29,11 @@ Las tres decisiones de esta ruta
 backoff ante cualquier respuesta que no sea 2xx. Leer el dataset, llamar al
 modelo por cada despacho y escribir en la base tarda bastante más que eso, así
 que hacerlo dentro de la petición garantizaría timeouts, reintentos y el mismo
-lote procesado varias veces. Se extrae el `dataset_id`, se responde 200 y el
-trabajo va a una `BackgroundTask`. Lo que se afirma con ese 200 es "recibí el
-aviso y sé qué dataset leer", no "ya está ingerido".
+lote procesado varias veces. Se extrae el `dataset_id`, se **encola** en
+`collector_runs` (un INSERT, milisegundos) y se responde 200; el proceso de
+workers lo procesa. Lo que se afirma con ese 200 es "el aviso quedó escrito en
+la base", no "ya está ingerido". Si la base no responde, 503: Apify reintenta y
+el aviso no se pierde. Ver «El inbox» en `apify_webhook_service`.
 
 **2. Casi todo responde 200.** Un webhook que devuelve 4xx ante un aviso que
 nunca va a poder procesar —un evento de prueba, un payload sin dataset— provoca
@@ -43,12 +44,11 @@ deliberadas: un secreto incorrecto es 401 —quien llama tiene que saber que fue
 rechazado— y un cuerpo que ni siquiera es un objeto JSON es 422, porque eso no
 lo manda Apify.
 
-**3. La idempotencia no se resuelve acá.** Apify puede entregar el mismo aviso
-dos veces y esta ruta no lleva registro de lo que ya vio. No hace falta: el
-`external_id` de cada despacho es determinista y `EventRepository.upsert_many`
-actualiza en vez de duplicar. Reprocesar un dataset entero cuesta unas llamadas
-al modelo y cero filas de más. Un candado acá sería un segundo mecanismo de
-idempotencia que puede desincronizarse del primero.
+**3. La idempotencia de las filas no se resuelve acá.** El `external_id` de
+cada despacho es determinista y `EventRepository.upsert_many` actualiza en vez
+de duplicar. Lo que sí se evita es encolar dos veces el mismo `dataset_id`
+(`encolar_dataset` responde `duplicate`): no por las filas, sino por las
+llamadas al modelo y a Nominatim que costaría procesarlo de nuevo.
 
 Sobre la autenticación
 ----------------------
@@ -82,14 +82,13 @@ import secrets
 from collections.abc import Sequence
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException, status
+from fastapi import APIRouter, Body, Header, HTTPException, status
 
 from app.core.config import settings
-from app.services.apify_press_service import process_dataset as process_press_dataset
 from app.services.apify_webhook_service import (
+    encolar_dataset,
     extract_actor_ids,
     extract_dataset_id,
-    process_dataset,
 )
 
 logger = logging.getLogger(__name__)
@@ -104,13 +103,7 @@ SECRET_HEADER = "X-AlertaV-Apify-Secret"
 
 
 def _autorizado_en(ids_recibidos: list[str], permitidos: Sequence[str]) -> bool:
-    """Versión genérica de `_actor_autorizado`, para la segunda puerta.
-
-    Las dos rutas comparten la regla —lista vacía deja pasar, un cuerpo sin
-    identidad no pasa— y difieren sólo en CUÁL lista consultan. Escribirla dos
-    veces garantizaría que dentro de seis meses una de las dos se relaje sin que
-    nadie lo note.
-    """
+    """¿Alguno de los ids recibidos está en la lista? Lista vacía deja pasar."""
     limpios = [i.strip() for i in permitidos if i.strip()]
     if not limpios:
         return True
@@ -188,114 +181,12 @@ def _authorised(secret_header: str | None, authorization: str | None) -> bool:
 
 
 @router.post(
-    "/webhook/prensa",
-    status_code=status.HTTP_200_OK,
-    summary="Aviso de Apify: corrida del Task de prensa y transporte",
-    description=(
-        "Segunda puerta de X, para las cuentas que NO son la central de "
-        "Bomberos: el MTT, la concesionaria de la Ruta 68, prensa local y la "
-        "red ciudadana. Mismo Actor, otro Task, otras bandas de confianza.\n\n"
-        "Existe porque `/webhook` está cableado a Bomberos: filtra por claves "
-        "`10-x` e ingiere con confianza 1.00, la única banda que por sí sola "
-        "confirma un incidente. Un tuit de prensa por ahí o se descarta entero "
-        "o entra con el peso de un despacho oficial, y ninguna de las dos "
-        "sirve.\n\n"
-        "**Sólo entran las cuentas declaradas en `HANDLES`**, con la confianza "
-        "que se les declara ahí. Es lo que impide que un término de búsqueda "
-        "mal puesto en el Task convierta a cualquier vecino en fuente."
-    ),
-)
-async def apify_webhook_prensa(
-    payload: Annotated[Any, Body()],
-    background_tasks: BackgroundTasks,
-    x_alertav_apify_secret: Annotated[str | None, Header()] = None,
-    authorization: Annotated[str | None, Header()] = None,
-) -> dict[str, Any]:
-    """Gemela de `apify_webhook`, con otra lista blanca y otro procesador.
-
-    El secreto es el MISMO —es de cuenta, no de ruta— así que por sí solo no
-    distingue una puerta de la otra. Lo que las separa es
-    `APIFY_PRENSA_ACTOR_IDS`: como los dos Tasks salen del mismo Actor,
-    comparten `actId` y hay que autorizar el **id del Task**. `extract_actor_ids`
-    lee también `actorTaskId` justamente para esto.
-    """
-    if not _authorised(x_alertav_apify_secret, authorization):
-        recibidos = _candidatos(x_alertav_apify_secret, authorization)
-        logger.log(
-            logging.INFO if not recibidos else logging.WARNING,
-            "webhook de prensa rechazado: %s",
-            "sin credencial" if not recibidos else "secreto inválido",
-            extra={"cabecera_esperada": SECRET_HEADER},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=(
-                f"secreto de webhook inválido. Configura en Apify la cabecera "
-                f"{SECRET_HEADER} con el valor de APIFY_WEBHOOK_SECRET."
-            ),
-        )
-
-    if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="el cuerpo del webhook debe ser un objeto JSON",
-        )
-
-    if not settings.APIFY_PRENSA_ENABLED:
-        # Puerta retirada (ver `APIFY_PRENSA_ENABLED`). 200 y no 4xx por lo de
-        # siempre: un webhook que quedó en el panel reintentaría once veces y
-        # Apify deshabilitaría la integración. INFO y no WARNING: no hay nada
-        # roto, sólo un webhook de más que conviene borrar del panel.
-        logger.info(
-            "webhook de prensa ignorado: la puerta está apagada",
-            extra={"remedio": "borrar el webhook del Task de prensa en Apify"},
-        )
-        return {
-            "status": "ignored",
-            "reason": "la puerta de prensa está apagada (APIFY_PRENSA_ENABLED=false)",
-        }
-
-    ids_actor = extract_actor_ids(payload)
-    if not _autorizado_en(ids_actor, settings.APIFY_PRENSA_ACTOR_IDS):
-        # Mismo criterio que en la puerta de Bomberos: 200 para que Apify no
-        # reintente once veces y deshabilite la integración, WARNING porque
-        # llegó CON el secreto correcto y por lo tanto es configuración nuestra.
-        logger.warning(
-            "webhook de prensa ignorado: la corrida no viene de un Task autorizado",
-            extra={
-                "ids_recibidos": ids_actor,
-                "ids_autorizados": list(settings.APIFY_PRENSA_ACTOR_IDS),
-                "remedio": (
-                    "los dos Tasks comparten actId; hay que autorizar el "
-                    "actorTaskId del Task de prensa en APIFY_PRENSA_ACTOR_IDS"
-                ),
-            },
-        )
-        return {
-            "status": "ignored",
-            "reason": "la corrida no viene de un Task autorizado en APIFY_PRENSA_ACTOR_IDS",
-            "actor_ids": ids_actor,
-        }
-
-    dataset_id = extract_dataset_id(payload)
-    if dataset_id is None:
-        logger.warning("webhook de prensa sin `resource.defaultDatasetId`")
-        return {"status": "ignored", "reason": "el payload no trae resource.defaultDatasetId"}
-
-    background_tasks.add_task(process_press_dataset, dataset_id, payload)
-    logger.info(
-        "webhook de prensa aceptado",
-        extra={"dataset_id": dataset_id, "ids_actor": ids_actor},
-    )
-    return {"status": "accepted", "dataset_id": dataset_id}
-
-
-@router.post(
     "/webhook",
     status_code=status.HTTP_200_OK,
     summary="Aviso de Apify: una corrida del Actor terminó",
     response_description=(
         "Acuse de recibo. `accepted` = el dataset quedó encolado para lectura; "
+        "`duplicate` = ese dataset ya estaba encolado; "
         "`ignored` = el aviso llegó bien pero no había nada que leer."
     ),
 )
@@ -306,7 +197,6 @@ async def apify_webhook(
     # el momento correcto —ninguna entrega llega a procesarse— pero por un
     # motivo imposible de adivinar leyendo el log de Apify, que sólo ve un 422.
     payload: Annotated[Any, Body()],
-    background_tasks: BackgroundTasks,
     x_alertav_apify_secret: Annotated[str | None, Header()] = None,
     authorization: Annotated[str | None, Header()] = None,
 ) -> dict[str, Any]:
@@ -326,9 +216,9 @@ async def apify_webhook(
         # depurarlo desde el panel de Apify, que sólo ve un 401, es adivinar.
         #
         # La longitud y no el valor: una diferencia de largo delata al instante
-        # el error más común (comillas o espacios pegados al copiar), y no
-        # revela el secreto. El valor entero jamás va al log — quedaría escrito
-        # en claro en el sistema de registro del proveedor.
+        # el error más común (comillas o espacios pegados al copiar). El valor
+        # entero jamás va al log — quedaría escrito en claro en el sistema de
+        # registro del proveedor.
         recibidos = _candidatos(x_alertav_apify_secret, authorization)
 
         # El NIVEL del registro depende de si venía alguna credencial, y la
@@ -360,17 +250,23 @@ async def apify_webhook(
                 "trae_cabecera_propia": x_alertav_apify_secret is not None,
                 "trae_authorization": authorization is not None,
                 "largos_recibidos": [len(valor) for valor in recibidos],
-                "largo_esperado": len(settings.APIFY_WEBHOOK_SECRET.strip()),
+                # Si el largo coincide, el valor está mal copiado; si no, suele
+                # ser una comilla o un espacio pegado. Se registra la
+                # comparación y no el largo esperado: eso no hace falta
+                # escribirlo en el log del proveedor.
+                "largo_coincide": any(
+                    len(valor) == len(settings.APIFY_WEBHOOK_SECRET.strip())
+                    for valor in recibidos
+                ),
                 "cabecera_esperada": SECRET_HEADER,
             },
         )
+        # Genérico a propósito: el nombre de la cabecera y de la variable están
+        # en el log (arriba) y en este docstring, no en la respuesta a quien
+        # sondea la URL.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=(
-                f"secreto de webhook inválido. Configura en Apify la cabecera "
-                f"{SECRET_HEADER} con el valor de APIFY_WEBHOOK_SECRET, o "
-                f"Authorization: Bearer <valor>."
-            ),
+            detail="no autorizado",
         )
 
     if not settings.APIFY_WEBHOOK_SECRET.strip():
@@ -383,7 +279,7 @@ async def apify_webhook(
     if not isinstance(payload, dict):
         # Apify manda un objeto. Otra cosa no viene de Apify.
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="el cuerpo del webhook debe ser un objeto JSON",
         )
 
@@ -460,7 +356,23 @@ async def apify_webhook(
             "reason": "el payload no trae resource.defaultDatasetId",
         }
 
-    background_tasks.add_task(process_dataset, dataset_id, payload)
+    try:
+        encolado = await encolar_dataset(dataset_id, payload)
+    except Exception as exc:
+        # 503 y no 200: que Apify reintente. Es la diferencia con la
+        # `BackgroundTask` de antes, que ya había respondido 200 cuando
+        # descubría que la base no estaba.
+        logger.error(
+            "no se pudo encolar el webhook de Apify; Apify reintentará",
+            extra={"dataset_id": dataset_id, "error": type(exc).__name__},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="no se pudo encolar el aviso; reintentar",
+        ) from None
+
+    if not encolado:
+        return {"status": "duplicate", "dataset_id": dataset_id}
 
     logger.info(
         "webhook de Apify aceptado",

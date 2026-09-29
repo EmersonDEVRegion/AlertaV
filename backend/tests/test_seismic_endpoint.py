@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.deps import get_seismic_service
+from app.api.v1.endpoints import events as events_endpoints
 from app.main import app
 from app.services.seismic_service import SeismicService
 
@@ -84,12 +85,12 @@ def _declared_paths() -> list[str]:
     nada y el test revienta con `StopIteration`, sin que el endpoint tenga nada
     malo: un fallo del instrumento de medición, no de lo medido.
 
-    El esquema OpenAPI sí es superficie pública y estable, y FastAPI lo arma
-    recorriendo las rutas en orden de registro, así que las claves de `paths`
-    llegan ordenadas y con el prefijo ya aplicado. Da la misma respuesta en las
-    dos versiones.
+    Tampoco se lee el esquema OpenAPI: desde el 2026-09-23 la ruta de detalle
+    `/events/{public_id}` está fuera del esquema público
+    (`include_in_schema=False`) y no aparece ahí. Se leen las rutas del router de
+    eventos, que conserva el orden de registro en todas las versiones.
     """
-    return list(app.openapi()["paths"])
+    return [getattr(ruta, "path", "") for ruta in events_endpoints.router.routes]
 
 
 class TestSeismicRouting:
@@ -165,41 +166,4 @@ class TestSeismicEndpoint:
         assert repo.kwargs["max_depth_km"] == 60.0
         assert repo.kwargs["tsunami_only"] is True
 
-    def test_geojson_preserva_la_magnitud_nula(self, client_and_repo: Any) -> None:
-        """Una solución preliminar no puede llegar al mapa como magnitud 0."""
-        client, _ = client_and_repo
-        collection = client.get("/api/v1/events/seismic/geojson").json()
 
-        preliminary = next(
-            f for f in collection["features"] if f["properties"]["usgs_id"] == "us7000ijkl"
-        )
-        assert preliminary["properties"]["magnitude"] is None
-
-    def test_geojson_ordena_las_coordenadas_lon_lat(self, client_and_repo: Any) -> None:
-        client, _ = client_and_repo
-        collection = client.get("/api/v1/events/seismic/geojson").json()
-        assert collection["features"][0]["geometry"]["coordinates"] == [-71.62, -33.05]
-
-    def test_geojson_solo_lleva_escalares(self, client_and_repo: Any) -> None:
-        """MapLibre serializa los objetos anidados: no tiene sentido mandarlos."""
-        client, _ = client_and_repo
-        collection = client.get("/api/v1/events/seismic/geojson").json()
-        for feature in collection["features"]:
-            for value in feature["properties"].values():
-                assert not isinstance(value, (dict, list))
-
-    def test_geojson_marca_que_un_sismo_no_es_un_incidente(
-        self, client_and_repo: Any
-    ) -> None:
-        client, _ = client_and_repo
-        collection = client.get("/api/v1/events/seismic/geojson").json()
-        assert all(
-            f["properties"]["is_confirmed_incident"] is False
-            for f in collection["features"]
-        )
-
-    def test_stats_ignora_las_magnitudes_nulas(self, client_and_repo: Any) -> None:
-        client, _ = client_and_repo
-        stats = client.get("/api/v1/events/seismic/stats").json()
-        assert stats["total"] == 3
-        assert stats["max_magnitude"] == 5.8

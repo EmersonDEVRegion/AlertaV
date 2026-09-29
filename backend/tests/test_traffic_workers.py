@@ -1,4 +1,4 @@
-"""Normalización de los tres workers de accidentes viales.
+"""Normalización de la capa de accidentes viales: MTT y despachos de Bomberos.
 
 Se testea `normalize()` —función pura por contrato del proyecto— sobre
 instancias creadas con `__new__`, sin pasar por `__init__` y por lo tanto sin
@@ -14,21 +14,20 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from itertools import pairwise
 
 import pytest
 
 from app.collectors.nominatim import RateLimiter, build_query
 from app.collectors.traffic.bomberos_10_4_worker import (
-    Bomberos104Collector,
     Dispatch,
     build_external_id,
-    feed_is_broken,
+    dispatches_to_events,
     find_codes,
     matches_key,
     normalise_code,
-    parse_dispatches,
+    revisar_feed,
 )
 from app.collectors.traffic.transporteinforma_worker import (
     TrafficNotice,
@@ -37,147 +36,9 @@ from app.collectors.traffic.transporteinforma_worker import (
     looks_like_accident,
     parse_notice,
 )
-from app.collectors.traffic.waze_worker import (
-    WazeCollector,
-    parse_alert,
-    parse_commune,
-)
-from app.models.enums import EventSource, EventType, family_of_event
+from app.models.enums import EventSource, EventType
 
 AHORA = datetime.now(UTC)
-
-
-def waze_collector(**overrides) -> WazeCollector:
-    """Instancia sin `__init__`: no toca sesión ni settings."""
-    collector = WazeCollector.__new__(WazeCollector)
-    collector.wanted_types = overrides.get("wanted_types", {"ACCIDENT"})
-    return collector
-
-
-# --- Waze --------------------------------------------------------------------
-
-
-def alerta_waze(**overrides) -> dict:
-    base = {
-        "uuid": "abc-123",
-        "type": "ACCIDENT",
-        "subtype": "ACCIDENT_MAJOR",
-        # x = LONGITUD, y = LATITUD.
-        "location": {"x": -71.6197, "y": -33.0458},
-        "street": "Ruta 68",
-        "city": "Valparaíso, Valparaíso",
-        "reliability": 7,
-        "pubMillis": int(AHORA.timestamp() * 1000),
-    }
-    base.update(overrides)
-    return base
-
-
-def test_waze_lee_x_como_longitud_e_y_como_latitud():
-    """El error clásico del feed de Waze.
-
-    Invertir los ejes deposita todos los accidentes de Valparaíso en el Índico, y
-    lo hace sin error: son coordenadas válidas.
-    """
-    alerta = parse_alert(alerta_waze())
-
-    assert alerta is not None
-    assert alerta.lat == pytest.approx(-33.0458)
-    assert alerta.lon == pytest.approx(-71.6197)
-    # Si se invirtieran, la latitud caería fuera de Chile.
-    assert -57.0 < alerta.lat < -17.0
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {},
-        {"uuid": "x"},
-        {"uuid": "x", "type": "ACCIDENT"},
-        {"uuid": "x", "type": "ACCIDENT", "location": {}},
-        {"uuid": "x", "type": "ACCIDENT", "location": {"x": None, "y": None}},
-        {"uuid": "x", "type": "ACCIDENT", "location": {"x": -71.6, "y": -200.0}},
-        "no soy un objeto",
-    ],
-)
-def test_waze_descarta_alertas_inservibles_sin_reventar(payload):
-    """Un feed comunitario trae filas incompletas de rutina.
-
-    Perder la corrida entera por una alerta rota sería cambiar un dato faltante
-    por doscientos.
-    """
-    assert parse_alert(payload) is None
-
-
-def test_waze_solo_emite_accidentes():
-    collector = waze_collector()
-    registros = [
-        parse_alert(alerta_waze(uuid="a", type="ACCIDENT")),
-        parse_alert(alerta_waze(uuid="b", type="JAM")),
-        parse_alert(alerta_waze(uuid="c", type="ROAD_CLOSED")),
-        parse_alert(alerta_waze(uuid="d", type="POLICE")),
-    ]
-
-    eventos = collector.normalize([r for r in registros if r])
-
-    assert len(eventos) == 1
-    assert eventos[0].external_id == "waze:a"
-    assert eventos[0].type is EventType.ACCIDENT
-    assert eventos[0].source is EventSource.WAZE
-    assert family_of_event(eventos[0].type) == "traffic"
-
-
-def test_waze_descarta_reportes_viejos():
-    """Waze mantiene vivas las alertas mientras se las confirme.
-
-    Una de hace horas ya no describe el tránsito de ahora; meterla al motor la
-    haría corroborar un accidente probablemente ya despejado.
-    """
-    collector = waze_collector()
-    viejo = AHORA - timedelta(hours=6)
-    registros = [
-        parse_alert(alerta_waze(uuid="viejo", pubMillis=int(viejo.timestamp() * 1000))),
-        parse_alert(alerta_waze(uuid="nuevo")),
-    ]
-
-    eventos = collector.normalize([r for r in registros if r])
-
-    assert [evento.external_id for evento in eventos] == ["waze:nuevo"]
-
-
-def test_waze_usa_la_confianza_de_su_capa():
-    eventos = waze_collector().normalize([parse_alert(alerta_waze())])
-    assert eventos[0].confidence == pytest.approx(0.40)
-
-
-def test_waze_deja_la_comuna_donde_el_motor_la_busca():
-    """`EventCreate` no tiene campo `commune`: va por `raw_data`.
-
-    Y va sólo la comuna, no "Comuna, Región": el Paso B compara nombres
-    normalizados y "valparaiso, valparaiso" no coincide con ninguno.
-    """
-    eventos = waze_collector().normalize([parse_alert(alerta_waze())])
-    assert eventos[0].raw_data["comuna"] == "Valparaíso"
-
-
-@pytest.mark.parametrize(
-    ("entrada", "esperado"),
-    [
-        ("Valparaíso, Valparaíso", "Valparaíso"),
-        ("Viña del Mar", "Viña del Mar"),
-        (None, None),
-        ("", None),
-    ],
-)
-def test_waze_parse_commune(entrada, esperado):
-    assert parse_commune(entrada) == esperado
-
-
-def test_waze_el_id_externo_es_estable():
-    """Idempotencia: releer el feed cada 5 min no puede duplicar el accidente."""
-    primera = waze_collector().normalize([parse_alert(alerta_waze())])
-    segunda = waze_collector().normalize([parse_alert(alerta_waze())])
-    assert primera[0].external_id == segunda[0].external_id
 
 
 # --- Bomberos 10-4: reconocimiento de la clave -------------------------------
@@ -251,73 +112,28 @@ def test_find_codes_ve_todas_las_claves_de_un_aviso():
     assert (10, 1) in codigos
 
 
-# --- Bomberos 10-4: lectura del feed RSS -------------------------------------
-
-RSS_FEED = """<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0">
-  <channel>
-    <title>Central CBV</title>
-    <item>
-      <title>Clave 5-1 en Ruta 68 km 42, se despachan unidades</title>
-      <description>Rescate vehicular. Personal en el lugar.</description>
-      <guid>https://ejemplo.cl/status/1</guid>
-      <pubDate>Wed, 19 Aug 2026 14:30:00 GMT</pubDate>
-    </item>
-    <item>
-      <title>Clave 5-0-1 Av. Espa&#241;a con Uno Norte</title>
-      <guid>https://ejemplo.cl/status/2</guid>
-      <pubDate>Wed, 19 Aug 2026 14:35:00 GMT</pubDate>
-    </item>
-    <item>
-      <title>Clave 10-40 emanaci&#243;n de gas en Av. Brasil</title>
-      <guid>https://ejemplo.cl/status/3</guid>
-      <pubDate>Wed, 19 Aug 2026 14:40:00 GMT</pubDate>
-    </item>
-    <item>
-      <title>Clave 10-1 incendio estructural, Cerro Bar&#243;n</title>
-      <guid>https://ejemplo.cl/status/4</guid>
-      <pubDate>Wed, 19 Aug 2026 14:45:00 GMT</pubDate>
-    </item>
-  </channel>
-</rss>
-"""
+# --- Bomberos: del despacho al evento -----------------------------------------
 
 
-def test_bomberos_extrae_del_rss_solo_la_clave_pedida():
-    despachos = parse_dispatches(RSS_FEED, ["5-1"])
-
-    assert len(despachos) == 2, "deben entrar 5-1 y 5-0-1, y sólo esas"
-    assert {d.key for d in despachos} == {"5-1"}
-    assert "Ruta 68" in (despachos[0].address or "")
-    assert "España" in (despachos[1].address or ""), "las entidades XML se decodifican"
-
-
-def test_bomberos_lee_la_fecha_del_pubdate():
-    despacho = parse_dispatches(RSS_FEED, ["5-1"])[0]
-    assert despacho.occurred_at is not None
-    assert (despacho.occurred_at.day, despacho.occurred_at.month) == (19, 8)
-    assert despacho.occurred_at.tzinfo is not None, "debe llegar con zona horaria"
-
-
-def test_bomberos_mira_titulo_y_descripcion():
-    """El puente no es consistente sobre dónde deja el texto completo."""
-    feed = """<?xml version="1.0"?><rss version="2.0"><channel>
-      <item>
-        <title>Despacho en curso</title>
-        <description>Clave 5-1 en Av. Argentina</description>
-        <guid>x1</guid>
-      </item></channel></rss>"""
-    despachos = parse_dispatches(feed, ["5-1"])
-    assert len(despachos) == 1
-    assert "Av. Argentina" in despachos[0].address
+def despacho(texto: str, *, guid: str | None = "https://x.com/CGI_CBV/status/1") -> Dispatch:
+    return Dispatch(
+        key="5-1",
+        address=texto,
+        occurred_at=datetime(2026, 8, 19, 14, 30, tzinfo=UTC),
+        commune=None,
+        raw_text=texto,
+        guid=guid,
+    )
 
 
 def test_bomberos_emite_accidente_confirmado_sin_coordenadas():
-    """Una 5-1 aporta certeza, no ubicación. Ver el docstring del worker."""
-    collector = Bomberos104Collector.__new__(Bomberos104Collector)
-    eventos = collector.normalize(parse_dispatches(RSS_FEED, ["5-1"]))
+    """Una 5-1 aporta certeza, no ubicación, mientras no se geocodifique."""
+    eventos, sin_fecha = dispatches_to_events(
+        [despacho("Clave 5-1 en Ruta 68 km 42, se despachan unidades")],
+        collector="bomberos_apify_webhook",
+    )
 
-    assert len(eventos) == 2
+    assert sin_fecha == 0
     evento = eventos[0]
     assert evento.type is EventType.ACCIDENT
     assert evento.source is EventSource.BOMBEROS
@@ -327,11 +143,12 @@ def test_bomberos_emite_accidente_confirmado_sin_coordenadas():
 
 
 def test_bomberos_el_id_externo_sale_del_guid():
-    """Idempotencia: releer el feed cada 3 min no puede duplicar el despacho."""
-    primera = parse_dispatches(RSS_FEED, ["5-1"])
-    segunda = parse_dispatches(RSS_FEED, ["5-1"])
-    assert build_external_id(primera[0]) == build_external_id(segunda[0])
-    assert build_external_id(primera[0]) != build_external_id(primera[1])
+    """Idempotencia: releer el mismo dataset no puede duplicar el despacho."""
+    a = despacho("Clave 5-1 en Ruta 68", guid="https://x.com/CGI_CBV/status/1")
+    b = despacho("Clave 5-1 en Ruta 68", guid="https://x.com/CGI_CBV/status/1")
+    c = despacho("Clave 5-1 en Ruta 68", guid="https://x.com/CGI_CBV/status/2")
+    assert build_external_id(a) == build_external_id(b)
+    assert build_external_id(a) != build_external_id(c)
 
 
 def test_bomberos_sin_guid_cae_a_un_hash_determinista():
@@ -346,24 +163,22 @@ def test_bomberos_sin_guid_cae_a_un_hash_determinista():
     assert build_external_id(a) != build_external_id(c)
 
 
-def test_bomberos_distingue_feed_vacio_de_feed_roto():
+def test_revisar_feed_distingue_feed_vacio_de_feed_roto():
     """Un `len(entries) == 0` confunde dos cosas muy distintas.
 
-    Un feed válido sin novedades es una noche tranquila. Un XML ilegible es
-    RSSHub sirviendo una página de error con HTTP 200, y eso necesita a alguien.
+    Un feed válido sin novedades es una tarde tranquila. Un XML ilegible es un
+    portal sirviendo una página de error con HTTP 200, y eso necesita a alguien.
+    La usa hoy la prensa local.
     """
     vacio = """<?xml version="1.0"?><rss version="2.0"><channel>
       <title>Central</title></channel></rss>"""
-    roto, _ = feed_is_broken(vacio)
-    assert roto is False, "un feed válido sin ítems no es un feed roto"
+    estado = revisar_feed(vacio)
+    assert estado.roto is False, "un feed válido sin ítems no es un feed roto"
+    assert estado.entradas == 0
 
-    roto, motivo = feed_is_broken("<html><body>429 Too Many Requests</body></html>")
-    assert roto is True
-    assert motivo
-
-
-def test_bomberos_html_sin_filas_no_produce_despachos():
-    assert parse_dispatches("<html><body>Sin novedades</body></html>", ["10-4"]) == []
+    estado = revisar_feed("<html><body>429 Too Many Requests</body></html>")
+    assert estado.roto is True
+    assert estado.motivo
 
 
 # --- Transporte Informa: Paso A (extracción) ---------------------------------

@@ -53,7 +53,6 @@ from app.schemas.event import GeoJSONFeature, GeoJSONFeatureCollection
 from app.schemas.weather import (
     TacticalWeatherRead,
     WeatherForecastRead,
-    WeatherStats,
 )
 
 
@@ -222,17 +221,3 @@ class WeatherService:
         ]
         return GeoJSONFeatureCollection(features=features)
 
-    @staticmethod
-    def stats(pronosticos: Sequence[WeatherForecastRead]) -> WeatherStats:
-        en_riesgo = [item for item in pronosticos if item.riesgo_inundacion]
-        inicios = [item.inicio for item in pronosticos]
-        return WeatherStats(
-            comunas=len(pronosticos),
-            en_riesgo=len(en_riesgo),
-            mm_total_max=max((item.mm_total for item in pronosticos), default=None),
-            mm_hora_max=max((item.mm_hora_max for item in pronosticos), default=None),
-            # Ya vienen ordenados por acumulado descendente desde `list_current`.
-            comunas_en_riesgo=[item.comuna for item in en_riesgo],
-            ventana_inicio=max(inicios) if inicios else None,
-            ventana_fin=max((item.fin for item in pronosticos), default=None),
-        )

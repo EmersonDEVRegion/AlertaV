@@ -468,15 +468,7 @@ def test_los_alias_de_los_workers_apuntan_al_modulo_central() -> None:
     existe para impedir."""
     from app.collectors import vocabulary
     from app.collectors.news import local_news_worker as prensa
-    from app.collectors.social import instagram_apify_worker as instagram
     from app.collectors.traffic import bomberos_10_4_worker as bomberos
-
-    assert instagram.is_emergency is vocabulary.is_emergency
-    assert instagram.classify_event_type is vocabulary.classify_event_type
-    assert instagram.CRITICAL_TERMS is vocabulary.CRITICAL_TERMS
-    assert instagram.TRAFFIC_TERMS is vocabulary.TRAFFIC_TERMS
-    assert instagram.FIRE_TERMS is vocabulary.FIRE_TERMS
-    assert instagram._NOISE_PHRASES is vocabulary.NOISE_PHRASES
 
     assert prensa.es_emergencia is vocabulary.es_emergencia
     assert prensa.clasificar_noticia is vocabulary.clasificar_noticia

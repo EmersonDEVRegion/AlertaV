@@ -22,23 +22,18 @@ from app.api.deps import (
 )
 from app.api.v1.params import parse_bbox
 from app.core.config import settings
-from app.core.ratelimit import RateLimiter, client_ip
+from app.core.ratelimit import RateLimiter, client_ip_de
 from app.models.enums import EventSource, EventType
 from app.schemas.event import (
     CitizenReportCreate,
-    EventBatchCreate,
-    EventCreate,
     EventRead,
     EventStats,
     GeoJSONFeature,
     GeoJSONFeatureCollection,
-    IngestResult,
 )
-from app.schemas.seismic import SeismicEventRead, SeismicStats
+from app.schemas.seismic import SeismicEventRead
 from app.schemas.weather import (
     TacticalWeatherRead,
-    WeatherForecastRead,
-    WeatherStats,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,38 +41,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/events", tags=["events"])
 
 #: Limitador del endpoint ciudadano. Vive a nivel de módulo —una instancia por
-#: proceso— y sólo protege ese endpoint: los demás son de lectura, o requieren
-#: credenciales de operador.
+#: proceso— y sólo protege ese endpoint: el resto de este router es de lectura.
+#: (`POST /events` y `POST /events/batch`, que dejaban a cualquiera inyectar
+#: señales con cualquier fuente y confianza, se borraron el 2026-09-23.)
 citizen_report_limiter = RateLimiter(
     interval_seconds=settings.CITIZEN_REPORT_MIN_INTERVAL_SECONDS
 )
-
-
-@router.post(
-    "",
-    response_model=EventRead,
-    status_code=status.HTTP_201_CREATED,
-    summary="Ingesta de un evento",
-)
-async def create_event(event: EventCreate, service: IngestServiceDep) -> EventRead:
-    entity = await service.repo.add(event)
-    await service.session.commit()
-    return EventRead.model_validate(entity)
-
-
-@router.post(
-    "/batch",
-    response_model=IngestResult,
-    summary="Ingesta idempotente por lote",
-    description=(
-        "Usado por los collectors. Reejecutar el mismo lote no duplica: la clave "
-        "es (source, external_id)."
-    ),
-)
-async def create_events_batch(
-    payload: EventBatchCreate, service: IngestServiceDep
-) -> IngestResult:
-    return await service.ingest_batch(payload.events)
 
 
 @router.post(
@@ -103,11 +72,7 @@ async def create_events_batch(
 async def create_citizen_report(
     report: CitizenReportCreate, request: Request, service: IngestServiceDep
 ) -> EventRead:
-    ip = client_ip(
-        forwarded_for=request.headers.get("x-forwarded-for"),
-        real_ip=request.headers.get("x-real-ip"),
-        peer=request.client.host if request.client else None,
-    )
+    ip = client_ip_de(request.headers, request.client.host if request.client else None)
 
     decision = citizen_report_limiter.check(ip)
     if not decision.allowed:
@@ -142,7 +107,15 @@ def _anonimizar(ip: str) -> str:
     return ".".join(partes[:2]) + ".×.×" if len(partes) == 4 else ip
 
 
-@router.get("", response_model=list[EventRead], summary="Listado de eventos")
+# Las rutas de lectura cruda (`""`, `/geojson`, `/stats`, `/{id}` y
+# `/{id}/neighbours`) no las consume la PWA: sirven para calibrar el motor y para
+# `scripts/smoke_test.py`. Siguen activas, pero fuera del esquema público.
+@router.get(
+    "",
+    response_model=list[EventRead],
+    summary="Listado de eventos",
+    include_in_schema=False,
+)
 async def list_events(
     service: IngestServiceDep,
     since: Annotated[datetime | None, Query(description="ISO 8601")] = None,
@@ -175,6 +148,7 @@ async def list_events(
 
 @router.get(
     "/geojson",
+    include_in_schema=False,
     response_model=GeoJSONFeatureCollection,
     summary="Eventos como GeoJSON",
     description="Consumible directamente por MapLibre GL JS.",
@@ -197,7 +171,12 @@ async def events_geojson(
     return service.to_geojson(events)
 
 
-@router.get("/stats", response_model=EventStats, summary="Resumen de la recolección")
+@router.get(
+    "/stats",
+    response_model=EventStats,
+    summary="Resumen de la recolección",
+    include_in_schema=False,
+)
 async def events_stats(
     service: IngestServiceDep,
     hours: Annotated[int | None, Query(ge=1, le=8760)] = None,
@@ -208,6 +187,7 @@ async def events_stats(
 
 @router.get(
     "/{public_id}/neighbours",
+    include_in_schema=False,
     response_model=list[EventRead],
     summary="Señales cercanas en espacio y tiempo",
     description=(
@@ -226,7 +206,7 @@ async def event_neighbours(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="evento no encontrado")
     if event.lat is None or event.lon is None:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="el evento no tiene coordenadas",
         )
 
@@ -296,44 +276,6 @@ async def list_seismic_events(
         limit=limit,
         offset=offset,
     )
-
-
-@router.get(
-    "/seismic/geojson",
-    response_model=GeoJSONFeatureCollection,
-    summary="Sismos como GeoJSON",
-    description=(
-        "Mismo conjunto que `/events/seismic`, en el formato que MapLibre GL JS "
-        "consume directamente. `magnitude` puede venir en `null` cuando el USGS "
-        "publicó una solución preliminar; la capa del mapa tiene que preverlo."
-    ),
-)
-async def seismic_geojson(
-    service: SeismicServiceDep,
-    hours: Annotated[int, Query(ge=1, le=720)] = 72,
-    min_magnitude: Annotated[float | None, Query(ge=-2.0, le=10.5)] = None,
-    max_depth_km: Annotated[float | None, Query(ge=-15.0, le=800.0)] = None,
-    limit: Annotated[int, Query(ge=1, le=2000)] = 500,
-) -> GeoJSONFeatureCollection:
-    events = await service.list_recent(
-        hours=hours,
-        min_magnitude=min_magnitude,
-        max_depth_km=max_depth_km,
-        limit=limit,
-    )
-    return service.to_geojson(events)
-
-
-@router.get(
-    "/seismic/stats",
-    response_model=SeismicStats,
-    summary="Resumen de la ventana sísmica",
-)
-async def seismic_stats(
-    service: SeismicServiceDep,
-    hours: Annotated[int, Query(ge=1, le=720)] = 72,
-) -> SeismicStats:
-    return service.stats(await service.list_recent(hours=hours, limit=2000))
 
 
 @router.get(
@@ -413,46 +355,6 @@ async def seismic_hazard(service: HazardServiceDep, request: Request) -> Respons
 
 
 @router.get(
-    "/weather",
-    response_model=list[WeatherForecastRead],
-    summary="Lluvia pronosticada por comuna, con riesgo de inundación",
-    description=(
-        "Pronóstico de precipitación de las próximas horas para cada comuna de "
-        "la Región de Valparaíso, con el flag `riesgo_inundacion` ya calculado "
-        "por el backend.\n\n"
-        "**Es un pronóstico, no una emergencia.** `riesgo_inundacion: true` "
-        "significa que el modelo anuncia lluvia suficiente para que la comuna "
-        "tenga un problema; no significa que haya una inundación, y no es una "
-        "alerta oficial: esas las declara SENAPRED.\n\n"
-        "Devuelve **una fila por comuna** —la ventana más reciente de cada una— "
-        "y sólo las comunas con lluvia: una comuna ausente es una comuna seca."
-    ),
-)
-async def list_weather_forecast(
-    service: WeatherServiceDep,
-    hours: Annotated[
-        int,
-        Query(
-            ge=1,
-            le=48,
-            description=(
-                "Holgura hacia atrás, no histórico. El pronóstico se reescribe "
-                "cada hora; 3 h cubren una corrida que llegó tarde sin arrastrar "
-                "la lluvia de anteayer al mapa de hoy."
-            ),
-        ),
-    ] = 3,
-    solo_riesgo: Annotated[
-        bool, Query(description="Sólo las comunas con `riesgo_inundacion`.")
-    ] = False,
-    limit: Annotated[int, Query(ge=1, le=2000)] = 500,
-) -> list[WeatherForecastRead]:
-    return await service.list_current(
-        hours=hours, solo_riesgo=solo_riesgo, limit=limit
-    )
-
-
-@router.get(
     "/weather/geojson",
     response_model=GeoJSONFeatureCollection,
     summary="Lluvia pronosticada como GeoJSON",
@@ -518,22 +420,6 @@ async def weather_tactical(
     ] = 3,
 ) -> TacticalWeatherRead:
     return await service.tactical(hours=hours)
-
-
-@router.get(
-    "/weather/stats",
-    response_model=WeatherStats,
-    summary="Resumen de la capa meteorológica vigente",
-    description=(
-        "Cuántas comunas tienen lluvia y cuántas cruzan un umbral, para una "
-        "tarjeta de estado. Nunca filtra por riesgo: cuenta las dos cosas."
-    ),
-)
-async def weather_stats(
-    service: WeatherServiceDep,
-    hours: Annotated[int, Query(ge=1, le=48)] = 3,
-) -> WeatherStats:
-    return service.stats(await service.list_current(hours=hours, limit=2000))
 
 
 # -- Cortes de ruta (MOP + MTT) ----------------------------------------------
@@ -656,7 +542,12 @@ async def road_closures_geojson(
     )
 
 
-@router.get("/{public_id}", response_model=EventRead, summary="Detalle de un evento")
+@router.get(
+    "/{public_id}",
+    response_model=EventRead,
+    summary="Detalle de un evento",
+    include_in_schema=False,
+)
 async def get_event(public_id: UUID, service: IngestServiceDep) -> EventRead:
     event = await service.repo.get_by_public_id(public_id)
     if event is None:
@@ -680,7 +571,7 @@ def _parse_near(
         return None
     if not all(provided):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="lat, lon y radius_m deben usarse juntos",
         )
     return (lat, lon, radius_m)  # type: ignore[return-value]

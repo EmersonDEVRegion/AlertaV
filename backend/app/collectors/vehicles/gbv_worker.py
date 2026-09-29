@@ -86,6 +86,7 @@ from app.collectors.vehicles.gbv_parser import (
 )
 from app.core.config import settings
 from app.core.exceptions import CollectorError
+from app.core.identidad import user_agent_o
 from app.models.enums import (
     SOURCE_BASE_CONFIDENCE,
     EventSource,
@@ -154,7 +155,11 @@ class GbvCollector(BaseCollector):
             timeout=settings.GBV_TIMEOUT_SECONDS,
             follow_redirects=True,
             headers={
-                "User-Agent": settings.GBV_USER_AGENT,
+                "User-Agent": user_agent_o(
+                    settings.GBV_USER_AGENT,
+                    "feed de vehiculos Region de Valparaiso",
+                    navegador=True,
+                ),
                 "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "es-CL,es;q=0.9",
             },
@@ -187,10 +192,13 @@ class GbvCollector(BaseCollector):
         total = await self.service.repo.count_containing(
             EventSource.GBV, {"gbv": {"seccion": seccion.clave}}
         )
+        await self.liberar_conexion()
         return total == 0
 
     async def _claves_conocidas(self, claves: Sequence[str]) -> set[str]:
         conocidas = await self.service.repo.ids_by_external_id(EventSource.GBV, claves)
+        # Lo que sigue son las fichas de detalle, con pausas entre una y otra.
+        await self.liberar_conexion()
         return set(conocidas)
 
     # -- Lectura --------------------------------------------------------------

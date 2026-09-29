@@ -7,11 +7,12 @@ entorno.
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Annotated, Literal
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import Field, PostgresDsn, computed_field, field_validator
+from pydantic import Field, PostgresDsn, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 #: Lista que se declara en el .env como CSV en vez de JSON.
@@ -24,6 +25,30 @@ CsvList = Annotated[list[str], NoDecode]
 #: proveedor. Se normalizan al driver que corresponde en cada caso: la app habla
 #: asyncpg, Alembic habla psycopg2.
 _DSN_SCHEMES = {"postgres", "postgresql", "postgresql+asyncpg", "postgresql+psycopg2"}
+
+
+#: Marcas de un valor de plantilla que nunca debió llegar a producción. Las
+#: revisa `Settings._produccion_sin_huecos` y los tests de User-Agent.
+PLACEHOLDERS: tuple[str, ...] = (
+    "example.cl",
+    "example.com",
+    "TU_CORREO",
+    "github.com/alertav",
+    "<",
+)
+
+
+#: Un correo dentro de un texto libre («AlertaV/1.0 (x@y.cl)», «mailto:x@y.cl»).
+_CORREO = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+#: Anulaciones de User-Agent: cualquiera con tildes rompe httpx al construirse.
+_AGENTES: tuple[str, ...] = (
+    "NOMINATIM_USER_AGENT",
+    "TRANSPORTE_INFORMA_USER_AGENT",
+    "GBV_USER_AGENT",
+    "ESVAL_USER_AGENT",
+    "LOCAL_NEWS_USER_AGENT",
+)
 
 
 class BoundingBox(BaseSettings):
@@ -55,7 +80,6 @@ class Settings(BaseSettings):
     VERSION: str = "0.1.0"
     API_V1_PREFIX: str = "/api/v1"
     ENVIRONMENT: Literal["local", "staging", "production"] = "local"
-    DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
     CORS_ORIGINS: CsvList = Field(default_factory=lambda: ["http://localhost:5173"])
     #: Vercel publica cada rama en un subdominio distinto
@@ -67,6 +91,17 @@ class Settings(BaseSettings):
     #: credenciales. Dejarlo en False evita además la trampa silenciosa de
     #: `allow_origins=["*"]`, que el navegador ignora si hay credenciales.
     CORS_ALLOW_CREDENTIALS: bool = False
+    #: Token de las rutas de operación (`/collectors/*` salvo `/health`,
+    #: `/incidents/correlate`): `Authorization: Bearer <token>`. Ver
+    #: `app.api.deps.require_operator`. Vacío en producción = esas rutas
+    #: responden 503 (fallan cerradas). Si se define, mínimo 32 caracteres ASCII:
+    #: `python -c "import secrets; print(secrets.token_hex(32))"`.
+    OPERATOR_TOKEN: str = ""
+    #: Identidad ante los servicios que se consultan. Ver `app/core/identidad.py`.
+    #: El correo es opcional: vacío, se toma el `mailto:` de `VAPID_SUBJECT` o el
+    #: correo de `NOMINATIM_USER_AGENT` (ver `contacto_email`).
+    CONTACT_EMAIL: str = ""
+    CONTACT_URL: str = "https://github.com/EmersonDEVRegion/AlertaV"
 
     # -- Base de datos -------------------------------------------------------
     #: DSN completo. Si viene definido, **manda sobre los `POSTGRES_*`**: es lo
@@ -135,6 +170,11 @@ class Settings(BaseSettings):
     #: reconocible y para que dos collectors no vuelvan a alinearse, y demasiado
     #: poco para mover la latencia de una capa que se mide en minutos.
     COLLECTOR_JITTER_RATIO: float = Field(default=0.10, ge=0.0, le=0.5)
+    #: Collectors corriendo A LA VEZ en el proceso de workers. Acota tres
+    #: presupuestos que comparten: conexiones (el pool de producción es de 2+3),
+    #: memoria (512 MB) y CPU (0,1 vCPU). Quien espera no pierde su turno: sólo
+    #: se atrasa unos segundos, y la dispersión de arriba ya los separa.
+    COLLECTOR_MAX_CONCURRENCY: int = Field(default=4, ge=1, le=20)
 
     # -- NASA FIRMS ----------------------------------------------------------
     FIRMS_MAP_KEY: str = ""
@@ -293,12 +333,9 @@ class Settings(BaseSettings):
     ESVAL_REGION_KML: int = 5
     #: Navegador + identificación, el criterio de `TRANSPORTE_INFORMA_USER_AGENT`.
     #: Sin tildes: las cabeceras HTTP van en latin-1.
-    ESVAL_USER_AGENT: str = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 "
-        "AlertaV/1.0 (+https://github.com/alertav; cortes de agua "
-        "Region de Valparaiso)"
-    )
+    #: Vacío = navegador + identidad de `app.core.identidad` (repo y correo de
+    #: contacto). Con valor, se manda tal cual: ASCII, sin tildes.
+    ESVAL_USER_AGENT: str = ""
     ESVAL_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0, le=120)
     #: 10 minutos. Son dos GET livianos por corrida; un corte de emergencia se
     #: publica en cualquier momento, pero no cambia minuto a minuto.
@@ -328,21 +365,6 @@ class Settings(BaseSettings):
     CSN_NORTH: float = -31.0
     CSN_TIMEOUT_SECONDS: float = 30.0
     CSN_POLL_INTERVAL_SECONDS: int = 300  # 5 min
-
-    # -- Accidentes viales: Waze ---------------------------------------------
-    # Feed del Waze for Cities / CCP. Es un endpoint privado que Waze entrega a
-    # cada municipio o gobierno con convenio: NO hay una URL pública que sirva
-    # para todos, y por eso no hay valor por defecto. Vacío = collector apagado.
-    WAZE_FEED_URL: str = ""
-    #: Tipos de alerta a conservar. El feed trae ACCIDENT, JAM, ROAD_CLOSED,
-    #: WEATHERHAZARD, HAZARD y POLICE; sólo el primero es un siniestro.
-    WAZE_ALERT_TYPES: CsvList = Field(default_factory=lambda: ["ACCIDENT"])
-    WAZE_TIMEOUT_SECONDS: float = 30.0
-    WAZE_POLL_INTERVAL_SECONDS: int = 300  # 5 min
-    #: Antigüedad máxima de un reporte. Waze mantiene alertas vivas mientras los
-    #: conductores las confirmen; una de hace seis horas ya no describe el
-    #: presente del tránsito.
-    WAZE_MAX_AGE_MINUTES: int = Field(default=120, ge=5, le=1440)
 
     # -- Accidentes viales: despachos de Bomberos ----------------------------
     #
@@ -427,7 +449,7 @@ class Settings(BaseSettings):
     #:
     #: Mismo mecanismo y mismo motivo que `TRANSPORTE_INFORMA_MAX_GEOCODES`: el
     #: geocodificador respeta 1 req/s, así que un lote grande podría tener la
-    #: tarea de fondo ocupada durante minutos. Lo que exceda el tope entra sin
+    #: entrega del inbox ocupada durante minutos. Lo que exceda el tope entra sin
     #: coordenadas, que es el estado en el que entraban todos los despachos
     #: antes de que este paso existiera.
     #:
@@ -435,13 +457,11 @@ class Settings(BaseSettings):
     #: pocos despachos: el resto de los items del dataset son tuits de la cuenta
     #: que el filtro por clave ya descartó.
     BOMBEROS_MAX_GEOCODES: int = Field(default=25, ge=0, le=200)
-    BOMBEROS_TIMEOUT_SECONDS: float = 30.0
-    BOMBEROS_POLL_INTERVAL_SECONDS: int = 180  # 3 min
     #: Cuenta de RESPALDO para citar y decodificar un despacho cuyo tuit no dice
     #: quién lo publicó. Desde que el Task raspa dos centrales, cada despacho
     #: usa la cuenta que trae el propio tuit (`author.userName` o la URL) y el
     #: diccionario de su Cuerpo; esto sólo rige para Actors que no informan el
-    #: autor y para el camino RSS.
+    #: autor.
     BOMBEROS_SOURCE_HANDLE: str = "@CGI_CBV"
     #: Tope de decodificaciones por corrida. Un despacho es una llamada al
     #: modelo; una noche de temporal con 200 avisos no puede convertirse en 200
@@ -501,12 +521,9 @@ class Settings(BaseSettings):
     #: `UnicodeEncodeError` antes de abrir la conexión. El collector no habría
     #: fallado al raspar sino al construirse — cada corrida, sin llegar nunca a
     #: la red, con un mensaje que no menciona la cabecera por ninguna parte.
-    TRANSPORTE_INFORMA_USER_AGENT: str = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 "
-        "AlertaV/1.0 (+https://github.com/alertav; monitoreo de siniestros "
-        "Region de Valparaiso)"
-    )
+    #: Vacío = navegador + identidad de `app.core.identidad` (repo y correo de
+    #: contacto). Con valor, se manda tal cual: ASCII, sin tildes.
+    TRANSPORTE_INFORMA_USER_AGENT: str = ""
     #: Tope de geocodificaciones por corrida. A 1 s por llamada (ver
     #: NOMINATIM_MIN_INTERVAL_SECONDS), 20 avisos son 20 segundos de corrida.
     #: Sin tope, un día de temporal con 300 avisos dejaría al worker cinco
@@ -551,12 +568,9 @@ class Settings(BaseSettings):
     #: `TRANSPORTE_INFORMA_USER_AGENT`: un WAF trata a un UA sin navegador como
     #: bot, y quien opera el sitio —una ONG— tiene derecho a saber quién le pega
     #: y a quién escribirle. Sin tildes: las cabeceras HTTP van en latin-1.
-    GBV_USER_AGENT: str = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 "
-        "AlertaV/1.0 (+https://github.com/alertav; feed de vehiculos "
-        "Region de Valparaiso)"
-    )
+    #: Vacío = navegador + identidad de `app.core.identidad` (repo y correo de
+    #: contacto). Con valor, se manda tal cual: ASCII, sin tildes.
+    GBV_USER_AGENT: str = ""
     GBV_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0, le=120)
     #: 30 minutos. GBV publica unas pocas denuncias al día y la primera página
     #: del listado cubre semanas: consultar más seguido sólo le pegaría más a un
@@ -574,25 +588,13 @@ class Settings(BaseSettings):
     #: Pausa entre peticiones consecutivas al sitio. Cortesía, no rate limit.
     GBV_PAUSA_SEGUNDOS: float = Field(default=0.5, ge=0.0, le=10.0)
 
-    # -- Apify: qué capas siguen en uso -------------------------------------
+    # -- Apify ----------------------------------------------------------------
     #
     # Desde 2026-09-22 Apify queda para UNA cosa: el Task de X que raspa a las
     # centrales de Bomberos (@CGI_CBV y @CBVM132) y entrega por
-    # `/apify/webhook`. La cuota gratuita no alcanzaba para tres Tasks, y lo que
-    # hacían los otros dos lo cubre ahora la prensa local por RSS, sin costo.
+    # `/apify/webhook`. Las capas de Instagram y de prensa por X se borraron el
+    # 2026-09-23: lo que cubrían lo toma la prensa local por RSS, sin costo.
     #
-    # Las dos capas retiradas NO se borran —su código y sus tests siguen siendo
-    # correctos— sino que se apagan acá. Apagadas no se registran, no cuentan
-    # para la salud de ninguna familia y no dejan filas en `collector_runs`: una
-    # capa que se sabe apagada y sigue «fallando» cada cinco minutos es el ruido
-    # que enseña a ignorar el rojo.
-    #
-    #: Collector de Instagram (pull sobre el dataset del Actor de Instagram).
-    APIFY_INSTAGRAM_ENABLED: bool = False
-    #: Segunda puerta de X (`/apify/webhook/prensa`). Apagada responde
-    #: `ignored` con el motivo, para que un webhook olvidado en el panel no
-    #: ingiera nada ni reviente.
-    APIFY_PRENSA_ENABLED: bool = False
     #: Cada cuántos minutos corre el Schedule del Task de X en el panel de
     #: Apify. **No lo dispara**: es lo que la salud espera, y con él decide
     #: cuándo el webhook de Bomberos lleva demasiado callado. Tres cadencias sin
@@ -600,48 +602,19 @@ class Settings(BaseSettings):
     #: subirlo acá también, o las tres familias quedan marcadas en falso.
     APIFY_X_SCHEDULE_MINUTES: int = Field(default=60, ge=5, le=1440)
 
-    # -- Redes sociales: Instagram vía Apify ---------------------------------
     #: Token de la API de Apify. Viaja SIEMPRE en la cabecera `Authorization`,
     #: nunca en la query: una URL con el token dentro termina en los logs de
     #: acceso y en el mensaje de cualquier `CollectorError`, que se serializa a
-    #: `collector_runs.error`. Vacío = collector apagado (el constructor lanza).
+    #: `collector_runs.error`. Vacío = el webhook no puede leer los datasets.
     APIFY_TOKEN: str = ""
     APIFY_BASE_URL: str = "https://api.apify.com/v2"
-    #: Actor a leer. El separador entre usuario y actor es una **tilde**, no una
-    #: barra: `apify~instagram-scraper`. `apify_client` normaliza las barras,
-    #: pero conviene escribirlo bien acá.
-    #:
-    #: Es lo único que hay que cambiar para migrar a otro Actor del marketplace
-    #: —el parser acepta los alias de campo de los tres más usados—, cosa que
-    #: pasa más seguido de lo que parece: estos Actors suben de precio o dejan
-    #: de funcionar cuando Instagram cambia algo.
-    APIFY_INSTAGRAM_ACTOR_ID: str = "apify~instagram-scraper"
-    #: Cuentas que el Actor raspa. **Este backend NO se las pasa a Apify**: la
-    #: entrada del Actor se configura en su Schedule, en el panel de Apify, que
-    #: es también donde se paga. Acá están para que `collector_runs.params` diga
-    #: de dónde se supone que vienen los datos que se leyeron.
-    APIFY_INSTAGRAM_ACCOUNTS: CsvList = Field(default_factory=lambda: ["alertanoticiasvalparaiso"])
     APIFY_TIMEOUT_SECONDS: float = 30.0
-    APIFY_POLL_INTERVAL_SECONDS: int = 300  # 5 min
-    #: Items a leer del dataset por corrida, del más nuevo al más viejo. No es
-    #: cuántos posts se raspan —eso lo fija `resultsLimit` en el Schedule del
-    #: Actor y es lo único que mueve la factura—: es cuántos se miran.
-    APIFY_MAX_ITEMS: int = Field(default=50, ge=1, le=1000)
-    #: Antigüedad máxima tolerada de la última corrida EXITOSA del Actor antes de
-    #: avisar. Cubre el fallo silencioso de esta arquitectura: si el Schedule se
-    #: rompe, Apify sigue sirviendo el dataset de la última corrida buena y el
-    #: collector reportaría `success` con 0 eventos para siempre. Debe ser
-    #: holgadamente mayor que la cadencia del Schedule.
-    APIFY_MAX_RUN_AGE_MINUTES: int = Field(default=45, ge=5, le=1440)
 
     # -- Apify: webhook de entrada -------------------------------------------
     #
-    # El collector de Instagram **pregunta** (CRON cada 5 min → `runs/last`). El
-    # webhook es al revés: Apify **avisa** al terminar una corrida y nosotros
-    # leemos el dataset que nos nombra. Los dos caminos coexisten a propósito —
-    # el pull tolera que se pierda un aviso, el push llega en segundos — y es la
-    # diferencia entre enterarse de una 10-4 a los 30 segundos o a los 5
-    # minutos.
+    # Apify **avisa** al terminar una corrida y nosotros leemos el dataset que
+    # nos nombra. El endpoint sólo encola el aviso en `collector_runs`; lo
+    # procesa el proceso de workers (ver `apify_webhook_service`).
     #
     #: Secreto compartido con Apify. Se compara con la cabecera
     #: `X-AlertaV-Apify-Secret` (o `Authorization: Bearer …`) de cada llamada.
@@ -674,46 +647,25 @@ class Settings(BaseSettings):
     #: webhook?", y un Actor ajeno disparando cada media hora la falsifica: la
     #: tabla se ve viva mientras los despachos de X llevan días sin entrar.
     #:
-    #: **El valor NO es `usuario~actor`.** Esa forma sirve para la ruta de la API
-    #: (`APIFY_INSTAGRAM_ACTOR_ID`), pero el webhook manda el id corto
-    #: (`nfp1fpt5gUlBwPcor`). Se saca del rechazo: el log del `ignored` cita los
-    #: ids que llegaron, listos para pegar acá. Admite varios separados por coma
+    #: **El valor NO es `usuario~actor`.** Esa forma sirve para las rutas de la
+    #: API, pero el webhook manda el id corto (`nfp1fpt5gUlBwPcor`). Se saca del
+    #: rechazo: el log del `ignored` cita los ids que llegaron, listos para
+    #: pegar acá. Admite varios separados por coma
     #: —el del Actor y el del Task son distintos— y se compara contra ambos.
     APIFY_BOMBEROS_ACTOR_IDS: CsvList = Field(default_factory=list)
-    #: Tasks autorizados a entregar por `/apify/webhook/prensa`. Vacío = cualquiera.
-    #:
-    #: Lista aparte de la de Bomberos y no la misma: son dos puertas con bandas
-    #: de confianza distintas —1.00 contra 0.45–0.80— y compartir la lista
-    #: significaría que autorizar una autoriza la otra.
-    #:
-    #: **Acá va el id del TASK, no el del Actor.** Los dos Tasks salen del mismo
-    #: Actor de X, así que comparten `actId` y ése no los distingue.
-    #: `extract_actor_ids` lee también `actorTaskId` justamente para esto.
-    APIFY_PRENSA_ACTOR_IDS: CsvList = Field(default_factory=list)
-    #: Items a leer del dataset que anuncia el webhook. Independiente de
-    #: `APIFY_MAX_ITEMS`: una corrida de X/Twitter trae muchos menos tuits que
-    #: una de Instagram trae posts, y el webhook llega una vez por corrida en
-    #: vez de cada cinco minutos.
+    #: Items a leer del dataset que anuncia el webhook, del más nuevo al más
+    #: viejo.
     APIFY_WEBHOOK_MAX_ITEMS: int = Field(default=100, ge=1, le=1000)
     #: Antigüedad máxima de un tuit para tomarlo como descripción del presente.
     #: Una corrida del Actor puede arrastrar el timeline entero de la cuenta; sin
     #: este corte, la primera llamada del webhook ingeriría meses de despachos
     #: con la hora de hoy y llenaría el mapa de siniestros que ya se resolvieron.
     APIFY_WEBHOOK_MAX_AGE_MINUTES: int = Field(default=180, ge=5, le=1440)
-    #: Antigüedad máxima de un post para considerarlo descripción del presente.
-    #: Estas cuentas publican recuerdos y resúmenes; tres horas es el corte.
-    INSTAGRAM_MAX_AGE_MINUTES: int = Field(default=180, ge=5, le=1440)
-    #: Tope de geocodificaciones por corrida. Mismo motivo que en el MTT: a 1 s
-    #: por llamada, sin tope una jornada movida deja al worker colgado del rate
-    #: limit de Nominatim. Ojo: ese presupuesto es COMPARTIDO entre los dos
-    #: collectors, porque el limitador es global al proceso.
-    INSTAGRAM_MAX_GEOCODES: int = Field(default=15, ge=1, le=200)
-    #: Confianza de una señal de Instagram. 0.35 es el techo de la banda de
-    #: `SOCIAL_MEDIA` en `confidence.py` (`max_weight`): emitir más alto no la
-    #: sube, sólo archiva en `raw_events` un número que el motor no respeta.
-    #: Que la cuenta se llame "noticias" no la hace un medio: republica lo que
-    #: le llega por mensaje directo, sin verificar.
-    INSTAGRAM_CONFIDENCE: float = Field(default=0.35, ge=0.0, le=1.0)
+    #: Cada cuánto el proceso de workers mira el inbox del webhook. Es la
+    #: latencia máxima entre el aviso de Apify y el despacho en el mapa: una
+    #: consulta indexada cada 10 s cuesta nada y mantiene la promesa de
+    #: «segundos, no minutos» del webhook.
+    APIFY_INBOX_POLL_SECONDS: int = Field(default=10, ge=2, le=300)
 
     # -- Prensa local: Alerta Noticias y Pura Noticia -------------------------
     #: Portales de la V Región, raspados de forma nativa y a costo cero. Formato
@@ -805,10 +757,9 @@ class Settings(BaseSettings):
     #: Esto NO resuelve un desafío JavaScript de verdad, y no pretende hacerlo:
     #: si alguno de los portales lo activa, lo correcto es dejar de raspar y
     #: pedir acceso, no perseguirlo.
-    LOCAL_NEWS_USER_AGENT: str = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-    )
+    #: Vacío = navegador + identidad de `app.core.identidad` (repo y correo de
+    #: contacto). Con valor, se manda tal cual: ASCII, sin tildes.
+    LOCAL_NEWS_USER_AGENT: str = ""
     LOCAL_NEWS_TIMEOUT_SECONDS: float = 30.0
     #: Cadencia. 15 minutos: un medio redacta y publica, no transmite. Consultar
     #: cada cinco devolvería tres veces la misma portada y golpearía a un
@@ -820,10 +771,10 @@ class Settings(BaseSettings):
     #: horas, más holgado que las tres de Instagram: un medio publica después de
     #: confirmar, y esa demora editorial es justamente lo que lo hace valer 0.60.
     LOCAL_NEWS_MAX_AGE_MINUTES: int = Field(default=240, ge=5, le=1440)
-    #: Tope de geocodificaciones por corrida. El más bajo de las tres capas que
-    #: comparten el limitador global de Nominatim (MTT 20, Instagram 15, prensa
-    #: 10): una noticia llega después que el aviso oficial y que el post de la
-    #: cuenta hiperlocal, así que si hay que recortar algo, que sea esto.
+    #: Tope de geocodificaciones por corrida. El más bajo de las capas que
+    #: comparten el limitador de Nominatim (MTT 20, Bomberos 25, prensa 10): una
+    #: noticia llega después que el aviso oficial, así que si hay que recortar
+    #: algo, que sea esto.
     LOCAL_NEWS_MAX_GEOCODES: int = Field(default=10, ge=1, le=200)
     #: Confianza de una señal de prensa. 0.60 es el techo de la banda de `MEDIA`
     #: en `confidence.py` (`max_weight`), aunque `SOURCE_BASE_CONFIDENCE[MEDIA]`
@@ -1021,8 +972,9 @@ class Settings(BaseSettings):
     NOMINATIM_MIN_INTERVAL_SECONDS: float = Field(default=1.0, ge=1.0, le=60.0)
     NOMINATIM_TIMEOUT_SECONDS: float = 20.0
     #: Nominatim exige un User-Agent identificable con contacto real; las
-    #: peticiones anónimas se rechazan. Cambiar el correo por el del operador.
-    NOMINATIM_USER_AGENT: str = "AlertaV/0.1 (contacto: alertav@example.cl)"
+    #: peticiones anónimas se rechazan. Vacío = `AlertaV/1.0 (+<repo>; <correo>)`
+    #: de `app.core.identidad`; con valor, se manda tal cual.
+    NOMINATIM_USER_AGENT: str = ""
     #: Sesgo de la búsqueda hacia Chile. Evita que "Avenida Argentina" resuelva
     #: en Buenos Aires, que es exactamente lo que hace Nominatim sin esto.
     NOMINATIM_COUNTRY_CODES: str = "cl"
@@ -1032,6 +984,19 @@ class Settings(BaseSettings):
     # calibran contra la ventana de recolección con `/events/{id}/neighbours`.
     #: Radio de agrupación espacial, en metros reales.
     CORRELATION_RADIUS_M: float = Field(default=1500.0, ge=100.0, le=20_000.0)
+    #: Radio, brecha temporal y edad máxima POR FAMILIA
+    #: (`app/services/correlation/perfiles.py`), filtro temporal al adherir una
+    #: señal a un incidente y ventana por hora de ingesta para lo que llega
+    #: tarde. En `false`, el motor vuelve exactamente a lo anterior: un solo
+    #: `CORRELATION_RADIUS_M` y ventana por `timestamp`. Es el interruptor de
+    #: emergencia si la calibración nueva agrupa peor.
+    CORRELATION_PERFILES: bool = True
+    #: Sólo se crean incidentes con señales dentro de la V Región (o a ~2 km),
+    #: medido contra `comunas_region` (migración 0015). La caja `REGION_*`
+    #: cubre media Región Metropolitana: sin esto, los cortes de CGE en
+    #: Santiago aparecían en el mapa como incidentes «sin comuna». Sin la tabla
+    #: no filtra nada. En `false`, vuelve a agrupar todo lo de la caja.
+    CORRELATION_SOLO_REGION: bool = True
     #: Ventana hacia atrás de señales que el motor considera en cada pasada.
     CORRELATION_WINDOW_HOURS: int = Field(default=4, ge=1, le=168)
     #: Antigüedad máxima de un incidente para que una señal nueva se le adhiera.
@@ -1157,7 +1122,6 @@ class Settings(BaseSettings):
     )
 
     # -- Ingesta -------------------------------------------------------------
-    INGEST_MAX_BATCH_SIZE: int = 1000
     # Tolerancia para eventos con timestamp futuro (desfase de reloj de fuentes)
     INGEST_FUTURE_TOLERANCE_SECONDS: int = 300
 
@@ -1168,12 +1132,9 @@ class Settings(BaseSettings):
         "CONAF_REGIONS",
         "SENAPRED_REGIONS",
         "USGS_EVENT_TYPES",
-        "WAZE_ALERT_TYPES",
         "BOMBEROS_ACCIDENT_KEYS",
         "BOMBEROS_CBVM_KEYS",
-        "APIFY_INSTAGRAM_ACCOUNTS",
         "APIFY_BOMBEROS_ACTOR_IDS",
-        "APIFY_PRENSA_ACTOR_IDS",
         "PUSH_ALLOWED_ENDPOINT_HOSTS",
         mode="before",
     )
@@ -1183,6 +1144,87 @@ class Settings(BaseSettings):
         if isinstance(v, str) and not v.strip().startswith("["):
             return [item.strip() for item in v.split(",") if item.strip()]
         return v
+
+    @model_validator(mode="after")
+    def _produccion_sin_huecos(self) -> Settings:
+        """En producción, la app no arranca con un secreto flojo o un placeholder.
+
+        Existe porque la auditoría del 2026-09-23 encontró que todo lo de abajo
+        tenía un valor por defecto que dejaba la puerta abierta en silencio: un
+        webhook sin secreto acepta despachos de peso 1.00 de cualquiera, y un
+        User-Agent con `TU_CORREO` le miente a Nominatim sobre a quién escribir
+        antes de bloquear la IP.
+
+        Si el arranque falla, Render deja corriendo el despliegue anterior: un
+        error de configuración se ve en el panel en vez de llegar a producción.
+        Sólo se exige lo que ya está configurado hoy; `OPERATOR_TOKEN` vacío NO
+        impide arrancar (las rutas de operación responden 503), pero si se
+        define tiene que ser largo.
+        """
+        if self.ENVIRONMENT != "production":
+            return self
+
+        errores: list[str] = []
+
+        secreto = self.APIFY_WEBHOOK_SECRET.strip()
+        if len(secreto) < 32 or not secreto.isascii():
+            errores.append("APIFY_WEBHOOK_SECRET: mínimo 32 caracteres ASCII")
+        if not [actor for actor in self.APIFY_BOMBEROS_ACTOR_IDS if actor.strip()]:
+            errores.append(
+                "APIFY_BOMBEROS_ACTOR_IDS vacío: el webhook aceptaría cualquier Actor"
+            )
+
+        token = self.OPERATOR_TOKEN.strip()
+        if token and (len(token) < 32 or not token.isascii()):
+            errores.append("OPERATOR_TOKEN: mínimo 32 caracteres ASCII")
+
+        revisar = ["FIRMS_MAP_KEY"]
+        if self.PUSH_ENABLED:
+            revisar.append("VAPID_SUBJECT")
+        for nombre in revisar:
+            valor = str(getattr(self, nombre)).strip()
+            if not valor or any(marca in valor for marca in PLACEHOLDERS):
+                errores.append(f"{nombre} vacío o con un placeholder ({valor!r})")
+
+        # El User-Agent de Nominatim puede ir vacío (se arma solo), pero si se
+        # define no puede ser una plantilla, y en cualquier caso tiene que haber
+        # un correo real a quién escribir: es la condición de uso del servicio.
+        agente = self.NOMINATIM_USER_AGENT.strip()
+        if agente and any(marca in agente for marca in PLACEHOLDERS):
+            errores.append(f"NOMINATIM_USER_AGENT con un placeholder ({agente!r})")
+        if not self.contacto_email:
+            errores.append(
+                "sin correo de contacto: definir CONTACT_EMAIL (o un mailto: en "
+                "VAPID_SUBJECT, o un correo en NOMINATIM_USER_AGENT)"
+            )
+        for nombre in _AGENTES:
+            if not str(getattr(self, nombre)).isascii():
+                errores.append(f"{nombre}: las cabeceras HTTP sólo admiten ASCII")
+
+        if errores:
+            raise ValueError(
+                "configuración de producción inválida: " + "; ".join(errores)
+            )
+        return self
+
+    @property
+    def contacto_email(self) -> str | None:
+        """Correo a quién escribir, para los User-Agent. None si no hay uno real.
+
+        Por orden: `CONTACT_EMAIL`, el `mailto:` de `VAPID_SUBJECT`, el correo
+        que traiga `NOMINATIM_USER_AGENT`. Los dos últimos son los que Render ya
+        tiene configurados; el primero existe para no depender de ellos.
+        """
+        candidatos = (
+            self.CONTACT_EMAIL,
+            self.VAPID_SUBJECT.removeprefix("mailto:"),
+            self.NOMINATIM_USER_AGENT,
+        )
+        for texto in candidatos:
+            encontrado = _CORREO.search(texto or "")
+            if encontrado and not any(m in encontrado.group(0) for m in PLACEHOLDERS):
+                return encontrado.group(0)
+        return None
 
     @computed_field  # type: ignore[prop-decorator]
     @property

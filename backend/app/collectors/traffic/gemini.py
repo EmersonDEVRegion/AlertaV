@@ -285,6 +285,38 @@ def _clean(value: Any) -> str | None:
     return text
 
 
+def registrar_uso(response: Any, operacion: str) -> None:
+    """Tokens de la llamada al log, como `gemini_uso`.
+
+    Sin esto no había forma de saber cuánto costaba una corrida: los topes
+    (`*_MAX_LLM_CALLS`) cuentan llamadas, no tokens, y con un modelo que razona
+    el costo de una llamada varía varias veces según el aviso. `thoughts` es la
+    parte que se cobra y no se ve en la respuesta.
+
+    Tolerante a todo: un SDK que cambie el nombre de un campo deja `None`, no
+    rompe la extracción.
+    """
+    meta = getattr(response, "usage_metadata", None)
+    if meta is None:
+        return
+
+    def cuenta(campo: str) -> int | None:
+        valor = getattr(meta, campo, None)
+        return valor if isinstance(valor, int) else None
+
+    logger.info(
+        "gemini_uso",
+        extra={
+            "operacion": operacion,
+            "modelo": settings.GEMINI_MODEL,
+            "tokens_entrada": cuenta("prompt_token_count"),
+            "tokens_salida": cuenta("candidates_token_count"),
+            "tokens_razonamiento": cuenta("thoughts_token_count"),
+            "tokens_total": cuenta("total_token_count"),
+        },
+    )
+
+
 async def extract_streets(text: str) -> dict[str, Any] | None:
     """Llama a Gemini y devuelve `{street_1, street_2, city}` o None.
 
@@ -341,6 +373,7 @@ async def extract_streets(text: str) -> dict[str, Any] | None:
         )
         return None
 
+    registrar_uso(response, "extract_streets")
     # `response_text` y no `response.text`: los modelos con razonamiento
     # devuelven además la firma del pensamiento, y el accesor del SDK avisa por
     # `warnings` en cada llamada. Ver el docstring de la función.
@@ -857,6 +890,7 @@ async def extract_dispatch(
         )
         return None
 
+    registrar_uso(response, "extract_dispatch")
     raw = response_text(response)
     if not raw:
         logger.warning(
@@ -1145,6 +1179,7 @@ __all__ = [
     "is_configured",
     "parse_dispatch_response",
     "parse_response",
+    "registrar_uso",
     "reordenar_clave_primero",
     "response_text",
 ]

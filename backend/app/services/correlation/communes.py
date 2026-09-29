@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.collectors.geoservices import normalise_text
+from app.collectors.lugares import comuna_por_nombre
 from app.models.enums import INCIDENT_FAMILY, IncidentType
 
 #: Alias del campo comuna en las capas institucionales.
@@ -129,11 +130,14 @@ def extract_commune(
 
     1. La columna `raw_events.commune`, si algún día se enriquece.
     2. El campo estructurado de la capa de origen (CONAF sí lo trae).
-    3. El texto generado por el collector, que tiene formato conocido.
+    3. La comuna donde Nominatim puso el punto (`raw_data._geocoding.comuna`).
+       Es la que verificó la guarda de comuna de `nominatim.geocode`, y hasta
+       el 2026-09-23 no se leía: los avisos del MTT y los despachos que no
+       nombran la comuna en el texto quedaban sin ella teniéndola guardada.
+    4. El texto generado por el collector, que tiene formato conocido.
 
-    Devuelve `None` sin adivinar. Un incidente sin comuna simplemente queda
-    fuera del alcance del Paso B, y el motor lo cuenta como métrica: es la señal
-    de que hace falta la capa de polígonos comunales.
+    Devuelve `None` sin adivinar. Un incidente sin comuna todavía tiene el
+    último recurso del motor: el polígono comunal (`comuna_por_punto`).
     """
     if commune and commune.strip():
         return commune.strip()
@@ -143,6 +147,14 @@ def extract_commune(
         candidates = split_communes(structured)
         if candidates:
             return candidates[0]
+
+    geocodificado = raw_data.get("_geocoding")
+    if isinstance(geocodificado, Mapping):
+        comuna = geocodificado.get("comuna")
+        if isinstance(comuna, str) and comuna.strip() and not is_whole_area(comuna):
+            # El nombre canónico si es una comuna de la región («Vina del Mar»
+            # → «Viña del Mar»): el Paso B compara contra esos nombres.
+            return comuna_por_nombre(comuna) or comuna.strip()
 
     if text:
         for pattern in _TEXT_COMMUNE_PATTERNS:

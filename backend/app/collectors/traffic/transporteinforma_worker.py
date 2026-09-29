@@ -145,6 +145,7 @@ from app.collectors.vocabulary import (
 )
 from app.core.config import settings
 from app.core.exceptions import CollectorError
+from app.core.identidad import user_agent_o
 from app.models.enums import EventSource, EventType
 from app.schemas.event import EventCreate
 
@@ -345,6 +346,53 @@ class TrafficNotice:
 ResolvedNotice = tuple[
     TrafficNotice, EventType, dict[str, Any], "GeocodeResult | None"
 ]
+
+#: Marcas que se escriben en `raw_data._extraction` cuando un aviso NO se
+#: extrajo o NO se geocodificó por falta de cupo en ESA corrida. El delta no
+#: reutiliza un aviso marcado: la corrida siguiente vuelve a intentarlo.
+PENDIENTE_EXTRACCION = "extraccion_pendiente"
+PENDIENTE_GEOCODIFICACION = "geocodificacion_pendiente"
+
+
+def external_id_de(notice: TrafficNotice, tipo: EventType) -> str:
+    """El `external_id` de un aviso. Lo usan el delta y `normalize()`.
+
+    **El prefijo de los accidentes NO cambia, y eso no es pereza.** Es la clave
+    de idempotencia: uniformar a `mtt:<tipo>:<hash>` habría reinsertado en la
+    primera corrida tras el despliegue **todos** los accidentes que el sistema ya
+    conocía, con identificador nuevo — duplicados que además se corroboran entre
+    sí en el motor. La capa táctica es nueva y lleva su prefijo propio.
+    """
+    if tipo is EventType.ACCIDENT:
+        return f"mtt:{notice.notice_id}"
+    return f"mtt:closure:{notice.notice_id}"
+
+
+def texto_md5(texto: str) -> str:
+    """md5 del texto tal como queda guardado (`EventCreate` le hace `strip`)."""
+    return hashlib.md5(texto[:10_000].strip().encode("utf-8")).hexdigest()
+
+
+def reutilizable(previo: Any, texto: str) -> bool:
+    """¿El aviso ya está guardado con el mismo texto y su extracción completa?
+
+    Es el delta que faltaba en esta fuente. Un aviso vive en el portal horas o
+    días, y en cada corrida —144 al día— volvía a pagar Gemini y Nominatim. Se
+    reutiliza lo guardado salvo que el texto haya cambiado o que la corrida que
+    lo guardó se haya quedado sin cupo para él (ver `PENDIENTE_*`).
+    """
+    if previo is None or previo.texto_md5 != texto_md5(texto):
+        return False
+    extraccion = previo.raw_data.get("_extraction")
+    if not isinstance(extraccion, Mapping):
+        return False
+    return not (extraccion.get(PENDIENTE_EXTRACCION) or extraccion.get(PENDIENTE_GEOCODIFICACION))
+
+
+def calles_guardadas(raw_data: Mapping[str, Any]) -> dict[str, Any]:
+    """La extracción guardada, tal cual (incluye el `mode` con que se hizo)."""
+    extraccion = raw_data.get("_extraction")
+    return dict(extraccion) if isinstance(extraccion, Mapping) else {}
 
 
 # --- Paso A: extracción del lugar -------------------------------------------
@@ -937,7 +985,13 @@ class TransporteInformaCollector(BaseCollector):
                 # falso: le decía al portal del Ministerio que quien lo visitaba
                 # era el cliente de OpenStreetMap. Ver
                 # `TRANSPORTE_INFORMA_USER_AGENT` en `core/config.py`.
-                headers={"User-Agent": settings.TRANSPORTE_INFORMA_USER_AGENT},
+                headers={
+                    "User-Agent": user_agent_o(
+                        settings.TRANSPORTE_INFORMA_USER_AGENT,
+                        "monitoreo de siniestros Region de Valparaiso",
+                        navegador=True,
+                    )
+                },
             ) as client:
                 html = await request_text(
                     client, self.url, origin="transporte_informa"
@@ -1003,20 +1057,47 @@ class TransporteInformaCollector(BaseCollector):
         ]
         clasificados.sort(key=lambda par: par[1] is not EventType.ACCIDENT)
 
+        # -- Delta: lo que ya se pagó no se vuelve a pagar --------------------
+        #
+        # Una consulta por corrida. Un aviso guardado con el mismo texto y con
+        # su extracción completa se reemite con lo guardado: el upsert refresca
+        # `updated_at` y ni Gemini ni Nominatim se enteran. La conexión se
+        # suelta enseguida, porque lo que sigue es red.
+        claves = [external_id_de(notice, tipo) for notice, tipo in clasificados]
+        conocidos = await self.service.repo.puntos_conocidos(self.source, claves)
+        await self.liberar_conexion()
+        reutilizados = 0
+
         # Un solo cliente para todas las llamadas a Nominatim: reutiliza la
         # conexión TLS y, sobre todo, mantiene un único User-Agent identificable,
         # que es parte del contrato de uso del servicio.
         async with build_client() as geo_client:
-            for notice, tipo in clasificados:
+            for (notice, tipo), clave in zip(clasificados, claves, strict=True):
+                previo = conocidos.get(clave)
+                if previo is not None and reutilizable(previo, notice.text):
+                    resolved.append(
+                        (
+                            notice,
+                            tipo,
+                            calles_guardadas(previo.raw_data),
+                            GeocodeResult.desde_dict(previo.raw_data.get("_geocoding")),
+                        )
+                    )
+                    reutilizados += 1
+                    continue
+
                 if llm_calls >= self.max_llm_calls:
                     self.warn(
                         f"se alcanzó el tope de {self.max_llm_calls} llamadas al "
                         f"modelo por corrida; el resto queda sin ubicación"
                     )
-                    streets = None
-                else:
-                    streets = await extract_streets_via_llm(notice.text)
-                    llm_calls += 1
+                    # Marcado para que la corrida siguiente lo intente: sin la
+                    # marca, el delta lo daría por resuelto para siempre.
+                    resolved.append((notice, tipo, {PENDIENTE_EXTRACCION: True}, None))
+                    continue
+
+                streets = await extract_streets_via_llm(notice.text)
+                llm_calls += 1
 
                 if streets is None:
                     # Ni el modelo ni la heurística reconocieron una vía. El
@@ -1051,6 +1132,7 @@ class TransporteInformaCollector(BaseCollector):
                         f"se alcanzó el tope de {self.max_geocodes} geocodificaciones "
                         f"por corrida; el resto queda sin coordenadas"
                     )
+                    streets = {**streets, PENDIENTE_GEOCODIFICACION: True}
 
                 resolved.append((notice, tipo, streets, point))
 
@@ -1081,6 +1163,9 @@ class TransporteInformaCollector(BaseCollector):
                 "cortes_de_via": len(resolved) - accidentes,
                 "extracciones_llm": llm_calls,
                 "geocodificados": geocoded,
+                # Avisos ya guardados con el mismo texto: cero modelo, cero
+                # Nominatim. En régimen debería ser casi todo el portal.
+                "reutilizados": reutilizados,
                 "descartados": len(descartados),
                 # Recortada dos veces: cinco avisos y 120 caracteres cada uno. Es
                 # una muestra para decidir si el filtro está bien calibrado, no
@@ -1119,24 +1204,7 @@ class TransporteInformaCollector(BaseCollector):
                     lat=point.lat if point else None,
                     lon=point.lon if point else None,
                     text=notice.text[:10_000],
-                    # **El prefijo de los accidentes NO cambia, y eso no es
-                    # pereza.** `external_id` es la clave de idempotencia: la
-                    # tentación obvia acá era uniformar a `mtt:<tipo>:<hash>`,
-                    # que se lee mejor y habría reinsertado en la primera corrida
-                    # tras el despliegue **todos** los accidentes que el sistema
-                    # ya conocía, con identificador nuevo. Duplicados que además
-                    # se corroboran entre sí en el motor, porque son idénticos en
-                    # texto, tiempo y lugar: un choque con la confianza inflada
-                    # por su propio fantasma.
-                    #
-                    # La capa táctica es nueva y no tiene historia que preservar,
-                    # así que lleva su prefijo propio. La asimetría es el precio
-                    # de no romper lo que ya está escrito en la base.
-                    external_id=(
-                        f"mtt:{notice.notice_id}"
-                        if tipo is EventType.ACCIDENT
-                        else f"mtt:closure:{notice.notice_id}"
-                    ),
+                    external_id=external_id_de(notice, tipo),
                     confidence=(
                         TRANSPORTE_INFORMA_CONFIDENCE
                         if tipo is EventType.ACCIDENT
@@ -1151,7 +1219,10 @@ class TransporteInformaCollector(BaseCollector):
                         # punto está mal, esto dice cuál de los dos falló.
                         "_extraction": {
                             **streets,
-                            "mode": (
+                            # Una extracción reutilizada conserva el modo con
+                            # que se hizo; una nueva lleva el de ahora.
+                            "mode": streets.get("mode")
+                            or (
                                 gemini.MODE_GEMINI
                                 if gemini.is_configured()
                                 else gemini.MODE_HEURISTIC
@@ -1171,12 +1242,16 @@ class TransporteInformaCollector(BaseCollector):
 
 
 __all__ = [
+    "PENDIENTE_EXTRACCION",
+    "PENDIENTE_GEOCODIFICACION",
     "ROAD_CLOSURE_CONFIDENCE",
     "TRAFFIC_KEYWORDS",
     "TRANSPORTE_INFORMA_CONFIDENCE",
     "ResolvedNotice",
     "TrafficNotice",
     "TransporteInformaCollector",
+    "calles_guardadas",
+    "external_id_de",
     "extract_streets_heuristic",
     "extract_streets_via_llm",
     "looks_like_accident",
@@ -1184,4 +1259,6 @@ __all__ = [
     "page_looks_broken",
     "parse_notice",
     "parse_notices",
+    "reutilizable",
+    "texto_md5",
 ]

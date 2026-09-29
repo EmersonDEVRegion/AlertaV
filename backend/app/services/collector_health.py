@@ -46,14 +46,15 @@ from app.models.event import CollectorRun
 
 #: Qué familia del mapa alimenta cada collector, y con qué peso.
 #:
-#: No se deriva de `EventSource` porque no hay correspondencia: Instagram y la
-#: prensa emiten lo que diga el texto —un choque, un incendio, un rescate— así
-#: que alimentan tres familias a la vez.
+#: No se deriva de `EventSource` porque no hay correspondencia: la prensa y los
+#: despachos emiten lo que diga el texto —un choque, un incendio, un rescate—
+#: así que alimentan tres familias a la vez.
 #:
 #: **`principal` vs `apoyo` decide si la caída de esa fuente vuelve
 #: sospechoso el cero de la familia**, y no es una etiqueta decorativa: la
 #: primera versión de este módulo trataba a todas por igual y por eso daba
-#: `traffic: ok` el 2026-09-02, con Instagram ciego y Transporte Informa sano.
+#: `traffic: ok` el 2026-09-02, con Instagram (hoy retirado) ciego y
+#: Transporte Informa sano.
 #: O sea, no habría atrapado el caso para el que se escribió.
 #:
 #: `transporte_informa` es apoyo porque **no sustituye a nadie en accidentes**:
@@ -70,7 +71,6 @@ COLLECTOR_ROLES: dict[str, dict[str, str]] = {
     "chilquinta_cortes": {"power": "principal"},
     "cge_cortes": {"power": "principal"},
     "transporte_informa": {"traffic": "apoyo"},
-    "instagram_apify": {"fire": "apoyo", "traffic": "principal", "otros": "apoyo"},
     "prensa_local": {"fire": "apoyo", "traffic": "principal", "otros": "apoyo"},
     #: Fuera de `COLLECTORS` —entra por webhook— pero escribe en `collector_runs`
     #: con este nombre y es el pilar de tres familias. Omitirlo dejaría
@@ -80,52 +80,19 @@ COLLECTOR_ROLES: dict[str, dict[str, str]] = {
         "traffic": "principal",
         "otros": "principal",
     },
-    #: La segunda puerta de X. Se agregó tarde y ese olvido es en sí mismo el
-    #: argumento del comentario de arriba: la ruta existía, escribía en
-    #: `collector_runs` y aun así `/collectors/health` no la miraba, así que su
-    #: caída no habría movido el estado de ninguna familia. Una fuente que no
-    #: está en esta tabla es una fuente que puede morir en silencio.
-    #:
-    #: `principal` en `traffic` porque el MTT y la concesionaria son de las
-    #: pocas fuentes que reportan un corte de vía antes que nadie; `apoyo` en
-    #: las otras dos, donde sólo aporta si la prensa alcanza a publicar.
-    "prensa_x_webhook": {
-        "fire": "apoyo",
-        "traffic": "principal",
-        "otros": "apoyo",
-    },
-}
-
-#: Vista plana, que es lo que la API expone por collector.
-COLLECTOR_FAMILIES: dict[str, tuple[str, ...]] = {
-    nombre: tuple(roles) for nombre, roles in COLLECTOR_ROLES.items()
-}
-
-#: Capas que pueden estar APAGADAS por configuración, y el ajuste que las
-#: enciende. Apagada, una capa no pesa en ninguna familia.
-#:
-#: Sin esto, retirar el Task de Instagram de Apify dejaba `instagram_apify` sin
-#: corridas nuevas, `stale` a las tres cadencias y —como es `principal` en
-#: `traffic`— el contador de accidentes marcado como sospechoso para siempre.
-#: Es el mismo canal que grita siempre que este módulo existe para evitar.
-_INTERRUPTORES: dict[str, str] = {
-    "instagram_apify": "APIFY_INSTAGRAM_ENABLED",
-    "prensa_x_webhook": "APIFY_PRENSA_ENABLED",
 }
 
 
 def active_roles() -> dict[str, dict[str, str]]:
-    """`COLLECTOR_ROLES` sin las capas apagadas. Se lee en cada llamada.
+    """Roles vigentes. Hoy son todos los de `COLLECTOR_ROLES`.
 
-    Una función y no una constante para que encender una capa en el entorno
-    —o en un test— se refleje sin reimportar el módulo.
+    Existía un mecanismo para apagar capas por configuración (Instagram y la
+    prensa por X). Esas capas se borraron el 2026-09-23 y con ellas el
+    mecanismo; la función se conserva porque es la puerta que usa
+    `build_health`.
     """
-    return {nombre: roles for nombre, roles in COLLECTOR_ROLES.items() if _encendida(nombre)}
+    return dict(COLLECTOR_ROLES)
 
-
-def _encendida(nombre: str) -> bool:
-    ajuste = _INTERRUPTORES.get(nombre)
-    return ajuste is None or bool(getattr(settings, ajuste, True))
 
 #: Familias que el mapa cuenta. Espejo de `INCIDENT_LAYERS` en el frontend.
 FAMILIES: tuple[str, ...] = ("fire", "traffic", "power", "otros")
@@ -184,9 +151,41 @@ def estado_de_collector(
     return _clasificar(run, _intervalo(nombre), ahora=ahora or datetime.now(UTC))
 
 
+#: Cuánto puede esperar una entrega del webhook en el inbox antes de que la
+#: espera misma sea la noticia. El inbox se mira cada `APIFY_INBOX_POLL_SECONDS`
+#: (10 s): quince minutos sin reclamarla es el proceso de workers caído o con
+#: `ENABLE_COLLECTORS=0`, y los despachos de la fuente de peso 1.00 no entran.
+INBOX_ATASCADO_SECONDS = 900
+
+#: Lo que `/collectors/health` muestra como detalle de una entrega atascada.
+INBOX_ATASCADO_DETALLE = (
+    "entregas del webhook esperando en el inbox sin procesar: "
+    "¿el proceso de workers está caído o con ENABLE_COLLECTORS=0?"
+)
+
+
+def inbox_atascado(run: CollectorRun | None, *, ahora: datetime) -> bool:
+    """¿La última corrida es una entrega que nadie reclamó a tiempo?"""
+    if run is None or run.status != CollectorStatus.RUNNING.value:
+        return False
+    params = getattr(run, "params", None) or {}
+    # "pendiente" es `apify_webhook_service.INBOX_PENDIENTE`; literal para no
+    # importar medio árbol de collectors desde acá (lo fija un test).
+    if params.get("inbox") != "pendiente" or run.started_at is None:
+        return False
+    llegada = run.started_at
+    if llegada.tzinfo is None:
+        llegada = llegada.replace(tzinfo=UTC)
+    return (ahora - llegada).total_seconds() > INBOX_ATASCADO_SECONDS
+
+
 def _clasificar(run: CollectorRun | None, intervalo: int, *, ahora: datetime) -> str:
     if run is None:
         return "never"
+    # Una entrega atascada es reciente por definición —acaba de llegar otra—
+    # y sin esta regla se leería como `ok` mientras nada entra al mapa.
+    if inbox_atascado(run, ahora=ahora):
+        return "failing"
 
     # El orden importa: `degraded` gana sobre cualquier cuenta de recencia,
     # porque es la fuente diciendo que no ve. Una corrida ciega es reciente por
@@ -290,7 +289,11 @@ def build_health(
                     else None
                 ),
                 expected_interval_seconds=intervalo,
-                detail=(run.error or None) if run else None,
+                detail=(
+                    INBOX_ATASCADO_DETALLE
+                    if inbox_atascado(run, ahora=momento)
+                    else ((run.error or None) if run else None)
+                ),
             )
         )
 

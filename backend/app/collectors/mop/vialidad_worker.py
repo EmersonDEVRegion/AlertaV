@@ -89,6 +89,7 @@ from app.collectors.mop.vialidad_parser import (
 )
 from app.core.config import settings
 from app.core.exceptions import CollectorError
+from app.core.identidad import user_agent
 from app.models.enums import EventSource, EventType
 from app.schemas.event import EventCreate
 
@@ -183,7 +184,9 @@ class MopVialidadCollector(BaseCollector):
 
     async def fetch(self) -> Sequence[RoadEmergency]:
         async with httpx.AsyncClient(
-            timeout=settings.MOP_VIALIDAD_TIMEOUT_SECONDS, follow_redirects=True
+            timeout=settings.MOP_VIALIDAD_TIMEOUT_SECONDS,
+            follow_redirects=True,
+            headers={"User-Agent": user_agent("emergencias viales")},
         ) as client:
             payload = await request_json(client, self.url, self.query_params(), origin=self.name)
 

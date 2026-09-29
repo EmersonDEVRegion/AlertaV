@@ -16,19 +16,16 @@ sola cosa: raspar las cuentas de X de las centrales de Bomberos.
 
 ## Lo que salió y por qué
 
-| Task retirado | Lo cubre ahora | Cómo reencenderlo |
-|---|---|---|
-| `alertav-prensa` (X: MTT, Rutas del Pacífico, RNE…) | prensa local por RSS (`prensa_local`) | `APIFY_PRENSA_ENABLED=true` + volver a listarlo en `configurar.ps1` |
-| `alertav-instagram` | prensa local por RSS | `APIFY_INSTAGRAM_ENABLED=true` + volver a listarlo en `configurar.ps1` |
+| Task retirado | Lo cubre ahora |
+|---|---|
+| `alertav-prensa` (X: MTT, Rutas del Pacífico, RNE…) | prensa local por RSS (`prensa_local`) |
+| `alertav-instagram` | prensa local por RSS |
 
-El motivo es la cuota. El código de las dos capas sigue en el backend, con sus
-tests. Solo están apagadas: no se registran, no cuentan para la salud del mapa
-y la puerta `/webhook/prensa` responde `ignored` si le llega algo.
-`task-prensa.json` y `task-instagram.json` quedan acá por si hubiera que
-volver a encenderlas.
-
-Después de correr `configurar.ps1`, el script **lista** los dos Tasks viejos,
-pero no los borra. Hay que borrarlos a mano en el panel de Apify.
+El motivo fue la cuota. Desde el 2026-09-23 el código de las dos capas ya no
+está en el backend (collector de Instagram, `apify_press_service`, la puerta
+`/webhook/prensa` y los `task-*.json`): si hiciera falta volver, está en el
+historial de git. `configurar.ps1` **lista** los dos Tasks viejos si siguen en
+la cuenta, pero no los borra: hay que borrarlos a mano en el panel de Apify.
 
 ## Dos centrales, dos diccionarios
 

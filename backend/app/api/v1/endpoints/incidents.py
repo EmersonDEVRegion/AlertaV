@@ -12,7 +12,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.api.deps import IncidentServiceDep
+from app.api.deps import IncidentServiceDep, OperatorDep
 from app.api.v1.params import parse_bbox
 from app.models.enums import IncidentStatus, IncidentType
 from app.schemas.event import GeoJSONFeatureCollection
@@ -78,8 +78,11 @@ async def list_active_incidents(
     return await service.read_with_outages(incidents)
 
 
+# `/geojson` y `/stats` no los consume la PWA (usa `/active`); quedan para
+# integraciones y para `scripts/smoke_test.py`, fuera del esquema público.
 @router.get(
     "/geojson",
+    include_in_schema=False,
     response_model=GeoJSONFeatureCollection,
     summary="Incidentes activos como GeoJSON",
     description=(
@@ -109,6 +112,7 @@ async def active_incidents_geojson(
 
 @router.get(
     "/stats",
+    include_in_schema=False,
     response_model=IncidentStats,
     summary="Resumen de la correlación",
 )
@@ -121,13 +125,14 @@ async def incident_stats(
 
 @router.post(
     "/correlate",
+    dependencies=[OperatorDep],
     response_model=CorrelationRunResult,
     summary="Disparo manual del motor de correlación",
     description=(
         "Ejecuta una pasada completa. Pensado para calibrar y operar, no para "
         "el camino caliente: el disparo normal es el worker periódico "
-        "(`python -m app.services.correlation.runner --loop`). Debe quedar "
-        "detrás de autenticación de operador en producción."
+        "(`python -m app.services.correlation.runner --loop`). Exige "
+        "`Authorization: Bearer <OPERATOR_TOKEN>`."
     ),
 )
 async def correlate_now(service: IncidentServiceDep) -> CorrelationRunResult:

@@ -63,6 +63,7 @@ from app.collectors.geoservices import (
 )
 from app.core.config import settings
 from app.core.exceptions import CollectorError
+from app.core.identidad import user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -253,7 +254,7 @@ class UsgsClient:
             follow_redirects=True,
             # El USGS pide identificarse; sin User-Agent propio algunos de sus
             # frontales responden 403 sin explicar por qué.
-            headers={"User-Agent": "AlertaV/1.0 (+https://github.com/alertav)"},
+            headers={"User-Agent": user_agent("sismos")},
         ) as client:
             for spec in self.sources:
                 try:

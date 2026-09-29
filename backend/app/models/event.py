@@ -168,6 +168,12 @@ class RawEvent(Base):
             "timestamp",
             postgresql_where=sa_text("processed_at IS NULL"),
         ),
+        # La ventana por hora de ingesta del motor (migración 0015).
+        Index(
+            "ix_raw_events_pendientes_ingesta",
+            sa_text("ingested_at DESC"),
+            postgresql_where=sa_text("incident_id IS NULL AND geom IS NOT NULL"),
+        ),
         Index(
             "ix_raw_events_incident_id",
             "incident_id",

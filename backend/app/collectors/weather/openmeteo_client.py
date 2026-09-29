@@ -93,6 +93,7 @@ from app.collectors.weather.comunas import Comuna, parse_comunas
 from app.collectors.weather.umbrales import PuntoHorario
 from app.core.config import settings
 from app.core.exceptions import CollectorError
+from app.core.identidad import user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -176,10 +177,10 @@ _CAMPO_DE: dict[str, str] = {
     UV_KEY: "uv",
 }
 
-#: Cabecera de cortesía. Ningún servicio público obliga, pero identificarse
-#: permite que el operador del servicio sepa a quién escribirle antes de
-#: bloquear, y ya evitó un 403 con el USGS.
-USER_AGENT = "AlertaV/1.0 (+https://github.com/alertav)"
+#: Qué se consulta, para la cabecera de cortesía (`app.core.identidad`).
+#: Ningún servicio público obliga, pero identificarse permite que el operador
+#: sepa a quién escribirle antes de bloquear, y ya evitó un 403 con el USGS.
+PROPOSITO = "pronostico de lluvia"
 
 
 @dataclass(frozen=True, slots=True)
@@ -639,7 +640,7 @@ class OpenMeteoClient:
         async with httpx.AsyncClient(
             timeout=self.timeout,
             follow_redirects=True,
-            headers={"User-Agent": USER_AGENT},
+            headers={"User-Agent": user_agent(PROPOSITO)},
         ) as client:
             for numero, lote in enumerate(lotes, start=1):
                 # El origen lleva el lote sólo cuando hay más de uno: con una

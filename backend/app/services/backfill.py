@@ -46,8 +46,8 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.collectors.geocoding import geocode_text
 from app.collectors.nominatim import build_client as build_geo_client
-from app.collectors.social.instagram_apify_worker import geocode_text
 from app.models.enums import CORRELATABLE_EVENT_TYPES
 from app.repositories.event_repository import EventRepository
 from app.schemas.event import EventCreate

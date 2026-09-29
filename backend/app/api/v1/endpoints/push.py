@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 
 from app.api.deps import PushServiceDep
 from app.core.config import settings
-from app.core.ratelimit import RateLimiter, client_ip
+from app.core.ratelimit import RateLimiter, client_ip_de
 from app.schemas.push import (
     PushEndpointRequest,
     PushProbeResult,
@@ -121,11 +121,7 @@ async def unsubscribe(payload: PushEndpointRequest, service: PushServiceDep) -> 
 async def send_probe(
     payload: PushEndpointRequest, request: Request, service: PushServiceDep
 ) -> PushProbeResult:
-    ip = client_ip(
-        forwarded_for=request.headers.get("x-forwarded-for"),
-        real_ip=request.headers.get("x-real-ip"),
-        peer=request.client.host if request.client else None,
-    )
+    ip = client_ip_de(request.headers, request.client.host if request.client else None)
     decision = probe_limiter.check(ip)
     if not decision.allowed:
         raise HTTPException(

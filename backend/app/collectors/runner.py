@@ -118,6 +118,18 @@ def _next_delay(interval: int) -> float:
     return max(5.0, interval + random.uniform(-spread, spread))
 
 
+#: Semáforo de `COLLECTOR_MAX_CONCURRENCY`. Se crea perezosamente, en el loop
+#: que lo usa por primera vez.
+_CUPOS: asyncio.Semaphore | None = None
+
+
+def _cupos() -> asyncio.Semaphore:
+    global _CUPOS
+    if _CUPOS is None:
+        _CUPOS = asyncio.Semaphore(max(1, settings.COLLECTOR_MAX_CONCURRENCY))
+    return _CUPOS
+
+
 async def run_collector(name: str) -> CollectorResult:
     """Ejecuta un collector en su propia sesión y garantiza que quede trazado.
 
@@ -126,8 +138,13 @@ async def run_collector(name: str) -> CollectorResult:
     nunca llega a arrancar es indistinguible, desde los datos, de uno que corrió
     y no encontró nada: esa ambigüedad es justo lo que la tabla existe para
     eliminar.
+
+    Corre dentro de un cupo (`COLLECTOR_MAX_CONCURRENCY`). Sin él, un reinicio
+    lanzaba los trece collectors casi a la vez contra un pool de cinco
+    conexiones, y el sexto reventaba por `pool_timeout` antes de poder escribir
+    su propia fila: el hueco sólo se veía en el log.
     """
-    async with AsyncSessionLocal() as session:
+    async with _cupos(), AsyncSessionLocal() as session:
         try:
             collector = get_collector(name, session)
         except Exception as exc:
@@ -207,12 +224,54 @@ async def _collector_loop(name: str, interval: int) -> None:
     logger.info("collector detenido", extra={"collector": name})
 
 
-async def run_loop(names: Sequence[str] | None, interval: int | None = None) -> None:
+async def _inbox_loop(intervalo: float) -> None:
+    """Vacía el inbox del webhook de Apify. Ver «El inbox» en `apify_webhook_service`.
+
+    Procesa de a una entrega y, mientras haya, sin esperar entre ellas; cuando
+    no queda ninguna, duerme `intervalo`. Cada entrega ocupa un cupo de
+    `COLLECTOR_MAX_CONCURRENCY` como cualquier collector: también abre
+    conexiones y llama al modelo.
+    """
+    # Import local: el servicio importa medio árbol de collectors y este módulo
+    # se importa desde la CLI sólo para `--show-schedule`.
+    from app.services.apify_webhook_service import procesar_siguiente
+
+    logger.info("inbox del webhook programado", extra={"interval_s": intervalo})
+    while not is_shutting_down():
+        try:
+            while not is_shutting_down():
+                async with _cupos():
+                    hubo = await procesar_siguiente()
+                if not hubo:
+                    break
+        except Exception:
+            # Base caída al reclamar. Se reintenta en el siguiente ciclo; la
+            # entrega sigue en la tabla, que es justamente el punto del inbox.
+            logger.exception("ciclo del inbox del webhook falló")
+        if not await sleep_unless_stopped(intervalo):
+            break
+    logger.info("inbox del webhook detenido")
+
+
+async def run_loop(
+    names: Sequence[str] | None,
+    interval: int | None = None,
+    *,
+    inbox: bool | None = None,
+) -> None:
+    """Bucle de todos los collectors pedidos, más el inbox del webhook.
+
+    El inbox corre por defecto sólo cuando se piden todos los collectors
+    (`names` vacío): quien depura uno en particular con `--collector` no quiere
+    que además se procesen entregas de Apify.
+    """
     plan = schedule(names, interval)
-    logger.info("runner iniciado", extra={"schedule": plan})
-    await asyncio.gather(
-        *(_collector_loop(name, seconds) for name, seconds in plan.items())
-    )
+    con_inbox = (not names) if inbox is None else inbox
+    logger.info("runner iniciado", extra={"schedule": plan, "inbox": con_inbox})
+    tareas = [_collector_loop(name, seconds) for name, seconds in plan.items()]
+    if con_inbox:
+        tareas.append(_inbox_loop(settings.APIFY_INBOX_POLL_SECONDS))
+    await asyncio.gather(*tareas)
     logger.info("runner detenido")
 
 

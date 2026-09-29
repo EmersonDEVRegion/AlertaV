@@ -122,6 +122,7 @@ from app.collectors.vocabulary import (
 )
 from app.core.config import settings
 from app.core.exceptions import CollectorError
+from app.core.identidad import user_agent_o
 from app.models.enums import EventSource, EventType
 from app.schemas.event import EventCreate
 
@@ -1033,7 +1034,9 @@ class LocalNewsCollector(BaseCollector):
             timeout=self.timeout,
             follow_redirects=True,
             headers={
-                "User-Agent": settings.LOCAL_NEWS_USER_AGENT,
+                "User-Agent": user_agent_o(
+                    settings.LOCAL_NEWS_USER_AGENT, "prensa local", navegador=True
+                ),
                 "Accept": (
                     "text/html,application/xhtml+xml,application/xml;q=0.9,"
                     "application/rss+xml;q=0.9,*/*;q=0.8"
@@ -1144,6 +1147,8 @@ class LocalNewsCollector(BaseCollector):
 
         ids = [external_id_for(item) for item in items]
         conocidos = await self.service.repo.ids_by_external_id(self.source, ids)
+        # Lo que sigue es Gemini y Nominatim: la conexión no espera con ellos.
+        await self.liberar_conexion()
         return [item for item in items if external_id_for(item) not in conocidos]
 
     # -- Orquestación ---------------------------------------------------------

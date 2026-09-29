@@ -41,6 +41,7 @@ import httpx
 from app.collectors.geoservices import as_float, normalise_text, request_json
 from app.collectors.lugares import sectores_compatibles
 from app.core.config import settings
+from app.core.identidad import nominatim_user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +254,36 @@ class GeocodeResult:
             "viewbox": list(self.viewbox) if self.viewbox else None,
             "provider": "nominatim",
         }
+
+    @classmethod
+    def desde_dict(cls, datos: Mapping[str, Any] | None) -> GeocodeResult | None:
+        """Inverso de `as_dict`: reconstruye el punto guardado en `raw_data._geocoding`.
+
+        Lo usa el delta de Transporte Informa para reemitir un aviso ya
+        geocodificado sin volver a pagar Nominatim. `None` si no hay punto o si
+        lo guardado no tiene coordenadas legibles.
+        """
+        if not isinstance(datos, Mapping):
+            return None
+        lat, lon = as_float(datos.get("lat")), as_float(datos.get("lon"))
+        if lat is None or lon is None:
+            return None
+        viewbox = datos.get("viewbox")
+        return cls(
+            lat=lat,
+            lon=lon,
+            display_name=datos.get("display_name"),
+            osm_type=datos.get("osm_type"),
+            importance=as_float(datos.get("importance")),
+            query=datos.get("query"),
+            precision=str(datos.get("precision") or PRECISION_STREET),
+            matched=datos.get("matched"),
+            omitted=tuple(datos.get("omitted") or ()),
+            comuna=datos.get("comuna"),
+            viewbox=tuple(viewbox) if isinstance(viewbox, list) and len(viewbox) == 4 else None,  # type: ignore[arg-type]
+            sector=datos.get("sector"),
+            zonas=tuple(datos.get("zonas") or ()),
+        )
 
 
 #: Región que se añade a toda consulta. El sistema sólo cubre la V, y sin ella
@@ -700,7 +731,7 @@ def build_client(timeout: float | None = None) -> httpx.AsyncClient:
     """
     return httpx.AsyncClient(
         timeout=timeout or settings.NOMINATIM_TIMEOUT_SECONDS,
-        headers={"User-Agent": settings.NOMINATIM_USER_AGENT},
+        headers={"User-Agent": nominatim_user_agent()},
         follow_redirects=True,
     )
 

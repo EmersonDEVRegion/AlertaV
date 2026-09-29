@@ -284,17 +284,6 @@ export interface IncidentDetail extends Incident {
   congestion: Congestion | null
 }
 
-/** `IncidentStats` — `GET /api/v1/incidents/stats`. */
-export interface IncidentStats {
-  total: number
-  confirmed: number
-  with_official_alert: number
-  avg_confidence: number | null
-  last_seen_at: string | null
-  by_status: Record<string, number>
-  by_type: Record<string, number>
-}
-
 // --- Reporte ciudadano -------------------------------------------------------
 
 /**

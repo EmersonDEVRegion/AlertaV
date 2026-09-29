@@ -63,9 +63,6 @@ class SeismicRepository:
         result = await self.session.execute(stmt)
         return len(result.fetchall())
 
-    async def get_by_usgs_id(self, usgs_id: str) -> SeismicDetail | None:
-        stmt = select(SeismicDetail).where(SeismicDetail.usgs_id == usgs_id)
-        return (await self.session.execute(stmt)).scalar_one_or_none()
 
     # -- Lectura para el mapa -------------------------------------------------
 

@@ -13,7 +13,7 @@ from typing import Any
 from uuid import UUID
 
 from geoalchemy2 import Geography
-from sqlalchemy import Select, cast, func, literal_column, or_, select
+from sqlalchemy import Select, and_, case, cast, func, literal_column, or_, select
 from sqlalchemy import text as sa_text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,10 +26,64 @@ from app.schemas.event import EventCreate
 #: Geografía usada para distancias en metros reales.
 _GEOGRAPHY = Geography(geometry_type="POINT", srid=4326)
 
-#: Columnas que el upsert refresca cuando la fuente reemite la misma
+#: Columnas que el upsert refresca tal cual cuando la fuente reemite la misma
 #: observación. `timestamp`, `source` y `external_id` NO se tocan: son la
-#: identidad del evento.
-_UPSERT_UPDATE_COLUMNS = ("type", "lat", "lon", "text", "confidence", "raw_data")
+#: identidad del evento. `lat`, `lon` y `raw_data` tampoco van acá: tienen su
+#: propia regla en `_set_del_upsert` (un punto conocido no se borra).
+_UPSERT_UPDATE_COLUMNS = ("type", "text", "confidence")
+
+
+def _set_del_upsert(excluded: Any) -> dict[str, Any]:
+    """Cláusula SET del `ON CONFLICT`: la fila nueva manda, salvo para borrar un punto.
+
+    Hasta el 2026-09-23 el upsert pisaba `lat`/`lon` con lo que viniera. Una
+    señal que ya tenía punto y volvía a pasar en una corrida donde se agotó el
+    cupo de Gemini o de Nominatim —o Nominatim falló, o cayó el KML de Esval—
+    quedaba con `NULL`: desaparecía del mapa y del motor sin que nada lo avisara.
+
+    Ahora un `NULL` entrante no borra un punto existente. El `raw_data` nuevo
+    igual se escribe (trae datos frescos, como el `visto_en` de Esval), pero
+    conserva el `_geocoding` anterior y queda marcado con `_punto_heredado`, para
+    que al auditar se sepa de dónde salió la coordenada.
+
+    Probado contra PostgreSQL 16: la referencia a la fila existente la escribe
+    SQLAlchemy calificada por esquema (`alertav.raw_events.lat`) y Postgres la
+    acepta en el SET de un `ON CONFLICT DO UPDATE`.
+    """
+    set_: dict[str, Any] = {
+        column: getattr(excluded, column) for column in _UPSERT_UPDATE_COLUMNS
+    }
+    set_["lat"] = func.coalesce(excluded.lat, RawEvent.lat)
+    set_["lon"] = func.coalesce(excluded.lon, RawEvent.lon)
+    set_["raw_data"] = case(
+        (
+            and_(excluded.lat.is_(None), RawEvent.lat.isnot(None)),
+            excluded.raw_data.op("||")(
+                func.jsonb_build_object(
+                    "_geocoding",
+                    RawEvent.raw_data["_geocoding"],
+                    "_punto_heredado",
+                    True,
+                )
+            ),
+        ),
+        else_=excluded.raw_data,
+    )
+    return set_
+
+
+@dataclass(frozen=True, slots=True)
+class PuntoConocido:
+    """Lo que ya se pagó por una señal: su texto (como md5), su punto y su raw_data.
+
+    Lo usa el delta de Transporte Informa para no volver a mandar a Gemini y a
+    Nominatim un aviso que ya está guardado con el mismo texto.
+    """
+
+    texto_md5: str
+    lat: float | None
+    lon: float | None
+    raw_data: dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,10 +182,7 @@ class EventRepository:
         stmt = stmt.on_conflict_do_update(
             index_elements=[RawEvent.source, RawEvent.external_id],
             index_where=sa_text("external_id IS NOT NULL"),
-            set_={
-                column: getattr(stmt.excluded, column)
-                for column in _UPSERT_UPDATE_COLUMNS
-            },
+            set_=_set_del_upsert(stmt.excluded),
         ).returning(literal_column("(xmax = 0)").label("inserted"))
 
         result = await self.session.execute(stmt)
@@ -203,6 +254,37 @@ class EventRepository:
         )
         result = await self.session.execute(stmt)
         return dict(result.all())  # type: ignore[arg-type]
+
+    async def puntos_conocidos(
+        self, source: EventSource, external_ids: Sequence[str]
+    ) -> dict[str, PuntoConocido]:
+        """`external_id → PuntoConocido` para las filas que ya existen.
+
+        Una consulta por corrida, acotada por el índice único
+        `uq_raw_events_source_external_id`. El texto viaja como md5 y no entero:
+        sólo hace falta saber si cambió.
+        """
+        wanted = [external_id for external_id in external_ids if external_id]
+        if not wanted:
+            return {}
+
+        stmt = select(
+            RawEvent.external_id,
+            func.md5(func.coalesce(RawEvent.text, "")).label("texto_md5"),
+            RawEvent.lat,
+            RawEvent.lon,
+            RawEvent.raw_data,
+        ).where(RawEvent.source == source, RawEvent.external_id.in_(wanted))
+        rows = (await self.session.execute(stmt)).all()
+        return {
+            row.external_id: PuntoConocido(
+                texto_md5=row.texto_md5,
+                lat=row.lat,
+                lon=row.lon,
+                raw_data=dict(row.raw_data or {}),
+            )
+            for row in rows
+        }
 
     async def count_containing(self, source: EventSource, fragment: dict[str, Any]) -> int:
         """Filas de una fuente cuyo `raw_data` contiene `fragment` (`@>`).
@@ -324,30 +406,6 @@ class EventRepository:
         stmt = stmt.order_by(RawEvent.timestamp.desc()).limit(limit).offset(offset)
         return (await self.session.execute(stmt)).scalars().all()
 
-    async def count_events(
-        self,
-        *,
-        since: datetime | None = None,
-        until: datetime | None = None,
-        sources: Sequence[EventSource] | None = None,
-        types: Sequence[EventType] | None = None,
-        min_confidence: float | None = None,
-        bbox: tuple[float, float, float, float] | None = None,
-        near: tuple[float, float, float] | None = None,
-        only_unprocessed: bool = False,
-    ) -> int:
-        stmt = self._apply_filters(
-            select(func.count()).select_from(RawEvent),
-            since=since,
-            until=until,
-            sources=sources,
-            types=types,
-            min_confidence=min_confidence,
-            bbox=bbox,
-            near=near,
-            only_unprocessed=only_unprocessed,
-        )
-        return int((await self.session.execute(stmt)).scalar_one())
 
     def _apply_filters(
         self,

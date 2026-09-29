@@ -17,17 +17,17 @@ def parse_bbox(value: str | None) -> tuple[float, float, float, float] | None:
     parts = value.split(",")
     if len(parts) != 4:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="bbox debe tener el formato west,south,east,north",
         )
     try:
         west, south, east, north = (float(part) for part in parts)
     except ValueError as exc:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="bbox no numérico"
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail="bbox no numérico"
         ) from exc
     if west >= east or south >= north:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="bbox invertido"
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail="bbox invertido"
         )
     return (west, south, east, north)

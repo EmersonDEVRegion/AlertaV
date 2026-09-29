@@ -7,7 +7,6 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -78,35 +77,6 @@ class IngestService:
             collapsed=outcome.collapsed_count,
         )
 
-    async def ingest_raw(self, payloads: Sequence[dict[str, Any]]) -> IngestResult:
-        """Ingesta tolerante a fallos: valida fila por fila.
-
-        Un payload malformado de una fuente externa no debe tumbar el lote
-        completo. Se descarta esa fila, se registra el motivo y el resto entra.
-        """
-        valid: list[EventCreate] = []
-        errors: list[str] = []
-
-        for index, payload in enumerate(payloads):
-            try:
-                valid.append(EventCreate.model_validate(payload))
-            except PydanticValidationError as exc:
-                errors.append(f"[{index}] {exc.errors()[0].get('msg', str(exc))}")
-
-        if not valid:
-            return IngestResult(
-                received=len(payloads),
-                inserted=0,
-                duplicated=0,
-                rejected=len(payloads),
-                errors=errors[:50],
-            )
-
-        result = await self.ingest_batch(valid)
-        result.received = len(payloads)
-        result.rejected = len(errors)
-        result.errors = errors[:50]
-        return result
 
     async def ingest_citizen_report(self, report: CitizenReportCreate) -> RawEvent:
         """Reporte desde la PWA.
@@ -133,6 +103,27 @@ class IngestService:
         self.session.add(run)
         await self.session.commit()
         await self.session.refresh(run)
+        # `refresh` es un SELECT, y un SELECT abre una transacción nueva
+        # (autobegin). Sin este commit, la conexión quedaba «idle in transaction»
+        # durante todo el `fetch()` del collector —minutos, en los que llaman a
+        # Gemini y a Nominatim— y cinco collectors así agotaban el pool.
+        # `expire_on_commit=False`: el objeto conserva sus atributos.
+        await self.session.commit()
+        return run
+
+    async def resume_run(self, run_id: int, params: dict[str, Any]) -> CollectorRun:
+        """Retoma una corrida que otro proceso abrió, sumándole `params`.
+
+        La usa el inbox del webhook de Apify: la API deja la fila `running` al
+        recibir el aviso y el proceso de workers la completa. Lanza `LookupError`
+        si la fila no existe, que sólo puede pasar si alguien la borró a mano.
+        """
+        run = await self.session.get(CollectorRun, run_id)
+        if run is None:
+            raise LookupError(f"collector_runs.id={run_id} no existe")
+        # JSONB no detecta mutaciones en el lugar: se reasigna un dict nuevo.
+        run.params = {**(run.params or {}), **params}
+        await self.session.commit()
         return run
 
     async def finish_run(

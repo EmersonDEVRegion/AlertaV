@@ -1,7 +1,8 @@
 """Disparo manual y estado de los collectors.
 
-En producción estos endpoints deben quedar detrás de autenticación de operador:
-lanzan tráfico saliente hacia APIs de terceros con cuota.
+Todo salvo `/health` exige `OPERATOR_TOKEN` (`require_operator`): lanzan
+tráfico saliente hacia APIs de terceros con cuota, o exponen el `error`
+completo de cada corrida. `/health` queda pública porque la lee el mapa.
 """
 
 from __future__ import annotations
@@ -13,11 +14,14 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import desc, select
 
-from app.api.deps import IngestServiceDep, SessionDep
+from app.api.deps import IngestServiceDep, OperatorDep, SessionDep
 from app.collectors.registry import available_collectors, get_collector
+from app.models.enums import CollectorStatus, EventSource
 from app.models.event import CollectorRun
+from app.services.apify_webhook_service import COLLECTOR_NAME as WEBHOOK_COLLECTOR
+from app.services.apify_webhook_service import INBOX_PENDIENTE
 from app.services.backfill import backfill_geocoding
-from app.services.collector_health import build_health
+from app.services.collector_health import build_health, inbox_atascado
 
 router = APIRouter(prefix="/collectors", tags=["collectors"])
 
@@ -65,7 +69,7 @@ class HealthRead(BaseModel):
     collectors: list[CollectorHealthRead]
 
 
-@router.get("", summary="Collectors disponibles")
+@router.get("", summary="Collectors disponibles", dependencies=[OperatorDep])
 async def list_collectors() -> dict[str, list[str]]:
     return {"collectors": available_collectors()}
 
@@ -80,6 +84,7 @@ class BackfillRead(BaseModel):
 
 @router.post(
     "/backfill-geocoding",
+    dependencies=[OperatorDep],
     response_model=BackfillRead,
     summary="Reintenta geocodificar los eventos que quedaron sin coordenadas",
     description=(
@@ -132,6 +137,26 @@ async def collectors_health(session: SessionDep) -> HealthRead:
     runs = (await session.execute(stmt)).scalars().all()
     ultimas = {run.collector: run for run in runs}
 
+    # La entrega más VIEJA sin reclamar del inbox del webhook. Mirar sólo la
+    # última no alcanza: con el proceso de workers caído y Apify entregando
+    # cada diez minutos, la última siempre «acaba de llegar» y la cola crece
+    # detrás de ella sin que el estado deje de ser `ok`.
+    pendiente = (
+        await session.execute(
+            select(CollectorRun)
+            .where(
+                CollectorRun.source == EventSource.BOMBEROS,
+                CollectorRun.collector == WEBHOOK_COLLECTOR,
+                CollectorRun.status == CollectorStatus.RUNNING.value,
+                CollectorRun.params["inbox"].astext == INBOX_PENDIENTE,
+            )
+            .order_by(CollectorRun.started_at)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if pendiente is not None and inbox_atascado(pendiente, ahora=datetime.now(UTC)):
+        ultimas[pendiente.collector] = pendiente
+
     salud, por_familia = build_health(ultimas)
     return HealthRead(
         generated_at=datetime.now(UTC),
@@ -155,6 +180,7 @@ async def collectors_health(session: SessionDep) -> HealthRead:
 
 @router.post(
     "/{name}/run",
+    dependencies=[OperatorDep],
     response_model=CollectorRunResult,
     summary="Ejecutar un collector ahora",
 )
@@ -179,6 +205,7 @@ async def run_collector(name: str, service: IngestServiceDep) -> CollectorRunRes
 
 @router.get(
     "/runs",
+    dependencies=[OperatorDep],
     response_model=list[CollectorRunRead],
     summary="Últimas ejecuciones",
     description=(

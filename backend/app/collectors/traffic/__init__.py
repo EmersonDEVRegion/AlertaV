@@ -1,34 +1,27 @@
 """Capa de accidentes viales.
 
-Tres fuentes con perfiles deliberadamente distintos, que es lo que hace que
-correlacionarlas valga la pena:
+Dos fuentes con perfiles deliberadamente distintos, más la prensa local:
 
-===================  ====  =========================  =========================
+===================  ====  =========================  =============================
 Fuente               Peso  Qué aporta                 Qué le falta
-===================  ====  =========================  =========================
-Bomberos (10-4)      1.00  Certeza institucional      Coordenadas (texto libre)
+===================  ====  =========================  =============================
+Bomberos (webhook)   1.00  Certeza institucional      Coordenadas (se geocodifican)
 Transporte Informa   0.80  Oficialidad y rapidez      Coordenadas (se geocodifican)
-Waze                 0.40  Punto exacto y volumen     Verificación de nadie
-===================  ====  =========================  =========================
+===================  ====  =========================  =============================
 
-La lectura de esa tabla es el diseño entero de la capa: Waze sabe *dónde* pero no
-*si*; Bomberos sabe *si* pero no *dónde*. El motor de correlación existe
-justamente para juntar esas dos mitades — y sólo puede hacerlo con las señales
-que tienen geometría, así que hoy la unión efectiva ocurre entre Waze y el MTT
-geocodificado. Los despachos de Bomberos quedan registrados y consultables, a la
-espera de un emparejamiento por texto en el Paso B.
+Los despachos de Bomberos no son un collector: entran por
+`POST /api/v1/apify/webhook`. Este paquete conserva sus funciones libres
+(`bomberos_10_4_worker`) y el extractor de calles con Gemini (`gemini`), que
+comparten el webhook, el MTT y la prensa.
+
+Waze salió del repositorio el 2026-09-23: el convenio de Waze for Cities nunca
+se aprobó.
 
 Todas emiten `type=accident`, que cae en la familia `traffic` y por lo tanto no
 puede fundirse con incendios: ver el docstring de
 `app/services/correlation/engine.py`.
 """
 
-from app.collectors.traffic.bomberos_10_4_worker import Bomberos104Collector
 from app.collectors.traffic.transporteinforma_worker import TransporteInformaCollector
-from app.collectors.traffic.waze_worker import WazeCollector
 
-__all__ = [
-    "Bomberos104Collector",
-    "TransporteInformaCollector",
-    "WazeCollector",
-]
+__all__ = ["TransporteInformaCollector"]
