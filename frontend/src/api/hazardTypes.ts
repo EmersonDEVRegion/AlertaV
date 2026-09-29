@@ -24,7 +24,7 @@
  * con el CSV del CSN sin recalcular centroides.
  */
 
-import type { Feature, FeatureCollection, Polygon } from 'geojson'
+import type { FeatureCollection, Polygon } from 'geojson'
 
 /**
  * Variables del modelo, tal como las renombra el script.
@@ -33,7 +33,7 @@ import type { Feature, FeatureCollection, Polygon } from 'geojson'
  * cambiar una constante en `domain/hazardSymbology.ts`, y el tipo tiene que
  * dejar que eso siga siendo un cambio de una línea.
  */
-export interface HazardValues {
+interface HazardValues {
   /** PGA (g), 10 % de excedencia en 50 años (~475 años). El del diseño habitual. */
   pga_475: number
   /** PGA (g), 2 % en 50 años (~2475 años). Estructuras críticas. */
@@ -43,13 +43,12 @@ export interface HazardValues {
   sa30_475?: number
 }
 
-export interface HazardCellProperties extends HazardValues {
+interface HazardCellProperties extends HazardValues {
   /** Centro del nodo original de la grilla del CSN. Ver la nota de la cabecera. */
   lon: number
   lat: number
 }
 
-export type HazardCell = Feature<Polygon, HazardCellProperties>
 export type HazardCells = FeatureCollection<Polygon, HazardCellProperties>
 
 /** Bloque de procedencia que el script adjunta al artefacto. */

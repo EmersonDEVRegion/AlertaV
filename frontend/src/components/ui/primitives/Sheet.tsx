@@ -30,7 +30,7 @@ import { Panel } from './Panel'
  */
 
 /** Ancho del panel. Lo usan el contenedor y el desplazamiento de cierre. */
-export const SHEET_WIDTH = 'w-60'
+const SHEET_WIDTH = 'w-60'
 
 /**
  * Techo de altura.
@@ -39,9 +39,9 @@ export const SHEET_WIDTH = 'w-60'
  * `vh` conserva el valor de la ventana expandida, así que el panel se cortaría
  * fuera del área visible justo en los teléfonos donde más molesta.
  */
-export const SHEET_MAX_H = 'max-h-[calc(100dvh-10rem)] md:max-h-[calc(100dvh-11rem)]'
+const SHEET_MAX_H = 'max-h-[calc(100dvh-10rem)] md:max-h-[calc(100dvh-11rem)]'
 
-export const SHEET_PANEL_ID = 'map-layer-panel'
+const SHEET_PANEL_ID = 'map-layer-panel'
 
 function Chevron({ collapsed }: { collapsed: boolean }) {
   return (

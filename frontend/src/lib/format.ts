@@ -2,12 +2,6 @@
 
 const TZ = 'America/Santiago'
 
-const timeFmt = new Intl.DateTimeFormat('es-CL', {
-  hour: '2-digit',
-  minute: '2-digit',
-  timeZone: TZ,
-})
-
 const dateTimeFmt = new Intl.DateTimeFormat('es-CL', {
   day: '2-digit',
   month: 'short',
@@ -20,10 +14,6 @@ const relativeFmt = new Intl.RelativeTimeFormat('es-CL', { numeric: 'auto' })
 
 /** «hace 5 h», «hace 24 min». Para filas densas donde «horas» no cabe. */
 const relativeShortFmt = new Intl.RelativeTimeFormat('es-CL', { numeric: 'auto', style: 'short' })
-
-export function formatTime(iso: string | number | Date): string {
-  return timeFmt.format(new Date(iso))
-}
 
 export function formatDateTime(iso: string | number | Date): string {
   return dateTimeFmt.format(new Date(iso))

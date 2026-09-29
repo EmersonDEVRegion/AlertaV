@@ -24,7 +24,7 @@
 export const REPORT_CATEGORIES = ['fire', 'traffic_accident', 'other'] as const
 export type ReportCategory = (typeof REPORT_CATEGORIES)[number]
 
-export interface EmergencyLine {
+interface EmergencyLine {
   number: string
   service: string
 }

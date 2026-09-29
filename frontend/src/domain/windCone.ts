@@ -48,16 +48,16 @@
 import { clamp } from '@/lib/geo'
 
 /** Velocidad de avance como fracción de la del viento (regla del 10 %). */
-export const SPREAD_RATIO = 0.1
+const SPREAD_RATIO = 0.1
 
 /** Horizonte temporal de la proyección. */
 export const PROJECTION_HOURS = 1
 
 /** Longitud mínima dibujable: por debajo, la cuña no se distingue del marcador. */
-export const MIN_CONE_KM = 0.8
+const MIN_CONE_KM = 0.8
 
 /** Tope de longitud. Más allá la proyección deja de ser defendible. */
-export const MAX_CONE_KM = 25
+const MAX_CONE_KM = 25
 
 export interface WindCone {
   /** Rumbo hacia el que avanza el fuego, en grados desde el norte. */
@@ -73,12 +73,12 @@ export interface WindCone {
  * dónde va). Aislada a propósito: es una sola línea y el error que evita es el
  * de apuntar el cono en sentido contrario.
  */
-export function spreadBearing(windDirectionDeg: number): number {
+function spreadBearing(windDirectionDeg: number): number {
   return (windDirectionDeg + 180) % 360
 }
 
 /** Longitud proyectada, en km, para una velocidad en km/h. */
-export function coneLengthKm(windSpeedKmh: number): number {
+function coneLengthKm(windSpeedKmh: number): number {
   return clamp(
     SPREAD_RATIO * windSpeedKmh * PROJECTION_HOURS,
     MIN_CONE_KM,
@@ -87,7 +87,7 @@ export function coneLengthKm(windSpeedKmh: number): number {
 }
 
 /** Semiapertura, en grados, para una velocidad en km/h. */
-export function coneHalfAngleDeg(windSpeedKmh: number): number {
+function coneHalfAngleDeg(windSpeedKmh: number): number {
   return clamp(45 - 0.5 * windSpeedKmh, 12, 45)
 }
 

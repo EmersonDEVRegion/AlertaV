@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-export interface Coordinates {
+interface Coordinates {
   lat: number
   lon: number
   /** Radio de incertidumbre en metros que informa el dispositivo. */
   accuracyM: number
 }
 
-export type GeolocationStatus =
+type GeolocationStatus =
   | 'idle'
   | 'unsupported'
   | 'locating'

@@ -57,7 +57,7 @@ export const UNKNOWN_PROVIDER: ProviderStyle = {
   chip: 'bg-slate-600 text-white dark:bg-slate-700',
 }
 
-export function isOutageProvider(value: string | null | undefined): value is OutageProvider {
+function isOutageProvider(value: string | null | undefined): value is OutageProvider {
   return value === 'chilquinta' || value === 'cge'
 }
 

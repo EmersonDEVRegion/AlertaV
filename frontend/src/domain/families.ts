@@ -19,11 +19,11 @@
 
 import type { IncidentType } from '@/api/types'
 
-export const FAMILIES = ['fire', 'traffic', 'power', 'hydro', 'other'] as const
-export type IncidentFamily = (typeof FAMILIES)[number]
+const FAMILIES = ['fire', 'traffic', 'power', 'hydro', 'other'] as const
+type IncidentFamily = (typeof FAMILIES)[number]
 
 /** Espejo de `INCIDENT_FAMILY`. Mantener sincronizado. */
-export const INCIDENT_FAMILY: Record<IncidentType, IncidentFamily> = {
+const INCIDENT_FAMILY: Record<IncidentType, IncidentFamily> = {
   possible_fire: 'fire',
   wildfire: 'fire',
   structural_fire: 'fire',
@@ -39,7 +39,7 @@ export const INCIDENT_FAMILY: Record<IncidentType, IncidentFamily> = {
   other: 'other',
 }
 
-export function familyOf(type: IncidentType): IncidentFamily {
+function familyOf(type: IncidentType): IncidentFamily {
   return INCIDENT_FAMILY[type] ?? 'other'
 }
 
@@ -52,7 +52,7 @@ export function familyOf(type: IncidentType): IncidentFamily {
  * `other` comparten casilla porque ninguna tiene todavía una fuente propia y
  * separarlas daría un panel con cuatro casillas casi siempre vacías.
  */
-export const INCIDENT_LAYERS = ['fire', 'traffic', 'power', 'otros'] as const
+const INCIDENT_LAYERS = ['fire', 'traffic', 'power', 'otros'] as const
 export type IncidentLayerKey = (typeof INCIDENT_LAYERS)[number]
 
 export function layerOf(type: IncidentType): IncidentLayerKey {

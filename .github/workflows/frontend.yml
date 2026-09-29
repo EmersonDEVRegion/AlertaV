@@ -1,0 +1,42 @@
+name: frontend
+
+# Vercel sólo corre `npm run build` (tsc + vite build): los tests, el linter y
+# knip no corrían en ningún lado. Este workflow los corre en cada PR y en cada
+# push a main que toque la PWA.
+
+on:
+  pull_request:
+    paths: ["frontend/**", ".github/workflows/frontend.yml"]
+  push:
+    branches: [main]
+    paths: ["frontend/**", ".github/workflows/frontend.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run knip
+      - run: npm test
+      - run: npm run build
+      - name: Sin vulnerabilidades en lo que llega al navegador
+        run: npm audit --omit=dev --audit-level=high

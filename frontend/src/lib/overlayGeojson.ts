@@ -19,7 +19,7 @@ import type { WindCone } from '@/domain/windCone'
 // Radio de percepción sísmica
 // ---------------------------------------------------------------------------
 
-export interface ReachProps {
+interface ReachProps {
   usgs_id: string
   radius_km: number
   magnitude: number | null
@@ -63,7 +63,7 @@ export function toReachCollection(
 // Cono de viento
 // ---------------------------------------------------------------------------
 
-export interface ConeProps {
+interface ConeProps {
   code: string
   bearing_deg: number
   length_km: number
@@ -71,7 +71,7 @@ export interface ConeProps {
 
 export type ConeCollection = FeatureCollection<Polygon, ConeProps>
 
-export const EMPTY_CONE: ConeCollection = { type: 'FeatureCollection', features: [] }
+const EMPTY_CONE: ConeCollection = { type: 'FeatureCollection', features: [] }
 
 /**
  * Cuña de un único incidente: sólo se dibuja para el incendio seleccionado,

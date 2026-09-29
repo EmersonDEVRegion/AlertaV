@@ -84,11 +84,6 @@ const MUTED: Record<IncidentLayerKey, Record<ConfidenceLevel, string>> = {
   otros: MUTED_OTHER_LEVEL,
 }
 
-/** Paleta de un incidente según su familia. */
-export function paletteFor(incident: Incident): PaletteTable {
-  return PALETTES[layerOf(incident.type)]
-}
-
 /**
  * Estilo final de un incidente: paleta por familia, tramo por confianza y color
  * atenuado si ya cerró. Es lo que consumen la ficha y los chips.

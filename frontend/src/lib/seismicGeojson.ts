@@ -14,7 +14,7 @@ import type { FeatureCollection, Point } from 'geojson'
 import type { SeismicEvent } from '@/api/seismicTypes'
 import { bandOf, sizingMagnitude } from '@/domain/seismicSymbology'
 
-export interface SeismicFeatureProps {
+interface SeismicFeatureProps {
   usgs_id: string
   band: string
   /** Magnitud acotada a [2, 7]. La usa la interpolación del radio. */

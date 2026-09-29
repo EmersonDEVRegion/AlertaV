@@ -26,7 +26,7 @@ import type { Map as MapLibreMap } from 'maplibre-gl'
 /** Si `load` no llegó en este plazo, algo se colgó y hay que reportarlo. */
 const WATCHDOG_MS = 8_000
 
-export const MAP_DEBUG: boolean = (() => {
+const MAP_DEBUG: boolean = (() => {
   if (import.meta.env.DEV) return true
   if (typeof window === 'undefined') return false
   const flag = new URLSearchParams(window.location.search).get('debug')

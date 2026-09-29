@@ -116,7 +116,7 @@ function toHazard(value: unknown): WeatherHazard | null {
  * preferible caer al texto genérico de la severidad que pintar `NaN °C` en la
  * barra superior.
  */
-export function parseTrigger(raw: unknown): WeatherTrigger | null {
+function parseTrigger(raw: unknown): WeatherTrigger | null {
   if (typeof raw !== 'object' || raw === null) return null
 
   const source = raw as Record<string, unknown>
@@ -159,7 +159,7 @@ function toNames(value: unknown): string[] {
  * a calma y se avisa por consola: una barra roja que no explica nada es peor
  * que una barra gris.
  */
-export function parseTacticalWeather(payload: unknown): TacticalWeather {
+function parseTacticalWeather(payload: unknown): TacticalWeather {
   if (typeof payload !== 'object' || payload === null) return UNKNOWN_WEATHER
 
   const source = payload as Record<string, unknown>

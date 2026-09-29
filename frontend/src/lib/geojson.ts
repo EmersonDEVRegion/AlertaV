@@ -20,7 +20,7 @@ import type { ConfidenceLevel, Incident, IncidentType } from '@/api/types'
 import { type IncidentLayerKey, layerOf } from '@/domain/families'
 import { isClosed, levelOf, needsVerificationCaveat } from '@/domain/symbology'
 
-export interface IncidentFeatureProps {
+interface IncidentFeatureProps {
   code: string
   /**
    * Tipo del incidente, tal cual lo entrega el backend.

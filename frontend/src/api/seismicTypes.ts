@@ -10,13 +10,13 @@
  */
 
 /** Nivel PAGER de impacto estimado del USGS. */
-export type PagerAlert = 'green' | 'yellow' | 'orange' | 'red'
+type PagerAlert = 'green' | 'yellow' | 'orange' | 'red'
 
 /**
  * `automatic` = solución de máquina, sin revisar; la magnitud puede corregirse.
  * `reviewed` = revisada por un sismólogo.
  */
-export type ReviewStatus = 'automatic' | 'reviewed'
+type ReviewStatus = 'automatic' | 'reviewed'
 
 /** `SeismicEventRead` — `GET /api/v1/events/seismic`. */
 export interface SeismicEvent {

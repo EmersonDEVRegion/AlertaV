@@ -11,7 +11,7 @@ import { OutagePin } from './OutagePin'
  * Se priorizan los cortes con más clientes afectados: si hay que recortar, que
  * sobrevivan los que afectan a más gente.
  */
-export const MAX_OUTAGE_PINS = 150
+const MAX_OUTAGE_PINS = 150
 
 interface OutagePinLayerProps {
   outages: readonly Incident[]

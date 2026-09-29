@@ -27,9 +27,6 @@
 
 import type { Feature, FeatureCollection, Point } from 'geojson'
 
-/** Fuentes que alimentan la capa. Cualquier otra cadena se trata como MTT. */
-export type RoadClosureSource = 'mop' | 'transporte_informa'
-
 /** `properties` de cada feature de `GET /api/v1/events/road-closures/geojson`. */
 export interface RoadClosureProperties {
   public_id: string

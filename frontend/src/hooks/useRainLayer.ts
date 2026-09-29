@@ -38,7 +38,7 @@ import { toggleRainLayer, useRainLayerEnabled } from '@/lib/tacticalWeatherStore
  * tráfico: de ahí los 10 minutos por defecto.
  */
 
-export type RainStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'error'
+type RainStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'error'
 
 export interface RainLayerState {
   enabled: boolean

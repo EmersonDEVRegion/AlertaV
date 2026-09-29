@@ -53,6 +53,13 @@ import { VehicleRadarPanel } from '@/components/vehicles/VehicleRadarPanel'
 import { env } from '@/config/env'
 import { usgsIdOf } from '@/lib/push'
 
+/**
+ * Arreglo vacío compartido. `incidents ?? []` creaba uno nuevo en cada render
+ * mientras no había datos, y cada `useMemo` que dependía de él se recalculaba
+ * de balde.
+ */
+const NO_INCIDENTS: Incident[] = []
+
 export default function App() {
   // La referencia del mapa vive acá y no dentro de `IncidentMap`: el panel de
   // capas es hermano del mapa, no descendiente, y necesita ordenarle un vuelo.
@@ -172,7 +179,7 @@ export default function App() {
   const isOnline = useOnlineStatus()
   const freshness = useFreshness(dataUpdatedAt || undefined)
 
-  const all = incidents ?? []
+  const all = incidents ?? NO_INCIDENTS
 
   // Una sola consulta a `/incidents/active` alimenta las tres capas; el filtro
   // es por familia y ocurre acá. Separarlo en tres consultas multiplicaría el

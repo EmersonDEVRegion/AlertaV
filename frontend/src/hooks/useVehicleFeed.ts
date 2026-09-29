@@ -35,7 +35,7 @@ import { useNow } from './useNow'
  *                     ni se sigue consultando: no es un corte, es una versión.
  */
 
-export type VehicleFeedStatus = 'loading' | 'ready' | 'empty' | 'blind' | 'error' | 'unavailable'
+type VehicleFeedStatus = 'loading' | 'ready' | 'empty' | 'blind' | 'error' | 'unavailable'
 
 export interface VehicleFeedState {
   status: VehicleFeedStatus

@@ -350,23 +350,3 @@ export const RAIN_TEXT: Record<'light' | 'dark', RainTextStyle> = {
   },
 }
 
-/**
- * Textos del panel.
- *
- * `caveat` no es decoración legal: el hand-off del backend pide explícitamente
- * que la UI diga "riesgo pronosticado" y nunca "inundación", y que quede claro
- * que las alertas oficiales las declara SENAPRED y llegan por otra vía.
- */
-export const RAIN_LEGEND = {
-  title: 'Lluvia pronosticada',
-  subtitle: 'Pronóstico 24 h · Open-Meteo',
-  rain: 'Lluvia',
-  risk: 'Riesgo de inundación pronosticado',
-  /** Lo que el usuario ve según la escala. Ver `RAIN_SWAP`. */
-  regional: 'Manchas por comuna',
-  local: 'Campo de precipitación',
-  zoomHint: 'Acércate a una ciudad para ver el campo local',
-  /** El estado más frecuente del año. No es un error de carga. */
-  empty: 'Sin lluvia pronosticada',
-  caveat: 'Pronóstico a escala comunal. No es una alerta oficial: esas las declara SENAPRED.',
-} as const

@@ -19,7 +19,7 @@ import type { IncidentLayerKey } from '@/domain/families'
  */
 export type HealthStatus = 'ok' | 'degraded' | 'failing' | 'stale' | 'never'
 
-export interface CollectorHealth {
+interface CollectorHealth {
   collector: string
   families: IncidentLayerKey[]
   status: HealthStatus

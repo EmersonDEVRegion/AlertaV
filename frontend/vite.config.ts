@@ -4,8 +4,27 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
+/**
+ * Toda variable `VITE_*` se hornea en el bundle y la puede leer cualquiera que
+ * abra la app. Hoy son todas públicas por diseño (una URL, cadencias y un
+ * interruptor), y esta barrera existe para que siga así: el build falla si
+ * alguien crea una con nombre de secreto, en vez de publicarla en silencio.
+ */
+const SECRET_NAME = /(SECRET|TOKEN|PASSWORD|PASSWD|PRIVATE|SERVICE_ROLE|API_KEY|DATABASE_URL|DSN)/i
+
+function assertNoSecretsInPublicEnv(env: Record<string, string>): void {
+  const offenders = Object.keys(env).filter((name) => SECRET_NAME.test(name))
+  if (offenders.length > 0) {
+    throw new Error(
+      `[AlertaV/env] ${offenders.join(', ')}: una variable VITE_ se publica en el bundle. ` +
+        'Si es un secreto, va en el backend.',
+    )
+  }
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), 'VITE_')
+  assertNoSecretsInPublicEnv(env)
   const apiProxyTarget = env.VITE_DEV_API_PROXY ?? 'http://localhost:8000'
 
   return {
@@ -47,14 +66,6 @@ export default defineConfig(({ mode }) => {
       // la misma URL relativa (/api/v1). Un problema menos que depurar.
       proxy: {
         '/api': { target: apiProxyTarget, changeOrigin: true },
-        /*
-         * Las capas de referencia las sirve el backend con `StaticFiles` en
-         * `/static`. Sin esta entrada, en desarrollo la petición se queda en el
-         * servidor de Vite —que no conoce esa ruta— y devuelve el index.html
-         * con 200: el peor 404 posible, porque MapLibre recibe HTML donde
-         * esperaba GeoJSON y falla con un error de parseo desconcertante.
-         */
-        '/static': { target: apiProxyTarget, changeOrigin: true },
       },
     },
 
@@ -157,22 +168,6 @@ export default defineConfig(({ mode }) => {
                 expiration: { maxEntries: 8, maxAgeSeconds: 60 * 60 * 6 },
                 cacheableResponse: { statuses: [0, 200] },
                 matchOptions: { ignoreVary: true },
-              },
-            },
-            {
-              /*
-               * Capas de referencia: un modelo probabilístico que cambia cada
-               * varios años. `CacheFirst` con vencimiento largo porque volver a
-               * pedirlo es tráfico garantizado a cambio de nada. El artefacto
-               * lleva su versión dentro (`metadata.model`), así que una
-               * actualización llega con nombre de archivo nuevo.
-               */
-              urlPattern: /\/static\/geo\/.*\.json$/,
-              handler: 'CacheFirst',
-              options: {
-                cacheName: 'alertav-geo-reference',
-                expiration: { maxEntries: 8, maxAgeSeconds: 60 * 60 * 24 * 90 },
-                cacheableResponse: { statuses: [0, 200] },
               },
             },
             {

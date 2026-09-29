@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import {
   AttributionControl,
@@ -203,23 +203,42 @@ export function IncidentMap({
         })
       }
     },
-    [onSelect, onSelectSeismic],
+    [mapRef, onSelect, onSelectSeismic],
   )
 
   /**
    * Un mapa en blanco sin nada en consola es el peor modo de falla: no se sabe
    * si falló el estilo, el WebGL, el worker o el encuadre.
    *
-   * Las sondas se enganchan en un efecto y no en `onLoad` a propósito: el fallo
-   * más difícil de ver es justamente aquel en el que `load` no se dispara nunca.
-   * Un handler de `load` no puede observar su propia ausencia; un `setTimeout`
-   * registrado al montar, sí. Ver `lib/mapDiagnostics.ts`.
+   * # Por qué un ref de callback y no un efecto
+   *
+   * La versión anterior enganchaba las sondas en un `useEffect(…, [])` que leía
+   * `mapRef.current`. Nunca funcionó: react-map-gl crea el mapa DESPUÉS de
+   * resolver `import('maplibre-gl')`, y hasta entonces su `useImperativeHandle`
+   * publica `null`. El efecto corría una sola vez, encontraba `null` y
+   * retornaba. Con `?debug=1` no aparecía ni una línea `[AlertaV/mapa]`.
+   *
+   * Un ref de callback lo llama React cada vez que el handle cambia, así que
+   * recibe el mapa en cuanto existe — antes de `load`, que es lo que el
+   * watchdog necesita para observar un `load` que nunca llega.
    */
-  useEffect(() => {
-    const map = mapRef.current?.getMap()
-    if (!map) return
-    return attachMapDiagnostics(map)
-  }, [])
+  const detachDiagnostics = useRef<(() => void) | null>(null)
+  const setMapRef = useCallback(
+    (ref: MapRef | null) => {
+      mapRef.current = ref
+      if (ref && !detachDiagnostics.current) {
+        detachDiagnostics.current = attachMapDiagnostics(ref.getMap())
+      }
+    },
+    [mapRef],
+  )
+  useEffect(
+    () => () => {
+      detachDiagnostics.current?.()
+      detachDiagnostics.current = null
+    },
+    [],
+  )
 
   const handleError = useCallback((event: ErrorEvent) => {
     console.error('[AlertaV/mapa] error', event.error ?? event)
@@ -227,7 +246,7 @@ export function IncidentMap({
 
   return (
     <Map
-      ref={mapRef}
+      ref={setMapRef}
       initialViewState={INITIAL_VIEW_STATE}
       /*
        * Cambiar `mapStyle` dispara `map.setStyle()`. Los `<Source>` se vuelven a

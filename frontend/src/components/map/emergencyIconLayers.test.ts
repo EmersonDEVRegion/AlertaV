@@ -180,7 +180,7 @@ describe('colocación', () => {
 
   it('el icono sísmico es más chico que el de incidente: va dentro del círculo', () => {
     const sizeAt = (layer: { layout?: Record<string, unknown> }, i: number) =>
-      (layer.layout?.['icon-size'] as unknown[])[i] as number
+      ((layer.layout?.['icon-size'] ?? []) as unknown[])[i] as number
     const inc = incidentIconLayer('dark')
     const seis = seismicIconLayer('dark', MAGNITUDE_COLOR_EXPRESSION as unknown as ExpressionSpecification)
     // Índice 4 = primer valor de salida del `interpolate`.

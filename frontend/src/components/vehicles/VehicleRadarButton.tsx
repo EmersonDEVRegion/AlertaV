@@ -38,7 +38,7 @@ export function badgeFor(feed: Pick<VehicleFeedState, 'status' | 'count'>): stri
   return null
 }
 
-export function radarLabel(feed: Pick<VehicleFeedState, 'status' | 'count' | 'recentCount'>): string {
+function radarLabel(feed: Pick<VehicleFeedState, 'status' | 'count' | 'recentCount'>): string {
   switch (feed.status) {
     case 'ready': {
       const avisos = feed.count === 1 ? '1 aviso' : `${feed.count} avisos`

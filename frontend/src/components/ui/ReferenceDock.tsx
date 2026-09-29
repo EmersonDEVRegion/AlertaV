@@ -1,15 +1,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { Button, Panel, Switch } from '@/components/ui/primitives'
-import {
-  HAZARD_LEGEND,
-  HAZARD_RAMP,
-  HAZARD_RETICULE,
-} from '@/domain/hazardSymbology'
-// Sólo la zona de relevo, para `REFERENCE_SWAP_ZOOMS`: la capa de lluvia sigue
-// existiendo en el mapa aunque su tarjeta se haya ido al widget, y el test de
-// coherencia entre estilo e interfaz sigue leyendo ese número desde acá.
-import { RAIN_SWAP } from '@/domain/rainSymbology'
+import { HAZARD_LEGEND, HAZARD_RAMP } from '@/domain/hazardSymbology'
 import {
   ROAD_CLOSURE_LEGEND,
   ROAD_CLOSURE_LEGEND_TEXT,
@@ -533,14 +525,3 @@ export function ReferenceDock(props: ReferenceDockProps) {
   )
 }
 
-/**
- * Zonas de relevo, expuestas para los tests de coherencia con el mapa.
- *
- * En la lluvia sigue siendo un relevo de representación. En la amenaza ya no lo
- * es —hay una sola superficie— y el número que queda es la ventana en la que
- * aparece la retícula de celda, que es lo único que cambia con el zoom.
- */
-export const REFERENCE_SWAP_ZOOMS = {
-  hazard: HAZARD_RETICULE,
-  rain: RAIN_SWAP,
-} as const

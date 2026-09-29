@@ -71,7 +71,7 @@ import { UNKNOWN_WEATHER, fetchTacticalWeather } from '@/api/tacticalWeather'
 import type { TacticalWeather } from '@/api/tacticalWeatherTypes'
 import { env } from '@/config/env'
 
-export type WeatherStatus = 'loading' | 'ready' | 'error'
+type WeatherStatus = 'loading' | 'ready' | 'error'
 
 export interface WeatherSnapshot {
   status: WeatherStatus
@@ -218,12 +218,6 @@ export function closeWeatherDetail(): void {
  */
 export function toggleRainLayer(): void {
   patch({ rainLayer: !snapshot.rainLayer })
-}
-
-/** Fuerza una relectura. Lo usa el botón de reintento del detalle. */
-export function retryWeather(): void {
-  patch({ status: 'loading' })
-  void refresh()
 }
 
 /**

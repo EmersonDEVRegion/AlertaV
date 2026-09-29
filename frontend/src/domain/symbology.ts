@@ -85,7 +85,7 @@ export const LEVEL_ORDER: readonly ConfidenceLevel[] = ['unsafe', 'possible', 'c
  * en cada respuesta; esto sólo actúa si falta, que en la práctica significa una
  * respuesta antigua servida desde la caché del service worker.
  */
-export function levelFor(confidence: number): ConfidenceLevel {
+function levelFor(confidence: number): ConfidenceLevel {
   if (confidence < UNSAFE_THRESHOLD) return 'unsafe'
   if (confidence > CONFIRMED_THRESHOLD) return 'confirmed'
   return 'possible'

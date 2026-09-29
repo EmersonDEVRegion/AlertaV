@@ -66,7 +66,7 @@ describe('cromo: sólo tokens', () => {
 describe('datos: intactos', () => {
   it('la paleta de datos conserva sus hex y no adopta tokens', () => {
     for (const [name, src] of DOMAIN) {
-      if (!/Symbology\.ts$/.test(name)) continue
+      if (!name.endsWith('Symbology.ts')) continue
       // Un token de cromo dentro de la simbología significaría que el color de
       // un dato pasó a depender del tema, que es justo lo que no puede pasar.
       expect(`${name}: ${src.match(/var\(--(?:surface|ink|accent|urgent)[a-z-]*\)/)?.[0] ?? 'sin tokens'}`)

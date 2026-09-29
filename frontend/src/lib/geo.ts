@@ -17,7 +17,7 @@
  */
 
 /** Radio medio terrestre (IUGG), en kilómetros. */
-export const EARTH_RADIUS_KM = 6371.0088
+const EARTH_RADIUS_KM = 6371.0088
 
 const toRad = (deg: number): number => (deg * Math.PI) / 180
 const toDeg = (rad: number): number => (rad * 180) / Math.PI
@@ -39,7 +39,7 @@ export type Position = [number, number]
  * @param bearingDeg  rumbo desde el norte verdadero, sentido horario
  * @param distanceKm  distancia sobre la superficie
  */
-export function destination(
+function destination(
   lon: number,
   lat: number,
   bearingDeg: number,
