@@ -82,7 +82,14 @@ export const CitizenReportControl = memo(function CitizenReportControl({
           //
           // De ahí que la transición del primitivo nombre `translate` y `scale`
           // por separado: `transform` no lo declara nadie.
-          hidden ? 'hidden md:inline-flex' : 'inline-flex',
+          //
+          // Escondido sólo en teléfono con `max-md:hidden`, y no con
+          // `hidden md:inline-flex`: la base de `Button` ya trae `inline-flex`,
+          // y en la hoja que genera Tailwind v4 `.inline-flex` va DESPUÉS de
+          // `.hidden`, así que a igual especificidad ganaba y el botón nunca se
+          // escondía. La variante `max-md:` vive en una media query, que sale
+          // al final de la hoja y gana sin pelear por el orden.
+          hidden && 'max-md:hidden',
         )}
       >
         <svg
