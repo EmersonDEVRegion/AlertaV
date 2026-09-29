@@ -30,7 +30,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.collectors.geoservices import normalise_text
-from app.collectors.lugares import comuna_por_nombre
 from app.models.enums import INCIDENT_FAMILY, IncidentType
 
 #: Alias del campo comuna en las capas institucionales.
@@ -152,6 +151,13 @@ def extract_commune(
     if isinstance(geocodificado, Mapping):
         comuna = geocodificado.get("comuna")
         if isinstance(comuna, str) and comuna.strip() and not is_whole_area(comuna):
+            # Import local, no de módulo: `lugares` importa el paquete
+            # `collectors.weather`, cuyo `__init__` carga un collector que
+            # importa `collectors.base`, que importa `services`… que importa
+            # este módulo. Arriba del archivo, `python -m app.workers` moría
+            # con un import circular (el deploy del 2026-09-28).
+            from app.collectors.lugares import comuna_por_nombre
+
             # El nombre canónico si es una comuna de la región («Vina del Mar»
             # → «Viña del Mar»): el Paso B compara contra esos nombres.
             return comuna_por_nombre(comuna) or comuna.strip()
