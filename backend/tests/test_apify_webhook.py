@@ -135,8 +135,12 @@ def _config_de_prueba():
             "APIFY_WEBHOOK_MAX_AGE_MINUTES",
             "BOMBEROS_ACCIDENT_KEYS",
             "BOMBEROS_MAX_LLM_CALLS",
+            "APIFY_X_CUENTAS_ESPERADAS",
         )
     }
+    # Sin exigencia de cuentas: la mayoría de estos tests arma lotes de una sola
+    # central. El bloque «Ceguera», al final, la enciende.
+    settings.APIFY_X_CUENTAS_ESPERADAS = []
     settings.APIFY_TOKEN = "token-de-prueba"
     settings.APIFY_WEBHOOK_SECRET = ""
     # Guard apagado por defecto, que es el estado de un despliegue que todavía
@@ -1304,3 +1308,159 @@ def test_el_runner_solo_levanta_el_inbox_con_todos_los_collectors(monkeypatch):
     levantados.clear()
     asyncio.run(runner.run_loop(None))
     assert "inbox" in levantados
+
+
+# --- 8. Ceguera: un Actor que corre y no ve (2026-09-29) ----------------------
+#
+# Del 2026-08-31 al 2026-09-29 `apidojo/tweet-scraper` se negó a raspar en el
+# plan Free lanzado por el Scheduler: escribía diez `{"noResults": true}` y
+# terminaba en SUCCEEDED. Cada entrega cerró `success` con 0 insertados y la
+# salud mostró las tres familias en verde durante un mes sin un despacho.
+
+RELLENO_APIDOJO = [{"noResults": True}] * 10
+
+
+def tuit_de(cuenta: str, texto: str, *, id_: str, minutos: int = 5) -> dict:
+    """Un tuit con la forma de xquik/x-tweet-scraper (salida por defecto)."""
+    momento = AHORA - timedelta(minutes=minutos)
+    return {
+        "id": id_,
+        "text": texto,
+        "createdAt": momento.strftime("%a %b %d %H:%M:%S +0000 %Y"),
+        "url": f"https://x.com/{cuenta}/status/{id_}",
+        "author": {"id": "1", "username": cuenta, "name": "Central"},
+    }
+
+
+@pytest.fixture
+def exigir_centrales():
+    settings.APIFY_X_CUENTAS_ESPERADAS = ["CGI_CBV", "CBVM132"]
+
+
+@respx.mock
+def test_el_relleno_de_apidojo_deja_la_corrida_degradada(servicio, exigir_centrales):
+    """El caso real: diez `noResults` ya no se leen como un lote tranquilo."""
+    respx.get(ITEMS_URL).mock(return_value=httpx.Response(200, json=RELLENO_APIDOJO))
+
+    asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
+
+    hecho = ServicioFalso.ultimo
+    assert hecho.status is CollectorStatus.DEGRADED
+    assert "@cgi_cbv" in (hecho.error or "").lower()
+    assert "10 items de relleno" in (hecho.error or "")
+
+
+@respx.mock
+def test_un_dataset_vacio_tambien_es_ceguera(servicio, exigir_centrales):
+    respx.get(ITEMS_URL).mock(return_value=httpx.Response(200, json=[]))
+
+    asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
+
+    assert ServicioFalso.ultimo.status is CollectorStatus.DEGRADED
+
+
+@respx.mock
+def test_si_falta_una_central_la_corrida_queda_parcial_y_la_nombra(servicio, exigir_centrales):
+    respx.get(ITEMS_URL).mock(
+        return_value=httpx.Response(
+            200, json=[tuit_de("CGI_CBV", "81 * SIERRA / REPUBLICA * CLAVE 12", id_="1")]
+        )
+    )
+
+    asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
+
+    hecho = ServicioFalso.ultimo
+    assert hecho.status is CollectorStatus.PARTIAL
+    assert "@cbvm132" in (hecho.error or "").lower()
+
+
+@respx.mock
+def test_con_las_dos_centrales_a_la_vista_un_lote_sin_despachos_es_success(
+    servicio, exigir_centrales
+):
+    """Tuits viejos y sin clave: el Actor ve, la central no despachó. Es calma."""
+    respx.get(ITEMS_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                tuit_de("CGI_CBV", "91 * GUACOLDA / DIEGO COOK * CLAVE 12", id_="1", minutos=300),
+                tuit_de("CBVM132", "Clave 16 U-63 al cuartel", id_="2", minutos=90),
+            ],
+        )
+    )
+
+    asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
+
+    hecho = ServicioFalso.ultimo
+    assert hecho.status is CollectorStatus.SUCCESS
+    assert hecho.eventos == []
+
+
+@respx.mock
+def test_el_formato_de_fecha_de_x_se_respeta_y_lo_viejo_no_entra(servicio):
+    """Hasta hoy «Tue Sep 29 …  +0000 2026» no se entendía y el despacho
+    pasaba como SIN fecha: con un Actor que devolviera tuits reales, los de
+    hace días habrían entrado al mapa con la hora de la entrega."""
+    respx.get(ITEMS_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                tuit_de("CGI_CBV", "112 * ALEJANDRO BERTRAND / RICARDO DE FERRARI * CLAVE 4-1",
+                        id_="1", minutos=20),
+                tuit_de("CGI_CBV", "22, 41 * AVENIDA ERRAZURIZ / PASAJE ROSS * CLAVE 5-1",
+                        id_="2", minutos=540),
+            ],
+        )
+    )
+    settings.BOMBEROS_ACCIDENT_KEYS = ["4-1", "5-1"]
+
+    asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
+
+    hecho = ServicioFalso.ultimo
+    assert len(hecho.eventos) == 1, "el 5-1 de hace nueve horas no describe el presente"
+    assert "4-1" in hecho.eventos[0].text or "BERTRAND" in hecho.eventos[0].text.upper()
+    assert "más viejos" in (hecho.error or "")
+
+
+def test_fecha_de_tuit_entiende_el_formato_de_x_sin_depender_del_locale():
+    assert svc.fecha_de_tuit("Tue Sep 29 18:50:12 +0000 2026") == datetime(
+        2026, 9, 29, 18, 50, 12, tzinfo=UTC
+    )
+    assert svc.fecha_de_tuit("Tue Sep 29 15:50:12 -0300 2026") == datetime(
+        2026, 9, 29, 18, 50, 12, tzinfo=UTC
+    )
+    assert svc.fecha_de_tuit("2026-09-29T18:50:12Z") == datetime(
+        2026, 9, 29, 18, 50, 12, tzinfo=UTC
+    )
+    assert svc.fecha_de_tuit("Tue Xyz 29 18:50:12 +0000 2026") is None
+    assert svc.fecha_de_tuit(None) is None
+
+
+def test_el_autor_de_xquik_y_de_scweet_tambien_se_lee():
+    assert svc.tweet_handle({"author": {"username": "CGI_CBV"}}) == "@CGI_CBV"
+    assert svc.tweet_handle({"authorUsername": "CBVM132"}) == "@CBVM132"
+    assert svc.tweet_handle({"tweet_url": "https://x.com/CGI_CBV/status/9"}) == "@CGI_CBV"
+
+
+def test_un_item_sin_nada_de_tuit_es_relleno_y_uno_sin_clave_no():
+    from app.collectors.social.apify_client import describe_items
+
+    buenos, problemas = describe_items(
+        [{"noResults": True}, {"foo": 1}, tuit("Feliz aniversario", id_="7")]
+    )
+    assert len(buenos) == 1
+    assert problemas and "2 items de relleno" in problemas[0]
+
+
+def test_estado_de_entrega():
+    degradado, parcial, exito = (
+        CollectorStatus.DEGRADED,
+        CollectorStatus.PARTIAL,
+        CollectorStatus.SUCCESS,
+    )
+    dos = ["cgi_cbv", "cbvm132"]
+    assert svc.estado_de_entrega(ciegas=dos, esperadas=dos, problemas=False) is degradado
+    assert svc.estado_de_entrega(ciegas=["cbvm132"], esperadas=dos, problemas=False) is parcial
+    assert svc.estado_de_entrega(ciegas=[], esperadas=dos, problemas=True) is parcial
+    assert svc.estado_de_entrega(ciegas=[], esperadas=dos, problemas=False) is exito
+    assert svc.estado_de_entrega(ciegas=[], esperadas=[], problemas=False) is exito

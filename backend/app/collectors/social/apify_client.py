@@ -50,6 +50,7 @@ def describe_items(items: Sequence[Any]) -> tuple[list[dict[str, Any]], list[str
     """
     good: list[dict[str, Any]] = []
     problems: list[str] = []
+    relleno = 0
 
     for item in items:
         if not isinstance(item, Mapping):
@@ -60,9 +61,48 @@ def describe_items(items: Sequence[Any]) -> tuple[list[dict[str, Any]], list[str
             perfil = item.get("username") or item.get("inputUrl") or "?"
             problems.append(f"Apify devolvió un error para «{perfil}»: {error}")
             continue
+        if es_marcador_vacio(item):
+            relleno += 1
+            continue
         good.append(dict(item))
 
+    if relleno:
+        # Uno por lote y no uno por item: el Actor del 2026-09 mandaba diez
+        # iguales en cada corrida, y diez líneas idénticas en `collector_runs`
+        # no dicen más que una con el número.
+        problems.append(
+            f"el Actor devolvió {relleno} items de relleno sin datos "
+            "(noResults / demo): no está entregando resultados reales"
+        )
     return (good, problems)
+
+
+#: Claves con las que los Actors marcan un item de relleno en vez de fallar.
+#:
+#: `noResults` es la de `apidojo/tweet-scraper`: desde septiembre de 2026, en
+#: el plan Free y lanzado por el Scheduler, el Actor no raspa nada, escribe
+#: diez `{"noResults": true}` y termina en `SUCCEEDED`. Cobra la corrida igual.
+_MARCAS_DE_RELLENO = ("noResults", "no_results", "isDemo", "demo")
+
+
+def es_marcador_vacio(item: Mapping[str, Any]) -> bool:
+    """¿Es un item que el Actor puso para no dejar el dataset vacío?
+
+    Se lo reconoce por una marca explícita o por no traer nada de un tuit: ni
+    texto, ni id, ni URL. Un item así no es un tuit sin clave —que sería
+    silencio legítimo de la central— sino un Actor que no ve.
+    """
+    if any(item.get(marca) is True for marca in _MARCAS_DE_RELLENO):
+        return True
+    return not any(item.get(clave) for clave in _CLAVES_DE_TUIT)
+
+
+#: Lo mínimo que trae cualquier tuit real, en los nombres de los Actors conocidos.
+_CLAVES_DE_TUIT = (
+    "text", "full_text", "fullText", "content", "rawContent",
+    "id", "id_str", "tweetId", "rest_id",
+    "url", "twitterUrl", "tweetUrl", "tweet_url", "permalink",
+)
 
 
 def build_client(timeout: float | None = None) -> httpx.AsyncClient:

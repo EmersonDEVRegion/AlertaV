@@ -648,7 +648,7 @@ class Settings(BaseSettings):
     #: cuándo el webhook de Bomberos lleva demasiado callado. Tres cadencias sin
     #: entrega = `stale`. Si el Schedule se espacia para cuidar la cuota, hay que
     #: subirlo acá también, o las tres familias quedan marcadas en falso.
-    APIFY_X_SCHEDULE_MINUTES: int = Field(default=60, ge=5, le=1440)
+    APIFY_X_SCHEDULE_MINUTES: int = Field(default=30, ge=5, le=1440)
 
     #: Token de la API de Apify. Viaja SIEMPRE en la cabecera `Authorization`,
     #: nunca en la query: una URL con el token dentro termina en los logs de
@@ -709,6 +709,23 @@ class Settings(BaseSettings):
     #: este corte, la primera llamada del webhook ingeriría meses de despachos
     #: con la hora de hoy y llenaría el mapa de siniestros que ya se resolvieron.
     APIFY_WEBHOOK_MAX_AGE_MINUTES: int = Field(default=180, ge=5, le=1440)
+    #: Cuentas de X que el Task tiene que traer en CADA entrega, sin arroba.
+    #:
+    #: Existe por lo que pasó del 2026-08-31 al 2026-09-29: el Actor de X dejó
+    #: de devolver tuits en el plan Free —diez items `{"noResults": true}` por
+    #: corrida— y cada entrega cerró en `success` con 0 insertados. Un mes sin
+    #: un despacho con la salud en verde. Con el orden «más recientes primero»
+    #: y sin filtro de fecha, un Actor que funciona trae SIEMPRE los últimos
+    #: tuits de cada cuenta, aunque sean de ayer. Así que una entrega sin un
+    #: solo tuit propio de una de estas cuentas no es calma: es ceguera.
+    #:
+    #: - Ninguna de las cuentas aparece → `degraded` (la salud lo muestra).
+    #: - Falta alguna → `partial`, con la cuenta nombrada en el detalle.
+    #:
+    #: Vacía = no se exige nada (así corren los tests).
+    APIFY_X_CUENTAS_ESPERADAS: CsvList = Field(
+        default_factory=lambda: ["CGI_CBV", "CBVM132"]
+    )
     #: Cada cuánto el proceso de workers mira el inbox del webhook. Es la
     #: latencia máxima entre el aviso de Apify y el despacho en el mapa: una
     #: consulta indexada cada 10 s cuesta nada y mantiene la promesa de

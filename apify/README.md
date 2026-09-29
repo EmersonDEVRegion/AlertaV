@@ -5,9 +5,39 @@ sola cosa: raspar las cuentas de X de las centrales de Bomberos.
 
 | Task | Actor | Cuentas | Entrega en | Ingiere como |
 |---|---|---|---|---|
-| `alertav-bomberos` | Tweet Scraper V2 | `@CBVM132`, `@CGI_CBV` | `POST /api/v1/apify/webhook` | `bomberos`, confianza **1.00** |
+| `alertav-bomberos` | `xquik/x-tweet-scraper` | `@CGI_CBV`, `@CBVM132` (6 tuits cada una) | `POST /api/v1/apify/webhook` | `bomberos`, confianza **1.00** |
 
-`configurar.ps1` crea o actualiza ese Task, su webhook y el Schedule `alertav`.
+`configurar.ps1` crea o actualiza ese Task, lo **prueba** con una corrida por la
+API, y recién entonces ajusta el Schedule `alertav` (cada 30 min) y el webhook.
+
+## Septiembre de 2026: un mes sin despachos con la salud en verde
+
+Del 31-08 al 29-09 no entró **ni un despacho** de Bomberos. El Actor de
+entonces, `apidojo/tweet-scraper`, dejó de raspar en el plan Free cuando lo
+lanza el Scheduler: cada corrida terminaba en `SUCCEEDED` con diez items
+`{"noResults": true}` y cobraba US$ 0,004. Su log lo decía —*«The developer of
+this actor doesn't allow the use of Scheduler in the Free Plan»*— pero nadie lo
+leía, y el webhook trataba esos items como tuits sin clave: `success`, 0
+insertados, salud `ok`.
+
+Lo que cambió:
+
+- **Actor:** `xquik/x-tweet-scraper`, US$ 0,00015 por tuit, sin cargo por
+  corrida, con `maxItemsPerTarget` para repartir el cupo entre las dos cuentas.
+- **Ceguera visible:** el backend exige ver tuits de las cuentas de
+  `APIFY_X_CUENTAS_ESPERADAS` (por defecto las dos) en cada entrega. Sin
+  ninguna → `degraded`, y `/collectors/health` lo muestra; falta una →
+  `partial`, con la cuenta nombrada. Los items de relleno se cuentan aparte.
+- **Fechas:** el formato de X (`Tue Sep 29 18:50:12 +0000 2026`) no se
+  entendía y el despacho pasaba como «sin fecha», que el filtro de edad deja
+  pasar. Con un Actor que funcionara, la primera entrega habría metido al mapa
+  despachos de hace días con la hora de hoy.
+- **`-Auditar`** muestra lo que trajeron las últimas corridas
+  (`10 items, 10 de relleno: ningun tuit con autor` era el síntoma).
+
+La prueba de `configurar.ps1` usa la API, **no el Scheduler**, que es justo
+donde falló el Actor anterior. Después del primer disparo programado hay que
+mirar `-Auditar` o `/collectors/health`.
 
 > **Correr `configurar.ps1` antes del 26-09-2026.** Al 23-09, la cuenta sigue
 > con el Schedule `alertav` corriendo los tres Tasks viejos cada 30 minutos, y
@@ -64,24 +94,26 @@ El 3 de septiembre la cuenta llegó a US$ 5,01 de US$ 5 y Apify dejó de iniciar
 Actors hasta el 26: Bomberos no entregó nada durante tres semanas. Instagram
 fue el 91 % del gasto, y por eso salió.
 
-Con sort `Latest`, cada corrida devuelve los `maxItems` tuits más recientes
-**aunque ya se hayan leído**, y los repetidos se vuelven a cobrar. El peor caso
-del mes es `corridas × maxItems × US$ 0,0004`:
+Con `queryType: Latest`, cada corrida devuelve los `maxItems` tuits más
+recientes **aunque ya se hayan leído**, y los repetidos se vuelven a cobrar. Es
+a propósito: que el Actor traiga siempre los últimos tuits de cada central es
+lo que permite distinguir «no publicó» de «no se ve». Con xquik el peor caso
+del mes es `corridas × maxItems × US$ 0,00015`:
 
 | Cron | maxItems | Peor caso al mes | ¿Cabe en Free (US$ 5)? |
 |---|---|---|---|
-| `*/30 * * * *` | 25 | US$ 14,88 | No |
-| `0 * * * *` (**el de ahora**) | 15 | US$ 4,46 | Sí, con margen |
-| `0 */2 * * *` | 25 | US$ 3,72 | Sí |
+| `*/15 * * * *` | 12 | US$ 5,36 | No |
+| `*/30 * * * *` (**el de ahora**) | 12 | US$ 2,68 | Sí |
+| `0 * * * *` | 12 | US$ 1,34 | Sí |
 
 `configurar.ps1` hace esta cuenta antes de tocar nada y **se niega a seguir**
 si el peor caso pasa de US$ 4,50, salvo que se le pase `-AceptarCosto`. Esa
 opción es para cuando la cuenta tenga un plan de pago.
 
-Lo que se pierde con 15 tuits por hora: si entre las dos centrales publican más
-de 15 despachos en una hora, los más viejos de esa hora no llegan. Si el log del
-webhook muestra una y otra vez corridas de exactamente 15 ítems, esa es la señal
-de que hace falta más cupo, ya sea con un plan de pago o con más frecuencia.
+Lo que se pierde con 6 tuits por central cada media hora: si una central
+publica más de 6 cosas en 30 minutos, las más viejas de esa media hora no
+llegan. `maxItemsPerTarget` reparte el cupo, así que la Clave 16 de Viña ya no
+puede dejar fuera a Valparaíso.
 
 Si se cambia el Cron, hay que cambiar `APIFY_X_SCHEDULE_MINUTES` en Render al
 mismo valor. El script lo imprime al final. Si no coinciden, `/collectors/health`
@@ -94,7 +126,8 @@ cadencia.
 ```
 Timeout             180 s      (0 = sin límite, y una corrida colgada se come el crédito)
 Memory              512 MB     (256 MB va lento y una corrida lenta muere por timeout)
-Maximum cost/run    US$ 0,01   (opción maxTotalChargeUsd; -MaxCostoPorCorrida en el script)
+Maximum cost/run    US$ 0,01   (opción maxTotalChargeUsd; -MaxCostoPorCorrida en el script;
+                               una corrida normal cuesta ~US$ 0,002)
 ```
 
 Hasta el 2026-09-23 el Task decía "Maximum cost per run: Unlimited": este
@@ -121,7 +154,9 @@ Evento: `ACTOR.RUN.SUCCEEDED`. La plantilla de payload por defecto sirve tal cua
 ## Después de la primera entrega
 
 Autorizar el `actorTaskId` del Task, que sale en el log de la primera entrega
-(campo `ids_actor`) y al final de `configurar.ps1`:
+(campo `ids_actor`) y al final de `configurar.ps1`. **Al cambiar de Actor el
+Task es otro y su id también**: hay que reemplazarlo en Render, o el webhook
+ignora las entregas del Task nuevo.
 
 ```
 APIFY_BOMBEROS_ACTOR_IDS = <actorTaskId del Task alertav-bomberos>

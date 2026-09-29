@@ -70,6 +70,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
@@ -273,10 +274,13 @@ async def fetch_dataset_items(dataset_id: str, *, limit: int) -> list[Any]:
 
 
 #: Dónde dice el Actor quién publicó el tuit. Varía por Actor igual que el texto.
-_AUTHOR_KEYS = ("userName", "username", "screen_name", "screenName", "handle")
+_AUTHOR_KEYS = (
+    "userName", "username", "screen_name", "screenName", "handle",
+    "authorUsername", "author_username",
+)
 _AUTHOR_CONTAINERS = ("author", "user")
 #: Dónde viene el enlace público del tuit.
-_URL_KEYS = ("url", "twitterUrl", "permalink")
+_URL_KEYS = ("url", "twitterUrl", "tweetUrl", "tweet_url", "permalink")
 _X_HOSTS = frozenset({"x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"})
 
 
@@ -360,6 +364,52 @@ def claves_de_ingesta(sistema: SistemaClaves) -> list[str]:
     return [key.strip() for key in getattr(settings, ajuste, []) if key.strip()]
 
 
+_MESES_EN = {
+    m: i
+    for i, m in enumerate(
+        ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"),
+        start=1,
+    )
+}
+#: «Sun Mar 15 12:00:00 +0000 2026»: el `created_at` clásico de X, que es el que
+#: devuelven los Actors de tuits (apidojo, xquik) en su formato por defecto.
+_FECHA_X = re.compile(
+    r"^[A-Za-z]{3}\s+(?P<mes>[A-Za-z]{3})\s+(?P<dia>\d{1,2})\s+"
+    r"(?P<h>\d{2}):(?P<m>\d{2}):(?P<s>\d{2})\s+(?P<tz>[+-]\d{4})\s+(?P<anio>\d{4})$"
+)
+
+
+def fecha_de_tuit(valor: Any) -> datetime | None:
+    """Fecha de publicación de un tuit, en UTC. None si no se entiende.
+
+    `parse_timestamp` sabe de ISO y de epoch, pero NO del formato clásico de X.
+    Hasta el 2026-09-29 ese formato caía a None, y un despacho sin fecha pasa
+    `is_fresh` por diseño: con un Actor que devolviera tuits de verdad, la
+    primera entrega habría metido al mapa despachos de hace días con la hora
+    de hoy. Se parsea a mano y no con `strptime("%a %b …")`, que depende del
+    locale del proceso: en un Windows en español «Mar» es martes.
+    """
+    if isinstance(valor, str):
+        encontrado = _FECHA_X.match(valor.strip())
+        if encontrado:
+            mes = _MESES_EN.get(encontrado["mes"].lower())
+            if mes is None:
+                return None
+            tz = encontrado["tz"]
+            signo = 1 if tz[0] == "+" else -1
+            desfase = timedelta(hours=int(tz[1:3]), minutes=int(tz[3:5])) * signo
+            try:
+                local = datetime(
+                    int(encontrado["anio"]), mes, int(encontrado["dia"]),
+                    int(encontrado["h"]), int(encontrado["m"]), int(encontrado["s"]),
+                    tzinfo=UTC,
+                )
+            except ValueError:
+                return None
+            return local - desfase
+    return parse_timestamp(valor)
+
+
 def parse_tweet(payload: Any, keys: Sequence[str]) -> Dispatch | None:
     """Un item del dataset → `Dispatch`, si trae una clave configurada.
 
@@ -393,7 +443,7 @@ def parse_tweet(payload: Any, keys: Sequence[str]) -> Dispatch | None:
         # intenta aislar la calle: cualquier heurística que lo hiciera
         # descartaría contexto que un operador sí sabe leer.
         address=text,
-        occurred_at=parse_timestamp(_first(payload, _DATE_KEYS)),
+        occurred_at=fecha_de_tuit(_first(payload, _DATE_KEYS)),
         commune=None,
         raw_text=text[:2000],
         guid=guid,
@@ -653,6 +703,47 @@ async def _sin_repetidos(
     return nuevos, len(dispatches) - len(nuevos)
 
 
+#: Si el tuit más nuevo de una central tiene más que esto, se anota. Las dos
+#: publican varias veces al día; dos días sin nada nuevo huele a un Actor que
+#: sirve un caché. Es nota y no cambia el estado: un feriado tranquilo existe.
+SILENCIO_SOSPECHOSO = timedelta(hours=48)
+
+
+def cuentas_esperadas() -> list[str]:
+    """Cuentas que cada entrega tiene que traer, sin arroba y en minúsculas."""
+    return [
+        c.strip().lstrip("@").lower()
+        for c in settings.APIFY_X_CUENTAS_ESPERADAS
+        if c.strip().lstrip("@")
+    ]
+
+
+def cuentas_sin_tuits(vistos: Mapping[str, int]) -> list[str]:
+    """Las cuentas esperadas de las que el Actor no trajo ni un tuit."""
+    return [c for c in cuentas_esperadas() if not vistos.get(c)]
+
+
+def estado_de_entrega(
+    *, ciegas: Sequence[str], esperadas: Sequence[str], problemas: bool
+) -> CollectorStatus:
+    """El estado con que cierra una entrega.
+
+    - **`degraded`** si no se vio NINGUNA de las centrales esperadas. Es lo
+      que la salud muestra como ceguera, y lo que faltó durante todo
+      septiembre de 2026: con diez items de relleno por corrida, cada entrega
+      cerraba `success` y las tres familias del mapa se veían sanas.
+    - **`partial`** si falta alguna, o hubo un problema reportado por Apify, o
+      una clave sin configurar.
+    - **`success`** en otro caso, incluido el lote que no trae despachos: la
+      central publica mucho más que claves, y eso es silencio legítimo.
+    """
+    if esperadas and len(ciegas) == len(esperadas):
+        return CollectorStatus.DEGRADED
+    if ciegas or problemas:
+        return CollectorStatus.PARTIAL
+    return CollectorStatus.SUCCESS
+
+
 def _marcar_inbox(run: Any, estado: str) -> None:
     """Deja el estado final del inbox en `params` antes de cerrar la corrida."""
     run.params = {**(getattr(run, "params", None) or {}), "inbox": estado}
@@ -705,8 +796,24 @@ async def _process(dataset_id: str, traza: str, run_id: int | None = None) -> No
             claves_no_configuradas: Counter[str] = Counter()
             cuentas_sin_tabla: Counter[str] = Counter()
             retuits = 0
+            # Tuits de cada central que el Actor trajo, retuits incluidos: la
+            # prueba de que la está viendo. Sólo cuenta el autor DECLARADO en el
+            # item (objeto, campo o URL), nunca el de respaldo: un item sin autor
+            # no demuestra nada.
+            vistos: Counter[str] = Counter()
+            mas_nuevo: dict[str, datetime] = {}
 
             for item in buenos:
+                declarada = tweet_handle(item)
+                if declarada is not None:
+                    clave_cuenta = declarada.lstrip("@").lower()
+                    vistos[clave_cuenta] += 1
+                    fecha = fecha_de_tuit(_first(item, _DATE_KEYS))
+                    if fecha is not None and (
+                        clave_cuenta not in mas_nuevo or fecha > mas_nuevo[clave_cuenta]
+                    ):
+                        mas_nuevo[clave_cuenta] = fecha
+
                 if es_retuit(item):
                     retuits += 1
                     continue
@@ -714,7 +821,7 @@ async def _process(dataset_id: str, traza: str, run_id: int | None = None) -> No
                 # Cada tuit se lee con el diccionario de la central que lo
                 # publicó. Sin autor en el item —Actors viejos, o el formato de
                 # los tests— rige la cuenta configurada, como siempre.
-                cuenta = tweet_handle(item) or respaldo
+                cuenta = declarada or respaldo
                 sistema = sistema_de_cuenta(cuenta)
                 if sistema is None:
                     # Una cuenta sin tabla NO se lee con la de otro Cuerpo. Es
@@ -874,10 +981,27 @@ async def _process(dataset_id: str, traza: str, run_id: int | None = None) -> No
             # El descarte por edad NO: es el filtro haciendo su trabajo, y
             # marcarlo pintaría de amarillo cada corrida nocturna. Se anota
             # igual, porque anotar y alarmar son cosas distintas.
-            estado = (
-                CollectorStatus.PARTIAL
-                if problemas or claves_no_configuradas
-                else CollectorStatus.SUCCESS
+            ciegas = cuentas_sin_tuits(vistos)
+            esperadas = cuentas_esperadas()
+            if ciegas:
+                notas.insert(
+                    0,
+                    "el Actor no trajo ningún tuit de "
+                    + ", ".join(f"@{c}" for c in ciegas)
+                    + f" ({len(items)} items en el dataset): esa central no se está viendo",
+                )
+            for cuenta_vista, fecha in sorted(mas_nuevo.items()):
+                if cuenta_vista in esperadas and now - fecha > SILENCIO_SOSPECHOSO:
+                    horas = int((now - fecha).total_seconds() // 3600)
+                    notas.append(
+                        f"el tuit más reciente de @{cuenta_vista} que trajo el Actor "
+                        f"tiene {horas} h: ¿está devolviendo un timeline viejo?"
+                    )
+
+            estado = estado_de_entrega(
+                ciegas=ciegas,
+                esperadas=esperadas,
+                problemas=bool(problemas or claves_no_configuradas),
             )
 
             if run_id is not None:
@@ -945,11 +1069,16 @@ __all__ = [
     "INBOX_MAX_INTENTOS",
     "INBOX_PENDIENTE",
     "INBOX_RECLAMO_VENCE",
+    "SILENCIO_SOSPECHOSO",
     "claves_de_ingesta",
+    "cuentas_esperadas",
+    "cuentas_sin_tuits",
     "dataset_items_url",
     "encolar_dataset",
     "es_retuit",
+    "estado_de_entrega",
     "extract_dataset_id",
+    "fecha_de_tuit",
     "fetch_dataset_items",
     "is_fresh",
     "parse_tweet",
