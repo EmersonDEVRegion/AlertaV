@@ -46,9 +46,31 @@ function json(body: unknown, status = 200): Response {
   })
 }
 
+/** Un corte de agua vigente: la fila del panel aparece y se queda quieta. */
+const WATER_BODY = {
+  type: 'FeatureCollection',
+  features: [
+    {
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [-71.54, -33.02] },
+      properties: { public_id: 'agua-1', comuna: 'Viña del Mar', programado: false },
+    },
+  ],
+  generado_en: '2026-09-23T18:31:00+00:00',
+  total: 1,
+  fuente: {
+    collector: 'esval_cortes_agua',
+    estado: 'ok',
+    ultima_corrida: '2026-09-23T18:30:05+00:00',
+    ultima_lectura: '2026-09-23T18:30:00+00:00',
+    detalle: null,
+  },
+}
+
 /** La API de siempre: nada cambia entre un sondeo y el siguiente. */
 function quietApi(input: RequestInfo | URL): Promise<Response> {
   const url = String(input)
+  if (url.includes('/events/water-cuts/')) return Promise.resolve(json(WATER_BODY))
   if (url.includes('/incidents/active')) return Promise.resolve(json([]))
   if (url.includes('/collectors/health')) {
     return Promise.resolve(json({ by_family: {}, collectors: [] }))
@@ -119,15 +141,19 @@ describe('App quieta', () => {
     expect(renders.map - base.map).toBe(0)
     expect(renders.panel - base.panel).toBe(0)
     expect(renders.header - base.header).toBe(0)
+    // La capa de agua también sondea: la prueba la cubre, no la esquiva.
+    const pedidas = vi.mocked(fetch).mock.calls.map(([input]) => String(input))
+    expect(pedidas.some((url) => url.includes('/events/water-cuts/geojson'))).toBe(true)
     client.clear()
   })
 
-  it('seleccionar un incidente, un sismo o el radar no pasa por App', async () => {
+  it('seleccionar un incidente, un sismo, un corte de agua o el radar no pasa por App', async () => {
     const { client } = await mountApp()
     const base = { ...renders }
 
     act(() => selectIncident('INC-2026-00001'))
     act(() => select({ kind: 'seismic', usgsId: 'us7000abcd' }))
+    act(() => select({ kind: 'water', id: 'agua-1' }))
     act(() => select({ kind: 'radar' }))
     act(() => select({ kind: 'none' }))
 

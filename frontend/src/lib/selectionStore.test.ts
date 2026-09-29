@@ -9,6 +9,8 @@ import {
   selectIncident,
   selectSeismic,
   useRadarOpen,
+  useSelectedWaterCutId,
+  selectWaterCut,
   useSelectedIncidentCode,
   useSelectedSeismicId,
 } from './selectionStore'
@@ -71,5 +73,33 @@ describe('selectionStore', () => {
     select({ kind: 'radar' })
     clearSelection()
     expect(getSelection().kind).toBe('none')
+  })
+
+  it('un corte de agua es una selección más: excluye al incidente y no repinta al radar', () => {
+    let radarRenders = 0
+    const water = renderHook(() => useSelectedWaterCutId())
+    const incident = renderHook(() => useSelectedIncidentCode())
+    renderHook(() => {
+      radarRenders += 1
+      return useRadarOpen()
+    })
+    const radarBefore = radarRenders
+
+    act(() => selectIncident('INC-9'))
+    act(() => selectWaterCut('agua-1'))
+    expect(water.result.current).toBe('agua-1')
+    expect(incident.result.current).toBeNull()
+    expect(radarRenders).toBe(radarBefore)
+
+    // El mismo corte otra vez no avisa; otro corte sí.
+    act(() => selectWaterCut('agua-1'))
+    expect(getSelection()).toEqual({ kind: 'water', id: 'agua-1' })
+    act(() => selectWaterCut('agua-2'))
+    expect(water.result.current).toBe('agua-2')
+
+    act(() => clearIf('incident'))
+    expect(getSelection().kind).toBe('water')
+    act(() => clearIf('water'))
+    expect(water.result.current).toBeNull()
   })
 })

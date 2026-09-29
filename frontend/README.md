@@ -234,6 +234,31 @@ emergencias no puede esconder un fuego detrás de un número.
 Antes eran `<Marker>` del DOM con un tope de 150: pasado el tope, el resto
 desaparecía del mapa sin aviso mientras el panel los seguía contando.
 
+### 1c-quater-bis. Cortes de agua (Esval): información de servicio
+
+Una fila más del panel de emergencias, junto a la luz, pero **no es un
+incidente**: `water_cut` está fuera del motor de correlación en el backend, no
+crea incidentes ni manda push, y sale por su propia ruta,
+`/events/water-cuts/geojson`.
+
+- **Vigente = visto en la última lectura de la API de Esval.** Esval no avisa
+  cuándo termina un corte, y su hora de término es referencial. Si el collector
+  cae, se ve lo último conocido y la fila avisa que el cero no es calma.
+- **La fila aparece sola cuando llegan datos.** Esval sólo responde a IP
+  chilenas y el backend sale por un proxy en Chile (`infra/proxy-cl/`); hasta
+  que el backend lo lee por primera vez (`fuente.ultima_lectura`), la fila no
+  existe. `VITE_WATER_CUTS=off` la apaga de emergencia.
+- **En el mapa**, disco cian oscuro `#0e7490` con la gota SDF `av-drop`, en su
+  propia fuente y **por debajo** de los cortes de luz y los incidentes: un
+  incendio en el mismo punto gana el dibujo y el toque. Sin agrupar (un mal día
+  son ~30). Apagar la fila es `visibility`, sin `setData`.
+- **Al tocarlo**, una tarjeta con la forma de la del sismo (`WaterCutCard`):
+  inicio, reposición estimada (en ámbar si ya pasó), motivo y el enlace al
+  visor de Esval. **No hay fila de clientes afectados**: Esval no publica ese
+  dato, y un cero afirmaría lo contrario de «no se sabe».
+- Un corte sin punto (el visor de Esval no respondió) cuenta en la lista y abre
+  la tarjeta, pero no se dibuja ni mueve la cámara.
+
 ### 1c-quinquies. Amenaza sísmica: capa de referencia, no de emergencia
 
 `/api/v1/events/seismic/hazard` (que sirve `backend/static/geo/amenaza_sismica_valpo.json`)
@@ -345,6 +370,8 @@ anidados, así que `sources` se lee del objeto tipado, no del feature.
 | `VITE_ROAD_CLOSURE_POLL_INTERVAL_MS` | `900000` | Cadencia de los cortes de ruta (sólo encendida) |
 | `VITE_VEHICLE_RADAR` | `on` en dev, `off` en build | Radar de vehículos (GBV) |
 | `VITE_VEHICLE_POLL_INTERVAL_MS` | `300000` | Cadencia del radar |
+| `VITE_WATER_CUTS` | `on` | Cortes de agua (Esval). La fila aparece cuando el backend ya tiene datos |
+| `VITE_WATER_CUT_POLL_INTERVAL_MS` | `300000` | Cadencia de los cortes de agua |
 | `VITE_STALE_AFTER_MS` | `180000` | Umbral del aviso de antigüedad |
 | `VITE_MAP_STYLE` / `VITE_MAP_STYLE_DARK` | CARTO Positron / Dark Matter | Estilo del mapa base |
 

@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import type { MapRef } from 'react-map-gl/maplibre'
 import type { SeismicEvent } from '@/api/seismicTypes'
 import type { ActiveIncidentsQuery, Incident } from '@/api/types'
+import type { WaterCut } from '@/api/waterCutTypes'
 import { IncidentMap } from '@/components/map/IncidentMap'
 import { MapLegend } from '@/components/map/MapLegend'
 import { SelectionDetails } from '@/components/incident/SelectionDetails'
@@ -13,6 +14,7 @@ import {
 import type {
   LayerVisibility,
   ProviderVisibility,
+  WaterPanel,
 } from '@/components/ui/SidePanel'
 import { providerOf } from '@/domain/powerSymbology'
 import { layerOf } from '@/domain/families'
@@ -24,7 +26,12 @@ import {
 } from '@/domain/seismicFilter'
 import { FOCUS_ZOOM, SEISMIC_FOCUS_ZOOM } from '@/config/map'
 import { toReachCollection } from '@/lib/overlayGeojson'
-import { clearSelection, selectIncident, selectSeismic } from '@/lib/selectionStore'
+import {
+  clearSelection,
+  selectIncident,
+  selectSeismic,
+  selectWaterCut,
+} from '@/lib/selectionStore'
 import { useIsCompact } from '@/hooks/useMediaQuery'
 import { useTheme } from '@/hooks/useTheme'
 import { useRainLayer } from '@/hooks/useRainLayer'
@@ -44,12 +51,14 @@ import { useCollectorHealth } from '@/hooks/useCollectorHealth'
 import { useSeismicEvents } from '@/hooks/useSeismicEvents'
 import { useNotificationDeepLink } from '@/hooks/useNotificationDeepLink'
 import { useVehicleFeed } from '@/hooks/useVehicleFeed'
+import { useWaterCuts } from '@/hooks/useWaterCuts'
 import { env } from '@/config/env'
 import {
   loadCitizenReportModal,
   loadIncidentSheet,
   loadRadarControls,
   loadSeismicCard,
+  loadWaterCutCard,
   prefetchWhenIdle,
 } from '@/lib/lazyChunks'
 import { usgsIdOf } from '@/lib/push'
@@ -70,6 +79,7 @@ const RadarPanelHost = lazy(() =>
  */
 const NO_INCIDENTS: Incident[] = []
 const NO_SEISMIC: SeismicEvent[] = []
+const NO_WATER: WaterCut[] = []
 
 /** Las familias que viven en la fuente de incidentes. Los cortes tienen la suya. */
 const MAP_FAMILIES = ['fire', 'traffic', 'otros'] as const satisfies readonly IncidentLayerKey[]
@@ -137,13 +147,24 @@ export default function App() {
   const vehicles = useVehicleFeed(radarEnabled)
   const radarButtonRef = useRef<HTMLButtonElement>(null)
 
-  // Lo que aparece al primer toque —la ficha, la tarjeta del sismo, el modal de
-  // reporte y el radar— se adelanta cuando el navegador queda libre.
+  // --- Cortes de agua (Esval) -------------------------------------------------
+  /*
+   * Una fila más del panel de emergencias, junto a la luz, pero no es un
+   * incidente: tiene su propia consulta, su propia fuente en el mapa y su
+   * propia salud. La fila no aparece hasta que el backend leyó a Esval al menos
+   * una vez (`water.available`); ver `useWaterCuts`.
+   */
+  const water = useWaterCuts()
+
+  // Lo que aparece al primer toque —la ficha, las tarjetas del sismo y del
+  // corte de agua, el modal de reporte y el radar— se adelanta cuando el
+  // navegador queda libre.
   useEffect(() => {
     prefetchWhenIdle([
       loadIncidentSheet,
       loadSeismicCard,
       loadCitizenReportModal,
+      ...(env.waterCutsEnabled ? [loadWaterCutCard] : []),
       ...(radarEnabled ? [loadRadarControls] : []),
     ])
   }, [radarEnabled])
@@ -231,6 +252,14 @@ export default function App() {
     [visibility],
   )
 
+  /*
+   * Los cortes de agua van al mapa enteros —apagar la fila es `visibility` en
+   * MapLibre— pero a la tarjeta sólo si la fila está encendida: no se abre una
+   * tarjeta sobre un pin que no se ve.
+   */
+  const mapWaterCuts = water.available ? water.cuts : NO_WATER
+  const visibleWaterCuts = visibility.water ? mapWaterCuts : NO_WATER
+
   const countsByLayer = useMemo(() => {
     const counts = { fire: 0, traffic: 0, power: 0, otros: 0 }
     for (const incident of all) counts[layerOf(incident.type)] += 1
@@ -290,6 +319,29 @@ export default function App() {
       flyTo(event.lon, event.lat, SEISMIC_FOCUS_ZOOM)
     },
     [flyTo],
+  )
+
+  // Un corte sin punto (el visor de Esval no respondió) abre la tarjeta igual,
+  // sin mover la cámara: no hay adónde volar.
+  const focusWaterCut = useCallback(
+    (cut: WaterCut) => {
+      selectWaterCut(cut.id)
+      if (cut.coordinates) flyTo(cut.coordinates[0], cut.coordinates[1], FOCUS_ZOOM)
+    },
+    [flyTo],
+  )
+
+  const waterPanel = useMemo<WaterPanel | null>(
+    () =>
+      water.available
+        ? {
+            cuts: water.cuts,
+            status: water.sourceStatus,
+            detail: water.source?.detalle ?? null,
+            onFocus: focusWaterCut,
+          }
+        : null,
+    [water, focusWaterCut],
   )
 
   // --- Notificación tocada --------------------------------------------------
@@ -352,7 +404,7 @@ export default function App() {
     () => ({
       visibility,
       onChange: setVisibility,
-      counts: { ...countsByLayer, seismic: seismicList.length },
+      counts: { ...countsByLayer, seismic: seismicList.length, water: mapWaterCuts.length },
       incidentsByLayer,
       seismicEvents: seismicList,
       onFocusIncident: focusIncident,
@@ -364,11 +416,14 @@ export default function App() {
       // Va acá y no en cada rama por el mismo motivo que el resto: declarar las
       // propiedades dos veces garantiza que una se quede atrás.
       health: health.data,
+      water: waterPanel,
     }),
     [
       visibility,
       countsByLayer,
       seismicList,
+      mapWaterCuts,
+      waterPanel,
       incidentsByLayer,
       focusIncident,
       focusSeismic,
@@ -449,6 +504,8 @@ export default function App() {
           incidents={mapIncidents}
           visibleFamilies={visibleFamilies}
           outages={outages}
+          waterCuts={mapWaterCuts}
+          showWater={visibility.water}
           seismic={seismicList}
           showSeismic={visibility.seismic}
         />
@@ -530,7 +587,7 @@ export default function App() {
           />
         )}
 
-        <SelectionDetails incidents={list} seismic={seismicList} />
+        <SelectionDetails incidents={list} seismic={seismicList} waterCuts={visibleWaterCuts} />
 
         {radarEnabled && (
           <Suspense fallback={null}>

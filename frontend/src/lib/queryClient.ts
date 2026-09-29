@@ -67,6 +67,14 @@ export const queryKeys = {
     geojson: (params: unknown) => ['road-closures', 'geojson', params] as const,
   },
   /**
+   * Cortes de agua de Esval. Ruta propia: `water_cut` no es un incidente y su
+   * vigencia la decide el backend con la última lectura. Ver `api/waterCuts.ts`.
+   */
+  waterCuts: {
+    all: ['water-cuts'] as const,
+    geojson: () => ['water-cuts', 'geojson'] as const,
+  },
+  /**
    * Capa de amenaza sísmica: un artefacto que el backend sirve en
    * `/events/seismic/hazard` (ver `config/map.ts`). Vive en el mismo cliente
    * igualmente, porque lo que se busca de react-query acá no es la caché sino

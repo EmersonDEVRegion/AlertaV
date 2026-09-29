@@ -22,6 +22,7 @@ import '@/lib/maplibreWorker'
 
 import type { SeismicEvent } from '@/api/seismicTypes'
 import type { Incident } from '@/api/types'
+import type { WaterCut } from '@/api/waterCutTypes'
 import {
   INITIAL_VIEW_STATE,
   MAP_ATTRIBUTION,
@@ -31,13 +32,19 @@ import {
 import type { IncidentLayerKey } from '@/domain/families'
 import type { Theme } from '@/hooks/useTheme'
 import { toConeCollection, type ReachCollection } from '@/lib/overlayGeojson'
-import { toFeatureCollection, toOutageFeatureCollection } from '@/lib/geojson'
+import {
+  toFeatureCollection,
+  toOutageFeatureCollection,
+  toWaterCutFeatureCollection,
+} from '@/lib/geojson'
 import {
   clearSelection,
   selectIncident,
   selectSeismic,
+  selectWaterCut,
   useSelectedIncidentCode,
   useSelectedSeismicId,
+  useSelectedWaterCutId,
 } from '@/lib/selectionStore'
 import {
   incidentIconLayer,
@@ -87,6 +94,15 @@ import {
   outageSelectedLayer,
 } from './outageLayers'
 import {
+  WATER_HIT_LAYER_ID,
+  WATER_SELECTED_LAYER_ID,
+  WATER_SOURCE_ID,
+  waterGlyphLayer,
+  waterHitLayer,
+  waterPinLayer,
+  waterSelectedLayer,
+} from './waterCutLayers'
+import {
   SEISMIC_HIT_LAYER_ID,
   SEISMIC_SOURCE_ID,
   seismicCoreLayer,
@@ -124,6 +140,12 @@ interface IncidentMapProps {
   visibleFamilies: readonly IncidentLayerKey[]
   /** Cortes de luz ya filtrados por capa y por empresa. Van agrupados. */
   outages: readonly Incident[]
+  /**
+   * Cortes de agua vigentes (Esval), con y sin punto: sólo se dibujan los que
+   * lo tienen. Encender o apagar su fila cambia `showWater`, no este arreglo.
+   */
+  waterCuts: readonly WaterCut[]
+  showWater: boolean
   seismic: readonly SeismicEvent[]
   showSeismic: boolean
   /** Tema activo: decide el estilo del mapa base. */
@@ -205,6 +227,16 @@ const SelectedOutageLayer = memo(function SelectedOutageLayer({
   return <Layer {...spec} source={source} />
 })
 
+const SelectedWaterLayer = memo(function SelectedWaterLayer({
+  source,
+  theme,
+  visible,
+}: SourceChild & { theme: Theme; visible: boolean }) {
+  const id = useSelectedWaterCutId()
+  const spec = useMemo(() => waterSelectedLayer(theme, id, visible), [theme, id, visible])
+  return <Layer {...spec} source={source} />
+})
+
 const SelectedQuakeLayer = memo(function SelectedQuakeLayer({ source }: SourceChild) {
   const usgsId = useSelectedSeismicId()
   const spec = useMemo(() => seismicSelectedLayer(usgsId), [usgsId])
@@ -246,6 +278,8 @@ export const IncidentMap = memo(function IncidentMap({
   incidents,
   visibleFamilies,
   outages,
+  waterCuts,
+  showWater,
   seismic,
   showSeismic,
   theme,
@@ -278,9 +312,11 @@ export const IncidentMap = memo(function IncidentMap({
   const data = useMemo(() => toFeatureCollection(incidents), [incidents])
   const outageData = useMemo(() => toOutageFeatureCollection(outages), [outages])
   const seismicData = useMemo(() => toSeismicFeatureCollection(seismic), [seismic])
+  const waterData = useMemo(() => toWaterCutFeatureCollection(waterCuts), [waterCuts])
 
   const showIncidents = visibleFamilies.length > 0
   const showOutages = outages.length > 0
+  const waterClickable = showWater && waterData.features.length > 0
 
   const families = useMemo<FilterSpecification>(
     () => ['in', ['get', 'layer'], ['literal', [...visibleFamilies]]],
@@ -294,18 +330,21 @@ export const IncidentMap = memo(function IncidentMap({
     if (showIncidents) ids.push(INCIDENT_HIT_LAYER_ID)
     if (showOutages) ids.push(OUTAGE_HIT_LAYER_ID, OUTAGE_CLUSTER_LAYER_ID)
     if (showSeismic) ids.push(SEISMIC_HIT_LAYER_ID)
+    if (waterClickable) ids.push(WATER_HIT_LAYER_ID)
     return ids
-  }, [showIncidents, showOutages, showSeismic])
+  }, [showIncidents, showOutages, showSeismic, waterClickable])
 
   const handleClick = useCallback(
     (event: MapLayerMouseEvent) => {
       // Prioridad explícita, porque el orden de `interactiveLayerIds` no la
-      // garantiza: una emergencia (incidente o corte) gana sobre un racimo de
-      // cortes, y un racimo gana sobre un sismo, que es contexto.
+      // garantiza: una emergencia (incidente o corte de luz) gana sobre un
+      // racimo de cortes, un racimo gana sobre un sismo, y todos ganan sobre un
+      // corte de agua, que es información de servicio.
       const features = event.features ?? []
       const incident = features.find((f) => typeof f.properties?.['code'] === 'string')
       const cluster = features.find((f) => typeof f.properties?.['cluster_id'] === 'number')
       const quake = features.find((f) => typeof f.properties?.['usgs_id'] === 'string')
+      const water = features.find((f) => typeof f.properties?.['water_id'] === 'string')
       const map = event.target
 
       if (incident) {
@@ -336,6 +375,12 @@ export const IncidentMap = memo(function IncidentMap({
 
       if (quake) {
         selectSeismic(String(quake.properties!['usgs_id']))
+        return
+      }
+
+      if (water) {
+        selectWaterCut(String(water.properties!['water_id']))
+        map.easeTo({ center: event.lngLat, offset: sheetOffset(), duration: 450 })
         return
       }
 
@@ -431,6 +476,14 @@ export const IncidentMap = memo(function IncidentMap({
       glyph: outageGlyphLayer(),
     }),
     [theme],
+  )
+  const waterSpecs = useMemo(
+    () => ({
+      pin: waterPinLayer(theme, showWater),
+      glyph: waterGlyphLayer(showWater),
+      hit: waterHitLayer(showWater),
+    }),
+    [theme, showWater],
   )
 
   return (
@@ -543,6 +596,20 @@ export const IncidentMap = memo(function IncidentMap({
           <Layer {...seismicHitLayer} />
         </Source>
       )}
+
+      {/*
+        Cortes de agua (Esval): contexto, así que por debajo de los cortes de
+        luz y de los incidentes. Siempre montada, como la de la luz: sin datos
+        recibe una colección vacía, y apagar la fila es `visibility`, no un
+        remontaje. Ver `waterCutLayers.ts`.
+      */}
+      <Source id={WATER_SOURCE_ID} type="geojson" data={waterData} promoteId="water_id">
+        <Layer {...waterSpecs.pin} />
+        {/* Mismo motivo que el rayo de abajo: montada tarde, necesita ancla. */}
+        {iconsReady && <Layer {...waterSpecs.glyph} beforeId={WATER_SELECTED_LAYER_ID} />}
+        <SelectedWaterLayer theme={theme} visible={showWater} />
+        <Layer {...waterSpecs.hit} />
+      </Source>
 
       {/*
         Cortes de luz: fuente propia, la única agrupada (ver `outageLayers.ts`).

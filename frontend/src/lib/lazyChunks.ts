@@ -2,8 +2,8 @@
  * Lo que no se ve en el primer cuadro, en chunks aparte.
  *
  * La ficha del incidente (con su auditoría de confianza, el detalle del corte y
- * el aviso de congestión), la tarjeta del sismo y el modal de reporte sólo
- * aparecen cuando alguien toca algo. Cargarlos con el resto retrasaba el primer
+ * el aviso de congestión), las tarjetas del sismo y del corte de agua y el modal
+ * de reporte sólo aparecen cuando alguien toca algo. Cargarlos con el resto retrasaba el primer
  * cuadro a cambio de nada.
  *
  * Los importadores viven acá, juntos, por dos motivos: `React.lazy` los usa para
@@ -17,6 +17,9 @@ export const loadIncidentSheet = () =>
 
 export const loadSeismicCard = () =>
   import('@/components/incident/SeismicCard').then((m) => ({ default: m.SeismicCard }))
+
+export const loadWaterCutCard = () =>
+  import('@/components/incident/WaterCutCard').then((m) => ({ default: m.WaterCutCard }))
 
 export const loadCitizenReportModal = () =>
   import('@/components/report/CitizenReportModal').then((m) => ({

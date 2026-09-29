@@ -30,7 +30,7 @@ function renderControls(
       incidents={{
         visibility: DEFAULT_LAYER_VISIBILITY,
         onChange,
-        counts: { fire: 2, traffic: 1, power: 0, otros: 0, seismic: 0 },
+        counts: { fire: 2, traffic: 1, power: 0, water: 0, otros: 0, seismic: 0 },
         incidentsByLayer: { ...emptyByLayer, fire: [makeIncident()] },
         seismicEvents: [],
         onFocusIncident: vi.fn(),

@@ -74,9 +74,9 @@ const BY_CLIENTS: ExpressionSpecification = ['coalesce', ['get', 'affected_clien
 const BY_CLUSTER_CLIENTS: ExpressionSpecification = ['coalesce', ['get', 'clientes'], 0]
 
 /** Borde del disco: el fondo de la app, para recortarlo contra el terreno. */
-const EDGE: Record<Theme, string> = { light: '#ffffff', dark: '#0f172a' }
+export const PIN_EDGE: Record<Theme, string> = { light: '#ffffff', dark: '#0f172a' }
 /** Anillo de selección: el color de máximo contraste del tema. */
-const INK: Record<Theme, string> = { light: '#0f172a', dark: '#f8fafc' }
+export const PIN_INK: Record<Theme, string> = { light: '#0f172a', dark: '#f8fafc' }
 
 /**
  * Radio del disco según el zoom, más un margen fijo.
@@ -85,7 +85,7 @@ const INK: Record<Theme, string> = { light: '#0f172a', dark: '#f8fafc' }
  * acepta `zoom` como entrada de un `interpolate` de primer nivel, y una suma por
  * fuera invalida la capa entera (el validador del test lo ataja).
  */
-function pinRadius(pad = 0): ExpressionSpecification {
+export function pinRadius(pad = 0): ExpressionSpecification {
   return ['interpolate', ['linear'], ['zoom'], 7, 7 + pad, 11, 9 + pad, 15, 11 + pad]
 }
 
@@ -101,7 +101,7 @@ export function outageClusterLayer(theme: Theme): CircleLayer {
     paint: {
       'circle-color': OUTAGE_CLUSTER.color,
       'circle-radius': ['step', ['get', 'point_count'], 13, 10, 16, 50, 21],
-      'circle-stroke-color': EDGE[theme],
+      'circle-stroke-color': PIN_EDGE[theme],
       'circle-stroke-width': 2,
     },
   }
@@ -133,7 +133,7 @@ export function outagePinLayer(theme: Theme): CircleLayer {
     paint: {
       'circle-color': PROVIDER_COLOR,
       'circle-radius': PIN_RADIUS,
-      'circle-stroke-color': EDGE[theme],
+      'circle-stroke-color': PIN_EDGE[theme],
       'circle-stroke-width': 2,
       'circle-opacity': CLOSED_OPACITY,
       'circle-stroke-opacity': CLOSED_OPACITY,
@@ -169,7 +169,7 @@ export function outageSelectedLayer(theme: Theme, code: string | null): CircleLa
     paint: {
       'circle-radius': pinRadius(5),
       'circle-color': 'transparent',
-      'circle-stroke-color': INK[theme],
+      'circle-stroke-color': PIN_INK[theme],
       'circle-stroke-width': 2.5,
     },
   }

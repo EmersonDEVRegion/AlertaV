@@ -67,7 +67,9 @@ export function layerOf(type: IncidentType): IncidentLayerKey {
 export const LAYER_LABEL: Record<IncidentLayerKey, string> = {
   fire: 'Incendios',
   traffic: 'Accidentes viales',
-  power: 'Cortes de suministro',
+  // «de luz» y no «de suministro»: al lado de «Cortes de agua», suministro
+  // ya no dice cuál.
+  power: 'Cortes de luz',
   otros: 'Otras emergencias',
 }
 
