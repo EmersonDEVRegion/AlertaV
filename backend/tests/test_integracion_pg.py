@@ -428,3 +428,39 @@ def test_el_indice_geography_sirve_a_la_consulta_del_motor():
 
     plan = correr(caso)
     assert "ix_incidents_open_geog" in plan, plan
+
+
+#: Puente Alto, Región Metropolitana: dentro de la caja `REGION_*`, fuera de la V.
+PUENTE_ALTO = (-33.6117, -70.5758)
+#: Frente al muelle Prat de Valparaíso, sobre el agua: fuera del polígono, a menos
+#: de 2 km de la costa.
+MUELLE_PRAT = (-33.0355, -71.6270)
+
+
+@pytest.mark.parametrize(
+    ("punto", "solo_region", "incidentes"),
+    [
+        (PUENTE_ALTO, True, 0),
+        (PUENTE_ALTO, False, 1),
+        (MUELLE_PRAT, True, 1),
+        (QUILPUE, True, 1),
+    ],
+    ids=["santiago-filtrado", "santiago-sin-filtro", "muelle-dentro-del-margen", "quilpue"],
+)
+def test_solo_se_agrupan_senales_de_la_v_region(punto, solo_region, incidentes):
+    """241 de 403 señales con punto de la semana del 19-09 eran de Santiago."""
+    from datetime import timedelta as td
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.incident import Incident
+    from app.services.correlation.engine import CorrelationEngine
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(_evento("cge", punto, hace=td(minutes=10), fuente="cge", tipo="power_outage"))
+        async with AsyncSessionLocal() as session:
+            await CorrelationEngine(session, solo_region=solo_region).run()
+        async with AsyncSessionLocal() as session:
+            return (await session.execute(select(Incident))).scalars().all()
+
+    assert len(correr(caso)) == incidentes

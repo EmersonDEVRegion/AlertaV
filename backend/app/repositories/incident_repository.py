@@ -40,6 +40,9 @@ from sqlalchemy import (
     select,
     update,
 )
+from sqlalchemy import (
+    true as sa_true,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -120,6 +123,22 @@ def por_familia_sql(
         {nombre: literal(valor) for nombre, valor in sorted(valores.items())},
         value=familia,
         else_=literal(defecto),
+    )
+
+
+#: Margen alrededor de las comunas de la región, en grados (~2 km a esta
+#: latitud). En grados y no en metros para que el `ST_DWithin` use el índice
+#: GIST de `comunas_region` sin castear a `geography`.
+MARGEN_REGION_GRADOS = 0.02
+
+
+def dentro_de_la_region(geom: Any) -> ColumnElement[bool]:
+    """¿El punto está en (o a menos de ~2 km de) alguna comuna de la V Región?"""
+    return (
+        select(literal(1))
+        .select_from(ComunaRegion)
+        .where(func.ST_DWithin(ComunaRegion.geom, geom, MARGEN_REGION_GRADOS))
+        .exists()
     )
 
 
@@ -236,6 +255,7 @@ class IncidentRepository:
         utm_srid: int | None = None,
         radios: Mapping[str, float] | None = None,
         edades_desde: Mapping[str, datetime] | None = None,
+        solo_region: bool = False,
     ) -> list[ClusteredEvent]:
         """Agrupa con DBSCAN las señales georreferenciadas aún sin incidente.
 
@@ -273,6 +293,18 @@ class IncidentRepository:
         siempre que no sea más viejo que la edad máxima de su familia: FIRMS
         publica ~3 h tarde, y antes eso quedaba sin incidente para siempre. Sin
         los dos parámetros, la consulta es exactamente la de antes.
+
+        Sólo la región (`solo_region`)
+        ------------------------------
+        La caja de ingesta (`REGION_*`) cubre media Región Metropolitana: en la
+        semana del 19 al 29 de septiembre, 241 de 403 señales con punto caían
+        fuera de la V Región —cortes de CGE en Puente Alto y La Florida, focos
+        de FIRMS en Colina— y eran los incidentes «sin comuna» del mapa. Con
+        `solo_region`, sólo se agrupan señales a menos de
+        `MARGEN_REGION_GRADOS` de alguna comuna de `comunas_region`: el margen
+        deja pasar un punto geocodificado sobre el muelle o la playa, que el
+        polígono de la BCN no siempre cubre. Lo de afuera queda como
+        `raw_event` consultable, sin incidente.
         """
         srid = utm_srid or settings.CORRELATION_UTM_SRID
         familia_evento = event_family_sql(RawEvent.type)
@@ -311,6 +343,7 @@ class IncidentRepository:
             .where(RawEvent.geom.isnot(None))
             .where(RawEvent.incident_id.is_(None))
             .where(ventana)
+            .where(dentro_de_la_region(RawEvent.geom) if solo_region else sa_true())
             .where(RawEvent.type.in_(sorted(CORRELATABLE_EVENT_TYPES, key=lambda t: t.value)))
             # Las señales más creíbles primero: si el tope de la pasada corta la
             # lista, que lo que se quede afuera sea lo menos informativo.

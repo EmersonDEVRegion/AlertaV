@@ -65,6 +65,10 @@ adhesión crece con la imprecisión del punto (`street`, `sector`), y lo que lle
 tarde (por `ingested_at`) todavía se agrupa. En `false`, todo vuelve a lo de
 antes: un radio y una ventana por `timestamp`.
 
+Con `CORRELATION_SOLO_REGION` (encendido) sólo se agrupan señales dentro de la V
+Región —o a ~2 km de ella—, medido contra `comunas_region`. La caja de ingesta
+deja entrar media Región Metropolitana, y eso eran los incidentes «sin comuna».
+
 La comuna tiene además un último recurso: el polígono comunal que contiene al
 incidente (`comunas_region`, migración 0015). Ese sí no depende del interruptor.
 """
@@ -251,6 +255,7 @@ class CorrelationEngine:
         attach_regional_alerts: bool | None = None,
         max_events: int | None = None,
         perfiles: bool | None = None,
+        solo_region: bool | None = None,
     ) -> None:
         self.session = session
         self.repo = IncidentRepository(session)
@@ -282,6 +287,9 @@ class CorrelationEngine:
         )
         self.max_events = max_events or settings.CORRELATION_MAX_EVENTS_PER_PASS
         self.perfiles = settings.CORRELATION_PERFILES if perfiles is None else perfiles
+        self.solo_region = (
+            settings.CORRELATION_SOLO_REGION if solo_region is None else solo_region
+        )
         #: ¿Existe `comunas_region`? Se pregunta una vez por pasada.
         self._hay_comunas: bool | None = None
         self._comunas_por_poligono = 0
@@ -337,6 +345,9 @@ class CorrelationEngine:
         since = now - timedelta(hours=self.window_hours)
         match_since = now - timedelta(hours=self.match_window_hours)
 
+        # Sin la tabla de comunas (antes de la migración 0015) no hay con qué
+        # filtrar: se agrupa como antes.
+        solo_region = self.solo_region and await self._comunas_disponibles()
         if self.perfiles:
             clustered = await self.repo.cluster_unassigned_events(
                 since=since,
@@ -344,10 +355,14 @@ class CorrelationEngine:
                 limit=self.max_events,
                 radios={familia: p.radio_m for familia, p in PERFILES.items()},
                 edades_desde={familia: now - p.edad_max for familia, p in PERFILES.items()},
+                solo_region=solo_region,
             )
         else:
             clustered = await self.repo.cluster_unassigned_events(
-                since=since, radius_m=self.radius_m, limit=self.max_events
+                since=since,
+                radius_m=self.radius_m,
+                limit=self.max_events,
+                solo_region=solo_region,
             )
         result.events_considered = len(clustered)
         if not clustered:
@@ -836,11 +851,15 @@ class CorrelationEngine:
         """`comuna_por_punto`, si la tabla existe (migración 0015) y hay punto."""
         if not isinstance(lat, int | float) or not isinstance(lon, int | float):
             return (None, None)
-        if self._hay_comunas is None:
-            self._hay_comunas = await self.repo.comunas_disponibles()
-        if not self._hay_comunas:
+        if not await self._comunas_disponibles():
             return (None, None)
         return await self.repo.comuna_por_punto(float(lat), float(lon))
+
+    async def _comunas_disponibles(self) -> bool:
+        """¿Existe `comunas_region`? Se pregunta una vez por pasada."""
+        if self._hay_comunas is None:
+            self._hay_comunas = await self.repo.comunas_disponibles()
+        return self._hay_comunas
 
     @staticmethod
     def _resolve_territory(

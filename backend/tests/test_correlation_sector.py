@@ -82,6 +82,9 @@ class RepoFalso:
     async def cluster_unassigned_events(self, **_: Any) -> list[ClusteredEvent]:
         return self.racimos
 
+    async def comunas_disponibles(self) -> bool:
+        return self.hay_comunas if hasattr(self, "hay_comunas") else False
+
     async def find_nearest_open_incident(self, **_: Any) -> None:
         return None  # nada a menos del radio: es el caso de Miraflores Alto
 

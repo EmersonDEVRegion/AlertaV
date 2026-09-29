@@ -991,6 +991,12 @@ class Settings(BaseSettings):
     #: `CORRELATION_RADIUS_M` y ventana por `timestamp`. Es el interruptor de
     #: emergencia si la calibración nueva agrupa peor.
     CORRELATION_PERFILES: bool = True
+    #: Sólo se crean incidentes con señales dentro de la V Región (o a ~2 km),
+    #: medido contra `comunas_region` (migración 0015). La caja `REGION_*`
+    #: cubre media Región Metropolitana: sin esto, los cortes de CGE en
+    #: Santiago aparecían en el mapa como incidentes «sin comuna». Sin la tabla
+    #: no filtra nada. En `false`, vuelve a agrupar todo lo de la caja.
+    CORRELATION_SOLO_REGION: bool = True
     #: Ventana hacia atrás de señales que el motor considera en cada pasada.
     CORRELATION_WINDOW_HOURS: int = Field(default=4, ge=1, le=168)
     #: Antigüedad máxima de un incidente para que una señal nueva se le adhiera.

@@ -123,6 +123,9 @@ class RepoFalso:
         self.pedido_racimos = kwargs
         return self.racimos
 
+    async def comunas_disponibles(self) -> bool:
+        return self.hay_comunas if hasattr(self, "hay_comunas") else False
+
     async def find_nearest_open_incident(self, **kwargs: Any) -> None:
         self.busquedas.append(kwargs)
         return None
@@ -250,3 +253,27 @@ def test_sin_tabla_de_poligonos_no_se_consulta_nada():
     assert asyncio.run(engine._commune_by_polygon(-33.0, -71.5)) == (None, None)
     assert asyncio.run(engine._commune_by_polygon(None, None)) == (None, None)
     assert SinTabla.consultas == 0
+
+
+# --- Sólo la V Región ------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("hay_tabla", "interruptor", "esperado"),
+    [(True, True, True), (False, True, False), (True, False, False)],
+    ids=["con-tabla", "sin-tabla-0015", "interruptor-apagado"],
+)
+def test_el_filtro_de_region_depende_de_la_tabla_y_del_interruptor(hay_tabla, interruptor, esperado):
+    """Sin `comunas_region` no hay con qué filtrar: se agrupa como antes."""
+    repo = RepoFalso([])
+    repo.hay_comunas = hay_tabla
+    engine = motor(repo, perfiles=True)
+    engine.solo_region = interruptor
+
+    asyncio.run(engine._step_a_spatial(CorrelationPass(started_at=AHORA), now=AHORA))
+
+    assert repo.pedido_racimos["solo_region"] is esperado
+
+
+def test_el_filtro_de_region_viene_encendido():
+    assert settings.CORRELATION_SOLO_REGION is True
