@@ -23,14 +23,24 @@ _RESERVED = set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {
 _MIN_SECRET_LEN = 8
 
 
+def _clave_de(url: str) -> str:
+    """La clave de una URL con credenciales, o "" si no trae o no se deja leer."""
+    try:
+        return urlsplit(url.strip()).password or ""
+    except ValueError:
+        return ""
+
+
 def secretos_configurados() -> tuple[str, ...]:
     """Los secretos que nunca pueden aparecer en un log, del más largo al más corto.
 
     Del más largo primero para que un secreto que contiene a otro se tache
     entero. La contraseña de la base se toma de `DATABASE_URL` en sus dos formas
-    (codificada y no), porque es lo que se pega desde el panel de Supabase.
+    (codificada y no), porque es lo que se pega desde el panel de Supabase. La
+    del proxy chileno de Esval, igual: va dentro de `ESVAL_PROXY_URL`.
     """
     dsn_password = urlsplit(settings.DATABASE_URL.strip()).password or ""
+    proxy_password = _clave_de(settings.ESVAL_PROXY_URL)
     candidatos = (
         settings.FIRMS_MAP_KEY,
         settings.APIFY_TOKEN,
@@ -41,6 +51,8 @@ def secretos_configurados() -> tuple[str, ...]:
         settings.POSTGRES_PASSWORD,
         dsn_password,
         unquote(dsn_password),
+        proxy_password,
+        unquote(proxy_password),
     )
     limpios = {c.strip() for c in candidatos if c and len(c.strip()) >= _MIN_SECRET_LEN}
     return tuple(sorted(limpios, key=len, reverse=True))
