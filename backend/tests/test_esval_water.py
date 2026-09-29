@@ -31,6 +31,7 @@ from app.collectors.power.outage_parser import records_or_raise
 from app.collectors.water import esval_worker
 from app.collectors.water.esval_parser import (
     CLAVES_ESPERADAS,
+    COMPANY,
     ESVAL_KEY,
     CorteAgua,
     KmlZonasError,
@@ -885,3 +886,130 @@ def test_migracion_0014_encadena_con_la_0013():
     spec.loader.exec_module(modulo)
     assert modulo.revision == "0014_esval_cortes_agua"
     assert modulo.down_revision == "0013_gbv_vehiculos"
+
+
+# --- Salida desde Chile (proxy) ------------------------------------------------
+#
+# Esval sólo responde a IP chilenas (plan.md, §S1). En producción las dos
+# peticiones salen por un proxy nuestro en Chile; estos tests fijan que el
+# proxy se use, que no se publique su dirección y que sin él la corrida falle
+# rápido y con el motivo.
+
+PROXY_HOST = "203.0.113.7"
+PROXY_CLAVE = "clave-del-proxy-cl-0123456789abcdef"
+PROXY_URL = f"http://alertav:{PROXY_CLAVE}@{PROXY_HOST}:8888"
+
+
+def collector_con_proxy() -> EsvalCollector:
+    instancia = collector()
+    instancia.proxy_url = PROXY_URL
+    return instancia
+
+
+@pytest.fixture
+def sin_esperas(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`request_json` espera entre reintentos; en los tests no hace falta."""
+
+    async def _nada(_segundos: float) -> None:
+        return None
+
+    monkeypatch.setattr("app.collectors.geoservices.asyncio.sleep", _nada)
+
+
+def _transporte(cliente: httpx.AsyncClient, url: str) -> object:
+    return cliente._transport_for_url(httpx.URL(url))
+
+
+def test_sin_proxy_sale_directo(monkeypatch):
+    # El entorno de pruebas puede tener su propio proxy de salida: httpx lo
+    # leería y el test mediría eso, no el collector.
+    for variable in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"):
+        monkeypatch.delenv(variable, raising=False)
+    instancia = collector()
+    cliente = instancia.http_client()
+    pool = _transporte(cliente, settings.ESVAL_CORTES_URL)._pool  # type: ignore[attr-defined]
+    assert type(pool).__name__ == "AsyncConnectionPool"
+    assert instancia.run_params()["via"] == "directo"
+    assert instancia.origen == COMPANY
+
+
+def test_con_proxy_las_dos_peticiones_salen_por_el_proxy():
+    cliente = collector_con_proxy().http_client()
+    for url in (settings.ESVAL_CORTES_URL, settings.ESVAL_ZONAS_KML_URL):
+        pool = _transporte(cliente, url)._pool  # type: ignore[attr-defined]
+        assert type(pool).__name__ == "AsyncHTTPProxy"
+        assert pool._proxy_url.host == PROXY_HOST.encode()
+
+
+def test_run_params_dice_que_hay_proxy_pero_no_donde():
+    params = collector_con_proxy().run_params()
+    assert params["via"] == "proxy-cl"
+    texto = json.dumps(params)
+    assert PROXY_HOST not in texto
+    assert PROXY_CLAVE not in texto
+
+
+@respx.mock
+def test_con_proxy_el_error_dice_por_donde_salio_y_no_la_direccion(reloj, sin_esperas):
+    """Un proxy caído o que rechaza se distingue de un Esval caído, sin filtrar su IP."""
+    respx.get(settings.ESVAL_CORTES_URL).mock(
+        side_effect=httpx.ProxyError(f"407 del proxy {PROXY_HOST}:8888 ({PROXY_URL})")
+    )
+    with pytest.raises(CollectorError) as error:
+        asyncio.run(collector_con_proxy().fetch())
+
+    mensaje = error.value.message
+    assert mensaje.startswith(f"{COMPANY} vía proxy-cl: sin respuesta tras 3 intentos")
+    assert "ProxyError" in mensaje
+    assert PROXY_HOST not in mensaje
+    assert PROXY_CLAVE not in mensaje
+    assert PROXY_HOST not in json.dumps(error.value.detail)
+
+
+@respx.mock
+def test_con_proxy_el_kml_caido_avisa_sin_la_direccion(reloj, sin_esperas):
+    mock_api(API_CORTES)
+    respx.get(settings.ESVAL_ZONAS_KML_URL).mock(
+        side_effect=httpx.ProxyError(f"CONNECT a {PROXY_HOST} rechazado")
+    )
+    instancia = collector_con_proxy()
+
+    cortes = asyncio.run(instancia.fetch())
+
+    assert len(cortes) == 2
+    assert all(c.punto is None for c in cortes)
+    aviso = " ".join(instancia.warnings)
+    assert f"{COMPANY} vía proxy-cl (KML de zonas)" in aviso
+    assert PROXY_HOST not in aviso
+
+
+@respx.mock
+def test_con_proxy_la_corrida_real_no_cambia(reloj):
+    """El proxy es sólo el camino: lo que llega y cómo se lee es lo mismo."""
+    mock_api(API_CORTES)
+    mock_kml()
+    cortes = asyncio.run(collector_con_proxy().fetch())
+    assert sorted(c.corte.sisda for c in cortes) == ["2912217", "2916567"]
+
+
+def test_en_produccion_sin_proxy_falla_al_construirse(monkeypatch):
+    """Directo desde Render son tres timeouts por corrida: mejor fallar ya y decir por qué."""
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(settings, "ESVAL_PROXY_URL", "")
+    with pytest.raises(CollectorError, match="ESVAL_PROXY_URL"):
+        EsvalCollector(session=None)  # type: ignore[arg-type]
+
+
+def test_en_produccion_con_proxy_se_construye(monkeypatch):
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(settings, "ESVAL_PROXY_URL", f"  {PROXY_URL}  ")
+    instancia = EsvalCollector(session=None)  # type: ignore[arg-type]
+    assert instancia.proxy_url == PROXY_URL
+    assert instancia.via == "proxy-cl"
+
+
+def test_en_local_sin_proxy_sale_directo(monkeypatch):
+    """Desde Chile (tu PC) la API responde directo: en local no se exige proxy."""
+    monkeypatch.setattr(settings, "ENVIRONMENT", "local")
+    monkeypatch.setattr(settings, "ESVAL_PROXY_URL", "")
+    assert EsvalCollector(session=None).via == "directo"  # type: ignore[arg-type]

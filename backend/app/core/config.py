@@ -50,6 +50,39 @@ _AGENTES: tuple[str, ...] = (
     "LOCAL_NEWS_USER_AGENT",
 )
 
+#: Largo mínimo de la clave de un proxy de salida. Va en texto claro por
+#: internet (Basic auth en el `CONNECT`), así que tiene que ser larga y
+#: aleatoria: lo que la protege es no poder adivinarla.
+_MIN_CLAVE_PROXY = 24
+
+
+def _problemas_del_proxy(url: str, nombre: str) -> list[str]:
+    """Qué le falta a la URL de un proxy de salida. Vacía = no hay proxy.
+
+    Nunca repite la URL en el mensaje: trae la clave, y el error del
+    validador termina en los logs de Render.
+    """
+    valor = url.strip()
+    if not valor:
+        return []
+    try:
+        partes = urlsplit(valor)
+        puerto = partes.port
+    except ValueError:
+        return [f"{nombre}: no es una URL válida"]
+    problemas: list[str] = []
+    if partes.scheme not in {"http", "https"}:
+        problemas.append(f"{nombre}: el esquema tiene que ser http o https")
+    if not partes.hostname or puerto is None:
+        problemas.append(f"{nombre}: falta el host o el puerto")
+    clave = partes.password or ""
+    if not partes.username or len(clave) < _MIN_CLAVE_PROXY or not valor.isascii():
+        problemas.append(
+            f"{nombre}: necesita usuario y una clave ASCII de "
+            f"{_MIN_CLAVE_PROXY} caracteres o más"
+        )
+    return problemas
+
 
 class BoundingBox(BaseSettings):
     """Caja envolvente en WGS84 (grados decimales)."""
@@ -340,6 +373,21 @@ class Settings(BaseSettings):
     #: 10 minutos. Son dos GET livianos por corrida; un corte de emergencia se
     #: publica en cualquier momento, pero no cambia minuto a minuto.
     ESVAL_POLL_INTERVAL_SECONDS: int = Field(default=600, ge=120, le=86400)
+    #: Proxy en Chile por el que salen las dos peticiones a Esval:
+    #: `http://usuario:clave@host:puerto`. **Es un secreto.**
+    #:
+    #: Esval sólo responde a IP chilenas: sus dos hosts descartan en silencio
+    #: todo lo de afuera, datacenters y hogares por igual (probado el
+    #: 2026-09-29 desde 40 nodos fuera de Chile y 8 dentro; `plan.md`, §S1).
+    #: Render no tiene regiones en Sudamérica, así que desde ahí la API no
+    #: responde nunca. El proxy (tinyproxy en Oracle Cloud, `infra/proxy-cl/`)
+    #: sólo deja pasar `CONNECT` a esos dos hosts: el TLS va de punta a punta y
+    #: el servidor chileno no puede alterar lo que llega.
+    #:
+    #: Vacío = directo, que es lo que sirve en local desde Chile. En producción,
+    #: vacío hace que el collector falle al construirse con el motivo, en vez de
+    #: esperar tres timeouts por corrida.
+    ESVAL_PROXY_URL: str = ""
 
     # -- Sismos: Centro Sismológico Nacional ---------------------------------
     # El CSN es la razón de ser de este collector: su umbral de detección en
@@ -1200,6 +1248,12 @@ class Settings(BaseSettings):
         for nombre in _AGENTES:
             if not str(getattr(self, nombre)).isascii():
                 errores.append(f"{nombre}: las cabeceras HTTP sólo admiten ASCII")
+
+        # Vacío no impide arrancar: el collector de Esval falla solo, con el
+        # motivo, y el resto del backend no depende de él. Pero si se define,
+        # tiene que ser un proxy con credenciales: uno abierto en internet es
+        # un proxy para cualquiera.
+        errores.extend(_problemas_del_proxy(self.ESVAL_PROXY_URL, "ESVAL_PROXY_URL"))
 
         if errores:
             raise ValueError(

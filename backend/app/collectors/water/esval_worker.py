@@ -44,6 +44,26 @@ Cortesía con un servidor ajeno
 ------------------------------
 Dos peticiones cada diez minutos, con un `User-Agent` que dice quién es AlertaV
 y dónde encontrarlo. Es menos de lo que gasta una persona con el visor abierto.
+
+Desde dónde sale
+----------------
+Esval sólo responde a IP chilenas: fuera de Chile los dos hosts descartan la
+conexión en silencio (`ConnectTimeout`), sea un datacenter o un hogar. Render
+no tiene regiones en Sudamérica, así que en producción las dos peticiones salen
+por un proxy nuestro en Chile (`ESVAL_PROXY_URL`, `infra/proxy-cl/`).
+
+* **No es un disfraz.** El servidor es nuestro y está en Chile, el `User-Agent`
+  sigue diciendo quién es AlertaV y la cadencia es la misma. Lo que el repo no
+  hace —proxies residenciales, IP rotativas, VPN comerciales— es usar la
+  conexión de otra persona para parecer alguien que no se es.
+* **El proxy no ve ni toca los datos.** Es un `CONNECT`: el TLS va de punta a
+  punta y httpx valida el certificado de Esval.
+* **Sus fallas se distinguen de las de Esval.** Con proxy, el origen de las
+  peticiones es «Esval vía proxy-cl», así que `collector_runs` dice por dónde
+  se cortó sin tener que interpretar mensajes de httpx.
+* **Su dirección no se publica.** `run_params` sólo dice `via`, y los mensajes
+  que llegan a `collector_runs` (que `/collectors/health` deja ver) pasan por
+  `_sin_proxy`: ni la clave ni el host.
 """
 
 from __future__ import annotations
@@ -52,6 +72,7 @@ import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -94,6 +115,10 @@ WATER_CUT_CONFIDENCE = 1.0
 API_REFERER = "https://ov.esval.cl/"
 KML_REFERER = "https://tupuntodeagua.esval.cl/"
 
+#: Cómo se nombra el proxy en `run_params` y en los mensajes: nunca su dirección.
+VIA_PROXY = "proxy-cl"
+VIA_DIRECTO = "directo"
+
 
 def _agente() -> str:
     """Navegador + identidad; `ESVAL_USER_AGENT` lo anula si tiene valor."""
@@ -115,17 +140,30 @@ class EsvalCollector(BaseCollector):
     source = EventSource.ESVAL
     default_interval_seconds = 600
 
+    #: Proxy chileno (`ESVAL_PROXY_URL`). Atributo de clase para que los tests
+    #: que arman el collector con `__new__` salgan directo sin más.
+    proxy_url: str = ""
+
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session)
         self.api_url = settings.ESVAL_CORTES_URL.strip()
         self.kml_url = settings.ESVAL_ZONAS_KML_URL.strip()
         self.bbox = settings.region_bbox
+        self.proxy_url = settings.ESVAL_PROXY_URL.strip()
         if not self.api_url:
             # Falla al construirse, no en silencio: el runner deja una corrida
             # `failed` en `collector_runs` con este mensaje.
             raise CollectorError(
                 "ESVAL_CORTES_URL no está configurada; el collector de Esval no "
                 "tiene de dónde leer."
+            )
+        if not self.proxy_url and settings.ENVIRONMENT == "production":
+            # Directo desde Render son tres timeouts de 20 s por corrida, que
+            # ocupan un cupo del runner más de un minuto para terminar igual en
+            # `failed`. Mejor fallar ya, con el motivo que sirve para arreglarlo.
+            raise CollectorError(
+                "Esval sólo responde a IP chilenas y Render no tiene regiones en "
+                "Sudamérica: falta ESVAL_PROXY_URL (infra/proxy-cl/)."
             )
 
     @classmethod
@@ -136,13 +174,39 @@ class EsvalCollector(BaseCollector):
 
     def run_params(self) -> dict[str, Any]:
         # Las cabeceras NO van acá: `collector_runs.params` es consultable por
-        # cualquiera con acceso al historial de corridas.
+        # cualquiera con acceso al historial de corridas. Por lo mismo, del
+        # proxy sólo se dice que existe.
         return {
             "company": COMPANY,
             "api_url": self.api_url,
             "kml_url": self.kml_url or None,
             "kml_params": self.kml_params(),
+            "via": self.via,
         }
+
+    @property
+    def via(self) -> str:
+        return VIA_PROXY if self.proxy_url else VIA_DIRECTO
+
+    @property
+    def origen(self) -> str:
+        """Nombre de la fuente en los mensajes de error: dice por dónde se salió."""
+        return f"{COMPANY} vía {VIA_PROXY}" if self.proxy_url else COMPANY
+
+    def _sin_proxy(self, texto: str) -> str:
+        """El texto sin la URL del proxy, su clave ni su host.
+
+        httpx no suele poner la dirección del proxy en sus mensajes, pero un
+        mensaje de error termina en `collector_runs` y de ahí en la API pública:
+        no se confía en que no la ponga.
+        """
+        if not self.proxy_url:
+            return texto
+        partes = urlsplit(self.proxy_url)
+        marcas = {self.proxy_url, partes.netloc, partes.password or "", partes.hostname or ""}
+        for marca in sorted((m for m in marcas if m), key=len, reverse=True):
+            texto = texto.replace(marca, VIA_PROXY)
+        return texto
 
     def api_headers(self) -> dict[str, str]:
         """Las cabeceras que manda el frontend de la Oficina Virtual.
@@ -179,9 +243,12 @@ class EsvalCollector(BaseCollector):
         }
 
     def http_client(self) -> httpx.AsyncClient:
+        # `proxy=` y no la variable `HTTPS_PROXY`: esa la leerían todos los
+        # clientes del proceso, y el proxy sólo deja pasar a Esval.
         return httpx.AsyncClient(
             timeout=settings.ESVAL_TIMEOUT_SECONDS,
             follow_redirects=True,
+            proxy=self.proxy_url or None,
         )
 
     # -- Lectura ---------------------------------------------------------------
@@ -189,7 +256,14 @@ class EsvalCollector(BaseCollector):
     async def fetch(self) -> Sequence[CorteAgua]:
         ahora = _ahora()
         async with self.http_client() as client:
-            registros = await self._leer_api(client)
+            try:
+                registros = await self._leer_api(client)
+            except CollectorError as exc:
+                if not self.proxy_url:
+                    raise
+                raise CollectorError(
+                    self._sin_proxy(exc.message), detail={"url": self.api_url, "via": self.via}
+                ) from None
             cortes = self._interpretar(registros)
             candidatos = self._seleccionar(cortes, ahora)
             # Sin cortes que ubicar, el KML sería una petición gastada.
@@ -223,14 +297,14 @@ class EsvalCollector(BaseCollector):
                 client,
                 self.api_url,
                 {},
-                origin=COMPANY,
+                origin=self.origen,
                 headers=self.api_headers(),
             )
         except CollectorError:
             raise
         except Exception as exc:  # frontera con una fuente ajena
             raise CollectorError(
-                f"{COMPANY}: fallo inesperado al leer CortesActivos: "
+                f"{self.origen}: fallo inesperado al leer CortesActivos: "
                 f"{type(exc).__name__}: {exc}",
                 detail={"url": self.api_url},
             ) from exc
@@ -334,7 +408,7 @@ class EsvalCollector(BaseCollector):
                 client,
                 self.kml_url,
                 self.kml_params(),
-                origin=f"{COMPANY} (KML de zonas)",
+                origin=f"{self.origen} (KML de zonas)",
                 headers=self.kml_headers(),
             )
             return parse_zonas_kml(texto), True
@@ -344,7 +418,10 @@ class EsvalCollector(BaseCollector):
             motivo = str(exc)
         except Exception as exc:  # frontera con una fuente ajena
             motivo = f"{type(exc).__name__}: {exc}"
-        self.warn(f"no se pudo leer el KML de zonas ({motivo}); los cortes entran sin coordenadas")
+        self.warn(
+            f"no se pudo leer el KML de zonas ({self._sin_proxy(motivo)}); "
+            f"los cortes entran sin coordenadas"
+        )
         return {}, False
 
     def _revisar_union(self, unidos: Sequence[CorteAgua], *, kml_ok: bool) -> None:

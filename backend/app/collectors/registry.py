@@ -80,9 +80,10 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     # `sisda`. Si el KML cae, la corrida sigue sin coordenadas y queda `partial`;
     # si cae la API, `failed`. Cadencia de 10 minutos.
     #
-    # Vigilar en la primera corrida en Render: `collector_runs` de
-    # `esval_cortes_agua`. Desde el navegador la API responde con o sin
-    # cabeceras, pero no se pudo probar desde una IP de datacenter.
+    # Esval sólo responde a IP chilenas (probado el 2026-09-29): desde Render
+    # la conexión se corta por timeout. En producción sale por el proxy de
+    # `ESVAL_PROXY_URL` (`infra/proxy-cl/`); sin él, el collector falla al
+    # construirse y lo dice en `collector_runs`.
     EsvalCollector.name: EsvalCollector,
     # -- Accidentes viales ----------------------------------------------------
     # Transporte Informa emite `type=accident` y queda aislado de la familia

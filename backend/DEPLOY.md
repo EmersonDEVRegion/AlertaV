@@ -216,6 +216,12 @@ Marcá como **Secret** las tres primeras; el resto pueden ir como plain text.
 Umbrales, radio y cadencia tienen valores por defecto; el detalle está en
 [`docs/notificaciones-push.md`](docs/notificaciones-push.md).
 
+### Cortes de agua (Esval): salida desde Chile
+
+| Variable | Valor | Nota |
+|---|---|---|
+| `ESVAL_PROXY_URL` | `http://alertav:<clave>@<ip-del-proxy>:8888` | 🔒 Secret. Esval sólo responde a IP chilenas, y ninguna región de Render está en Sudamérica. El proxy vive en Oracle Cloud (Santiago o Valparaíso) y sólo deja pasar a los dos hosts de Esval: [`infra/proxy-cl/README.md`](../infra/proxy-cl/README.md). Sin ella, el collector `esval_cortes_agua` falla al construirse con el motivo; el resto del backend no se entera. |
+
 ### Sólo si usás el pooler de transacción (puerto 6543)
 
 | Variable | Valor |

@@ -165,6 +165,35 @@ def test_produccion_no_arranca_con_huecos(cambio, motivo):
         _produccion(**cambio)
 
 
+#: Un proxy de salida bien formado: usuario y clave larga, host y puerto.
+PROXY_VALIDO = "http://alertav:" + "k" * 32 + "@203.0.113.7:8888"
+
+
+def test_el_proxy_de_esval_es_opcional_en_produccion():
+    """Sin proxy arranca igual: el collector de Esval falla solo, con el motivo."""
+    assert _produccion(ESVAL_PROXY_URL="").ESVAL_PROXY_URL == ""
+    assert _produccion(ESVAL_PROXY_URL=PROXY_VALIDO).ESVAL_PROXY_URL == PROXY_VALIDO
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://203.0.113.7:8888",  # sin credenciales: un proxy abierto
+        "http://alertav:corta@203.0.113.7:8888",  # clave adivinable
+        "socks5://alertav:" + "k" * 32 + "@203.0.113.7:1080",  # httpx sin extra
+        "http://alertav:" + "k" * 32 + "@203.0.113.7",  # sin puerto
+        "http://alertav:" + "k" * 32 + "@203.0.113.7:99999",  # puerto imposible
+        "http://alertav:" + "ñ" * 32 + "@203.0.113.7:8888",  # no ASCII
+    ],
+)
+def test_un_proxy_de_esval_flojo_no_arranca_y_el_error_no_trae_la_clave(url):
+    with pytest.raises(ValueError, match="ESVAL_PROXY_URL") as error:
+        _produccion(ESVAL_PROXY_URL=url)
+    clave = url.split(":")[2].split("@")[0] if url.count(":") > 2 else ""
+    if len(clave) > 5:
+        assert clave not in str(error.value)
+
+
 def test_fuera_de_produccion_no_se_exige_nada():
     assert Settings(_env_file=None, ENVIRONMENT="local", APIFY_WEBHOOK_SECRET="").ENVIRONMENT == "local"
 
@@ -228,6 +257,24 @@ def test_los_secretos_configurados_incluyen_la_clave_de_firms(monkeypatch):
     secretos = secretos_configurados()
     assert "clave-firms-de-prueba-1234" in secretos
     assert "alertav" not in secretos, "un valor corto taparía media línea sin proteger nada"
+
+
+def test_los_secretos_configurados_incluyen_la_clave_del_proxy_de_esval(monkeypatch):
+    from app.core.logging import secretos_configurados
+
+    monkeypatch.setattr(
+        settings, "ESVAL_PROXY_URL", "http://alertav:clave%2Fdel-proxy-cl-0123456789@203.0.113.7:8888"
+    )
+    secretos = secretos_configurados()
+    assert "clave%2Fdel-proxy-cl-0123456789" in secretos
+    assert "clave/del-proxy-cl-0123456789" in secretos
+
+
+def test_una_url_de_proxy_ilegible_no_rompe_el_logging(monkeypatch):
+    from app.core.logging import secretos_configurados
+
+    monkeypatch.setattr(settings, "ESVAL_PROXY_URL", "http://[no-es-ipv6")
+    secretos_configurados()  # no lanza: el logging no puede caerse por esto
 
 
 # --- 5. La clave de FIRMS en el error de la corrida --------------------------
