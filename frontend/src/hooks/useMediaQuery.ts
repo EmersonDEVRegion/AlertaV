@@ -36,7 +36,7 @@ import { useSyncExternalStore } from 'react'
  */
 
 /** `md` de Tailwind. El mismo número que usan las variantes `md:` del cromo. */
-export const COMPACT_BREAKPOINT = '(max-width: 767.98px)'
+const COMPACT_BREAKPOINT = '(max-width: 767.98px)'
 
 function subscribe(query: string, onChange: () => void): () => void {
   if (typeof window === 'undefined' || !window.matchMedia) return () => {}
@@ -45,7 +45,7 @@ function subscribe(query: string, onChange: () => void): () => void {
   return () => list.removeEventListener('change', onChange)
 }
 
-export function useMediaQuery(query: string): boolean {
+function useMediaQuery(query: string): boolean {
   return useSyncExternalStore(
     (onChange) => subscribe(query, onChange),
     () => window.matchMedia?.(query).matches ?? false,

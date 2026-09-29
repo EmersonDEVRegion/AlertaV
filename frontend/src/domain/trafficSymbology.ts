@@ -63,13 +63,6 @@ export const TRAFFIC_LEVEL: Record<ConfidenceLevel, TrafficLevelStyle> = {
   },
 }
 
-/** Mismo orden que la leyenda de incendios: de menor a mayor evidencia. */
-export const TRAFFIC_LEVEL_ORDER: readonly ConfidenceLevel[] = [
-  'unsafe',
-  'possible',
-  'confirmed',
-]
-
 /**
  * Versión apagada para los incidentes cerrados. Se deriva con la misma función
  * que la paleta de incendios: si un color base cambia, el atenuado lo sigue solo.

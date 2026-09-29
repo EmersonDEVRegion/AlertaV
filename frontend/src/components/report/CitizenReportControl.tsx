@@ -1,13 +1,16 @@
-import { useState } from 'react'
+import { Suspense, lazy, memo, useState } from 'react'
 import { Button } from '@/components/ui/primitives'
 import { cn } from '@/lib/cn'
-import { CitizenReportModal } from './CitizenReportModal'
+import { useSelection } from '@/lib/selectionStore'
+
+// El formulario (categorías, geolocalización, envío) se descarga al abrirlo.
+const CitizenReportModal = lazy(loadCitizenReportModal)
+import { loadCitizenReportModal } from '@/lib/lazyChunks'
 
 interface CitizenReportControlProps {
   /**
-   * Oculta el botón solo en teléfono. Existe porque `IncidentSheet` ocupa el
-   * tercio inferior en esa medida y el botón quedaría flotando sobre la ficha.
-   * En `md` la ficha es un panel lateral y no hay colisión.
+   * Oculta el botón solo en teléfono, además de lo que ya lo oculta solo: la
+   * ficha de un incidente o el radar abiertos (ver abajo).
    */
   hiddenOnMobile?: boolean
 }
@@ -30,8 +33,18 @@ interface CitizenReportControlProps {
  * fijo que no responde al tema y sin alineación fiable con el texto. El
  * triángulo vectorial hereda `currentColor` y mide siempre lo mismo.
  */
-export function CitizenReportControl({ hiddenOnMobile = false }: CitizenReportControlProps) {
+export const CitizenReportControl = memo(function CitizenReportControl({
+  hiddenOnMobile = false,
+}: CitizenReportControlProps) {
   const [open, setOpen] = useState(false)
+  /*
+   * En teléfono la ficha del incidente y el radar ocupan el tercio inferior, y
+   * el botón quedaría flotando encima. En `md` son paneles laterales y no hay
+   * colisión. Se lee del store de selección —no llega por props— para que
+   * abrir una ficha no tenga que pasar por `App`.
+   */
+  const selection = useSelection()
+  const hidden = hiddenOnMobile || selection.kind === 'incident' || selection.kind === 'radar'
 
   return (
     <>
@@ -69,7 +82,14 @@ export function CitizenReportControl({ hiddenOnMobile = false }: CitizenReportCo
           //
           // De ahí que la transición del primitivo nombre `translate` y `scale`
           // por separado: `transform` no lo declara nadie.
-          hiddenOnMobile ? 'hidden md:inline-flex' : 'inline-flex',
+          //
+          // Escondido sólo en teléfono con `max-md:hidden`, y no con
+          // `hidden md:inline-flex`: la base de `Button` ya trae `inline-flex`,
+          // y en la hoja que genera Tailwind v4 `.inline-flex` va DESPUÉS de
+          // `.hidden`, así que a igual especificidad ganaba y el botón nunca se
+          // escondía. La variante `max-md:` vive en una media query, que sale
+          // al final de la hoja y gana sin pelear por el orden.
+          hidden && 'max-md:hidden',
         )}
       >
         <svg
@@ -89,7 +109,11 @@ export function CitizenReportControl({ hiddenOnMobile = false }: CitizenReportCo
         Reportar emergencia
       </Button>
 
-      {open && <CitizenReportModal onClose={() => setOpen(false)} />}
+      {open && (
+        <Suspense fallback={null}>
+          <CitizenReportModal onClose={() => setOpen(false)} />
+        </Suspense>
+      )}
     </>
   )
-}
+})

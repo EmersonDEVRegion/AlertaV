@@ -37,7 +37,7 @@ import { SDF_RADIUS, alphaToSdf, sdfToImageData } from './sdf'
  */
 
 /** Lado del lienzo, en píxeles. */
-export const ICON_CANVAS = 64
+const ICON_CANVAS = 64
 /** Lienzo en el que están dibujados los glifos. */
 const VIEWBOX = 24
 
@@ -77,7 +77,7 @@ function rasterize(glyph: IconGlyph): Float64Array | null {
 }
 
 /** Construye la imagen SDF de un glifo. `null` si no hay canvas disponible. */
-export function buildIcon(id: IconId): RasterIcon | null {
+function buildIcon(id: IconId): RasterIcon | null {
   const glyph = ICON_GLYPHS[id]
   const alpha = rasterize(glyph)
   if (!alpha) return null

@@ -187,7 +187,7 @@ export function dismissInvite(): void {
 // ---------------------------------------------------------------------------
 
 /** Moverse menos que esto no cambia a quién le llega un aviso de 5 km. */
-export const RESYNC_DISTANCE_KM = 0.25
+const RESYNC_DISTANCE_KM = 0.25
 /**
  * Aunque no se haya movido, se reenvía cada tanto: renueva la suscripción en el
  * servidor si éste la perdió (una base restaurada, una baja por fallos) y

@@ -21,7 +21,7 @@ const HOUR_MS = 3_600_000
 export const FEED_WINDOW_HOURS = 48
 
 /** Por debajo de esto, el aviso se resalta. */
-export const RECENT_HOURS = 6
+const RECENT_HOURS = 6
 
 /** Tope de la consulta. Con la ventana de 48 h no se llega nunca en la práctica. */
 export const FEED_LIMIT = 100

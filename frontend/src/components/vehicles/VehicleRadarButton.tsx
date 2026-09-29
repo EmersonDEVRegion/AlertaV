@@ -1,8 +1,9 @@
+import { memo } from 'react'
 import type { Ref } from 'react'
 import type { VehicleFeedState } from '@/hooks/useVehicleFeed'
 import { cn } from '@/lib/cn'
 import { RadarGlyph } from './RadarGlyph'
-import { RADAR_PANEL_ID } from './VehicleRadarPanel'
+import { RADAR_PANEL_ID } from './radarIds'
 
 /**
  * Botón del radar en la barra superior, con su contador.
@@ -38,7 +39,7 @@ export function badgeFor(feed: Pick<VehicleFeedState, 'status' | 'count'>): stri
   return null
 }
 
-export function radarLabel(feed: Pick<VehicleFeedState, 'status' | 'count' | 'recentCount'>): string {
+function radarLabel(feed: Pick<VehicleFeedState, 'status' | 'count' | 'recentCount'>): string {
   switch (feed.status) {
     case 'ready': {
       const avisos = feed.count === 1 ? '1 aviso' : `${feed.count} avisos`
@@ -54,7 +55,7 @@ export function radarLabel(feed: Pick<VehicleFeedState, 'status' | 'count' | 're
   }
 }
 
-export function VehicleRadarButton({ feed, open, onToggle, ref }: VehicleRadarButtonProps) {
+export const VehicleRadarButton = memo(function VehicleRadarButton({ feed, open, onToggle, ref }: VehicleRadarButtonProps) {
   const badge = badgeFor(feed)
   const hot = feed.status === 'ready' && feed.recentCount > 0
   const label = radarLabel(feed)
@@ -99,4 +100,4 @@ export function VehicleRadarButton({ feed, open, onToggle, ref }: VehicleRadarBu
       )}
     </button>
   )
-}
+})

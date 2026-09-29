@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { EMPTY_RAIN, countFloodRisk, fetchRainGeojson } from '@/api/rain'
 import type { RainCollection, RainQuery } from '@/api/rainTypes'
 import { env } from '@/config/env'
+import { pollEvery } from '@/lib/polling'
 import { queryKeys } from '@/lib/queryClient'
 import { toggleRainLayer, useRainLayerEnabled } from '@/lib/tacticalWeatherStore'
 
@@ -38,7 +39,7 @@ import { toggleRainLayer, useRainLayerEnabled } from '@/lib/tacticalWeatherStore
  * tráfico: de ahí los 10 minutos por defecto.
  */
 
-export type RainStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'error'
+type RainStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'error'
 
 export interface RainLayerState {
   enabled: boolean
@@ -64,6 +65,7 @@ export interface RainLayerState {
  * estable y por tanto también la clave de caché.
  */
 const RAIN_PARAMS: RainQuery = {}
+const refetchInterval = pollEvery(env.rainPollIntervalMs)
 
 export function useRainLayer(): RainLayerState {
   /*
@@ -120,7 +122,7 @@ export function useRainLayer(): RainLayerState {
     // cada arranque aunque nadie la encienda nunca.
     enabled,
     staleTime: env.rainPollIntervalMs,
-    refetchInterval: env.rainPollIntervalMs,
+    refetchInterval,
   })
 
   // Se conserva en la interfaz —lo consumen el mapa y los tests— pero delega en

@@ -1,5 +1,6 @@
 import type { OutageDetail } from '@/api/types'
 import { providerStyle } from '@/domain/powerSymbology'
+import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { formatDateTime, formatRelative } from '@/lib/format'
 
 /**
@@ -21,13 +22,15 @@ function formatClients(value: number): string {
 }
 
 /** ¿La hora comprometida ya pasó? Entonces dejó de ser una estimación útil. */
-function isOverdue(iso: string): boolean {
+function isOverdue(iso: string, now: number): boolean {
   const target = new Date(iso).getTime()
-  return Number.isFinite(target) && target < Date.now()
+  return Number.isFinite(target) && target < now
 }
 
 export function OutageDetails({ outage }: { outage: OutageDetail }) {
   const style = providerStyle(outage.provider)
+  // La reposición «vence» sola con el paso del tiempo, sin que llegue nada nuevo.
+  const now = useNow(RELATIVE_TIME_TICK_MS)
 
   const clients = outage.affected_clients
   const restoration = outage.estimated_restoration
@@ -77,12 +80,12 @@ export function OutageDetails({ outage }: { outage: OutageDetail }) {
               <span
                 className={
                   'ml-1.5 text-xs ' +
-                  (isOverdue(restoration)
+                  (isOverdue(restoration, now)
                     ? 'text-warn-ink'
                     : 'text-ink-muted')
                 }
               >
-                ({formatRelative(restoration)})
+                ({formatRelative(restoration, now)})
               </span>
             </dd>
           </div>
@@ -98,7 +101,7 @@ export function OutageDetails({ outage }: { outage: OutageDetail }) {
         )}
       </dl>
 
-      {restorationValid && isOverdue(restoration) && (
+      {restorationValid && isOverdue(restoration, now) && (
         <p className="mt-2 callout callout-warn">
           La hora comprometida por {style.label} ya pasó y el corte sigue
           publicado. La estimación puede haberse actualizado en su sistema.

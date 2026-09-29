@@ -7,7 +7,7 @@ import type {
   LinkMethod,
 } from '@/api/types'
 
-export const SOURCE_LABEL: Record<EventSource, string> = {
+const SOURCE_LABEL: Record<EventSource, string> = {
   conaf: 'CONAF',
   senapred: 'SENAPRED',
   bomberos: 'Bomberos',

@@ -28,7 +28,7 @@ export type MagnitudeBand = 'menor' | 'moderado' | 'fuerte' | 'desconocido'
 
 /** Cortes de la escala. Los pidió el producto: 4.0 y 5.5. */
 export const MODERATE_THRESHOLD = 4.0
-export const STRONG_THRESHOLD = 5.5
+const STRONG_THRESHOLD = 5.5
 
 export interface MagnitudeStyle {
   color: string
@@ -82,7 +82,7 @@ export const MAGNITUDE_ORDER: readonly MagnitudeBand[] = [
 ]
 
 /** Banda de una magnitud. `null` (solución preliminar) tiene su propia banda. */
-export function magnitudeBand(magnitude: number | null): MagnitudeBand {
+function magnitudeBand(magnitude: number | null): MagnitudeBand {
   if (magnitude === null || Number.isNaN(magnitude)) return 'desconocido'
   if (magnitude > STRONG_THRESHOLD) return 'fuerte'
   if (magnitude >= MODERATE_THRESHOLD) return 'moderado'

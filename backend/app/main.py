@@ -71,8 +71,12 @@ app.add_middleware(
     # no ve, así que se bajaría el artefacto entero en cada carga del mapa.
     # `X-AlertaV-Hazard-Stale` avisa de que la capa salió de la caché de
     # respaldo — un dato viejo servido sin marcarlo es una mentira silenciosa.
+    # `Retry-After` acompaña a los 429 (reporte ciudadano, prueba de push): sin
+    # exponerla, el cliente no puede esperar lo que el servidor pidió y
+    # reintenta a ciegas con su propio backoff.
     expose_headers=[
         "ETag",
+        "Retry-After",
         "X-AlertaV-Hazard-Stale",
         "X-AlertaV-Hazard-Generated-At",
     ],

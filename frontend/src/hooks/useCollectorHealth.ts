@@ -1,6 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 import { fetchCollectorsHealth } from '@/api/health'
 import { env } from '@/config/env'
+import { pollEvery } from '@/lib/polling'
+
+const refetchInterval = pollEvery(env.pollIntervalMs * 2)
 
 /**
  * Salud de la recolección.
@@ -18,6 +21,6 @@ export function useCollectorHealth() {
   return useQuery({
     queryKey: ['collectors', 'health'],
     queryFn: ({ signal }) => fetchCollectorsHealth(signal),
-    refetchInterval: env.pollIntervalMs * 2,
+    refetchInterval,
   })
 }

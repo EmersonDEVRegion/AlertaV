@@ -10,7 +10,7 @@
 import type { ReportCategory } from '@/domain/reportCategories'
 
 /** `EventSource` — origen de una señal. */
-export const EVENT_SOURCES = [
+const EVENT_SOURCES = [
   'citizen',
   'broadcastify',
   'nasa_firms',
@@ -72,7 +72,7 @@ export type IncidentType = (typeof INCIDENT_TYPES)[number]
  * `stale` NO es `extinguished`: significa que dejaron de llegar señales, no que
  * alguien haya declarado el fin de la emergencia. La UI los rotula distinto.
  */
-export const INCIDENT_STATUSES = [
+const INCIDENT_STATUSES = [
   'active',
   'controlled',
   'extinguished',
@@ -91,7 +91,7 @@ export type IncidentStatus = (typeof INCIDENT_STATUSES)[number]
  * hecho institucional. Un racimo de despachos radiales llega a `confirmed` con
  * `is_official_confirmed = false`, y la UI tiene que dejar ver la diferencia.
  */
-export const CONFIDENCE_LEVELS = ['unsafe', 'possible', 'confirmed'] as const
+const CONFIDENCE_LEVELS = ['unsafe', 'possible', 'confirmed'] as const
 export type ConfidenceLevel = (typeof CONFIDENCE_LEVELS)[number]
 
 /**
@@ -110,7 +110,7 @@ export type AlertLevel = 'roja' | 'amarilla' | 'temprana_preventiva' | 'verde'
 export type LinkMethod = 'spatial' | 'commune_text' | 'sector_text' | 'manual'
 
 /** Etiquetas legibles que calcula el backend. No se recalculan en el cliente. */
-export type ConfidenceLabel =
+type ConfidenceLabel =
   | 'confirmado'
   | 'muy probable'
   | 'probable'
@@ -136,7 +136,7 @@ export interface ConfidenceBreakdown {
 }
 
 /** Proveedores de suministro con cobertura en la Región de Valparaíso. */
-export const OUTAGE_PROVIDERS = ['chilquinta', 'cge'] as const
+const OUTAGE_PROVIDERS = ['chilquinta', 'cge'] as const
 export type OutageProvider = (typeof OUTAGE_PROVIDERS)[number]
 
 /**

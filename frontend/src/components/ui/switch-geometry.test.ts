@@ -118,7 +118,7 @@ describe('altura del panel', () => {
 })
 
 describe('cohesión del sistema de diseño', () => {
-  const CHROME = ['LayerToggles', 'IncidentListItem', 'MapOverlayState'].map((n) =>
+  const CHROME = ['SidePanel', 'IncidentListItem', 'MapOverlayState'].map((n) =>
     readFileSync(resolve(process.cwd(), `src/components/ui/${n}.tsx`), 'utf8'),
   )
   const ALL = [PANEL, ...CHROME].join('\n')

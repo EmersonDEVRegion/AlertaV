@@ -54,6 +54,24 @@ const SIZE_BY_LEVEL: ExpressionSpecification = [
   0.78,
 ]
 
+/**
+ * El de más evidencia se dibuja encima.
+ *
+ * Los iconos llevan `icon-allow-overlap` —un racimo apretado es información, no
+ * ruido—, así que cuando dos se pisan alguno queda debajo. Sin orden explícito
+ * decide el orden de llegada; con esto, un confirmado nunca queda tapado por un
+ * reporte sin corroborar. Exportado para la capa de iconos.
+ */
+export const BY_EVIDENCE: ExpressionSpecification = [
+  'match',
+  ['get', 'confidence_level'],
+  'confirmed',
+  3,
+  'possible',
+  2,
+  1,
+]
+
 const round = (value: number) => Math.round(value * 100) / 100
 
 /** Radio base del disco, en píxeles, antes de aplicar el factor por tramo. */
@@ -118,6 +136,7 @@ export const alertHaloLayer: IncidentLayer = {
   id: 'incidents-alert-halo',
   type: 'circle',
   filter: HAS_ALERT,
+  layout: { 'circle-sort-key': BY_EVIDENCE },
   paint: {
     'circle-radius': HALO_RADIUS,
     'circle-color': ALERT_COLOR_EXPRESSION as unknown as ExpressionSpecification,
@@ -132,6 +151,7 @@ export const alertHaloLayer: IncidentLayer = {
 export const casingLayer: IncidentLayer = {
   id: 'incidents-casing',
   type: 'circle',
+  layout: { 'circle-sort-key': BY_EVIDENCE },
   paint: {
     'circle-radius': circleRadius({ pad: 2.5 }),
     'circle-color': '#ffffff',
@@ -142,6 +162,7 @@ export const casingLayer: IncidentLayer = {
 export const coreLayer: IncidentLayer = {
   id: 'incidents-core',
   type: 'circle',
+  layout: { 'circle-sort-key': BY_EVIDENCE },
   paint: {
     'circle-radius': CORE_RADIUS,
     'circle-color': LEVEL_COLOR_EXPRESSION as unknown as ExpressionSpecification,

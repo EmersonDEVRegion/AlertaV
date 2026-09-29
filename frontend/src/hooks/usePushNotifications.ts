@@ -31,7 +31,7 @@ import {
  * - `off` / `on`: lo obvio.
  * - `working`: pidiendo permiso, ubicación o hablando con el servidor.
  */
-export type PushPhase =
+type PushPhase =
   | 'checking'
   | 'unavailable'
   | 'ios-install'
@@ -40,7 +40,7 @@ export type PushPhase =
   | 'working'
   | 'on'
 
-export interface PushPreferences {
+interface PushPreferences {
   notifyIncidents: boolean
   notifySeismic: boolean
 }

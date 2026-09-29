@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { memo, useEffect } from 'react'
 import type { CurrentWind } from '@/api/weather'
 import type { Incident } from '@/api/types'
 import type { WindCone } from '@/domain/windCone'
@@ -13,6 +13,7 @@ import {
 import { styleFor } from '@/domain/palette'
 import { isClosed, needsVerificationCaveat } from '@/domain/symbology'
 import { useIncidentDetail } from '@/hooks/useIncidentDetail'
+import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { formatDateTime, formatDistance, formatRelative } from '@/lib/format'
 import { AlertBadge } from './AlertBadge'
 import { ConfidenceAudit } from './ConfidenceAudit'
@@ -38,7 +39,7 @@ interface IncidentSheetProps {
  * emergencia, tapar el contexto geografico para mostrar un detalle es lo
  * contrario de lo que hace falta.
  */
-export function IncidentSheet({
+export const IncidentSheet = memo(function IncidentSheet({
   incident,
   onClose,
   wind = null,
@@ -50,6 +51,7 @@ export function IncidentSheet({
   // traza de señales, así que la tarjeta se pinta al instante y las señales
   // aparecen cuando llegan.
   const { data: detail, isLoading: loadingDetail } = useIncidentDetail(incident.code)
+  const now = useNow(RELATIVE_TIME_TICK_MS)
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -197,7 +199,7 @@ export function IncidentSheet({
             <dd className="text-right text-ink">
               {formatDateTime(incident.first_seen_at)}
               <span className="ml-1.5 text-xs text-ink-muted">
-                ({formatRelative(incident.first_seen_at)})
+                ({formatRelative(incident.first_seen_at, now)})
               </span>
             </dd>
           </div>
@@ -206,7 +208,7 @@ export function IncidentSheet({
             <dd className="text-right text-ink">
               {formatDateTime(incident.last_seen_at)}
               <span className="ml-1.5 text-xs text-ink-muted">
-                ({formatRelative(incident.last_seen_at)})
+                ({formatRelative(incident.last_seen_at, now)})
               </span>
             </dd>
           </div>
@@ -249,7 +251,7 @@ export function IncidentSheet({
                     {event.source_label ?? sourceLabel(event.source)}
                   </span>
                   <span className="shrink-0 text-ink-muted">
-                    {formatRelative(event.timestamp)}
+                    {formatRelative(event.timestamp, now)}
                   </span>
                 </div>
                 {event.text &&
@@ -375,4 +377,4 @@ export function IncidentSheet({
       </div>
     </section>
   )
-}
+})

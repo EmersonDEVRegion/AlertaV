@@ -19,7 +19,12 @@ export const queryClient = new QueryClient({
         if (error instanceof ApiError && !error.isRetryable) return false
         return failureCount < 3
       },
-      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 15_000),
+      // Si el servidor dijo cuánto esperar (429/503 con `Retry-After`), se le
+      // hace caso, con un tope de un minuto. Si no, backoff exponencial.
+      retryDelay: (attempt, error) =>
+        error instanceof ApiError && error.retryAfterMs !== null
+          ? Math.min(error.retryAfterMs, 60_000)
+          : Math.min(1000 * 2 ** attempt, 15_000),
     },
   },
 })
@@ -62,13 +67,14 @@ export const queryKeys = {
     geojson: (params: unknown) => ['road-closures', 'geojson', params] as const,
   },
   /**
-   * Capa de amenaza sísmica: un archivo estático servido en `/static`, no una
-   * ruta de la API. Vive en el mismo cliente igualmente, porque lo que se busca
-   * de react-query acá no es la caché sino la CANCELACIÓN y el ciclo de vida:
-   * una promesa que resuelve o rechaza una sola vez, en vez de una máquina de
-   * estados alimentada por eventos de MapLibre. Ver `hooks/useSeismicHazard.ts`.
+   * Capa de amenaza sísmica: un artefacto que el backend sirve en
+   * `/events/seismic/hazard` (ver `config/map.ts`). Vive en el mismo cliente
+   * igualmente, porque lo que se busca de react-query acá no es la caché sino
+   * la CANCELACIÓN y el ciclo de vida: una promesa que resuelve o rechaza una
+   * sola vez, en vez de una máquina de estados alimentada por eventos de
+   * MapLibre. Ver `hooks/useSeismicHazard.ts`.
    *
-   * Sin parámetros: hay un único artefacto por despliegue.
+   * Sin parámetros: hay un único artefacto.
    */
   hazard: {
     all: ['hazard'] as const,

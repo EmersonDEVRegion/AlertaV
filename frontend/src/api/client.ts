@@ -6,13 +6,26 @@ export class ApiError extends Error {
   readonly status: number
   readonly url: string
   readonly body: unknown
+  /**
+   * Cuánto pidió esperar el servidor (`Retry-After`), en milisegundos. `null`
+   * si no lo dijo. Ojo: con la API en otro origen, el navegador sólo deja leer
+   * esa cabecera si el backend la expone (`expose_headers` en el CORS).
+   */
+  readonly retryAfterMs: number | null
 
-  constructor(message: string, status: number, url: string, body: unknown) {
+  constructor(
+    message: string,
+    status: number,
+    url: string,
+    body: unknown,
+    retryAfterMs: number | null = null,
+  ) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.url = url
     this.body = body
+    this.retryAfterMs = retryAfterMs
   }
 
   /** Reintentar un 4xx no sirve de nada; un 5xx o un corte de red si. */
@@ -41,6 +54,19 @@ export function buildQuery(params: Record<string, QueryValue>): string {
   return qs ? `?${qs}` : ''
 }
 
+/**
+ * `Retry-After` en milisegundos. La cabecera admite segundos («120») o una
+ * fecha HTTP. Cualquier otra cosa se ignora: mejor el backoff propio que
+ * obedecer un valor ilegible.
+ */
+export function parseRetryAfter(value: string | null, now = Date.now()): number | null {
+  if (value === null || value.trim() === '') return null
+  const trimmed = value.trim()
+  if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1000
+  const at = Date.parse(trimmed)
+  return Number.isNaN(at) ? null : Math.max(0, at - now)
+}
+
 /** Convierte una respuesta no-2xx en `ApiError`, preservando el cuerpo. */
 async function toApiError(
   response: Response,
@@ -59,6 +85,7 @@ async function toApiError(
     response.status,
     url,
     parsed,
+    parseRetryAfter(response.headers.get('Retry-After')),
   )
 }
 

@@ -39,10 +39,21 @@ Otros comandos:
 
 ```bash
 npm run typecheck   # tsc --noEmit
+npm run lint        # oxlint: reglas de hooks (exhaustive-deps) y corrección
+npm run knip        # archivos, exports y dependencias sin uso
 npm test            # vitest run — tests de componentes y de geometría
+npm run check       # los cuatro anteriores, en orden (lo mismo que corre el CI)
 npm run build       # typecheck + build de producción (genera el service worker)
 npm run preview     # sirve dist/ — es la única forma de probar el service worker
+npm run analyze     # build con mapas de fuente + dist/stats.html (qué pesa cada chunk)
 ```
+
+**Por qué oxlint y no ESLint.** `typescript-eslint` no soporta TypeScript 7 (su
+paquete ya no trae la API de JavaScript que usa el parser). oxlint no depende
+del compilador y trae `react-hooks/exhaustive-deps`. Las variables sin uso las
+ataja `tsc` (`noUnusedLocals`), así que el linter no las repite. La
+configuración está en `.oxlintrc.json`; `react-perf` corre sólo sobre el mapa,
+donde un objeto nuevo en cada render sí le cuesta trabajo a react-map-gl.
 
 El service worker está desactivado en `npm run dev` a propósito: cachear durante
 el desarrollo es una fuente inagotable de confusión. Para probarlo, usá
@@ -211,22 +222,23 @@ usa para lo que sí varía y sí le importa a un vecino: **qué empresa** repone
 | Chilquinta | rojo profundo `#b91c1c` |
 | CGE | azul oscuro `#1e3a8a` |
 
-Los cortes además **no pasan por la fuente GeoJSON**: se dibujan como `<Marker>`
-de react-map-gl, que es el equivalente en MapLibre del `divIcon` de Leaflet
-(MapLibre no tiene `divIcon`). La partición ocurre en `App`, que entrega a
-`IncidentMap` dos arreglos ya separados.
+Los cortes tienen **su propia fuente GeoJSON**, separada de la de incidentes
+(`components/map/outageLayers.ts`): un disco del color de la empresa con el
+rayo SDF `av-bolt` encima. Es la **única fuente agrupada**: en un temporal son
+decenas de cortes en la misma comuna, y a escala regional lo que importa es
+dónde y a cuántos clientes, que es lo que dice un racimo (suma
+`affected_clients`). Tocar un racimo acerca la cámara; desde zoom 12 cada corte
+va suelto. Los incendios, en cambio, no se agrupan nunca: un mapa de
+emergencias no puede esconder un fuego detrás de un número.
 
-`OutagePinLayer` impone un tope de 150 marcadores porque cada uno es un nodo del
-DOM que MapLibre reposiciona en cada frame del paneo: un temporal deja cientos
-de circuitos caídos y el mapa se pondría pesado justo cuando más se necesita
-fluido. Cuando recorta, prioriza los cortes con más clientes afectados y nunca
-descarta el que está seleccionado.
+Antes eran `<Marker>` del DOM con un tope de 150: pasado el tope, el resto
+desaparecía del mapa sin aviso mientras el panel los seguía contando.
 
 ### 1c-quinquies. Amenaza sísmica: capa de referencia, no de emergencia
 
-`/static/geo/amenaza_sismica_valpo.json` es el modelo probabilístico del CSN
-(MASCSN26): una grilla de celdas con `pga_475`, `pga_2475` y aceleraciones
-espectrales. Describe cuánto **puede** moverse el suelo, no lo que está pasando,
+`/api/v1/events/seismic/hazard` (que sirve `backend/static/geo/amenaza_sismica_valpo.json`)
+es el modelo probabilístico del CSN (MASCSN26): una grilla de celdas con
+`pga_475`, `pga_2475` y aceleraciones espectrales. Describe cuánto **puede** moverse el suelo, no lo que está pasando,
 así que todo su diseño busca que no se lea como un evento:
 
 - **Violeta**, fuera de la familia cálida que usan incendios y sismos reales.
@@ -251,8 +263,7 @@ en el orden del arreglo de capas del estilo. Las dos capas de amenaza se anclan
 con `beforeId` a `seismic-reach-fill`, la primera capa de emergencia. Si esa
 constante deja de coincidir con una capa real, MapLibre ignora el anclaje **en
 silencio** y la amenaza pasa a taparlo todo; hay un test que ata ambos
-identificadores. Los pines de cortes son otro caso: al ser elementos del DOM
-(`<Marker>`) y no capas del lienzo, el navegador los pinta siempre por encima.
+identificadores.
 
 ### 1d. La capa de sismos usa una escala completamente aparte
 
@@ -297,6 +308,12 @@ El service worker cachea el app shell y los tiles, y sirve `/incidents/*` con
 `NetworkFirst` (timeout 6 s, expiración 10 min). Eso permite abrir la app en una
 quebrada sin señal.
 
+**Las reglas de la API son funciones, no expresiones regulares.** En producción
+la API vive en otro origen (Render) que la PWA (Vercel), y Workbox sólo aplica
+una RegExp a una URL de otro origen si calza desde el primer carácter. Con
+`/\/api\/v1\/incidents\//` las reglas no guardaban nada en producción; un
+matcher `({ url }) => url.pathname.startsWith(…)` sirve en los dos casos.
+
 La contraparte obligatoria es `StalenessBanner`: si la respuesta tiene más de
 `VITE_STALE_AFTER_MS` (3 min por defecto) o no hay conexión, aparece una franja
 ámbar con la antigüedad exacta del dato. Sin ese cartel, cachear una app de
@@ -320,18 +337,29 @@ anidados, así que `sources` se lee del objeto tipado, no del feature.
 | Variable | Por defecto | Para qué |
 |---|---|---|
 | `VITE_API_BASE_URL` | `/api/v1` | Base de la API |
-| `VITE_DEV_API_PROXY` | `http://localhost:8000` | Destino del proxy de desarrollo |
+| `VITE_DEV_API_PROXY` | `http://localhost:8000` | Destino del proxy de desarrollo (sólo `vite.config.ts`) |
 | `VITE_POLL_INTERVAL_MS` | `60000` | Cadencia del polling de incidentes |
 | `VITE_SEISMIC_POLL_INTERVAL_MS` | `180000` | Cadencia de la capa de sismos |
+| `VITE_RAIN_POLL_INTERVAL_MS` | `600000` | Cadencia de la lluvia (sólo encendida) |
+| `VITE_WEATHER_POLL_INTERVAL_MS` | `600000` | Cadencia del widget meteorológico |
+| `VITE_ROAD_CLOSURE_POLL_INTERVAL_MS` | `900000` | Cadencia de los cortes de ruta (sólo encendida) |
+| `VITE_VEHICLE_RADAR` | `on` en dev, `off` en build | Radar de vehículos (GBV) |
+| `VITE_VEHICLE_POLL_INTERVAL_MS` | `300000` | Cadencia del radar |
 | `VITE_STALE_AFTER_MS` | `180000` | Umbral del aviso de antigüedad |
-| `VITE_MAP_STYLE` | CARTO Positron | Estilo del mapa base |
+| `VITE_MAP_STYLE` / `VITE_MAP_STYLE_DARK` | CARTO Positron / Dark Matter | Estilo del mapa base |
+
+**Todas son públicas**: Vite las copia al bundle. `vite.config.ts` rechaza el
+build si el nombre de una `VITE_` parece un secreto (`TOKEN`, `SECRET`, `KEY`…).
 
 El polling está en 60 s porque el worker de correlación corre cada 120 s
 (`CORRELATION_POLL_INTERVAL_SECONDS`). Pedir más seguido gasta batería sin traer
 datos nuevos. Si cambia esa constante en el backend, cambiala acá también.
 
 TanStack Query pausa el polling cuando la pestaña pierde el foco y refresca al
-volver, así que la app no consume batería en el bolsillo.
+volver, así que la app no consume batería en el bolsillo. Con el backend caído,
+`lib/polling.ts` frena el sondeo (duplica la espera en cada fallo, hasta 5 min,
+con ±15 % de jitter) y el primer éxito lo devuelve a la cadencia base. Un 429 o
+503 con `Retry-After` se reintenta cuando el servidor lo pidió.
 
 ---
 
@@ -345,10 +373,9 @@ volver, así que la app no consume batería en el bolsillo.
   absoluta.
 - **`POST /incidents/correlate`** debe quedar detrás de autenticación de
   operador; la PWA no lo llama.
-- **Logos de las distribuidoras.** Los pines usan un acento de color y un glifo
-  de rayo, no los logos de Chilquinta y CGE: son marcas registradas y usarlas
-  exige permiso. El acento está aislado en `powerSymbology.ts`, así que cambiar
-  a logos es sustituir el `<span>` del pin.
+- **Logos de las distribuidoras.** Los pines usan un acento de color y el glifo
+  `av-bolt`, no los logos de Chilquinta y CGE: son marcas registradas y usarlas
+  exige permiso. El acento está aislado en `powerSymbology.ts`.
 - **Exponer `family` en la API.** Hoy `domain/families.ts` replica
   `INCIDENT_FAMILY` del backend. Un `computed_field` en `IncidentRead` elimina la
   tabla duplicada y su riesgo de deriva.
@@ -363,9 +390,10 @@ volver, así que la app no consume batería en el bolsillo.
   run preview`, porque el service worker está apagado en `npm run dev`.
 - **Tests visuales.** `npm test` cubre comportamiento y geometría bajo jsdom, que
   no calcula layout ni renderiza píxeles. Una regresión puramente visual —un
-  color mal contrastado, un solape— no la atrapa. Falta Playwright con capturas
-  de referencia; no se pudo instalar acá porque su CDN de navegadores no es
-  alcanzable desde este entorno.
+  color mal contrastado, un solape— no la atrapa. Las pruebas de humo con
+  Chromium (29-sep-2026) se corrieron a mano; falta dejarlas en el repo con
+  capturas de referencia. Con `?debug=1`, la instancia del mapa queda en
+  `window.__ALERTAV_MAP__` para inspeccionarla.
 - **Accesibilidad.** Los objetivos táctiles y `prefers-reduced-motion` están
   cubiertos; falta una pasada de contraste sobre el amarillo `single_signal`
   cuando se usa como fondo de chip.
@@ -375,8 +403,10 @@ volver, así que la app no consume batería en el bolsillo.
 ## Verificaciones hechas
 
 - `tsc --noEmit` limpio (TypeScript 7, `strict` + `noUncheckedIndexedAccess`).
-- `vite build` limpio; service worker con 19 entradas precacheadas y las dos
-  reglas de runtime caching presentes en `dist/sw.js`.
+- `vite build` limpio; service worker con las entradas precacheadas y las reglas
+  de runtime caching (funciones para la API) presentes en `dist/sw.js`.
+- `App.renders.test.tsx`: con la app quieta un minuto, y al seleccionar un
+  incidente, un sismo o el radar, el mapa, el panel y la barra no se repintan.
 - Contraste automático contra `backend/app/schemas/incident.py` y
   `backend/app/models/enums.py`: campos de `IncidentRead` (incluido
   `confidence_level`), `IncidentEventLink`, `IncidentStats` y los enums. La

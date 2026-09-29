@@ -34,7 +34,7 @@ function isFiniteNumber(value: unknown): value is number {
  * Exportada para poder probarla sin red: es donde vive todo el riesgo de que el
  * servicio devuelva algo distinto de lo esperado.
  */
-export function parseCurrentWind(payload: unknown): CurrentWind | null {
+function parseCurrentWind(payload: unknown): CurrentWind | null {
   if (typeof payload !== 'object' || payload === null) return null
 
   const current = (payload as Record<string, unknown>)['current_weather']

@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { MapRef } from 'react-map-gl/maplibre'
 import type { SeismicEvent } from '@/api/seismicTypes'
 import type { ActiveIncidentsQuery, Incident } from '@/api/types'
 import { IncidentMap } from '@/components/map/IncidentMap'
 import { MapLegend } from '@/components/map/MapLegend'
-import { IncidentSheet } from '@/components/incident/IncidentSheet'
-import { SeismicCard } from '@/components/incident/SeismicCard'
+import { SelectionDetails } from '@/components/incident/SelectionDetails'
 import {
   DEFAULT_LAYER_VISIBILITY,
   DEFAULT_PROVIDER_VISIBILITY,
@@ -23,10 +22,9 @@ import {
   filterSeismic,
   type SeismicFilterKey,
 } from '@/domain/seismicFilter'
-import { windConeFor } from '@/domain/windCone'
 import { FOCUS_ZOOM, SEISMIC_FOCUS_ZOOM } from '@/config/map'
-import { toConeCollection, toReachCollection } from '@/lib/overlayGeojson'
-import { useCurrentWind } from '@/hooks/useCurrentWind'
+import { toReachCollection } from '@/lib/overlayGeojson'
+import { clearSelection, selectIncident, selectSeismic } from '@/lib/selectionStore'
 import { useIsCompact } from '@/hooks/useMediaQuery'
 import { useTheme } from '@/hooks/useTheme'
 import { useRainLayer } from '@/hooks/useRainLayer'
@@ -44,14 +42,37 @@ import { levelOf } from '@/domain/symbology'
 import { useActiveIncidents } from '@/hooks/useActiveIncidents'
 import { useCollectorHealth } from '@/hooks/useCollectorHealth'
 import { useSeismicEvents } from '@/hooks/useSeismicEvents'
-import { useFreshness } from '@/hooks/useFreshness'
-import { useOnlineStatus } from '@/hooks/useOnlineStatus'
 import { useNotificationDeepLink } from '@/hooks/useNotificationDeepLink'
 import { useVehicleFeed } from '@/hooks/useVehicleFeed'
-import { VehicleRadarButton } from '@/components/vehicles/VehicleRadarButton'
-import { VehicleRadarPanel } from '@/components/vehicles/VehicleRadarPanel'
 import { env } from '@/config/env'
+import {
+  loadCitizenReportModal,
+  loadIncidentSheet,
+  loadRadarControls,
+  loadSeismicCard,
+  prefetchWhenIdle,
+} from '@/lib/lazyChunks'
 import { usgsIdOf } from '@/lib/push'
+
+/*
+ * El radar entero va en un chunk aparte: con `VITE_VEHICLE_RADAR` apagado —así
+ * está en producción hasta avisarle a GBV— no se descarga nunca.
+ */
+const RadarToggle = lazy(() => loadRadarControls().then((m) => ({ default: m.RadarToggle })))
+const RadarPanelHost = lazy(() =>
+  loadRadarControls().then((m) => ({ default: m.RadarPanelHost })),
+)
+
+/**
+ * Arreglo vacío compartido. `incidents ?? []` creaba uno nuevo en cada render
+ * mientras no había datos, y cada `useMemo` que dependía de él se recalculaba
+ * de balde.
+ */
+const NO_INCIDENTS: Incident[] = []
+const NO_SEISMIC: SeismicEvent[] = []
+
+/** Las familias que viven en la fuente de incidentes. Los cortes tienen la suya. */
+const MAP_FAMILIES = ['fire', 'traffic', 'otros'] as const satisfies readonly IncidentLayerKey[]
 
 export default function App() {
   // La referencia del mapa vive acá y no dentro de `IncidentMap`: el panel de
@@ -91,8 +112,11 @@ export default function App() {
   // es cuando nadie está tocando nada y nadie iría a buscarlo.
   const health = useCollectorHealth()
 
-  const [selectedCode, setSelectedCode] = useState<string | null>(null)
-  const [selectedUsgsId, setSelectedUsgsId] = useState<string | null>(null)
+  /*
+   * La selección (incidente, sismo o radar) ya no vive acá: está en
+   * `lib/selectionStore`, y la leen sólo los componentes que la dibujan. Tocar
+   * un pin no repinta `App`.
+   */
 
   // --- Radar de vehículos ---------------------------------------------------
   /*
@@ -105,32 +129,24 @@ export default function App() {
    * y no sale ninguna petición.
    *
    * El panel y la ficha del incidente se excluyen. En teléfono ocupan el mismo
-   * borde inferior; en escritorio, el mismo borde derecho. Abrir el radar cierra
-   * la ficha, y seleccionar algo en el mapa cierra el radar.
+   * borde inferior; en escritorio, el mismo borde derecho. Abrir el radar es
+   * una selección más del store, así que la exclusión viene sola: abrirlo
+   * cierra la ficha, y seleccionar algo en el mapa lo cierra a él.
    */
   const radarEnabled = env.vehicleRadarEnabled
   const vehicles = useVehicleFeed(radarEnabled)
-  const [radarOpen, setRadarOpen] = useState(false)
   const radarButtonRef = useRef<HTMLButtonElement>(null)
 
+  // Lo que aparece al primer toque —la ficha, la tarjeta del sismo, el modal de
+  // reporte y el radar— se adelanta cuando el navegador queda libre.
   useEffect(() => {
-    if (selectedCode !== null || selectedUsgsId !== null) setRadarOpen(false)
-  }, [selectedCode, selectedUsgsId])
-
-  const toggleRadar = useCallback(() => {
-    if (!radarOpen) {
-      setSelectedCode(null)
-      setSelectedUsgsId(null)
-    }
-    setRadarOpen(!radarOpen)
-  }, [radarOpen])
-
-  // Cierre pedido por la persona (Escape, ✕, velo): el foco vuelve al botón que
-  // lo abrió, o quien navega con teclado queda en ninguna parte.
-  const closeRadar = useCallback(() => {
-    setRadarOpen(false)
-    radarButtonRef.current?.focus()
-  }, [])
+    prefetchWhenIdle([
+      loadIncidentSheet,
+      loadSeismicCard,
+      loadCitizenReportModal,
+      ...(radarEnabled ? [loadRadarControls] : []),
+    ])
+  }, [radarEnabled])
 
   const [confirmedOnly, setConfirmedOnly] = useState(false)
   const [visibility, setVisibility] = useState<LayerVisibility>(DEFAULT_LAYER_VISIBILITY)
@@ -162,17 +178,14 @@ export default function App() {
   // la consulta: alternar entre microsismos y relevantes es instantáneo y no
   // vuelve a golpear la API, que además ya trajo ambos conjuntos.
   const seismicList = useMemo(
-    () => filterSeismic(seismic ?? [], seismicFilter),
+    () => filterSeismic(seismic ?? NO_SEISMIC, seismicFilter),
     [seismic, seismicFilter],
   )
 
   const anyIncidentLayer =
     visibility.fire || visibility.traffic || visibility.power || visibility.otros
 
-  const isOnline = useOnlineStatus()
-  const freshness = useFreshness(dataUpdatedAt || undefined)
-
-  const all = incidents ?? []
+  const all = incidents ?? NO_INCIDENTS
 
   // Una sola consulta a `/incidents/active` alimenta las tres capas; el filtro
   // es por familia y ocurre acá. Separarlo en tres consultas multiplicaría el
@@ -196,19 +209,27 @@ export default function App() {
   )
 
   /**
-   * Los cortes se separan del resto: van a `<Marker>` y no a la fuente GeoJSON.
-   * La partición ocurre acá, una sola vez, y no dentro del mapa, para que
-   * `IncidentMap` reciba dos arreglos ya listos y no tenga que filtrar en cada
-   * repintado.
+   * Lo que recibe el mapa, en dos fuentes.
+   *
+   * - `mapIncidents`: TODOS los que no son cortes, sin filtrar por capa. El
+   *   mapa esconde las familias apagadas con un `filter` de MapLibre, así que
+   *   encender o apagar una capa no le cambia este arreglo.
+   * - `outages`: los cortes, ya filtrados por capa y por empresa. Su fuente
+   *   está agrupada, y un `filter` de capa no le cambia la cuenta a un racimo:
+   *   ahí el filtro tiene que ir en los datos.
    */
-  const { regular, outages } = useMemo(() => {
-    const regular: Incident[] = []
-    const outages: Incident[] = []
-    for (const incident of list) {
-      ;(layerOf(incident.type) === 'power' ? outages : regular).push(incident)
-    }
-    return { regular, outages }
-  }, [list])
+  const mapIncidents = useMemo(
+    () => all.filter((incident) => layerOf(incident.type) !== 'power'),
+    [all],
+  )
+  const outages = useMemo(
+    () => list.filter((incident) => layerOf(incident.type) === 'power'),
+    [list],
+  )
+  const visibleFamilies = useMemo(
+    () => MAP_FAMILIES.filter((family) => visibility[family]),
+    [visibility],
+  )
 
   const countsByLayer = useMemo(() => {
     const counts = { fire: 0, traffic: 0, power: 0, otros: 0 }
@@ -231,39 +252,6 @@ export default function App() {
     }
     return groups
   }, [all])
-  const selected = useMemo(
-    () => list.find((incident) => incident.code === selectedCode) ?? null,
-    [list, selectedCode],
-  )
-
-  const selectedSeismic = useMemo(
-    () => seismicList.find((event) => event.usgs_id === selectedUsgsId) ?? null,
-    [seismicList, selectedUsgsId],
-  )
-
-  // --- Cono de viento -------------------------------------------------------
-  // Sólo se consulta el viento para un INCENDIO seleccionado: una cuña de
-  // propagación sobre un choque no significa nada, y pedirlo para cada
-  // incidente del mapa sería una llamada por marcador a un servicio externo.
-  const selectedFire =
-    selected && layerOf(selected.type) === 'fire' ? selected : null
-
-  const { data: wind, isLoading: windLoading, isError: windError } = useCurrentWind(
-    selectedFire?.lat ?? null,
-    selectedFire?.lon ?? null,
-    selectedFire !== null,
-  )
-
-  const cone = useMemo(
-    () => windConeFor(wind?.windSpeedKmh, wind?.windDirectionDeg),
-    [wind],
-  )
-
-  const coneCollection = useMemo(
-    () => toConeCollection(selectedFire, cone),
-    [selectedFire, cone],
-  )
-
   // --- Radio de percepción sísmica -----------------------------------------
   const reachCollection = useMemo(
     () => toReachCollection(seismicList),
@@ -290,8 +278,7 @@ export default function App() {
 
   const focusIncident = useCallback(
     (incident: Incident) => {
-      setSelectedUsgsId(null)
-      setSelectedCode(incident.code)
+      selectIncident(incident.code)
       flyTo(incident.lon, incident.lat, FOCUS_ZOOM)
     },
     [flyTo],
@@ -299,8 +286,7 @@ export default function App() {
 
   const focusSeismic = useCallback(
     (event: SeismicEvent) => {
-      setSelectedCode(null)
-      setSelectedUsgsId(event.usgs_id)
+      selectSeismic(event.usgs_id)
       flyTo(event.lon, event.lat, SEISMIC_FOCUS_ZOOM)
     },
     [flyTo],
@@ -324,8 +310,9 @@ export default function App() {
 
     if (pendingLink.kind === 'seismic') {
       setVisibility((current) => (current.seismic ? current : { ...current, seismic: true }))
-      setSelectedCode(null)
-      setSelectedUsgsId(usgsIdOf(pendingLink.key))
+      const usgsId = usgsIdOf(pendingLink.key)
+      if (usgsId) selectSeismic(usgsId)
+      else clearSelection()
       flyTo(pendingLink.lon, pendingLink.lat, SEISMIC_FOCUS_ZOOM)
       clearLink()
       return
@@ -361,39 +348,76 @@ export default function App() {
    * propiedades dos veces es garantía de que una de las dos se quede atrás
    * cuando se añada un filtro. Acá se declaran una vez y cada rama las derrama.
    */
-  const incidentControls = {
-    visibility,
-    onChange: setVisibility,
-    counts: { ...countsByLayer, seismic: seismicList.length },
-    incidentsByLayer,
-    seismicEvents: seismicList,
-    selectedCode,
-    selectedUsgsId,
-    onFocusIncident: focusIncident,
-    onFocusSeismic: focusSeismic,
-    seismicFilter,
-    onSeismicFilterChange: setSeismicFilter,
-    providers,
-    onProvidersChange: setProviders,
-    // Va acá y no en cada rama por el mismo motivo que el resto: declarar las
-    // propiedades dos veces garantiza que una se quede atrás.
-    health: health.data,
-  }
+  const incidentControls = useMemo(
+    () => ({
+      visibility,
+      onChange: setVisibility,
+      counts: { ...countsByLayer, seismic: seismicList.length },
+      incidentsByLayer,
+      seismicEvents: seismicList,
+      onFocusIncident: focusIncident,
+      onFocusSeismic: focusSeismic,
+      seismicFilter,
+      onSeismicFilterChange: setSeismicFilter,
+      providers,
+      onProvidersChange: setProviders,
+      // Va acá y no en cada rama por el mismo motivo que el resto: declarar las
+      // propiedades dos veces garantiza que una se quede atrás.
+      health: health.data,
+    }),
+    [
+      visibility,
+      countsByLayer,
+      seismicList,
+      incidentsByLayer,
+      focusIncident,
+      focusSeismic,
+      seismicFilter,
+      providers,
+      health.data,
+    ],
+  )
 
-  const referenceControls = {
-    hazardEnabled: hazard.enabled,
-    hazardStatus: hazard.status,
-    hazardError: hazard.errorMessage,
-    onHazardToggle: hazard.toggle,
-    onHazardRetry: hazard.retry,
-    closureEnabled: closures.enabled,
-    closureStatus: closures.status,
-    closureCount: closures.count,
-    closureCutCount: closures.cutCount,
-    onClosureToggle: closures.toggle,
-    onClosureRetry: closures.retry,
-    theme,
-  }
+  const referenceControls = useMemo(
+    () => ({
+      hazardEnabled: hazard.enabled,
+      hazardStatus: hazard.status,
+      hazardError: hazard.errorMessage,
+      onHazardToggle: hazard.toggle,
+      onHazardRetry: hazard.retry,
+      closureEnabled: closures.enabled,
+      closureStatus: closures.status,
+      closureCount: closures.count,
+      closureCutCount: closures.cutCount,
+      onClosureToggle: closures.toggle,
+      onClosureRetry: closures.retry,
+      theme,
+    }),
+    [hazard, closures, theme],
+  )
+
+  /*
+   * Todo lo que baja a un componente memorizado tiene que conservar su
+   * identidad entre renders: un objeto, una función o un elemento JSX nuevo en
+   * cada render anula el `memo` del hijo sin que nada avise.
+   */
+  const retryIncidents = useCallback(() => void refetch(), [refetch])
+  const themeToggle = useMemo(
+    () => <ThemeToggle theme={theme} onToggle={toggleTheme} />,
+    [theme, toggleTheme],
+  )
+  const notifications = useMemo(() => <NotificationBell />, [])
+  const radarButton = useMemo(
+    () =>
+      // Con 404 el servidor todavía no tiene el feed: un botón que abre
+      // «no disponible» es cromo muerto, así que no se muestra.
+      radarEnabled && vehicles.status !== 'unavailable' ? (
+        <Suspense fallback={null}>
+          <RadarToggle feed={vehicles} buttonRef={radarButtonRef} />
+        </Suspense>
+      ) : undefined,
+    [radarEnabled, vehicles],
+  )
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-app">
@@ -403,29 +427,15 @@ export default function App() {
         withAlert={withAlert}
         confirmedOnly={confirmedOnly}
         onToggleConfirmedOnly={setConfirmedOnly}
-        themeToggle={<ThemeToggle theme={theme} onToggle={toggleTheme} />}
-        notifications={<NotificationBell />}
-        radar={
-          // Con 404 el servidor todavía no tiene el feed: un botón que abre
-          // «no disponible» es cromo muerto, así que no se muestra.
-          radarEnabled && vehicles.status !== 'unavailable' ? (
-            <VehicleRadarButton
-              ref={radarButtonRef}
-              feed={vehicles}
-              open={radarOpen}
-              onToggle={toggleRadar}
-            />
-          ) : undefined
-        }
+        themeToggle={themeToggle}
+        notifications={notifications}
+        radar={radarButton}
       />
 
       <StalenessBanner
-        freshness={freshness}
-        isOnline={isOnline}
-        isFetching={isFetching}
         dataUpdatedAt={dataUpdatedAt || undefined}
         hasError={isError}
-        onRetry={() => void refetch()}
+        onRetry={retryIncidents}
       />
 
       <main className="relative flex-1">
@@ -433,19 +443,14 @@ export default function App() {
           mapRef={mapRef}
           theme={theme}
           reach={reachCollection}
-          cone={coneCollection}
           hazard={hazard}
           rain={rain}
           closures={closures}
-          incidents={regular}
+          incidents={mapIncidents}
+          visibleFamilies={visibleFamilies}
           outages={outages}
           seismic={seismicList}
-          showIncidents={visibility.fire || visibility.traffic || visibility.otros}
           showSeismic={visibility.seismic}
-          selectedCode={selectedCode}
-          selectedUsgsId={selectedUsgsId}
-          onSelect={setSelectedCode}
-          onSelectSeismic={setSelectedUsgsId}
         />
 
         {/*
@@ -492,10 +497,10 @@ export default function App() {
         {/*
           El botón vive dentro del `main` relativo, no en el árbol del mapa: así
           no compite con los controles de MapLibre ni se pierde en un repintado
-          del canvas. En teléfono se oculta mientras la ficha del incidente está
-          abierta, porque esa ficha ocupa el mismo borde inferior.
+          del canvas. En teléfono se oculta sola mientras la ficha del incidente
+          o el radar están abiertos: ocupan el mismo borde inferior.
         */}
-        <CitizenReportControl hiddenOnMobile={selected !== null || radarOpen} />
+        <CitizenReportControl />
 
         {isPending && (
           <MapOverlayState
@@ -525,26 +530,12 @@ export default function App() {
           />
         )}
 
-        {selected && (
-          <IncidentSheet
-            incident={selected}
-            onClose={() => setSelectedCode(null)}
-            wind={selectedFire ? (wind ?? null) : null}
-            windCone={cone}
-            windLoading={selectedFire !== null && windLoading}
-            windError={selectedFire !== null && windError}
-          />
-        )}
+        <SelectionDetails incidents={list} seismic={seismicList} />
 
-        {!selected && selectedSeismic && (
-          <SeismicCard
-            event={selectedSeismic}
-            onClose={() => setSelectedUsgsId(null)}
-          />
-        )}
-
-        {radarEnabled && radarOpen && (
-          <VehicleRadarPanel feed={vehicles} onClose={closeRadar} />
+        {radarEnabled && (
+          <Suspense fallback={null}>
+            <RadarPanelHost feed={vehicles} buttonRef={radarButtonRef} />
+          </Suspense>
         )}
       </main>
     </div>

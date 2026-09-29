@@ -20,7 +20,7 @@
 import type { SeismicEvent } from '@/api/seismicTypes'
 import { MODERATE_THRESHOLD } from './seismicSymbology'
 
-export const SEISMIC_FILTERS = ['relevant', 'micro'] as const
+const SEISMIC_FILTERS = ['relevant', 'micro'] as const
 export type SeismicFilterKey = (typeof SEISMIC_FILTERS)[number]
 
 export interface SeismicFilterOption {
@@ -48,7 +48,7 @@ export const SEISMIC_FILTER_OPTIONS: readonly SeismicFilterOption[] = [
   },
 ]
 
-export function matchesSeismicFilter(
+function matchesSeismicFilter(
   event: SeismicEvent,
   filter: SeismicFilterKey,
 ): boolean {

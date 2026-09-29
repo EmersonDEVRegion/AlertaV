@@ -12,17 +12,6 @@ export const INITIAL_VIEW_STATE = {
 } as const
 
 /**
- * Espejo de REGION_{WEST,SOUTH,EAST,NORTH} en `backend/app/core/config.py`, con
- * un margen para poder ver el borde. Se usa para acotar el paneo: mostrar un
- * mapa mundial invita a buscar incidentes donde el backend no recolecta nada.
- *
- * Orden: oeste, sur, este, norte — el mismo de `BoundingBox.as_firms_param()`.
- */
-export const REGION_BOUNDS: [number, number, number, number] = [
-  -72.6, -34.4, -69.2, -31.4,
-]
-
-/**
  * Límite de paneo del mapa.
  *
  * Es la UNIÓN de `region_bbox` (incendios) y `usgs_bbox` (sismos), con margen.
@@ -67,14 +56,13 @@ export const SEISMIC_FOCUS_ZOOM = 9.5
  */
 export const HAZARD_SOURCE_URL = `${env.apiBaseUrl}/events/seismic/hazard`
 
-export const MAP_STYLE_URL = env.mapStyle
-export const MAP_STYLE_URL_DARK = env.mapStyleDark
+const MAP_STYLE_URL = env.mapStyle
+const MAP_STYLE_URL_DARK = env.mapStyleDark
 
 /** Estilo según el tema activo. */
 export function mapStyleFor(theme: 'light' | 'dark'): string {
   return theme === 'dark' ? MAP_STYLE_URL_DARK : MAP_STYLE_URL
 }
-
 
 /** Atribucion obligatoria del mapa base. */
 export const MAP_ATTRIBUTION =

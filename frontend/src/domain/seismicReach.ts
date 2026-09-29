@@ -48,30 +48,30 @@ import type { SeismicEvent } from '@/api/seismicTypes'
 import { clamp } from '@/lib/geo'
 
 /** Coeficientes de la relación de atenuación. */
-export const ATTENUATION = { a: 1.7, b: 1.5, c: 3.0 } as const
+const ATTENUATION = { a: 1.7, b: 1.5, c: 3.0 } as const
 
 /** Umbral de percepción, en grados de Mercalli. */
-export const PERCEPTION_INTENSITY = 2.5
+const PERCEPTION_INTENSITY = 2.5
 
 /**
  * Profundidad supuesta cuando el USGS no la entrega. 15 km es un valor central
  * para sismos corticales; se supone en vez de omitirse porque tratar la
  * profundidad como 0 exageraría el radio justo en el caso peor informado.
  */
-export const ASSUMED_DEPTH_KM = 15
+const ASSUMED_DEPTH_KM = 15
 
 /**
  * Tope del radio dibujable. Un M7 sale por sobre los 1.000 km con esta fórmula
  * —y sí, un M7 se siente lejísimos—, pero un círculo así deja de informar y
  * pasa a tapar el mapa entero.
  */
-export const MAX_REACH_KM = 400
+const MAX_REACH_KM = 400
 
 /** Bajo este radio el círculo es más chico que el propio marcador. */
-export const MIN_DRAWABLE_KM = 1.5
+const MIN_DRAWABLE_KM = 1.5
 
 /** Distancia hipocentral, en km, a la que se alcanza el umbral de percepción. */
-export function hypocentralReachKm(magnitude: number): number {
+function hypocentralReachKm(magnitude: number): number {
   const { a, b, c } = ATTENUATION
   return 10 ** ((a + b * magnitude - PERCEPTION_INTENSITY) / c)
 }
@@ -98,8 +98,3 @@ export function perceptionRadiusKm(event: SeismicEvent): number | null {
   return radius < MIN_DRAWABLE_KM ? null : clamp(radius, 0, MAX_REACH_KM)
 }
 
-/** ¿El radio quedó recortado por el tope? La ficha lo advierte. */
-export function isReachClamped(event: SeismicEvent): boolean {
-  const raw = perceptionRadiusKm(event)
-  return raw !== null && raw >= MAX_REACH_KM
-}

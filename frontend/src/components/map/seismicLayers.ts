@@ -77,9 +77,17 @@ const SEISMIC_RADIUS = seismicRadius()
 
 const BAND_COLOR = MAGNITUDE_COLOR_EXPRESSION as unknown as ExpressionSpecification
 
+/**
+ * El sismo más fuerte se dibuja encima. En un enjambre los círculos se pisan, y
+ * sin orden explícito el que queda arriba es el último que llegó, no el que
+ * importa. Exportado para la capa del icono, que tiene que seguir el mismo orden.
+ */
+export const BY_MAGNITUDE: ExpressionSpecification = ['get', 'sizing_magnitude']
+
 export const seismicRingLayer: SeismicLayer = {
   id: 'seismic-ring',
   type: 'circle',
+  layout: { 'circle-sort-key': BY_MAGNITUDE },
   paint: {
     'circle-radius': SEISMIC_RADIUS,
     'circle-color': BAND_COLOR,
@@ -102,6 +110,7 @@ export const seismicRingLayer: SeismicLayer = {
 export const seismicCoreLayer: SeismicLayer = {
   id: 'seismic-core',
   type: 'circle',
+  layout: { 'circle-sort-key': BY_MAGNITUDE },
   paint: {
     'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 1.5, 14, 3],
     'circle-color': BAND_COLOR,
