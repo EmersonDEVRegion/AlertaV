@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { Layer, Source, useMap } from 'react-map-gl/maplibre'
 import type { HazardGrid } from '@/api/hazardTypes'
 import type { Theme } from '@/hooks/useTheme'
-import { RAIN_HEAT_LAYER_ID } from './rainLayers'
+import { RAIN_FIELD_LAYER_ID, RAIN_RISK_LABEL_LAYER_ID } from './rainLayers'
 import {
   HAZARD_BEFORE_ID,
   HAZARD_CELL_SOURCE_ID,
@@ -51,14 +51,11 @@ interface SeismicHazardLayerProps {
  *
  * La amenaza tiene que quedar **debajo de TODA la lluvia**, pero la lluvia puede
  * no estar montada —es otra capa diferida—. Si está, la referencia es su capa
- * más baja, que es el campo de calor; si no, el cono de viento, la única capa
+ * más baja: el campo (la imagen), o la etiqueta de riesgo cuando no llueve en
+ * ninguna parte y el campo no se monta. Si no, el cono de viento, la única capa
  * propia que existe siempre.
- *
- * Anclar al halo en vez de al calor dejaría la amenaza intercalada entre las dos
- * capas de la lluvia: no rompe nada, pero pone un modelo estático encima de un
- * pronóstico, que es al revés de lo que la jerarquía afirma.
  */
-const HAZARD_ANCHORS = [RAIN_HEAT_LAYER_ID, HAZARD_BEFORE_ID] as const
+const HAZARD_ANCHORS = [RAIN_FIELD_LAYER_ID, RAIN_RISK_LABEL_LAYER_ID, HAZARD_BEFORE_ID] as const
 
 export function SeismicHazardLayer({ grid, visible, theme }: SeismicHazardLayerProps) {
   const { current: map } = useMap()

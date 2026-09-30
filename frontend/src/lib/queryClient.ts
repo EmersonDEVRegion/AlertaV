@@ -56,6 +56,7 @@ export const queryKeys = {
   rain: {
     all: ['rain'] as const,
     geojson: (params: unknown) => ['rain', 'geojson', params] as const,
+    grid: () => ['rain', 'grid'] as const,
   },
   /**
    * Cortes e intervenciones de la vía (MOP + MTT). Ruta propia y no

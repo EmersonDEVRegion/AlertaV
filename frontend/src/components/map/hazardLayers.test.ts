@@ -28,7 +28,7 @@ import {
 } from './hazardLayers'
 import { coneFillLayer, reachFillLayer } from './overlayLayers'
 import { alertHaloLayer } from './incidentLayers'
-import { RAIN_HEAT_LAYER_ID, RAIN_LAYER_IDS } from './rainLayers'
+import { RAIN_FIELD_LAYER_ID, RAIN_LAYER_IDS } from './rainLayers'
 import {
   HAZARD_MAX_G,
   HAZARD_MIN_G,
@@ -116,7 +116,7 @@ describe('jerarquía de dibujo', () => {
     // `SeismicHazardLayer` prefiere anclarse bajo la lluvia cuando está
     // montada, y tiene que ser bajo su capa más baja: anclarse a una intermedia
     // dejaría el modelo estático encima de parte del pronóstico.
-    expect(RAIN_LAYER_IDS[0]).toBe(RAIN_HEAT_LAYER_ID)
+    expect(RAIN_LAYER_IDS[0]).toBe(RAIN_FIELD_LAYER_ID)
   })
 })
 

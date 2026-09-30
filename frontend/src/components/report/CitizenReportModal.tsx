@@ -379,7 +379,7 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
                     : 'Describe qué ves y una referencia del lugar.'
                 }
                 className={`
-                  mt-1.5 w-full resize-y rounded-surface border px-3 py-2 text-sm text-ink
+                  mt-1.5 w-full resize-y rounded-surface border px-3 py-2 text-sm text-ink pointer-coarse:text-base
                   placeholder:text-ink-faint focus:outline-none focus:ring-2
                   disabled:bg-sunken disabled:text-ink-muted
                   ${

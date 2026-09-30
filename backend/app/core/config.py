@@ -900,6 +900,31 @@ class Settings(BaseSettings):
     #: cliente cuida sigue intacto —lo caro era una llamada POR COMUNA, no tres
     #: por corrida— y ahora un lote que falle no se lleva a los otros dos.
     OPENMETEO_CHUNK_SIZE: int = Field(default=12, ge=1, le=100)
+    #: --- Grilla de lluvia (mapa de calor) -----------------------------------
+    #:
+    #: Además de las 36 comunas, una grilla regular sobre la región y el mar de
+    #: enfrente, para pintar la lluvia como un campo continuo (el mapa de calor
+    #: de la capa). La guarda un trabajo del proceso de workers en
+    #: `weather_grids`; ver `app/services/rain_grid_service.py`.
+    #:
+    #: Presupuesto: con paso 0,15° la caja de abajo son 17 × 15 = 255 puntos.
+    #: Si Open-Meteo contara cada punto como una llamada (su página de precios
+    #: no lo aclara), una corrida por hora son 6120 al día, que sumadas a las
+    #: 1728 de las comunas quedan bajo las 10.000 del nivel abierto. Un paso de
+    #: 0,1° pasaría el límite, y más fino que el modelo (~9-11 km) no agrega nada.
+    RAIN_GRID_ENABLED: bool = True
+    RAIN_GRID_STEP_DEGREES: float = Field(default=0.15, ge=0.05, le=1.0)
+    RAIN_GRID_WEST: float = -72.3
+    RAIN_GRID_SOUTH: float = -34.0
+    RAIN_GRID_EAST: float = -69.8
+    RAIN_GRID_NORTH: float = -31.9
+    RAIN_GRID_POLL_INTERVAL_SECONDS: int = Field(default=3600, ge=900, le=86_400)
+    #: Puntos por petición. Una sola variable × 48 pasos por punto: 25 puntos
+    #: dejan cada respuesta en ~40 KB, lejos del truncado que describe
+    #: `OPENMETEO_CHUNK_SIZE`.
+    RAIN_GRID_CHUNK_SIZE: int = Field(default=25, ge=1, le=100)
+    #: Horas hacia adelante sobre las que se toma el máximo.
+    RAIN_GRID_HOURS: int = Field(default=24, ge=1, le=48)
     #: Umbrales de `riesgo_inundacion`. Cualquiera de los tres levanta el flag.
     #: NO son umbrales oficiales de la DMC ni de SENAPRED: son una hipótesis
     #: calibrable, elegida por la geografía del caso (cerros con pendiente fuerte,

@@ -459,3 +459,39 @@ class TacticalWeatherRead(BaseModel):
             return None
 
 
+
+
+# ---------------------------------------------------------------------------
+#  Grilla de lluvia (mapa de calor)
+# ---------------------------------------------------------------------------
+
+
+class RainGrid(BaseModel):
+    """El máximo de mm/h por celda en las próximas `horas` horas."""
+
+    generado_en: datetime
+    modelo: str | None = None
+    horas: int | None = None
+    paso: float = Field(..., description="Grados entre celdas.")
+    oeste: float = Field(..., description="Longitud de la columna 0.")
+    norte: float = Field(..., description="Latitud de la fila 0.")
+    nx: int
+    ny: int
+    valores: list[float | None] = Field(
+        ...,
+        description=(
+            "`nx × ny` valores en mm/h, fila a fila de norte a sur y de oeste a "
+            "este. `null` donde el modelo no dio dato (no es lo mismo que 0)."
+        ),
+    )
+
+
+class RainGridSource(BaseModel):
+    estado: str = Field(..., description="`ok`, `stale`, `failing` o `never`.")
+    ultima_lectura: datetime | None = None
+    detalle: str | None = None
+
+
+class RainGridRead(BaseModel):
+    grilla: RainGrid | None = None
+    fuente: RainGridSource

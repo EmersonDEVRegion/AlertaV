@@ -25,6 +25,7 @@ from app.models.event import CollectorRun, RawEvent, SourceConfidence
 from app.models.incident import Incident, IncidentCounter, IncidentEvent
 from app.models.push import PushDelivery, PushPlace, PushSubscription
 from app.models.seismic import SeismicDetail
+from app.models.weather_grid import WeatherGrid
 
 __all__ = [
     "CONFIRMED_LABEL_BY_FAMILY",
@@ -53,6 +54,7 @@ __all__ = [
     "RawEvent",
     "SeismicDetail",
     "SourceConfidence",
+    "WeatherGrid",
     "confirmed_label_for",
     "family_of_event",
     "family_of_incident",

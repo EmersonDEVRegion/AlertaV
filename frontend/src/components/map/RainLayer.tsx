@@ -1,16 +1,16 @@
 import { useMemo } from 'react'
 import { Layer, Source, useMap } from 'react-map-gl/maplibre'
 import type { RainCollection } from '@/api/rainTypes'
+import type { RainRaster } from '@/lib/rainRaster'
 import type { Theme } from '@/hooks/useTheme'
 import {
   RAIN_BEFORE_ID,
+  RAIN_FIELD_SOURCE_ID,
   RAIN_LAYER_IDS,
+  RAIN_RISK_LABEL_LAYER_ID,
   RAIN_SOURCE_ID,
-  rainCoreLayer,
-  rainHaloLayer,
-  rainHeatLayer,
-  rainNucleusLayer,
-  rainRiskRingLayer,
+  rainFieldLayer,
+  rainRiskLabelLayer,
   rainTextLayer,
 } from './rainLayers'
 import { useLayerReanchor } from './useLayerReanchor'
@@ -35,6 +35,8 @@ import { useLayerReanchor } from './useLayerReanchor'
 
 interface RainLayerProps {
   data: RainCollection
+  /** El campo interpolado; `null` sin grilla o sin lluvia en ninguna parte. */
+  raster: RainRaster | null
   /** Encendida o apagada. Nunca desmonta: alterna `visibility`. */
   visible: boolean
   theme: Theme
@@ -50,7 +52,7 @@ interface RainLayerProps {
  */
 const RAIN_ANCHORS = [RAIN_BEFORE_ID] as const
 
-export function RainLayer({ data, visible, theme }: RainLayerProps) {
+export function RainLayer({ data, raster, visible, theme }: RainLayerProps) {
   const { current: map } = useMap()
   const instance = map?.getMap() ?? null
 
@@ -73,36 +75,41 @@ export function RainLayer({ data, visible, theme }: RainLayerProps) {
   // compara propiedad por propiedad, así que un objeto nuevo con los mismos
   // valores no produce escrituras — pero memorizarlas evita incluso esa
   // comparación en cada repintado del árbol.
-  const heat = useMemo(() => rainHeatLayer(theme, visible), [theme, visible])
-  const halo = useMemo(() => rainHaloLayer(theme, visible), [theme, visible])
-  const core = useMemo(() => rainCoreLayer(theme, visible), [theme, visible])
-  const nucleus = useMemo(() => rainNucleusLayer(theme, visible), [theme, visible])
-  const ring = useMemo(() => rainRiskRingLayer(theme, visible), [theme, visible])
+  const field = useMemo(() => rainFieldLayer(theme, visible), [theme, visible])
+  const risk = useMemo(() => rainRiskLabelLayer(theme, visible), [theme, visible])
   const text = useMemo(() => rainTextLayer(theme, visible), [theme, visible])
 
   return (
-    /*
-     * Sin `interactiveLayerIds` y sin `promoteId`: la lluvia no se selecciona, no
-     * abre ficha y no debe robarle el clic al incidente que tenga debajo. Es
-     * contexto, y el contexto no se toca.
-     */
-    <Source id={RAIN_SOURCE_ID} type="geojson" data={data}>
-      {/* Los seis con el mismo `beforeId`: cada uno se inserta justo antes del
-          ancla, así que el orden de inserción es el orden de dibujo.
+    <>
+      {/*
+        El campo, primero: queda el más abajo de la lluvia. Una fuente `image`
+        con la grilla interpolada; cambia una vez por hora (`url` nueva) y
+        react-map-gl la actualiza sin recrear la capa. Sin lluvia en ninguna
+        parte no se monta: una imagen transparente no aporta nada.
 
-          El campo de calor va el PRIMERO —el más abajo—. Es la misma fuente que
-          los discos, sin `promoteId` ni filtro: lo único que cambia es que se
-          alimenta del punto en vez del radio, que es justo lo que permite que
-          el relevo por zoom no descargue nada nuevo. */}
-      <Layer beforeId={RAIN_BEFORE_ID} {...heat} />
-      <Layer beforeId={RAIN_BEFORE_ID} {...halo} />
-      <Layer beforeId={RAIN_BEFORE_ID} {...core} />
-      <Layer beforeId={RAIN_BEFORE_ID} {...nucleus} />
-      <Layer beforeId={RAIN_BEFORE_ID} {...ring} />
-      {/* El texto va el ÚLTIMO: queda inmediatamente debajo del ancla, o sea
-          encima de sus propias manchas y debajo del cono, los sismos y los
-          incidentes. Moverlo de sitio en este bloque cambia la jerarquía. */}
-      <Layer beforeId={RAIN_BEFORE_ID} {...text} />
-    </Source>
+        Sin `interactiveLayerIds`: la lluvia no se selecciona ni le roba el
+        clic al incidente que tenga debajo.
+      */}
+      {raster && (
+        <Source
+          id={RAIN_FIELD_SOURCE_ID}
+          type="image"
+          url={raster.url}
+          coordinates={raster.coordinates}
+        >
+          {/* Antes de la etiqueta de riesgo y no del cono: la imagen llega
+              después que las comunas, y anclada al cono quedaría encima del
+              texto. La etiqueta existe siempre que exista esta capa. */}
+          <Layer beforeId={RAIN_RISK_LABEL_LAYER_ID} {...field} />
+        </Source>
+      )}
+      <Source id={RAIN_SOURCE_ID} type="geojson" data={data}>
+        {/* Los dos con el mismo `beforeId`: el orden de inserción es el de
+            dibujo, y el texto queda encima del campo y debajo del cono, los
+            sismos y los incidentes. */}
+        <Layer beforeId={RAIN_BEFORE_ID} {...risk} />
+        <Layer beforeId={RAIN_BEFORE_ID} {...text} />
+      </Source>
+    </>
   )
 }

@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from app.api.deps import (
     HazardServiceDep,
     IngestServiceDep,
+    RainGridServiceDep,
     SeismicServiceDep,
     WaterCutServiceDep,
     WeatherServiceDep,
@@ -35,6 +36,7 @@ from app.schemas.event import (
 from app.schemas.seismic import SeismicEventRead
 from app.schemas.water_cut import WaterCutCollection
 from app.schemas.weather import (
+    RainGridRead,
     TacticalWeatherRead,
 )
 
@@ -354,6 +356,24 @@ async def seismic_hazard(service: HazardServiceDep, request: Request) -> Respons
 # IMPORTANTE: van declaradas antes de `/{public_id}`, por lo mismo que las
 # sísmicas — FastAPI resuelve por orden de registro y "weather" entraría por la
 # ruta del detalle, fallando al parsearlo como UUID.
+
+
+@router.get(
+    "/weather/grid",
+    response_model=RainGridRead,
+    summary="Grilla de lluvia pronosticada (mapa de calor)",
+    description=(
+        "El máximo de precipitación (mm/h) de las próximas horas sobre una "
+        "grilla regular de la región y el mar de enfrente, para pintar la capa "
+        "de lluvia como un campo continuo. Se actualiza cada hora desde "
+        "Open-Meteo.\n\n"
+        "`grilla = null` si todavía no hay ninguna lectura. `fuente.estado` "
+        "distinto de `ok` significa que la foto puede ser vieja: su hora está "
+        "en `grilla.generado_en`."
+    ),
+)
+async def weather_grid(service: RainGridServiceDep) -> RainGridRead:
+    return RainGridRead.model_validate(await service.current())
 
 
 @router.get(
