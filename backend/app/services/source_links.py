@@ -153,6 +153,19 @@ def source_url_for(source: EventSource, raw_data: Any) -> str | None:
     return None
 
 
+def unidades_for(source: EventSource, raw_data: Any) -> list[str]:
+    """Carros despachados, para las señales de Bomberos. Lista vacía si no hay."""
+    if source != EventSource.BOMBEROS or not isinstance(raw_data, Mapping):
+        return []
+    bomberos = raw_data.get("_bomberos")
+    if not isinstance(bomberos, Mapping):
+        return []
+    unidades = bomberos.get("unidades")
+    if not isinstance(unidades, list):
+        return []
+    return [str(u).strip()[:12] for u in unidades if str(u).strip()][:20]
+
+
 def source_label_for(source: EventSource, raw_data: Any) -> str | None:
     """Nombre humano de quien publicó la señal: «Pura Noticia», «@cuenta».
 

@@ -89,4 +89,11 @@ export const queryKeys = {
     all: ['hazard'] as const,
     grid: () => ['hazard', 'grid'] as const,
   },
+  /**
+   * Cuarteles de Bomberos: instantánea estática del SIG, servida en
+   * `/events/cuarteles`. La comparten la capa del mapa y «Mis lugares».
+   */
+  cuarteles: {
+    all: ['cuarteles'] as const,
+  },
 } as const

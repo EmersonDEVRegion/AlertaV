@@ -80,7 +80,7 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import func, select, text
 
-from app.collectors.geoservices import parse_timestamp, request_json
+from app.collectors.geoservices import normalise_text, parse_timestamp, request_json
 from app.collectors.social.apify_client import build_client, describe_items
 from app.collectors.traffic.bomberos_10_4_worker import (
     Dispatch,
@@ -90,7 +90,9 @@ from app.collectors.traffic.bomberos_10_4_worker import (
     dispatches_to_events,
     geocode_dispatches,
     strip_html,
+    unidades_del_aviso,
 )
+from app.collectors.traffic.gemini import dispatch_summary_heuristic, es_seguimiento
 from app.collectors.vocabulary import (
     CBV,
     SISTEMAS_CLAVES,
@@ -104,7 +106,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.exceptions import CollectorError
 from app.models.enums import CollectorStatus, EventSource
-from app.models.event import CollectorRun
+from app.models.event import CollectorRun, RawEvent
 from app.services.ingest_service import IngestService
 
 logger = logging.getLogger(__name__)
@@ -114,6 +116,17 @@ logger = logging.getLogger(__name__)
 #: distintos y mezclarlos en la misma etiqueta haría imposible responder "¿está
 #: llegando el webhook?" mirando la tabla.
 COLLECTOR_NAME = "bomberos_apify_webhook"
+
+#: Las entregas del Task **canario** (ver `APIFY_X_CANARIO_IDS`). Otra etiqueta y
+#: no la misma porque miden cosas distintas: el Task principal trae sólo lo
+#: nuevo —una entrega vacía es calma— y el canario trae siempre lo último de
+#: cada cuenta, así que sólo en él una cuenta ausente es ceguera. Con la misma
+#: etiqueta, la entrega principal de media hora después taparía un canario
+#: `degraded` en `/collectors/health`.
+CANARIO_NAME = "bomberos_apify_canario"
+
+#: Las dos etiquetas que atiende el inbox.
+_COLECTORES_DEL_INBOX = (COLLECTOR_NAME, CANARIO_NAME)
 
 #: Estados del inbox, en `collector_runs.params["inbox"]`.
 INBOX_PENDIENTE = "pendiente"
@@ -232,6 +245,22 @@ def extract_actor_ids(payload: Any) -> list[str]:
             encontrados.append(texto)
 
     return encontrados
+
+
+def es_entrega_canario(payload: Any) -> bool:
+    """¿El aviso viene del Task canario? Ver `APIFY_X_CANARIO_IDS`."""
+    canarios = {i.strip() for i in settings.APIFY_X_CANARIO_IDS if i.strip()}
+    return bool(canarios) and bool(canarios & set(extract_actor_ids(payload)))
+
+
+def mide_ceguera(*, canario: bool) -> bool:
+    """¿En esta entrega se exige ver cada cuenta esperada?
+
+    En el canario, siempre. En la entrega principal, sólo si NO hay canario
+    configurado: sin ventana de tiempo, el Actor trae siempre lo último de cada
+    cuenta y la regla de antes sigue valiendo.
+    """
+    return canario or not [i for i in settings.APIFY_X_CANARIO_IDS if i.strip()]
 
 
 def dataset_items_url(dataset_id: str) -> str:
@@ -353,6 +382,9 @@ def es_retuit(payload: Any) -> bool:
 _AJUSTE_DE_CLAVES: dict[str, str] = {
     "cbv": "BOMBEROS_ACCIDENT_KEYS",
     "cbvm": "BOMBEROS_CBVM_KEYS",
+    "cbla": "BOMBEROS_CBLA_KEYS",
+    "cbquilpue": "BOMBEROS_QUILPUE_KEYS",
+    "cbquillota": "BOMBEROS_QUILLOTA_KEYS",
 }
 
 
@@ -410,7 +442,9 @@ def fecha_de_tuit(valor: Any) -> datetime | None:
     return parse_timestamp(valor)
 
 
-def parse_tweet(payload: Any, keys: Sequence[str]) -> Dispatch | None:
+def parse_tweet(
+    payload: Any, keys: Sequence[str], sistema: SistemaClaves | None = None
+) -> Dispatch | None:
     """Un item del dataset → `Dispatch`, si trae una clave configurada.
 
     Devuelve None —sin ruido— para todo lo que no sea un despacho: retuits del
@@ -430,7 +464,15 @@ def parse_tweet(payload: Any, keys: Sequence[str]) -> Dispatch | None:
     if not text:
         return None
 
-    key = matches_key(text, keys)
+    # Con el diccionario del Cuerpo: en Los Andes el `0` de `10-0-4` no se
+    # colapsa y las claves internas no cuentan aunque compartan prefijo con una
+    # configurada (`10-5-5` higienización, dentro de `10-5`).
+    key = matches_key(
+        text,
+        keys,
+        colapsar_cero=sistema.colapsa_cero if sistema is not None else True,
+        excluir=sistema.es_interna if sistema is not None else None,
+    )
     if key is None:
         return None
 
@@ -490,13 +532,14 @@ async def encolar_dataset(dataset_id: str, payload: Mapping[str, Any]) -> bool:
     sin él, las dos verían «no existe» y las dos insertarían.
     """
     traza = _run_fingerprint(dataset_id, payload)
+    colector = CANARIO_NAME if es_entrega_canario(payload) else COLLECTOR_NAME
     async with AsyncSessionLocal() as session:
         await session.execute(select(func.pg_advisory_xact_lock(func.hashtext(dataset_id))))
         ya_estaba = await session.scalar(
             select(CollectorRun.id)
             .where(
                 CollectorRun.source == EventSource.BOMBEROS,
-                CollectorRun.collector == COLLECTOR_NAME,
+                CollectorRun.collector.in_(_COLECTORES_DEL_INBOX),
                 CollectorRun.params["dataset_id"].astext == dataset_id,
                 CollectorRun.started_at > func.now() - INBOX_VENTANA_DUPLICADO,
             )
@@ -513,7 +556,7 @@ async def encolar_dataset(dataset_id: str, payload: Mapping[str, Any]) -> bool:
         session.add(
             CollectorRun(
                 source=EventSource.BOMBEROS,
-                collector=COLLECTOR_NAME,
+                collector=colector,
                 status=CollectorStatus.RUNNING.value,
                 # El `dataset_id` sí, el token jamás. `params` se serializa a la base.
                 params={
@@ -541,7 +584,7 @@ async def _abandonar_vencidas(session) -> None:
                             || ' veces procesando esta entrega; se abandona',
                     params = params || jsonb_build_object('inbox', CAST(:abandonado AS text))
                 WHERE source = :source
-                  AND collector = :collector
+                  AND collector IN (:collector, :canario)
                   AND status = 'running'
                   AND params->>'inbox' = :en_proceso
                   AND (params->>'reclamado_en')::timestamptz < now() - make_interval(secs => :vence)
@@ -552,6 +595,7 @@ async def _abandonar_vencidas(session) -> None:
             {
                 "source": EventSource.BOMBEROS.value,
                 "collector": COLLECTOR_NAME,
+                "canario": CANARIO_NAME,
                 "abandonado": INBOX_ABANDONADO,
                 "en_proceso": INBOX_EN_PROCESO,
                 "vence": INBOX_RECLAMO_VENCE.total_seconds(),
@@ -566,8 +610,8 @@ async def _abandonar_vencidas(session) -> None:
         )
 
 
-async def reclamar_siguiente() -> tuple[int, str, str, int] | None:
-    """Toma la entrega pendiente más vieja: `(run_id, dataset_id, traza, intento)`.
+async def reclamar_siguiente() -> tuple[int, str, str, int, bool] | None:
+    """Toma la entrega pendiente más vieja: `(run_id, dataset_id, traza, intento, canario)`.
 
     `FOR UPDATE SKIP LOCKED` hace que dos procesos de workers —el modo `split`,
     o un deploy solapado con el anterior— nunca tomen la misma. El reclamo se
@@ -593,7 +637,7 @@ async def reclamar_siguiente() -> tuple[int, str, str, int] | None:
                     WHERE r.id = (
                         SELECT id FROM {_TABLA_RUNS}
                         WHERE source = :source
-                          AND collector = :collector
+                          AND collector IN (:collector, :canario)
                           AND status = 'running'
                           AND (params->>'inbox' = :pendiente
                                OR (params->>'inbox' = :en_proceso
@@ -604,6 +648,7 @@ async def reclamar_siguiente() -> tuple[int, str, str, int] | None:
                         FOR UPDATE SKIP LOCKED
                     )
                     RETURNING r.id,
+                              r.collector AS collector,
                               r.params->>'dataset_id' AS dataset_id,
                               r.params->>'traza' AS traza,
                               (r.params->>'intentos')::int AS intentos
@@ -612,6 +657,7 @@ async def reclamar_siguiente() -> tuple[int, str, str, int] | None:
                 {
                     "source": EventSource.BOMBEROS.value,
                     "collector": COLLECTOR_NAME,
+                    "canario": CANARIO_NAME,
                     "pendiente": INBOX_PENDIENTE,
                     "en_proceso": INBOX_EN_PROCESO,
                     "vence": INBOX_RECLAMO_VENCE.total_seconds(),
@@ -622,7 +668,13 @@ async def reclamar_siguiente() -> tuple[int, str, str, int] | None:
 
     if fila is None:
         return None
-    return int(fila.id), str(fila.dataset_id), str(fila.traza or ""), int(fila.intentos)
+    return (
+        int(fila.id),
+        str(fila.dataset_id),
+        str(fila.traza or ""),
+        int(fila.intentos),
+        fila.collector == CANARIO_NAME,
+    )
 
 
 async def procesar_siguiente() -> bool:
@@ -635,13 +687,13 @@ async def procesar_siguiente() -> bool:
     reclamo = await reclamar_siguiente()
     if reclamo is None:
         return False
-    run_id, dataset_id, traza, intento = reclamo
+    run_id, dataset_id, traza, intento, canario = reclamo
     logger.info(
         "entrega del webhook reclamada",
         extra={"run_id": run_id, "dataset_id": dataset_id, "traza": traza, "intento": intento},
     )
     try:
-        await _process(dataset_id, traza, run_id=run_id)
+        await _process(dataset_id, traza, run_id=run_id, canario=canario)
     except Exception:
         logger.exception(
             "el inbox del webhook no pudo cerrar la entrega; se reintentará",
@@ -659,7 +711,7 @@ async def process_dataset(dataset_id: str, payload: Mapping[str, Any]) -> None:
     """
     traza = _run_fingerprint(dataset_id, payload)
     try:
-        await _process(dataset_id, traza)
+        await _process(dataset_id, traza, canario=es_entrega_canario(payload))
     except Exception:
         # Última barrera. Lo de adentro ya intenta dejar el fallo en
         # `collector_runs`, pero abrir la sesión y registrar la corrida son ellos
@@ -701,6 +753,130 @@ async def _sin_repetidos(
             continue
         nuevos.append(dispatch)
     return nuevos, len(dispatches) - len(nuevos)
+
+
+#: Hasta cuánto antes que un «SALE … A …» se busca su despacho original.
+VENTANA_SEGUIMIENTO = timedelta(minutes=90)
+
+
+def huella_de_despacho(texto: str, sistema: SistemaClaves) -> tuple[str, frozenset[str]] | None:
+    """`(clave, calles)` de un aviso, para reconocer su seguimiento.
+
+    Se usa la decodificación por reglas —determinista y sin red— porque lo que
+    importa es que el original y el seguimiento produzcan LA MISMA huella, no
+    que la calle sea la correcta. Las calles como conjunto: la central no
+    siempre las escribe en el mismo orden.
+    """
+    decodificado = dispatch_summary_heuristic(texto, source_handle=sistema.handle, sistema=sistema)
+    if not decodificado or not decodificado.get("clave") or not decodificado.get("street_1"):
+        return None
+    calles = frozenset(
+        normalise_text(str(decodificado[campo]))
+        for campo in ("street_1", "street_2")
+        if decodificado.get(campo)
+    )
+    return (normalise_text(str(decodificado["clave"])), calles)
+
+
+async def _colapsar_seguimientos(
+    service: IngestService, dispatches: list[Dispatch]
+) -> tuple[list[Dispatch], int]:
+    """Anexa cada «SALE <unidades> A …» a su despacho. Devuelve `(que_siguen, anexados)`.
+
+    Un seguimiento anuncia más carros para una emergencia ya publicada. Tratarlo
+    como despacho nuevo costaba una llamada al modelo y una a Nominatim (con
+    tope de 25 por entrega) para un lugar que ya se conocía, y con cinco
+    centrales un incendio grande podía agotar los topes y dejar sin punto a los
+    despachos nuevos de verdad.
+
+    El original se busca primero en el lote y después en la base (con la
+    ventana de tiempo del Task, puede haber llegado en la entrega anterior): la
+    misma cuenta, la misma clave y las mismas calles, dentro de
+    `VENTANA_SEGUIMIENTO`. **Si no aparece, el seguimiento se procesa como un
+    despacho normal**: nunca se descarta uno sin original.
+    """
+    seguimientos = [d for d in dispatches if es_seguimiento(d.raw_text)]
+    if not seguimientos:
+        return dispatches, 0
+
+    originales = [d for d in dispatches if not es_seguimiento(d.raw_text)]
+    salida: dict[int, Dispatch] = {id(d): d for d in originales}
+    anexados = 0
+    sin_original: list[Dispatch] = []
+
+    for seguimiento in seguimientos:
+        sistema = sistema_de_cuenta(seguimiento.cuenta)
+        huella = huella_de_despacho(seguimiento.raw_text, sistema) if sistema else None
+        if sistema is None or huella is None:
+            sin_original.append(seguimiento)
+            continue
+        unidades = unidades_del_aviso(seguimiento.raw_text, sistema)
+        cuenta = (seguimiento.cuenta or "").lstrip("@").lower()
+        cuando = seguimiento.occurred_at or datetime.now(UTC)
+
+        # 1) En el mismo lote.
+        en_lote = next(
+            (
+                d
+                for d in originales
+                if (d.cuenta or "").lstrip("@").lower() == cuenta
+                and huella_de_despacho(d.raw_text, sistema) == huella
+                and (
+                    d.occurred_at is None
+                    or timedelta(0) <= cuando - d.occurred_at <= VENTANA_SEGUIMIENTO
+                )
+            ),
+            None,
+        )
+        if en_lote is not None:
+            actual = salida[id(en_lote)]
+            salida[id(en_lote)] = replace(
+                actual,
+                unidades_extra=tuple(dict.fromkeys((*actual.unidades_extra, *unidades))),
+            )
+            anexados += 1
+            continue
+
+        # 2) En la base.
+        filas = (
+            await service.session.execute(
+                select(RawEvent).where(
+                    RawEvent.source == EventSource.BOMBEROS,
+                    RawEvent.timestamp >= cuando - VENTANA_SEGUIMIENTO,
+                    RawEvent.timestamp <= cuando + timedelta(minutes=5),
+                    func.lower(
+                        func.ltrim(RawEvent.raw_data["_bomberos"]["cuenta"].astext, "@")
+                    ) == cuenta,
+                )
+            )
+        ).scalars().all()
+        original = next(
+            (
+                fila
+                for fila in filas
+                if huella_de_despacho(
+                    str(((fila.raw_data or {}).get("_bomberos") or {}).get("aviso") or ""), sistema
+                ) == huella
+            ),
+            None,
+        )
+        if original is None:
+            sin_original.append(seguimiento)
+            continue
+        datos = dict(original.raw_data or {})
+        bomberos = dict(datos.get("_bomberos") or {})
+        previas = list(bomberos.get("unidades") or [])
+        bomberos["unidades"] = list(dict.fromkeys((*previas, *unidades)))
+        bomberos["seguimientos"] = list(
+            dict.fromkeys((*(bomberos.get("seguimientos") or []), seguimiento.guid or ""))
+        )
+        datos["_bomberos"] = bomberos
+        # JSONB no detecta mutaciones en el lugar: se reasigna un dict nuevo.
+        original.raw_data = datos
+        anexados += 1
+
+    await service.session.commit()
+    return [*salida.values(), *sin_original], anexados
 
 
 #: Si el tuit más nuevo de una central tiene más que esto, se anota. Las dos
@@ -749,7 +925,9 @@ def _marcar_inbox(run: Any, estado: str) -> None:
     run.params = {**(getattr(run, "params", None) or {}), "inbox": estado}
 
 
-async def _process(dataset_id: str, traza: str, run_id: int | None = None) -> None:
+async def _process(
+    dataset_id: str, traza: str, run_id: int | None = None, *, canario: bool = False
+) -> None:
     """El cuerpo del procesamiento, con la sesión abierta. Puede lanzar.
 
     Con `run_id` retoma la fila que dejó `encolar_dataset`; sin él abre una.
@@ -773,7 +951,9 @@ async def _process(dataset_id: str, traza: str, run_id: int | None = None) -> No
         }
         if run_id is None:
             run = await service.start_run(
-                source=EventSource.BOMBEROS, collector=COLLECTOR_NAME, params=params
+                source=EventSource.BOMBEROS,
+                collector=CANARIO_NAME if canario else COLLECTOR_NAME,
+                params=params,
             )
         else:
             run = await service.resume_run(run_id, params)
@@ -781,7 +961,7 @@ async def _process(dataset_id: str, traza: str, run_id: int | None = None) -> No
         try:
             if not any(claves_por_cuerpo.values()):
                 raise CollectorError(
-                    "BOMBEROS_ACCIDENT_KEYS y BOMBEROS_CBVM_KEYS quedaron vacías"
+                    "todas las listas de claves de Bomberos (BOMBEROS_*_KEYS) quedaron vacías"
                 )
 
             items = await fetch_dataset_items(
@@ -830,7 +1010,7 @@ async def _process(dataset_id: str, traza: str, run_id: int | None = None) -> No
                     cuentas_sin_tabla[cuenta] += 1
                     continue
 
-                dispatch = parse_tweet(item, claves_por_cuerpo.get(sistema.slug, []))
+                dispatch = parse_tweet(item, claves_por_cuerpo.get(sistema.slug, []), sistema)
                 if dispatch is not None:
                     dispatch = replace(dispatch, cuenta=cuenta)
                 if dispatch is None:
@@ -859,7 +1039,7 @@ async def _process(dataset_id: str, traza: str, run_id: int | None = None) -> No
                     # frecuente es la 16, carros moviéndose entre cuarteles, y
                     # contarla dejaría cada entrega en `partial`.
                     texto = strip_html(str(_first(item, _TEXT_KEYS) or ""))
-                    for código in find_claves(texto):
+                    for código in find_claves(texto, colapsar_cero=sistema.colapsa_cero):
                         if sistema.es_interna(código):
                             continue
                         etiqueta = clave_label(código)
@@ -876,6 +1056,9 @@ async def _process(dataset_id: str, traza: str, run_id: int | None = None) -> No
 
             leidos = len(dispatches)
             dispatches, ya_ingeridos = await _sin_repetidos(service, dispatches)
+            # «SALE M-34 A CLAVE 15 …»: unidades que se suman a un despacho ya
+            # publicado. Se anexan al original sin modelo ni Nominatim.
+            dispatches, colapsados = await _colapsar_seguimientos(service, dispatches)
             # El SELECT del delta abrió una transacción (autobegin). Se cierra
             # antes del modelo y de Nominatim, que pueden tardar un minuto: una
             # conexión «idle in transaction» durante ese minuto es una conexión
@@ -981,8 +1164,13 @@ async def _process(dataset_id: str, traza: str, run_id: int | None = None) -> No
             # El descarte por edad NO: es el filtro haciendo su trabajo, y
             # marcarlo pintaría de amarillo cada corrida nocturna. Se anota
             # igual, porque anotar y alarmar son cosas distintas.
-            ciegas = cuentas_sin_tuits(vistos)
-            esperadas = cuentas_esperadas()
+            medir = mide_ceguera(canario=canario)
+            ciegas = cuentas_sin_tuits(vistos) if medir else []
+            esperadas = cuentas_esperadas() if medir else []
+            if colapsados:
+                notas.append(
+                    f"{colapsados} seguimientos («SALE … A …») anexados a su despacho"
+                )
             if ciegas:
                 notas.insert(
                     0,
@@ -1003,6 +1191,10 @@ async def _process(dataset_id: str, traza: str, run_id: int | None = None) -> No
                 esperadas=esperadas,
                 problemas=bool(problemas or claves_no_configuradas),
             )
+            # Con ventana de tiempo, una entrega vacía es calma. Una entrega
+            # que trae items y TODOS son relleno no lo es: el Actor no ve.
+            if items and not buenos:
+                estado = CollectorStatus.DEGRADED
 
             if run_id is not None:
                 _marcar_inbox(run, INBOX_HECHO)
@@ -1025,6 +1217,8 @@ async def _process(dataset_id: str, traza: str, run_id: int | None = None) -> No
                     "items": len(items),
                     "despachos": leidos,
                     "ya_ingeridos": ya_ingeridos,
+                    "seguimientos_anexados": colapsados,
+                    "canario": canario,
                     "insertados": inserted,
                     "duplicados": duplicated,
                     "descartados_por_edad": descartados_por_edad,
@@ -1062,6 +1256,7 @@ async def _process(dataset_id: str, traza: str, run_id: int | None = None) -> No
 
 
 __all__ = [
+    "CANARIO_NAME",
     "COLLECTOR_NAME",
     "INBOX_ABANDONADO",
     "INBOX_EN_PROCESO",
@@ -1070,17 +1265,21 @@ __all__ = [
     "INBOX_PENDIENTE",
     "INBOX_RECLAMO_VENCE",
     "SILENCIO_SOSPECHOSO",
+    "VENTANA_SEGUIMIENTO",
     "claves_de_ingesta",
     "cuentas_esperadas",
     "cuentas_sin_tuits",
     "dataset_items_url",
     "encolar_dataset",
+    "es_entrega_canario",
     "es_retuit",
     "estado_de_entrega",
     "extract_dataset_id",
     "fecha_de_tuit",
     "fetch_dataset_items",
+    "huella_de_despacho",
     "is_fresh",
+    "mide_ceguera",
     "parse_tweet",
     "procesar_siguiente",
     "process_dataset",

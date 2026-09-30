@@ -1,0 +1,3001 @@
+{
+ "type": "FeatureCollection",
+ "metadata": {
+  "fuente": "SIG Bomberos de Chile (sig.bomberos.cl)",
+  "region": "Valparaíso",
+  "generado": "2026-09-30T14:46:23+00:00",
+  "cuerpos": 33,
+  "companias": 113,
+  "descartados_fuera_de_la_region_continental": 2
+ },
+ "features": [
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.673857,
+     -33.367622
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Algarrobo",
+    "cuerpo": "Algarrobo",
+    "numero": null,
+    "direccion": "Penablanca 305",
+    "comuna": "Algarrobo",
+    "comunas_atendidas": [
+     "Algarrobo"
+    ],
+    "telefono": "(35) 2481190"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.673855,
+     -33.367698
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Algarrobo",
+    "cuerpo": "Algarrobo",
+    "numero": 1,
+    "direccion": "Avenida Peñablanca 305",
+    "comuna": "Algarrobo",
+    "comunas_atendidas": [],
+    "telefono": "(35) 481190"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.644844,
+     -33.327665
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Algarrobo",
+    "cuerpo": "Algarrobo",
+    "numero": 2,
+    "direccion": "Camino Vecinal Lote 3, Sector Mirasol",
+    "comuna": "Algarrobo",
+    "comunas_atendidas": [],
+    "telefono": "(35) 481191"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.068482,
+     -32.427317
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Cabildo",
+    "cuerpo": "Cabildo",
+    "numero": null,
+    "direccion": "Humeres 830",
+    "comuna": "Cabildo",
+    "comunas_atendidas": [
+     "Cabildo"
+    ],
+    "telefono": "(33) 761070"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.068386,
+     -32.427211
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Cabildo",
+    "cuerpo": "Cabildo",
+    "numero": 1,
+    "direccion": "Avenda Humeres 830",
+    "comuna": "Cabildo",
+    "comunas_atendidas": [],
+    "telefono": "(33) 761070"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.94839,
+     -32.449865
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Cabildo",
+    "cuerpo": "Cabildo",
+    "numero": 2,
+    "direccion": "Poblacion San Francisco S/N, La Vega",
+    "comuna": "Cabildo",
+    "comunas_atendidas": [],
+    "telefono": "(33) 761070"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.603434,
+     -33.546509
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Cartagena",
+    "cuerpo": "Cartagena",
+    "numero": null,
+    "direccion": "Cartagena 137",
+    "comuna": "Cartagena",
+    "comunas_atendidas": [
+     "Cartagena"
+    ],
+    "telefono": "(035) 2450046"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.60325,
+     -33.546566
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Cartagena",
+    "cuerpo": "Cartagena",
+    "numero": 1,
+    "direccion": "Avenida Cartagena 137",
+    "comuna": "Cartagena",
+    "comunas_atendidas": [],
+    "telefono": "(35) 450046"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.599597,
+     -33.524405
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Cartagena",
+    "cuerpo": "Cartagena",
+    "numero": 2,
+    "direccion": "Sexta Oriente 448",
+    "comuna": "Cartagena",
+    "comunas_atendidas": [],
+    "telefono": "(35) 450047"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.411184,
+     -33.315003
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Casablanca",
+    "cuerpo": "Casablanca",
+    "numero": null,
+    "direccion": "Alejandro Galaz 343",
+    "comuna": "Casablanca",
+    "comunas_atendidas": [
+     "Casablanca"
+    ],
+    "telefono": "(32) 2742366"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.406753,
+     -33.317458
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Casablanca",
+    "cuerpo": "Casablanca",
+    "numero": 1,
+    "direccion": "Calle Chapito 152",
+    "comuna": "Casablanca",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2742366"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.411237,
+     -33.31491
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Casablanca",
+    "cuerpo": "Casablanca",
+    "numero": 2,
+    "direccion": "Alejandro Galaz 343",
+    "comuna": "Casablanca",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2742367"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.405719,
+     -33.31673
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Tercera de Casablanca",
+    "cuerpo": "Casablanca",
+    "numero": 3,
+    "direccion": "Jorge Montt 495, Quintay",
+    "comuna": "Casablanca",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2742368"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.40152,
+     -33.3186
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Cuarta de Casablanca",
+    "cuerpo": "Casablanca",
+    "numero": 4,
+    "direccion": "Lautaro 138, Villa El Rocio",
+    "comuna": "Casablanca",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2742369"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.962842,
+     -32.778494
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Catemu",
+    "cuerpo": "Catemu",
+    "numero": null,
+    "direccion": "Garcia Huidobro S/N",
+    "comuna": "Catemu",
+    "comunas_atendidas": [
+     "Catemu"
+    ],
+    "telefono": "(34) 631219"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.962837,
+     -32.778312
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Catemu",
+    "cuerpo": "Catemu",
+    "numero": 1,
+    "direccion": "Garcia Huidobro S/N",
+    "comuna": "Catemu",
+    "comunas_atendidas": [],
+    "telefono": "(34) 631219"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.693783,
+     -33.397467
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de El Quisco",
+    "cuerpo": "El Quisco",
+    "numero": null,
+    "direccion": "Ignacio Carrera Pinto 35",
+    "comuna": "El Quisco",
+    "comunas_atendidas": [
+     "El Quisco"
+    ],
+    "telefono": "35-2471166"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.693717,
+     -33.397518
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de El Quisco",
+    "cuerpo": "El Quisco",
+    "numero": 1,
+    "direccion": "Ignacio Carrera Pinto 032",
+    "comuna": "El Quisco",
+    "comunas_atendidas": [],
+    "telefono": "(35) 471166"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.684102,
+     -33.438478
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de El Quisco",
+    "cuerpo": "El Quisco",
+    "numero": 2,
+    "direccion": "Avenida I. Dubournais S/N, Isla Negra",
+    "comuna": "El Quisco",
+    "comunas_atendidas": [],
+    "telefono": "(36) 471166"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.665943,
+     -33.454998
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de El Tabo",
+    "cuerpo": "El Tabo",
+    "numero": null,
+    "direccion": "San Martin 951",
+    "comuna": "El Tabo",
+    "comunas_atendidas": [
+     "El Tabo"
+    ],
+    "telefono": "035-469699"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.665856,
+     -33.455018
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de El Tabo",
+    "cuerpo": "El Tabo",
+    "numero": 1,
+    "direccion": "San Martin 951",
+    "comuna": "El Tabo",
+    "comunas_atendidas": [],
+    "telefono": "(35) 469699"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.62085,
+     -33.498465
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de El Tabo",
+    "cuerpo": "El Tabo",
+    "numero": 2,
+    "direccion": "Eduardo Romero 60",
+    "comuna": "El Tabo",
+    "comunas_atendidas": [],
+    "telefono": "(35) 469700"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.144089,
+     -32.802474
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Hijuelas",
+    "cuerpo": "Hijuelas",
+    "numero": null,
+    "direccion": "Manuel Rodriguez 1735",
+    "comuna": "Hijuelas",
+    "comunas_atendidas": [
+     "Hijuelas"
+    ],
+    "telefono": "33 2272737"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.14427,
+     -32.802281
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Hijuelas",
+    "cuerpo": "Hijuelas",
+    "numero": 1,
+    "direccion": "Manuel Rodriguez 1735",
+    "comuna": "Hijuelas",
+    "comunas_atendidas": [],
+    "telefono": "(33) 272737"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.112216,
+     -32.849877
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Hijuelas",
+    "cuerpo": "Hijuelas",
+    "numero": 2,
+    "direccion": "calle principal 88",
+    "comuna": "Hijuelas",
+    "comunas_atendidas": [],
+    "telefono": "33 2272737"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.190642,
+     -32.787315
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de La Calera",
+    "cuerpo": "La Calera",
+    "numero": null,
+    "direccion": "Aldunate 341",
+    "comuna": "La Calera",
+    "comunas_atendidas": [
+     "La Calera"
+    ],
+    "telefono": "(33) 2225570"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.207124,
+     -32.790522
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de La Calera",
+    "cuerpo": "La Calera",
+    "numero": 1,
+    "direccion": "Avenida Dr. Alonso Zumaeta 1250",
+    "comuna": "La Calera",
+    "comunas_atendidas": [],
+    "telefono": "(33) 225570"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.190663,
+     -32.7872
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de La Calera",
+    "cuerpo": "La Calera",
+    "numero": 2,
+    "direccion": "Aldunate 341",
+    "comuna": "La Calera",
+    "comunas_atendidas": [],
+    "telefono": "(33) 225571"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.200927,
+     -32.791635
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Cuarta de La Calera",
+    "cuerpo": "La Calera",
+    "numero": 4,
+    "direccion": "Poblacion Cemento Melon 200",
+    "comuna": "La Calera",
+    "comunas_atendidas": [],
+    "telefono": "(33) 225572"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.227021,
+     -32.827803
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de La Cruz",
+    "cuerpo": "La Cruz",
+    "numero": null,
+    "direccion": "21 de Mayo 3302",
+    "comuna": "La Cruz",
+    "comunas_atendidas": [
+     "La Cruz"
+    ],
+    "telefono": "(33) 320166"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.226981,
+     -32.82767
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de La Cruz",
+    "cuerpo": "La Cruz",
+    "numero": 1,
+    "direccion": "Avenida 21 de Mayo 3302",
+    "comuna": "La Cruz",
+    "comunas_atendidas": [],
+    "telefono": "(33) 320166"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.229034,
+     -32.450495
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de La Ligua",
+    "cuerpo": "La Ligua",
+    "numero": null,
+    "direccion": "Diego Portales 298",
+    "comuna": "La Ligua",
+    "comunas_atendidas": [
+     "La Ligua"
+    ],
+    "telefono": "(33) 711024"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.229066,
+     -32.450421
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de La Ligua",
+    "cuerpo": "La Ligua",
+    "numero": 1,
+    "direccion": "Portales 298",
+    "comuna": "La Ligua",
+    "comunas_atendidas": [],
+    "telefono": "(33) 711024"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.22895,
+     -32.450428
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de La Ligua",
+    "cuerpo": "La Ligua",
+    "numero": 2,
+    "direccion": "Portales 298",
+    "comuna": "La Ligua",
+    "comunas_atendidas": [],
+    "telefono": "(33) 711025"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.283739,
+     -32.447356
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Tercera de La Ligua",
+    "cuerpo": "La Ligua",
+    "numero": 3,
+    "direccion": "Portales 2423, Placilla",
+    "comuna": "La Ligua",
+    "comunas_atendidas": [],
+    "telefono": "(33) 711026"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.199524,
+     -32.442747
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Cuarta de La Ligua",
+    "cuerpo": "La Ligua",
+    "numero": 4,
+    "direccion": "Esmeralda S/N, Valle Hermoso",
+    "comuna": "La Ligua",
+    "comunas_atendidas": [],
+    "telefono": "(33) 711027"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.451597,
+     -32.337858
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Quinta de La Ligua",
+    "cuerpo": "La Ligua",
+    "numero": 5,
+    "direccion": "Los Pescadores S/N, Los Molles",
+    "comuna": "La Ligua",
+    "comunas_atendidas": [],
+    "telefono": "(33) 711028"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.248224,
+     -32.310374
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Sexta de La Ligua",
+    "cuerpo": "La Ligua",
+    "numero": 6,
+    "direccion": "Valle Longotoma s/n",
+    "comuna": "La Ligua",
+    "comunas_atendidas": [],
+    "telefono": "no registra"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.264111,
+     -33.003122
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Limache",
+    "cuerpo": "Limache",
+    "numero": null,
+    "direccion": "Republica 368",
+    "comuna": "Limache",
+    "comunas_atendidas": [
+     "Limache"
+    ],
+    "telefono": "(33) 2413702"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.264339,
+     -33.002984
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Limache",
+    "cuerpo": "Limache",
+    "numero": 1,
+    "direccion": "Avenida Republica 368",
+    "comuna": "Limache",
+    "comunas_atendidas": [],
+    "telefono": "(33) 411930 - (33) 413702"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.27855,
+     -32.987508
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Limache",
+    "cuerpo": "Limache",
+    "numero": 2,
+    "direccion": "Caupolican 98",
+    "comuna": "Limache",
+    "comunas_atendidas": [],
+    "telefono": "(33) 411930 - (33) 413703"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.263026,
+     -33.009032
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Tercera de Limache",
+    "cuerpo": "Limache",
+    "numero": 3,
+    "direccion": "Calle 12 de Febrero 229",
+    "comuna": "Limache",
+    "comunas_atendidas": [],
+    "telefono": "(33) 411930 - (33) 413704"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.95419,
+     -32.842274
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Llaillay",
+    "cuerpo": "Llaillay",
+    "numero": 1,
+    "direccion": "Balmaceda 181",
+    "comuna": "Llaillay",
+    "comunas_atendidas": [],
+    "telefono": "(34) 611060"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.956927,
+     -32.837209
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Llaillay",
+    "cuerpo": "Llaillay",
+    "numero": 2,
+    "direccion": "Balmaceda 181",
+    "comuna": "Llaillay",
+    "comunas_atendidas": [],
+    "telefono": "(35) 611060"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.954404,
+     -32.842223
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Llay Llay",
+    "cuerpo": "Llay Llay",
+    "numero": null,
+    "direccion": "Balmaceda 181",
+    "comuna": "Llay Llay",
+    "comunas_atendidas": [
+     "Llay Llay"
+    ],
+    "telefono": "34 611060"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.596546,
+     -32.834345
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Los Andes",
+    "cuerpo": "Los Andes",
+    "numero": null,
+    "direccion": "Ricardo Vicuña",
+    "comuna": "Los Andes",
+    "comunas_atendidas": [
+     "Calle Larga",
+     "Los Andes"
+    ],
+    "telefono": "(34) 421212"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.596413,
+     -32.834371
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Los Andes",
+    "cuerpo": "Los Andes",
+    "numero": 1,
+    "direccion": "Esmeralda 136",
+    "comuna": "Los Andes",
+    "comunas_atendidas": [],
+    "telefono": "(34) 421212"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.596494,
+     -32.83447
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Los Andes",
+    "cuerpo": "Los Andes",
+    "numero": 2,
+    "direccion": "Esmeralda 120",
+    "comuna": "Los Andes",
+    "comunas_atendidas": [],
+    "telefono": "(34) 421213"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.593171,
+     -32.844315
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Tercera de Los Andes",
+    "cuerpo": "Los Andes",
+    "numero": 3,
+    "direccion": "Pascual Baburiza 1234",
+    "comuna": "Los Andes",
+    "comunas_atendidas": [],
+    "telefono": "(34) 421214"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.626655,
+     -32.855356
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Cuarta de Los Andes",
+    "cuerpo": "Los Andes",
+    "numero": 4,
+    "direccion": "Paseo Basaure S/N",
+    "comuna": "Los Andes",
+    "comunas_atendidas": [],
+    "telefono": "(34) 421215"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.60859,
+     -32.828808
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Quinta de Los Andes",
+    "cuerpo": "Los Andes",
+    "numero": 5,
+    "direccion": "Pedro Aguirre Cerda 30",
+    "comuna": "Los Andes",
+    "comunas_atendidas": [],
+    "telefono": "(34) 421216"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.304338,
+     -32.910546
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Sexta de Los Andes",
+    "cuerpo": "Los Andes",
+    "numero": 6,
+    "direccion": "Estacion S/N Rio Blanco",
+    "comuna": "Los Andes",
+    "comunas_atendidas": [],
+    "telefono": "(34) 421217"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.200124,
+     -32.736486
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Nogales",
+    "cuerpo": "Nogales",
+    "numero": null,
+    "direccion": "Vicuna Mackenna 430",
+    "comuna": "Nogales",
+    "comunas_atendidas": [
+     "Nogales"
+    ],
+    "telefono": "332262823"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.200216,
+     -32.736501
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Nogales",
+    "cuerpo": "Nogales",
+    "numero": 1,
+    "direccion": "Simon Bolivar 14",
+    "comuna": "Nogales",
+    "comunas_atendidas": [],
+    "telefono": "(33) 262823"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.211656,
+     -32.692319
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Nogales",
+    "cuerpo": "Nogales",
+    "numero": 2,
+    "direccion": "Ramon Freire S/N, El Melon",
+    "comuna": "Nogales",
+    "comunas_atendidas": [],
+    "telefono": "(33) 262824"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.215586,
+     -32.735705
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Tercera de Nogales",
+    "cuerpo": "Nogales",
+    "numero": 3,
+    "direccion": "Calle El Molle 10, Poblacion El Poligono",
+    "comuna": "Nogales",
+    "comunas_atendidas": [],
+    "telefono": "(33) 262825"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.185875,
+     -32.998223
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Olmué",
+    "cuerpo": "Olmué",
+    "numero": null,
+    "direccion": "Manuel Antonio Matta 790",
+    "comuna": "Olmue",
+    "comunas_atendidas": [
+     "Olmue"
+    ],
+    "telefono": "(33) 441488"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.185861,
+     -32.99834
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Olmué",
+    "cuerpo": "Olmué",
+    "numero": 1,
+    "direccion": "Diego Portales/Eastman",
+    "comuna": "Olmue",
+    "comunas_atendidas": [],
+    "telefono": "(33) 443587"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.439963,
+     -32.506339
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Papudo",
+    "cuerpo": "Papudo",
+    "numero": null,
+    "direccion": "Doctor Moore 82",
+    "comuna": "Papudo",
+    "comunas_atendidas": [
+     "Papudo"
+    ],
+    "telefono": "(33) 2791127"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.440025,
+     -32.506253
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Papudo",
+    "cuerpo": "Papudo",
+    "numero": 1,
+    "direccion": "Fernandez Concha 721",
+    "comuna": "Papudo",
+    "comunas_atendidas": [],
+    "telefono": "(33) 712338 - 791127"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.320831,
+     -32.434824
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Papudo",
+    "cuerpo": "Papudo",
+    "numero": 2,
+    "direccion": "Avenida Las Salinas S/N, Pullally",
+    "comuna": "Papudo",
+    "comunas_atendidas": [],
+    "telefono": "(33) 712338 - 791128"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.929692,
+     -32.251735
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Petorca",
+    "cuerpo": "Petorca",
+    "numero": null,
+    "direccion": "Walter Martinez 364",
+    "comuna": "Petorca",
+    "comunas_atendidas": [
+     "Petorca"
+    ],
+    "telefono": "(33) 781052"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.929613,
+     -32.251668
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Petorca",
+    "cuerpo": "Petorca",
+    "numero": 1,
+    "direccion": "Manuel Montt 795",
+    "comuna": "Petorca",
+    "comunas_atendidas": [],
+    "telefono": "(33) 781052"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.843292,
+     -32.223783
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Petorca",
+    "cuerpo": "Petorca",
+    "numero": 2,
+    "direccion": "Pedro Montt S/N",
+    "comuna": "Petorca",
+    "comunas_atendidas": [],
+    "telefono": "(33) 781053"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.069772,
+     -32.355824
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Tercera de Petorca",
+    "cuerpo": "Petorca",
+    "numero": 3,
+    "direccion": "Carretera E-35",
+    "comuna": "Petorca",
+    "comunas_atendidas": [],
+    "telefono": "332-781052"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.415089,
+     -32.725709
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Puchuncaví",
+    "cuerpo": "Puchuncaví",
+    "numero": null,
+    "direccion": "Bernardo O'Higgins 461",
+    "comuna": "Puchuncaví",
+    "comunas_atendidas": [
+     "Puchuncaví"
+    ],
+    "telefono": "(32) 2791028"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.414943,
+     -32.725782
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Puchuncaví",
+    "cuerpo": "Puchuncaví",
+    "numero": 1,
+    "direccion": null,
+    "comuna": "Puchuncaví",
+    "comunas_atendidas": [],
+    "telefono": "(32) 791028"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.482771,
+     -32.741845
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Puchuncaví",
+    "cuerpo": "Puchuncaví",
+    "numero": 2,
+    "direccion": "Población Bello Horizonte",
+    "comuna": "Puchuncaví",
+    "comunas_atendidas": [],
+    "telefono": "(32) 791029"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.432525,
+     -32.646115
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Tercera de Puchuncaví",
+    "cuerpo": "Puchuncaví",
+    "numero": 3,
+    "direccion": "El Acantilado, 14",
+    "comuna": "Maitencillo",
+    "comunas_atendidas": [],
+    "telefono": "322771248"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.717775,
+     -32.626198
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Putaendo",
+    "cuerpo": "Putaendo",
+    "numero": null,
+    "direccion": "Pedro Aguirre Cerda 312",
+    "comuna": "Putaendo",
+    "comunas_atendidas": [
+     "Putaendo"
+    ],
+    "telefono": "34-2501026"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.717578,
+     -32.626146
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Putaendo",
+    "cuerpo": "Putaendo",
+    "numero": 1,
+    "direccion": "Camus 130, Casilla 36",
+    "comuna": "Putaendo",
+    "comunas_atendidas": [],
+    "telefono": "(34) 501026"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.726323,
+     -32.578112
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Putaendo",
+    "cuerpo": "Putaendo",
+    "numero": 2,
+    "direccion": "Calle Nueva, Sector Rinconada de Guzmanes",
+    "comuna": "Putaendo",
+    "comunas_atendidas": [],
+    "telefono": "(34) 501027"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.722721,
+     -32.660942
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Tercera de Putaendo",
+    "cuerpo": "Putaendo",
+    "numero": 3,
+    "direccion": "Calle Lo Hermita 01, Rinconada de Silva",
+    "comuna": "Putaendo",
+    "comunas_atendidas": [],
+    "telefono": "no registra"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.247287,
+     -32.885247
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Quillota",
+    "cuerpo": "Quillota",
+    "numero": null,
+    "direccion": "Bulnes 1029",
+    "comuna": "Quillota",
+    "comunas_atendidas": [
+     "Quillota"
+    ],
+    "telefono": "(33) 312987 - 311691"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.249114,
+     -32.88034
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Quillota",
+    "cuerpo": "Quillota",
+    "numero": 1,
+    "direccion": "La Concepción 476",
+    "comuna": "Quillota",
+    "comunas_atendidas": [],
+    "telefono": "(33) 312987 - 311691"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.242645,
+     -32.877442
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Quillota",
+    "cuerpo": "Quillota",
+    "numero": 2,
+    "direccion": "Condell 71",
+    "comuna": "Quillota",
+    "comunas_atendidas": [],
+    "telefono": "(33) 312987 - 311692"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.243648,
+     -32.877481
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Tercera de Quillota",
+    "cuerpo": "Quillota",
+    "numero": 3,
+    "direccion": "Blanco Encalada 47",
+    "comuna": "Quillota",
+    "comunas_atendidas": [],
+    "telefono": "(33) 312987 - 311693"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.442837,
+     -33.050071
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Quilpué",
+    "cuerpo": "Quilpué",
+    "numero": null,
+    "direccion": "German Castro 583",
+    "comuna": "Quilpué",
+    "comunas_atendidas": [
+     "Quilpué"
+    ],
+    "telefono": "(32) 910310"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.438569,
+     -33.046554
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Quilpué",
+    "cuerpo": "Quilpué",
+    "numero": 1,
+    "direccion": "Zenteno 770",
+    "comuna": "Quilpué",
+    "comunas_atendidas": [],
+    "telefono": "(32) 910310"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.442652,
+     -33.049927
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Quilpué",
+    "cuerpo": "Quilpué",
+    "numero": 2,
+    "direccion": "Esmeralda 700",
+    "comuna": "Quilpué",
+    "comunas_atendidas": [],
+    "telefono": "(32) 910311"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.439463,
+     -33.038299
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Tercera de Quilpué",
+    "cuerpo": "Quilpué",
+    "numero": 3,
+    "direccion": "San Enrique/Lisboa",
+    "comuna": "Quilpué",
+    "comunas_atendidas": [],
+    "telefono": "(32) 910312"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.419002,
+     -33.049396
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Cuarta de Quilpué",
+    "cuerpo": "Quilpué",
+    "numero": 4,
+    "direccion": "Baden Power 310 Belloto 2000",
+    "comuna": "Quilpué",
+    "comunas_atendidas": [],
+    "telefono": "(32) 910313"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.437316,
+     -33.064228
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Quinta de Quilpué",
+    "cuerpo": "Quilpué",
+    "numero": 5,
+    "direccion": "Colina de Oro 2155",
+    "comuna": "Quilpué",
+    "comunas_atendidas": [],
+    "telefono": "32 2150154"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.52747,
+     -32.786951
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Quintero",
+    "cuerpo": "Quintero",
+    "numero": null,
+    "direccion": "Independencia 580",
+    "comuna": "Quintero",
+    "comunas_atendidas": [
+     "Quintero"
+    ],
+    "telefono": "(56) (32) 2933145-2930776"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.528848,
+     -32.77955
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Quintero",
+    "cuerpo": "Quintero",
+    "numero": 1,
+    "direccion": "Aranguiz Tudela 280",
+    "comuna": "Quintero",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2933145 - 2930776"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.527453,
+     -32.78716
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Quintero",
+    "cuerpo": "Quintero",
+    "numero": 2,
+    "direccion": "Normandie 1980",
+    "comuna": "Quintero",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2933145 - 2930777"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.684255,
+     -32.8518
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Rinconada",
+    "cuerpo": "Rinconada",
+    "numero": null,
+    "direccion": "Independencia 1145",
+    "comuna": "Rinconada",
+    "comunas_atendidas": [
+     "Rinconada"
+    ],
+    "telefono": "(34) 2401022"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.684301,
+     -32.851642
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Rinconada",
+    "cuerpo": "Rinconada",
+    "numero": 1,
+    "direccion": "Avenida General San Martin 2502",
+    "comuna": "Rinconada",
+    "comunas_atendidas": [],
+    "telefono": "(34) 401022"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.606126,
+     -33.587029
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de San Antonio",
+    "cuerpo": "San Antonio",
+    "numero": null,
+    "direccion": "Covadonga 459",
+    "comuna": "San Antonio",
+    "comunas_atendidas": [
+     "San Antonio"
+    ],
+    "telefono": "(35)2211144"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.612591,
+     -33.594231
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de San Antonio",
+    "cuerpo": "San Antonio",
+    "numero": 1,
+    "direccion": "Avenida Barrosluco 1610, Barrancas",
+    "comuna": "San Antonio",
+    "comunas_atendidas": [],
+    "telefono": "(35) 211144"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.613254,
+     -33.580597
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de San Antonio",
+    "cuerpo": "San Antonio",
+    "numero": 2,
+    "direccion": "Pedro Montt S/N",
+    "comuna": "San Antonio",
+    "comunas_atendidas": [],
+    "telefono": "(35) 211145"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.612615,
+     -33.611962
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Tercera de San Antonio",
+    "cuerpo": "San Antonio",
+    "numero": 3,
+    "direccion": "Arzobispo Casanova 139 Llolleo",
+    "comuna": "San Antonio",
+    "comunas_atendidas": [],
+    "telefono": "(35) 211146"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.580906,
+     -33.642292
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Cuarta de San Antonio",
+    "cuerpo": "San Antonio",
+    "numero": 4,
+    "direccion": "Victoria S/N, San Juan",
+    "comuna": "San Antonio",
+    "comunas_atendidas": [],
+    "telefono": "(35) 211147"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.580795,
+     -32.799359
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de San Esteban",
+    "cuerpo": "San Esteban",
+    "numero": null,
+    "direccion": "Merced 832",
+    "comuna": "San Esteban",
+    "comunas_atendidas": [
+     "San Esteban"
+    ],
+    "telefono": "(34) 482600-480102"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.580708,
+     -32.79924
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de San Esteban",
+    "cuerpo": "San Esteban",
+    "numero": 1,
+    "direccion": "Avenida Santa Teresa 31",
+    "comuna": "San Esteban",
+    "comunas_atendidas": [],
+    "telefono": "(34) 482600 - 480102"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.436608,
+     -32.858176
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de San Esteban",
+    "cuerpo": "San Esteban",
+    "numero": 2,
+    "direccion": "Camino Internacional Los Chacayes",
+    "comuna": "San Esteban",
+    "comunas_atendidas": [],
+    "telefono": "no registra"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.725942,
+     -32.751819
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de San Felipe",
+    "cuerpo": "San Felipe",
+    "numero": null,
+    "direccion": "Argomedo 615",
+    "comuna": "San Felipe",
+    "comunas_atendidas": [
+     "Panquehue",
+     "San Felipe"
+    ],
+    "telefono": "342518817"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.725752,
+     -32.75177
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de San Felipe",
+    "cuerpo": "San Felipe",
+    "numero": 1,
+    "direccion": "Merced 832",
+    "comuna": "San Felipe",
+    "comunas_atendidas": [],
+    "telefono": "(34) 518817"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.732383,
+     -32.753789
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de San Felipe",
+    "cuerpo": "San Felipe",
+    "numero": 2,
+    "direccion": "Tacna Sur 22",
+    "comuna": "San Felipe",
+    "comunas_atendidas": [],
+    "telefono": "(34) 518818"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.736647,
+     -32.744081
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Tercera de San Felipe",
+    "cuerpo": "San Felipe",
+    "numero": 3,
+    "direccion": "Justo Estay 1000",
+    "comuna": "San Felipe",
+    "comunas_atendidas": [],
+    "telefono": "(34) 518819"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.717642,
+     -32.749584
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Cuarta de San Felipe",
+    "cuerpo": "San Felipe",
+    "numero": 4,
+    "direccion": "Ambrosio Santelices 980, P.A.C.",
+    "comuna": "San Felipe",
+    "comunas_atendidas": [],
+    "telefono": "(34) 518820"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.689451,
+     -32.784287
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Quinta de San Felipe",
+    "cuerpo": "San Felipe",
+    "numero": 5,
+    "direccion": "Santiago Bueras S/N Curimon",
+    "comuna": "San Felipe",
+    "comunas_atendidas": [],
+    "telefono": "(34) 518821"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.836603,
+     -32.770946
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Sexta de San Felipe",
+    "cuerpo": "San Felipe",
+    "numero": 6,
+    "direccion": "Troncal S/N, Panquehue",
+    "comuna": "Panquehue",
+    "comunas_atendidas": [],
+    "telefono": "(34) 518822"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.747635,
+     -32.713672
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Séptima de San Felipe",
+    "cuerpo": "San Felipe",
+    "numero": 7,
+    "direccion": "Calle El Rio S/N, 21 de Mayo",
+    "comuna": "San Felipe",
+    "comunas_atendidas": [],
+    "telefono": "(34) 518823"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.655664,
+     -32.7476
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Santa María",
+    "cuerpo": "Santa María",
+    "numero": null,
+    "direccion": "Los Alamos 3007",
+    "comuna": "Santa María",
+    "comunas_atendidas": [
+     "Santa Maria"
+    ],
+    "telefono": "34-582024"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.655837,
+     -32.747884
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Santa María",
+    "cuerpo": "Santa María",
+    "numero": 1,
+    "direccion": null,
+    "comuna": "Santa María",
+    "comunas_atendidas": [],
+    "telefono": "(34) 582024"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.655374,
+     -32.748017
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Santa María",
+    "cuerpo": "Santa María",
+    "numero": 2,
+    "direccion": null,
+    "comuna": "Santa María",
+    "comunas_atendidas": [],
+    "telefono": "(34) 582025"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -70.64693,
+     -32.782057
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Tercera de Santa María",
+    "cuerpo": "Santa María",
+    "numero": 3,
+    "direccion": "Tocornal s/n",
+    "comuna": "Santa María",
+    "comunas_atendidas": [],
+    "telefono": "034-2582270"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.620754,
+     -33.636131
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Santo Domingo",
+    "cuerpo": "Santo Domingo",
+    "numero": null,
+    "direccion": "Calle Jaime Guzman 200",
+    "comuna": "Santo Domingo",
+    "comunas_atendidas": [
+     "Santo Domingo"
+    ],
+    "telefono": "(35) 441804"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.620626,
+     -33.636047
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Santo Domingo",
+    "cuerpo": "Santo Domingo",
+    "numero": 1,
+    "direccion": "Avenida El Golf 130",
+    "comuna": "Santo Domingo",
+    "comunas_atendidas": [],
+    "telefono": "(35) 441804"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.628536,
+     -33.038928
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Valparaíso",
+    "cuerpo": "Valparaíso",
+    "numero": null,
+    "direccion": "San Antonio 295",
+    "comuna": "Valparaíso",
+    "comunas_atendidas": [
+     "Valparaiso"
+    ],
+    "telefono": "(32) 2255856"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.628632,
+     -33.038858
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Valparaiso",
+    "cuerpo": "Valparaíso",
+    "numero": 1,
+    "direccion": "Cochrane 625",
+    "comuna": "Valparaíso",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2255856"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.628407,
+     -33.038753
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Valparaíso",
+    "cuerpo": "Valparaíso",
+    "numero": 2,
+    "direccion": "Blanco 630",
+    "comuna": "Valparaíso",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2255857"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.615125,
+     -33.047233
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Tercera de Valparaíso",
+    "cuerpo": "Valparaíso",
+    "numero": 3,
+    "direccion": "Avenida Pedro Montt 2078",
+    "comuna": "Valparaíso",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2255858"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.614384,
+     -33.044506
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Cuarta de Valparaíso",
+    "cuerpo": "Valparaíso",
+    "numero": 4,
+    "direccion": "Freire 159, Valparaíso.",
+    "comuna": "Valparaíso",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2255859"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.61428,
+     -33.044301
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Quinta de Valparaíso",
+    "cuerpo": "Valparaíso",
+    "numero": 5,
+    "direccion": "Freire 171",
+    "comuna": "Valparaíso",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2255860"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.613842,
+     -33.048611
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Sexta de Valparaíso",
+    "cuerpo": "Valparaíso",
+    "numero": 6,
+    "direccion": "General Cruz 630",
+    "comuna": "Valparaíso",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2255861"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.612329,
+     -33.047072
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Séptima de Valparaíso",
+    "cuerpo": "Valparaíso",
+    "numero": 7,
+    "direccion": "Avenida Pedro Montt 2313",
+    "comuna": "Valparaíso",
+    "comunas_atendidas": [],
+    "telefono": "(32) 255331"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.624001,
+     -33.042713
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Octava de Valparaiso",
+    "cuerpo": "Valparaíso",
+    "numero": 8,
+    "direccion": "Blanco 1184",
+    "comuna": "Valparaíso",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2255863"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.614281,
+     -33.044691
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Novena de Valparaiso",
+    "cuerpo": "Valparaíso",
+    "numero": 9,
+    "direccion": "Avenida Brasil 2103",
+    "comuna": "Valparaíso",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2255864"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.574759,
+     -33.050336
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Décima Cuarta de Valparaíso",
+    "cuerpo": "Valparaíso",
+    "numero": 10,
+    "direccion": "Avenida Matta 2503, Los Placeres",
+    "comuna": "Valparaíso",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2255869"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.623931,
+     -33.042824
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Décima Primera de Valparaiso",
+    "cuerpo": "Valparaíso",
+    "numero": 10,
+    "direccion": "Malgarejo 210",
+    "comuna": "Valparaíso",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2255866"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.576444,
+     -33.058918
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Décima Quinta de Valparaíso",
+    "cuerpo": "Valparaíso",
+    "numero": 10,
+    "direccion": "Avenida Rodelillo/Jardin Aradie, Rodelillo",
+    "comuna": "Valparaíso",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2255870"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.645884,
+     -33.038739
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Décima Segunda de Valparaíso",
+    "cuerpo": "Valparaíso",
+    "numero": 10,
+    "direccion": "Pedro Aguirre Cerda 1170, Playa Ancha",
+    "comuna": "Valparaíso",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2255867"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.657239,
+     -33.101902
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Décima Sexta de Valparaíso",
+    "cuerpo": "Valparaíso",
+    "numero": 10,
+    "direccion": "Calle Las 7 Vueltas S/N, Laguna Verde",
+    "comuna": "Valparaíso",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2255871"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.572273,
+     -33.112425
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Décima Tercera de Valparaíso",
+    "cuerpo": "Valparaíso",
+    "numero": 10,
+    "direccion": "2 Norte y Virginia Letelier, Placilla",
+    "comuna": "Valparaíso",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2255868"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.613733,
+     -33.049295
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Décima de Valparaiso",
+    "cuerpo": "Valparaíso",
+    "numero": 10,
+    "direccion": "Independencia 2190.",
+    "comuna": "Valparaíso",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2255865"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.364859,
+     -33.044054
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Villa Alemana",
+    "cuerpo": "Villa Alemana",
+    "numero": null,
+    "direccion": "Ignacio Carrera Pinto 34",
+    "comuna": "Villa Alemana",
+    "comunas_atendidas": [
+     "Villa Alemana"
+    ],
+    "telefono": "(32) 2951446 - 2958871"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.372175,
+     -33.048143
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Villa Alemana",
+    "cuerpo": "Villa Alemana",
+    "numero": 1,
+    "direccion": "San Martin 331",
+    "comuna": "Villa Alemana",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2951446 - 2958871"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.371642,
+     -33.043951
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Villa Alemana",
+    "cuerpo": "Villa Alemana",
+    "numero": 2,
+    "direccion": "Santiago 566",
+    "comuna": "Villa Alemana",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2951446 - 2958872"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.35277,
+     -33.046955
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Tercera de Villa Alemana",
+    "cuerpo": "Villa Alemana",
+    "numero": 3,
+    "direccion": "Freire Esquina Troncal",
+    "comuna": "Villa Alemana",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2951446 - 2958873"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.3908,
+     -33.056599
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Cuarta de Villa Alemana",
+    "cuerpo": "Villa Alemana",
+    "numero": 4,
+    "direccion": "Los Avellanos 798, Pais de Gales",
+    "comuna": "Villa Alemana",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2951446 - 2958874"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.539897,
+     -33.017619
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Viña del Mar",
+    "cuerpo": "Viña del Mar",
+    "numero": null,
+    "direccion": "Los Castaños 485",
+    "comuna": "Viña del Mar",
+    "comunas_atendidas": [
+     "Viña del Mar"
+    ],
+    "telefono": "(32)-2684328"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.554789,
+     -33.026807
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Viña del Mar",
+    "cuerpo": "Viña del Mar",
+    "numero": 1,
+    "direccion": "Alvarez 562",
+    "comuna": "Viña del Mar",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2684328"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.549997,
+     -33.025813
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Viña del Mar",
+    "cuerpo": "Viña del Mar",
+    "numero": 2,
+    "direccion": "Avenida Valparaiso 791",
+    "comuna": "Viña del Mar",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2684329"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.531821,
+     -33.028418
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Tercera de Viña del Mar",
+    "cuerpo": "Viña del Mar",
+    "numero": 3,
+    "direccion": "Avenida Valparaiso 791",
+    "comuna": "Viña del Mar",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2684330"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.541224,
+     -33.013063
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Cuarta de Viña del Mar",
+    "cuerpo": "Viña del Mar",
+    "numero": 4,
+    "direccion": "12 Norte S/N/Quillota",
+    "comuna": "Viña del Mar",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2684331"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.517498,
+     -32.998246
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Quinta de Viña del Mar",
+    "cuerpo": "Viña del Mar",
+    "numero": 5,
+    "direccion": "Avenida Pacifico 5215, Gomez Carreño",
+    "comuna": "Viña del Mar",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2684332"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.511825,
+     -32.926475
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Sexta de Viña del Mar",
+    "cuerpo": "Viña del Mar",
+    "numero": 6,
+    "direccion": "Calle Vergara/Calle 10 S/N",
+    "comuna": "Concón",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2684333"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.554722,
+     -33.034589
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Séptima de Viña del Mar",
+    "cuerpo": "Viña del Mar",
+    "numero": 7,
+    "direccion": "Logroño 1298 Viña del Mar Alto",
+    "comuna": "Viña del Mar",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2684334"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.537545,
+     -32.972768
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Octava de Viña del Mar",
+    "cuerpo": "Viña del Mar",
+    "numero": 8,
+    "direccion": "Avenida Jose M. Balmaceda/Torreblanca",
+    "comuna": "Viña del Mar",
+    "comunas_atendidas": [],
+    "telefono": "(32) 2684335"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.488414,
+     -32.998434
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Novena de Viña del Mar",
+    "cuerpo": "Viña del Mar",
+    "numero": 9,
+    "direccion": "Reñaca Alto, Lago Villarica con Altamira",
+    "comuna": "Viña del Mar",
+    "comunas_atendidas": [],
+    "telefono": "32 2111191"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.503972,
+     -33.022469
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Décima de Viña del Mar",
+    "cuerpo": "Viña del Mar",
+    "numero": 10,
+    "direccion": "Av. Presidente Eduardo Frei Montalva 4350",
+    "comuna": "Viña del Mar",
+    "comunas_atendidas": [],
+    "telefono": "32 - 2634912"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.454605,
+     -32.556108
+    ]
+   },
+   "properties": {
+    "tipo": "cuerpo",
+    "nombre": "Cuerpo de Bomberos de Zapallar",
+    "cuerpo": "Zapallar",
+    "numero": null,
+    "direccion": "Benito del Villar 100",
+    "comuna": "Zapallar",
+    "comunas_atendidas": [
+     "Zapallar"
+    ],
+    "telefono": "332741262 - 332742327"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.454747,
+     -32.55646
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Primera de Zapallar",
+    "cuerpo": "Zapallar",
+    "numero": 1,
+    "direccion": "Benito del Villar 100",
+    "comuna": "Zapallar",
+    "comunas_atendidas": [],
+    "telefono": "(33) 741262 - 742327"
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -71.277808,
+     -32.565976
+    ]
+   },
+   "properties": {
+    "tipo": "compania",
+    "nombre": "Segunda de Zapallar",
+    "cuerpo": "Zapallar",
+    "numero": 2,
+    "direccion": "Jose Maria Mercado S/N Recinto Estacion, Catapilco",
+    "comuna": "Zapallar",
+    "comunas_atendidas": [],
+    "telefono": "332285551"
+   }
+  }
+ ]
+}

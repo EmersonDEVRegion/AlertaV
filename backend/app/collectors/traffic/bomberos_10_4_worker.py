@@ -80,6 +80,7 @@ from typing import Any
 import feedparser
 
 from app.collectors import vocabulary
+from app.collectors.cuarteles import cuartel_nombrado, punto_de_cuartel
 from app.collectors.nominatim import GeocodeResult, build_client, geocode
 from app.collectors.traffic import gemini
 from app.collectors.vocabulary import (
@@ -153,6 +154,9 @@ class Dispatch:
     #: Enlace público al tuit, si el Actor lo trae. Sólo para el panel: la
     #: identidad del despacho sigue siendo `guid`.
     url: str | None = None
+    #: Unidades que llegaron después en un «SALE … A …» del mismo lote y se
+    #: anexaron a este despacho (ver `_colapsar_seguimientos` en el webhook).
+    unidades_extra: tuple[str, ...] = ()
 
 
 def strip_html(fragment: str) -> str:
@@ -386,6 +390,11 @@ def comunas_alternativas(handle: str | None) -> tuple[str, ...]:
     return tuple(sistema.comunas[1:])
 
 
+def unidades_del_aviso(texto: str | None, sistema: SistemaClaves) -> list[str]:
+    """Reexporta `gemini.unidades_del_aviso` para el webhook."""
+    return gemini.unidades_del_aviso(texto, sistema)
+
+
 def sistema_de_despacho(dispatch: Dispatch, *, respaldo: str | None = None) -> SistemaClaves:
     """Con qué diccionario se lee un despacho.
 
@@ -444,6 +453,18 @@ async def geocode_dispatches(
     async with build_client() as client:
         for dispatch in dispatches:
             calles = dispatch.decoded or {}
+            # Un destino que es un cuartel («Quinta Compañía de Bomberos
+            # Quilpue», «CUARTEL GENERAL») se ubica con la instantánea del SIG,
+            # sin gastar Nominatim, que no conoce esos nombres. Ver
+            # `collectors/cuarteles.py`.
+            destino = " ".join(
+                str(calles.get(campo) or "") for campo in ("street_1", "street_2")
+            ).strip() or dispatch.raw_text
+            cuartel = cuartel_nombrado(destino, sistema_de_despacho(dispatch))
+            if cuartel is not None:
+                resueltos += 1
+                salida.append(replace(dispatch, point=punto_de_cuartel(cuartel, destino)))
+                continue
             # Sin vía principal no hay nada que buscar. Preguntar sólo por la
             # comuna devolvería el centroide comunal, que como ubicación de una
             # emergencia es peor que no tener ninguna: parece un dato y no lo es.
@@ -581,6 +602,18 @@ def dispatches_to_events(
                         # como agua (CBV) o como servicio (CBVM).
                         "cuenta": dispatch.cuenta,
                         "cuerpo": sistema_de_despacho(dispatch).slug,
+                        # Los carros despachados, más los de los seguimientos
+                        # que se anexaron. La ficha del incidente los muestra.
+                        "unidades": list(
+                            dict.fromkeys(
+                                (
+                                    *gemini.unidades_del_aviso(
+                                        dispatch.raw_text, sistema_de_despacho(dispatch)
+                                    ),
+                                    *dispatch.unidades_extra,
+                                )
+                            )
+                        ),
                         "url": dispatch.url,
                         "fecha_declarada": (
                             dispatch.occurred_at.isoformat() if dispatch.occurred_at else None
@@ -633,4 +666,5 @@ __all__ = [
     "normalise_code",
     "revisar_feed",
     "strip_html",
+    "unidades_del_aviso",
 ]

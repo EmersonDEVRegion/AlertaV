@@ -1,14 +1,62 @@
 # Configuración de Apify
 
-**Un Task, un Actor, un Schedule.** Desde el 2026-09-22 Apify se usa para una
-sola cosa: raspar las cuentas de X de las centrales de Bomberos.
+**Dos Tasks, un Actor, dos Schedules.** Desde el 2026-09-22 Apify se usa para
+una sola cosa: raspar las cuentas de X de las centrales de Bomberos.
 
-| Task | Actor | Cuentas | Entrega en | Ingiere como |
-|---|---|---|---|---|
-| `alertav-bomberos` | `xquik/x-tweet-scraper` | `@CGI_CBV`, `@CBVM132` (6 tuits cada una) | `POST /api/v1/apify/webhook` | `bomberos`, confianza **1.00** |
+| Task | Schedule | Qué pide | Entrega en |
+|---|---|---|---|
+| `alertav-bomberos` | `alertav`, cada 30 min | lo publicado en los **últimos 45 min** (`within_time`), hasta 6 por cuenta y 15 en total | `POST /api/v1/apify/webhook` |
+| `alertav-canario` | `alertav-canario`, 12:10 cada día | los 2 últimos tuits de cada cuenta, **sin ventana** | el mismo webhook |
 
-`configurar.ps1` crea o actualiza ese Task, lo **prueba** con una corrida por la
-API, y recién entonces ajusta el Schedule `alertav` (cada 30 min) y el webhook.
+Las cinco cuentas, en los dos: `@CGI_CBV` (Valparaíso), `@CBVM132` (Viña del
+Mar y Concón), `@despachoscbla` (Los Andes y Calle Larga), `@CBQuilpue` y
+`@cbquillota`. Actor `xquik/x-tweet-scraper`; todo entra como `bomberos`,
+confianza **1.00**.
+
+`configurar.ps1` crea o actualiza los dos Tasks, los **prueba** con una corrida
+por la API, y recién entonces ajusta los Schedules y los webhooks.
+
+## 30 de septiembre de 2026: cinco centrales, ventana de tiempo y canario
+
+Con cinco cuentas a 6 tuits cada media hora el peor caso era US$ 6,70 al mes:
+no cabía en Free. La salida fue dejar de pagar por tuits repetidos:
+
+- **Ventana:** el Task principal pide sólo lo publicado en los últimos 45
+  minutos (30 de cadencia + 15 de margen). xquik aplica el filtro **antes de
+  cobrar** (probado el 30-09: una corrida sin tuits en la ventana cobró 0 tuits
+  y US$ 0,00013 de plataforma). Una entrega vacía pasa a ser **calma**.
+- **Canario:** como una entrega vacía ya no dice nada, la ceguera la mide un
+  Task aparte, una vez al día y sin ventana. El backend lo reconoce por
+  `APIFY_X_CANARIO_IDS`, lo registra como `bomberos_apify_canario` y SÓLO ahí
+  exige ver cada cuenta de `APIFY_X_CUENTAS_ESPERADAS`. Un lote que trae items
+  y todos son relleno sigue siendo `degraded` en cualquiera de los dos.
+- **Seguimientos:** «SALE M-34 A CLAVE 15 …» ya no es un despacho nuevo: sus
+  unidades se anexan al original (mismo cuerpo, clave y calles, dentro de 90
+  min) sin modelo ni Nominatim.
+
+Peor caso del mes, con la plataforma incluida (US$ 0,0002 por corrida):
+
+| Task | Corridas al mes | Tuits por corrida (máx.) | Peor caso |
+|---|---|---|---|
+| `alertav-bomberos` | 1.488 | 15 | US$ 3,65 |
+| `alertav-canario` | 31 | 10 | US$ 0,05 |
+| **Total** | | | **US$ 3,70** |
+
+Lo normal es mucho menos: el peor caso supone que cada media hora las centrales
+publican 15 cosas. `configurar.ps1` se niega a aplicar una configuración cuyo
+peor caso pase de **US$ 4** sin `-AceptarCosto`.
+
+Lo que se pierde: si una central publica más de 6 cosas en 45 minutos, las más
+viejas no llegan (en un incendio grande, casi todas son «SALE … A …», que se
+anexan igual al original si llegan).
+
+Variables de Render que hay que tener (el script las imprime al final):
+
+```
+APIFY_BOMBEROS_ACTOR_IDS = <id de alertav-bomberos>,<id de alertav-canario>
+APIFY_X_CANARIO_IDS      = <id de alertav-canario>
+APIFY_X_SCHEDULE_MINUTES = 30
+```
 
 ## Septiembre de 2026: un mes sin despachos con la salud en verde
 
@@ -56,6 +104,18 @@ está en el backend (collector de Instagram, `apify_press_service`, la puerta
 `/webhook/prensa` y los `task-*.json`): si hiciera falta volver, está en el
 historial de git. `configurar.ps1` **lista** los dos Tasks viejos si siguen en
 la cuenta, pero no los borra: hay que borrarlos a mano en el panel de Apify.
+
+## Cinco centrales, tres sistemas de claves
+
+Además de las dos de abajo:
+
+| | @despachoscbla (Los Andes) | @CBQuilpue y @cbquillota |
+|---|---|---|
+| Formato | `10-0-1 (LLAMADO ESTRUCTURAL), MEMBRILLAR /CHACABUCO, QB-2,RB-3,BT-5` | `Clave 5-1 AYMARAS / LOS CARRERA M-43, M-11` (como Viña) |
+| Sistema | **nacional**: las emergencias son la familia 10; de 0 a 9 es radio. El `0` de `10-0-x` NO se colapsa | la familia 1–6 de la costa |
+| Tabla | Wurtlitzer, completa | **provisional**: no hay tabla publicada |
+| No se ingiere | radio, 10-9, 10-10, 10-11, 10-12, 10-15 y algunos subtipos | 17-x de Quilpué (servicios internos), 15 de Quillota |
+| Claves que entran | `BOMBEROS_CBLA_KEYS` | `BOMBEROS_QUILPUE_KEYS`, `BOMBEROS_QUILLOTA_KEYS` |
 
 ## Dos centrales, dos diccionarios
 
@@ -107,7 +167,7 @@ del mes es `corridas × maxItems × US$ 0,00015`:
 | `0 * * * *` | 12 | US$ 1,34 | Sí |
 
 `configurar.ps1` hace esta cuenta antes de tocar nada y **se niega a seguir**
-si el peor caso pasa de US$ 4,50, salvo que se le pase `-AceptarCosto`. Esa
+si el peor caso pasa de US$ 4 (con la plataforma incluida), salvo que se le pase `-AceptarCosto`. Esa
 opción es para cuando la cuenta tenga un plan de pago.
 
 Lo que se pierde con 6 tuits por central cada media hora: si una central

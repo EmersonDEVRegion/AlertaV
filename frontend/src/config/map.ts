@@ -56,6 +56,13 @@ export const SEISMIC_FOCUS_ZOOM = 9.5
  */
 export const HAZARD_SOURCE_URL = `${env.apiBaseUrl}/events/seismic/hazard`
 
+/**
+ * Cuarteles de Bomberos de la V Región (instantánea del SIG de Bomberos de
+ * Chile). Mismo motivo que la amenaza sísmica para colgar de la API: el
+ * frontend vive en otro origen. Ver `api/cuarteles.ts`.
+ */
+export const CUARTELES_SOURCE_URL = `${env.apiBaseUrl}/events/cuarteles`
+
 const MAP_STYLE_URL = env.mapStyle
 const MAP_STYLE_URL_DARK = env.mapStyleDark
 

@@ -299,6 +299,11 @@ export const IncidentSheet = memo(function IncidentSheet({
                     Ver publicación ↗
                   </a>
                 )}
+                {event.unidades && event.unidades.length > 0 && (
+                  <p className="mt-1 text-[11px] text-ink-muted">
+                    Unidades: {event.unidades.join(', ')}
+                  </p>
+                )}
                 <p className="mt-1 text-[11px] text-ink-faint">
                   {LINK_METHOD_LABEL[event.link_method]}
                   {event.distance_m !== null && ` · a ${formatDistance(event.distance_m)}`}

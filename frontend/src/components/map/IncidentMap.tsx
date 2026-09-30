@@ -64,6 +64,8 @@ import type {
 } from 'maplibre-gl'
 import { RainLayer } from './RainLayer'
 import { RoadClosureLayer } from './RoadClosureLayer'
+import { CuartelesLayer } from './CuartelesLayer'
+import type { CuartelesState } from '@/hooks/useCuarteles'
 import { SeismicHazardLayer } from './SeismicHazardLayer'
 import type { RainLayerState } from '@/hooks/useRainLayer'
 import type { RoadClosureState } from '@/hooks/useRoadClosures'
@@ -174,6 +176,11 @@ interface IncidentMapProps {
    * confianza 0,0 — no es un siniestro y no puede robarle el clic a uno.
    */
   closures: RoadClosureState
+  /**
+   * Cuarteles de Bomberos (SIG). Capa de contexto y diferida, como los cortes
+   * de ruta: no entra en `interactiveLayerIds`.
+   */
+  cuarteles: CuartelesState
 }
 
 /*
@@ -360,6 +367,7 @@ export const IncidentMap = memo(function IncidentMap({
   hazard,
   rain,
   closures,
+  cuarteles,
 }: IncidentMapProps) {
   /*
    * La instancia nativa, en ESTADO y no leída del ref durante el render.
@@ -656,6 +664,14 @@ export const IncidentMap = memo(function IncidentMap({
         Como las otras dos: el `<Source>` sólo entra al árbol cuando el usuario
         la enciende por primera vez, y a partir de ahí se queda.
       */}
+      {/*
+        Cuarteles de Bomberos: referencia, así que por debajo de los cortes de
+        ruta. Misma ancla y mismo motivo que ellos (montaje después del cono).
+      */}
+      {cuarteles.hasMounted && (
+        <CuartelesLayer data={cuarteles.data} visible={cuarteles.enabled} theme={theme} />
+      )}
+
       {closures.hasMounted && (
         <RoadClosureLayer data={closures.data} visible={closures.enabled} theme={theme} />
       )}

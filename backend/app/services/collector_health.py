@@ -80,7 +80,19 @@ COLLECTOR_ROLES: dict[str, dict[str, str]] = {
         "traffic": "principal",
         "otros": "principal",
     },
+    #: El canario diario del webhook (desde el 2026-09-30). La entrega principal
+    #: pide sólo lo nuevo y ya no puede decir si ve cada cuenta; esto sí. Sólo
+    #: cuenta cuando está configurado (`APIFY_X_CANARIO_IDS`).
+    "bomberos_apify_canario": {
+        "fire": "principal",
+        "traffic": "principal",
+        "otros": "principal",
+    },
 }
+
+#: Nombre del canario. Literal y no importado de `apify_webhook_service` por lo
+#: mismo que `inbox_atascado`: no traer medio árbol de collectors hasta acá.
+_CANARIO = "bomberos_apify_canario"
 
 
 def active_roles() -> dict[str, dict[str, str]]:
@@ -91,7 +103,10 @@ def active_roles() -> dict[str, dict[str, str]]:
     mecanismo; la función se conserva porque es la puerta que usa
     `build_health`.
     """
-    return dict(COLLECTOR_ROLES)
+    roles = dict(COLLECTOR_ROLES)
+    if not [i for i in settings.APIFY_X_CANARIO_IDS if i.strip()]:
+        roles.pop(_CANARIO, None)
+    return roles
 
 
 #: Familias que el mapa cuenta. Espejo de `INCIDENT_LAYERS` en el frontend.
@@ -133,6 +148,8 @@ def _intervalo(nombre: str) -> int:
     para cuidar la cuota gratuita, subir ese ajuste evita marcar en falso las
     tres familias que el webhook sostiene.
     """
+    if nombre == _CANARIO:
+        return settings.APIFY_X_CANARIO_HORAS * 3600
     if nombre not in COLLECTORS:
         return settings.APIFY_X_SCHEDULE_MINUTES * 60
     return collector_class(nombre).poll_interval_seconds()

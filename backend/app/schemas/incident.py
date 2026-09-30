@@ -294,6 +294,14 @@ class IncidentEventLink(BaseModel):
     matched_commune: str | None = None
     note: str | None = None
 
+    unidades: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Carros de Bomberos despachados a esta señal («M-32», «QB-2»), "
+            "incluidos los que se sumaron después con un «SALE … A …». Vacía "
+            "para las demás fuentes."
+        ),
+    )
     source_url: str | None = Field(
         default=None,
         description=(

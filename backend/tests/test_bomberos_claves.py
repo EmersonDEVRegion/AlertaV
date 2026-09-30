@@ -326,7 +326,9 @@ def test_el_ejemplo_del_prompt_no_contradice_al_diccionario():
     for sistema in vocabulary.SISTEMAS_CLAVES:
         prompt = gemini.dispatch_instruction(sistema)
         _, clave, _, _ = sistema.ejemplo
-        significado = sistema.meanings[vocabulary.parse_key(clave)]
+        significado = sistema.meanings[
+            vocabulary.parse_key(clave, colapsar_cero=sistema.colapsa_cero)
+        ]
         assert f'"significado": "{significado}"' in prompt
         assert "servicio especial" not in prompt
         assert "familia 3 piden un recurso" not in prompt
