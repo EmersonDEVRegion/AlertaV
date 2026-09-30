@@ -5,6 +5,7 @@ import { WATER_ICON } from '@/domain/emergencyIcons'
 import { WATER } from '@/domain/waterSymbology'
 import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { formatDateTime, formatRelative } from '@/lib/format'
+import { DetailSurface } from './DetailSurface'
 
 /**
  * Tarjeta de un corte de agua de Esval.
@@ -57,14 +58,13 @@ export const WaterCutCard = memo(function WaterCutCard({
   const overdue = isOverdue(cut.fin, now)
 
   return (
-    <section
-      role="dialog"
-      aria-label={`Corte de agua de Esval${cut.comuna ? ` en ${cut.comuna}` : ''}`}
-      className="pointer-events-auto fixed inset-x-0 bottom-0 z-20 max-h-[70dvh] overflow-y-auto overscroll-contain rounded-t-2xl bg-raised
+    <DetailSurface
+      label={`Corte de agua de Esval${cut.comuna ? ` en ${cut.comuna}` : ''}`}
+      floating="pointer-events-auto fixed inset-x-0 bottom-0 z-20 max-h-[70dvh] overflow-y-auto overscroll-contain rounded-t-2xl bg-raised
         p-4 pb-[max(1rem,env(safe-area-inset-bottom))]
         shadow-[var(--shadow-raised)]
-        md:inset-y-0 md:left-auto md:right-0 md:max-h-none md:w-[26rem] md:rounded-none md:rounded-l-2xl
- "
+        md:inset-y-0 md:left-auto md:right-0 md:max-h-none md:w-[26rem] md:rounded-none md:rounded-l-2xl"
+      embedded="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4"
     >
       <div className="flex items-start gap-3">
         <span
@@ -181,6 +181,6 @@ export const WaterCutCard = memo(function WaterCutCard({
           Ver en el visor de Esval ↗
         </a>
       )}
-    </section>
+    </DetailSurface>
   )
 })

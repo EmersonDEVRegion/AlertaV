@@ -36,7 +36,7 @@ import { useSyncExternalStore } from 'react'
  */
 
 /** `md` de Tailwind. El mismo número que usan las variantes `md:` del cromo. */
-const COMPACT_BREAKPOINT = '(max-width: 767.98px)'
+export const COMPACT_BREAKPOINT = '(max-width: 767.98px)'
 
 function subscribe(query: string, onChange: () => void): () => void {
   if (typeof window === 'undefined' || !window.matchMedia) return () => {}

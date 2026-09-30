@@ -1,4 +1,3 @@
-import { memo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ALERT, LEVEL, LEVEL_ORDER, MUTED_LEVEL } from '@/domain/symbology'
 import { LAYER_LABEL } from '@/domain/families'
@@ -23,65 +22,6 @@ import { cn } from '@/lib/cn'
 const LEGEND_ICONS = ICON_IDS.filter((id) => id !== OUTAGE_ICON && id !== WATER_ICON)
 
 /**
- * Leyenda de la política de confianza v2.0.0.
- *
- * No es decoración. La escala es deliberadamente contraintuitiva —el rojo marca
- * baja confianza, no emergencia— y el mapa además codifica estado y
- * verificación institucional como textura. Sin este cuadro, un pin rojo se lee
- * exactamente al revés de lo que significa.
- */
-export const MapLegend = memo(function MapLegend() {
-  const [open, setOpen] = useState(false)
-
-  return (
-    /*
-     * Sin posicionamiento propio: vive dentro del riel izquierdo que arma
-     * `App`, debajo del controlador de capas de referencia. Antes se anclaba
-     * sola a `left-3 top-3`, que es exactamente donde ahora va el dock, y dos
-     * elementos absolutos peleando por la misma esquina es la clase de colisión
-     * que sólo se ve en la pantalla de alguien más.
-     */
-    <div className="pointer-events-auto flex min-h-0 flex-col">
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        aria-expanded={open}
-        className={cn(
-          'surface-floating flex w-full shrink-0 items-center gap-2 px-3 py-2',
-          'text-[11px] font-semibold text-ink-muted',
-          'transition-[color,scale] duration-150 hover:text-ink active:scale-[0.99]',
-          'focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent',
-        )}
-      >
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden
-          className={cn('size-3.5 shrink-0 transition-transform duration-300', open && 'rotate-45')}
-        >
-          {/* La misma «+» girada 45° es la «×» de cerrar: una sola forma que
-              rota, en vez de dos nodos intercambiados que saltarían. */}
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-        <span className="min-w-0 flex-1 truncate text-left">
-          {open ? 'Cerrar leyenda' : 'Qué significan los colores'}
-        </span>
-      </button>
-
-      {open && (
-        <div className="animate-rise surface-floating mt-2 max-h-[26rem] min-h-0 overflow-y-auto overscroll-contain p-3 text-xs">
-          <LegendBody />
-        </div>
-      )}
-    </div>
-  )
-})
-
-/**
  * El cuerpo de la leyenda, sin superficie ni control de apertura.
  *
  * # Dos niveles
@@ -93,8 +33,8 @@ export const MapLegend = memo(function MapLegend() {
  * Lo demás es consulta y va plegado en `<details>`, que es accesible sin una
  * línea de JavaScript y recuerda su estado mientras la leyenda esté abierta.
  *
- * Separado de `MapLegend` porque en teléfono no hay riel: lo monta una ficha de
- * `MobileMapControls`. Ver `hooks/useMediaQuery.ts`.
+ * Sin superficie propia: lo monta la pestaña «Leyenda» de la columna y de la
+ * hoja del teléfono (`components/shell/ExplorePanel.tsx`).
  */
 export function LegendBody() {
   return (

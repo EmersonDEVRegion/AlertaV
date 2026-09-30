@@ -27,7 +27,8 @@
  * ------------------------------------------------------------
  *
  * `useIsCompact` no cambia estilos: cambia el árbol. Cruzar los 768 px desmonta
- * `MobileMapControls` y monta el riel de escritorio, o al revés. Un estado
+ * la hoja inferior (`components/shell/BottomSheet`) y monta la columna de
+ * escritorio, o al revés. Un estado
  * guardado en un hook de ese subárbol se reinicia en ese momento — el widget se
  * quedaría en «consultando…» y volvería a golpear la API por girar el
  * dispositivo. El temporizador de este módulo sobrevive porque nunca estuvo

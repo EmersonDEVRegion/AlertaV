@@ -21,7 +21,8 @@ import { VehicleCard } from './VehicleCard'
  * queda mapa útil al lado, y el velo dice dónde tocar para volver.
  *
  * Las dos formas salen de las mismas clases con variantes `md:`, no de dos
- * árboles como `MobileMapControls`. Allá el cambio es de interfaz entera; acá
+ * árboles como la columna y la hoja (`components/shell`). Allá el cambio es de
+ * contenedor entero; acá
  * es sólo de posición, y un solo árbol conserva el filtro y la tarjeta abierta
  * si alguien gira el teléfono.
  *

@@ -302,13 +302,11 @@ function hazardDescription(status: HazardStatus, error: string | null): string {
 /**
  * Las dos tarjetas, sin el contenedor plegable.
  *
- * Existe separado porque en teléfono este contenido no vive en el riel
- * izquierdo —dos superficies flotantes de 15 rem no caben a 430 px— sino dentro
- * de la barra de fichas de `MobileMapControls`, donde la ficha ya hace de
- * cabecera y un segundo plegado sería un clic de más para llegar a lo mismo.
- * Ver la nota de `hooks/useMediaQuery.ts`.
+ * Separadas del contenedor para que el contenedor pueda cambiar sin tocarlas:
+ * hoy es un bloque plegable encima del historial, en la columna de escritorio
+ * y en la hoja del teléfono (`components/shell/ExplorePanel.tsx`).
  */
-export function ReferenceLayers({
+function ReferenceLayers({
   hazardEnabled,
   hazardStatus,
   hazardError,
@@ -470,13 +468,31 @@ export function ReferenceLayers({
  * El riel izquierdo de escritorio: las mismas tarjetas, dentro de una superficie
  * flotante plegable.
  */
-export const ReferenceDock = memo(function ReferenceDock(props: ReferenceDockProps) {
-  const [open, setOpen] = useState(true)
+export const ReferenceDock = memo(function ReferenceDock({
+  inline = false,
+  defaultOpen = true,
+  ...props
+}: ReferenceDockProps & {
+  /**
+   * Dentro de la columna (o de la hoja del teléfono) no flota: es un bloque
+   * más, encima del historial, y arranca plegado para no empujarlo.
+   */
+  inline?: boolean
+  defaultOpen?: boolean
+}) {
+  const [open, setOpen] = useState(defaultOpen)
   // Dos y no tres: la lluvia se cuenta sola en el widget de la barra superior.
   const activeCount = Number(props.hazardEnabled) + Number(props.closureEnabled)
 
   return (
-    <Panel className="pointer-events-auto w-full overflow-hidden p-1.5">
+    <Panel
+      className={cn(
+        'pointer-events-auto w-full overflow-hidden p-1.5',
+        // `shadow-none` y fondo hundido: una superficie flotante dentro de otra
+        // se leería como dos capas de vidrio.
+        inline && 'bg-sunken shadow-none ring-0 [backdrop-filter:none]',
+      )}
+    >
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}

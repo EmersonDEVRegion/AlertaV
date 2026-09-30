@@ -3,6 +3,7 @@ import type { SeismicEvent } from '@/api/seismicTypes'
 import { MAGNITUDE, bandOf } from '@/domain/seismicSymbology'
 import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { formatDateTime, formatRelative } from '@/lib/format'
+import { DetailSurface } from './DetailSurface'
 
 /**
  * Ficha de un sismo.
@@ -30,14 +31,13 @@ export const SeismicCard = memo(function SeismicCard({
   const preliminary = event.review_status === 'automatic'
 
   return (
-    <section
-      role="dialog"
-      aria-label={`Sismo ${event.usgs_id}`}
-      className="pointer-events-auto fixed inset-x-0 bottom-0 z-20 rounded-t-2xl bg-raised
+    <DetailSurface
+      label={`Sismo ${event.usgs_id}`}
+      floating="pointer-events-auto fixed inset-x-0 bottom-0 z-20 rounded-t-2xl bg-raised
         p-4 pb-[max(1rem,env(safe-area-inset-bottom))]
         shadow-[var(--shadow-raised)]
-        md:inset-y-0 md:left-auto md:right-0 md:w-[26rem] md:rounded-none md:rounded-l-2xl
- "
+        md:inset-y-0 md:left-auto md:right-0 md:w-[26rem] md:rounded-none md:rounded-l-2xl"
+      embedded="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4"
     >
       <div className="flex items-start gap-3">
         <span
@@ -133,6 +133,6 @@ export const SeismicCard = memo(function SeismicCard({
           Ver en el catálogo del USGS
         </a>
       )}
-    </section>
+    </DetailSurface>
   )
 })
