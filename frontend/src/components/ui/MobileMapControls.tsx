@@ -7,6 +7,7 @@ import type { SidePanelProps } from './SidePanel'
 import { ReferenceLayers } from './ReferenceDock'
 import type { ReferenceDockProps } from './ReferenceDock'
 import { cn } from '@/lib/cn'
+import { HistoryFeed, type HistoryFeedProps } from '@/components/feed/HistoryFeed'
 
 /**
  * Controles del mapa en pantalla estrecha.
@@ -65,11 +66,18 @@ import { cn } from '@/lib/cn'
 export interface MobileMapControlsProps {
   incidents: SidePanelProps
   reference: ReferenceDockProps
+  /** El historial de 24 h: su propia ficha, como el riel de escritorio. */
+  history: HistoryFeedProps
   /** Total de incidentes visibles. Va en la ficha, sin abrir nada. */
   incidentCount: number
 }
 
-type PanelKey = 'incidents' | 'reference' | 'legend'
+/*
+ * Tres fichas y no cuatro: a 430 px cuatro con contador no caben. La leyenda
+ * compacta va dentro de «Capas», debajo de las de referencia: las dos
+ * responden «qué estoy viendo».
+ */
+type PanelKey = 'incidents' | 'history' | 'reference'
 
 interface Tab {
   key: PanelKey
@@ -86,13 +94,13 @@ interface Tab {
 }
 
 const TABS: readonly Tab[] = [
-  { key: 'incidents', label: 'Emergencias', description: 'emergencias: capas y lista' },
+  { key: 'incidents', label: 'Emergencias', description: 'emergencias: filtros y lista' },
+  { key: 'history', label: 'Historial', description: 'historial de las últimas 24 horas' },
   {
     key: 'reference',
-    label: 'Referencia',
-    description: 'referencia: amenaza sísmica y cortes de ruta',
+    label: 'Capas',
+    description: 'capas de referencia y leyenda de colores',
   },
-  { key: 'legend', label: 'Leyenda', description: 'leyenda: qué significan los colores' },
 ]
 
 const PANEL_ID = 'mobile-map-panel'
@@ -117,6 +125,7 @@ function Chevron({ open }: { open: boolean }) {
 export const MobileMapControls = memo(function MobileMapControls({
   incidents,
   reference,
+  history,
   incidentCount,
 }: MobileMapControlsProps) {
   const [open, setOpen] = useState<PanelKey | null>(null)
@@ -135,14 +144,22 @@ export const MobileMapControls = memo(function MobileMapControls({
   /** Contador de la ficha. `null` cuando no hay nada que contar. */
   const badgeFor = (key: PanelKey): number | null => {
     if (key === 'incidents') return incidentCount
+    if (key === 'history') return history.ready ? history.history.length : null
     if (key === 'reference') return activeReference > 0 ? activeReference : null
     return null
   }
 
   const body: Record<PanelKey, ReactNode> = {
     incidents: <IncidentFilters {...incidents} />,
-    reference: <ReferenceLayers {...reference} />,
-    legend: <LegendBody />,
+    history: <HistoryFeed {...history} />,
+    reference: (
+      <>
+        <ReferenceLayers {...reference} />
+        <div className="mt-3 border-t border-line pt-3">
+          <LegendBody />
+        </div>
+      </>
+    ),
   }
 
   const openTab = TABS.find((tab) => tab.key === open) ?? null

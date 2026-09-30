@@ -102,6 +102,22 @@ class OutageDetail(BaseModel):
     outage_count: int = Field(
         default=1, description="Cuántos cortes distintos componen el incidente."
     )
+    visto_en: datetime | None = Field(
+        default=None,
+        description=(
+            "Última vez que la empresa publicó alguno de los cortes del "
+            "incidente (el collector lo vuelve a escribir en cada corrida)."
+        ),
+    )
+    vigente: bool | None = Field(
+        default=None,
+        description=(
+            "¿La empresa lo sigue listando? `true` si apareció en la última "
+            "corrida que leyó su feed; `false` si ya no. `null` si no hay "
+            "ninguna lectura con qué comparar. Las empresas no avisan cuándo "
+            "repusieron: dejan de listar el corte, igual que Esval."
+        ),
+    )
 
 
 class IncidentRead(BaseModel):

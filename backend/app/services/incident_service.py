@@ -44,6 +44,41 @@ from app.services.source_links import source_label_for, source_url_for
 
 logger = logging.getLogger(__name__)
 
+#: Holgura sobre el inicio de la corrida para dar por vigente un corte de luz.
+#: El upsert escribe después de `started_at`; el minuto cubre relojes desfasados.
+MARGEN_VIGENCIA_CORTE = timedelta(minutes=1)
+
+#: Collector de cada empresa, para las señales viejas que no traen `_collector`.
+_COLLECTOR_DE_EMPRESA = {"chilquinta": "chilquinta_cortes", "cge": "cge_cortes"}
+
+
+def _collector_de(payload: dict[str, Any]) -> str | None:
+    collector = payload.get("collector")
+    if isinstance(collector, str) and collector:
+        return collector
+    return _COLLECTOR_DE_EMPRESA.get(str(payload.get("provider") or "").lower())
+
+
+def adosar_vigencia(
+    payloads: dict[int, dict[str, Any]], lecturas: dict[str, datetime]
+) -> None:
+    """Marca `vigente` en cada corte: ¿apareció en la última lectura de su empresa?
+
+    Chilquinta y CGE no publican el fin de un corte: lo dejan de listar. Antes
+    el incidente se quedaba en el mapa hasta que el motor lo pasaba a `stale`
+    (12 h sin señales nuevas), así que un corte repuesto en una hora se veía
+    doce, y uno de veinte podía desaparecer a las doce.
+    """
+    for payload in payloads.values():
+        visto = payload.get("visto_en")
+        lectura = lecturas.get(_collector_de(payload) or "")
+        if not isinstance(visto, datetime) or lectura is None:
+            payload["vigente"] = None
+            continue
+        visto = visto if visto.tzinfo else visto.replace(tzinfo=UTC)
+        lectura = lectura if lectura.tzinfo else lectura.replace(tzinfo=UTC)
+        payload["vigente"] = visto >= lectura - MARGEN_VIGENCIA_CORTE
+
 
 class IncidentService:
     def __init__(self, session: AsyncSession) -> None:
@@ -98,7 +133,8 @@ class IncidentService:
         # La ficha es justamente donde se leen los clientes afectados y la
         # reposición; sin esto el detalle sabría menos que el listado.
         if incident.type == IncidentType.POWER_OUTAGE:
-            payload = (await self.repo.outage_details([incident.id])).get(incident.id)
+            payloads = await self._outages_con_vigencia([incident.id])
+            payload = payloads.get(incident.id)
             if payload is not None:
                 detail.outage = OutageDetail.model_validate(payload)
 
@@ -199,6 +235,18 @@ class IncidentService:
         """Lectura sin enriquecer. Los cortes salen con `outage = null`."""
         return [IncidentRead.model_validate(incident) for incident in incidents]
 
+    async def _outages_con_vigencia(
+        self, incident_ids: Sequence[int]
+    ) -> dict[int, dict[str, Any]]:
+        """`outage_details` + `vigente`, con una sola consulta más por lote."""
+        details = await self.repo.outage_details(incident_ids)
+        if not details:
+            return details
+        collectors = {c for c in (_collector_de(p) for p in details.values()) if c}
+        lecturas = await self.repo.ultimas_lecturas(sorted(collectors))
+        adosar_vigencia(details, lecturas)
+        return details
+
     async def read_with_outages(
         self, incidents: Sequence[Incident]
     ) -> list[IncidentRead]:
@@ -218,7 +266,7 @@ class IncidentService:
         if not outage_ids:
             return models
 
-        details = await self.repo.outage_details(outage_ids)
+        details = await self._outages_con_vigencia(outage_ids)
         by_code = {incident.id: incident.code for incident in incidents}
         detail_by_code = {
             by_code[incident_id]: payload

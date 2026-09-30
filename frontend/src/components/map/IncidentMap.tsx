@@ -12,6 +12,7 @@ import {
 import type {
   ErrorEvent,
   MapEvent,
+  LayerProps,
   MapLayerMouseEvent,
   MapRef,
 } from 'react-map-gl/maplibre'
@@ -20,6 +21,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 // apuntando a una URL inexistente en produccion y el lienzo sale en blanco.
 import '@/lib/maplibreWorker'
 
+import type { FeatureCollection, Point } from 'geojson'
 import type { SeismicEvent } from '@/api/seismicTypes'
 import type { Incident } from '@/api/types'
 import type { WaterCut } from '@/api/waterCutTypes'
@@ -138,6 +140,12 @@ interface IncidentMapProps {
   incidents: readonly Incident[]
   /** Familias encendidas de las que viven en `incidents` (no incluye `power`). */
   visibleFamilies: readonly IncidentLayerKey[]
+  /**
+   * Lo del historial que ya salió del mapa (con las capas encendidas). No se
+   * dibuja: sólo sirve para marcar con un pin fantasma el que se abra desde el
+   * historial, que si no quedaría como una ficha sin lugar.
+   */
+  offMap: readonly Incident[]
   /** Cortes de luz ya filtrados por capa y por empresa. Van agrupados. */
   outages: readonly Incident[]
   /**
@@ -243,6 +251,70 @@ const SelectedQuakeLayer = memo(function SelectedQuakeLayer({ source }: SourceCh
   return <Layer {...spec} source={source} />
 })
 
+const EMPTY_GHOST: FeatureCollection<Point> = {
+  type: 'FeatureCollection',
+  features: [],
+}
+
+const GHOST_RING = {
+  id: 'incident-ghost-ring',
+  type: 'circle',
+  paint: {
+    'circle-radius': ['interpolate', ['linear'], ['zoom'], 7, 9, 14, 14],
+    'circle-color': '#a1a1aa',
+    'circle-opacity': 0.22,
+    'circle-stroke-color': '#e4e4e7',
+    'circle-stroke-width': 2.5,
+    'circle-stroke-opacity': 0.95,
+  },
+} as const satisfies LayerProps
+const GHOST_DOT = {
+  id: 'incident-ghost-dot',
+  type: 'circle',
+  paint: {
+    'circle-radius': 3.5,
+    'circle-color': '#52525b',
+    'circle-stroke-color': '#ffffff',
+    'circle-stroke-width': 1.5,
+  },
+} as const satisfies LayerProps
+
+/**
+ * Pin fantasma: el incidente abierto desde el historial que ya no está en el
+ * mapa. Gris y hueco, para que se lea «estuvo acá» y no «está pasando».
+ *
+ * Siempre montado (vacío si no hay nada que marcar), por la misma razón que el
+ * resto de las fuentes: un `<Source>` que entra y sale se agrega al final del
+ * estilo y cambia el orden de las capas.
+ */
+const GhostSelection = memo(function GhostSelection({
+  offMap,
+}: {
+  offMap: readonly Incident[]
+}) {
+  const code = useSelectedIncidentCode()
+  const data = useMemo(() => {
+    const ghost = code === null ? undefined : offMap.find((i) => i.code === code)
+    if (!ghost) return EMPTY_GHOST
+    return {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [ghost.lon, ghost.lat] },
+          properties: { code: ghost.code },
+        },
+      ],
+    } satisfies FeatureCollection<Point>
+  }, [code, offMap])
+  return (
+    <Source id="incident-ghost" type="geojson" data={data}>
+      <Layer {...GHOST_RING} />
+      <Layer {...GHOST_DOT} />
+    </Source>
+  )
+})
+
 /**
  * El cono de viento del incendio seleccionado.
  *
@@ -277,6 +349,7 @@ export const IncidentMap = memo(function IncidentMap({
   mapRef,
   incidents,
   visibleFamilies,
+  offMap,
   outages,
   waterCuts,
   showWater,
@@ -665,6 +738,8 @@ export const IncidentMap = memo(function IncidentMap({
         <SelectedIncidentLayer families={families} />
         <Layer {...incidentSpecs.hit} />
       </Source>
+
+      <GhostSelection offMap={offMap} />
     </Map>
   )
 })

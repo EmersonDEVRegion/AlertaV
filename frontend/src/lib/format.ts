@@ -10,6 +10,19 @@ const dateTimeFmt = new Intl.DateTimeFormat('es-CL', {
   timeZone: TZ,
 })
 
+const clockFmt = new Intl.DateTimeFormat('es-CL', {
+  hour: '2-digit',
+  minute: '2-digit',
+  // Sin esto, algunos motores (Chromium en Windows) escriben «09:12 p. m.».
+  hourCycle: 'h23',
+  timeZone: TZ,
+})
+
+/** «14:05», en hora de Chile. Para filas que ya dicen el día en su sección. */
+export function formatClock(iso: string | number | Date): string {
+  return clockFmt.format(new Date(iso))
+}
+
 const relativeFmt = new Intl.RelativeTimeFormat('es-CL', { numeric: 'auto' })
 
 /** «hace 5 h», «hace 24 min». Para filas densas donde «horas» no cabe. */

@@ -52,6 +52,10 @@ import { useSeismicEvents } from '@/hooks/useSeismicEvents'
 import { useNotificationDeepLink } from '@/hooks/useNotificationDeepLink'
 import { useVehicleFeed } from '@/hooks/useVehicleFeed'
 import { useWaterCuts } from '@/hooks/useWaterCuts'
+import { useDisplaySplit } from '@/hooks/useDisplaySplit'
+import { INCIDENT_QUERY_HOURS, INCIDENT_QUERY_STATUSES } from '@/domain/displayWindow'
+import { HistoryDock } from '@/components/feed/HistoryDock'
+import type { HistoryFeedProps } from '@/components/feed/HistoryFeed'
 import { env } from '@/config/env'
 import {
   loadCitizenReportModal,
@@ -177,8 +181,18 @@ export default function App() {
     DEFAULT_PROVIDER_VISIBILITY,
   )
 
+  /*
+   * Una sola consulta para el mapa y el historial: 48 h y también lo que ya
+   * no está abierto (`stale`, `extinguished`). Qué va al mapa lo decide
+   * `useDisplaySplit` con la ventana de cada familia (`domain/displayWindow`).
+   */
   const params = useMemo<ActiveIncidentsQuery>(
-    () => ({ confirmed_only: confirmedOnly, limit: 500 }),
+    () => ({
+      confirmed_only: confirmedOnly,
+      limit: 500,
+      hours: INCIDENT_QUERY_HOURS,
+      status: INCIDENT_QUERY_STATUSES,
+    }),
     [confirmedOnly],
   )
 
@@ -208,25 +222,42 @@ export default function App() {
 
   const all = incidents ?? NO_INCIDENTS
 
+  /*
+   * Mapa e historial. `current` es lo que está en su ventana de exhibición: lo
+   * único que se dibuja y se cuenta como «activo». `history` son las últimas
+   * 24 h, estén o no en el mapa. Se recalcula sólo cuando algo vence, sin un
+   * reloj que repinte `App`.
+   */
+  const { onMap: current, history } = useDisplaySplit(all)
+
+  const isVisible = useCallback(
+    (incident: Incident) => {
+      const layer = layerOf(incident.type)
+      if (!visibility[layer]) return false
+      // Dentro de la categoría de cortes manda además el subfiltro por
+      // empresa. Un corte sin distribuidora identificable se muestra
+      // siempre que la categoría esté encendida: esconderlo por no saber
+      // de quién es sería perder el dato por una duda administrativa.
+      if (layer === 'power') {
+        const provider = providerOf(incident)
+        return provider === null || providers[provider]
+      }
+      return true
+    },
+    [visibility, providers],
+  )
+
   // Una sola consulta a `/incidents/active` alimenta las tres capas; el filtro
   // es por familia y ocurre acá. Separarlo en tres consultas multiplicaría el
   // tráfico sin ganar nada: el backend ya devuelve todo junto.
-  const list = useMemo(
-    () =>
-      all.filter((incident) => {
-        const layer = layerOf(incident.type)
-        if (!visibility[layer]) return false
-        // Dentro de la categoría de cortes manda además el subfiltro por
-        // empresa. Un corte sin distribuidora identificable se muestra
-        // siempre que la categoría esté encendida: esconderlo por no saber
-        // de quién es sería perder el dato por una duda administrativa.
-        if (layer === 'power') {
-          const provider = providerOf(incident)
-          return provider === null || providers[provider]
-        }
-        return true
-      }),
-    [all, visibility, providers],
+  const list = useMemo(() => current.filter(isVisible), [current, isVisible])
+
+  // El historial obedece a las mismas capas que el mapa.
+  const visibleHistory = useMemo(() => history.filter(isVisible), [history, isVisible])
+  const onMapCodes = useMemo(() => new Set(current.map((incident) => incident.code)), [current])
+  const offMap = useMemo(
+    () => visibleHistory.filter((incident) => !onMapCodes.has(incident.code)),
+    [visibleHistory, onMapCodes],
   )
 
   /**
@@ -240,8 +271,8 @@ export default function App() {
    *   ahí el filtro tiene que ir en los datos.
    */
   const mapIncidents = useMemo(
-    () => all.filter((incident) => layerOf(incident.type) !== 'power'),
-    [all],
+    () => current.filter((incident) => layerOf(incident.type) !== 'power'),
+    [current],
   )
   const outages = useMemo(
     () => list.filter((incident) => layerOf(incident.type) === 'power'),
@@ -262,9 +293,9 @@ export default function App() {
 
   const countsByLayer = useMemo(() => {
     const counts = { fire: 0, traffic: 0, power: 0, otros: 0 }
-    for (const incident of all) counts[layerOf(incident.type)] += 1
+    for (const incident of current) counts[layerOf(incident.type)] += 1
     return counts
-  }, [all])
+  }, [current])
 
   /** Índice del acordeón: los mismos incidentes, agrupados por capa. */
   const incidentsByLayer = useMemo(() => {
@@ -274,13 +305,13 @@ export default function App() {
       power: [],
       otros: [],
     }
-    for (const incident of all) groups[layerOf(incident.type)].push(incident)
+    for (const incident of current) groups[layerOf(incident.type)].push(incident)
     // Los más recientes arriba: es el orden en que alguien quiere revisarlos.
     for (const key of Object.keys(groups) as IncidentLayerKey[]) {
       groups[key].sort((a, b) => b.last_seen_at.localeCompare(a.last_seen_at))
     }
     return groups
-  }, [all])
+  }, [current])
   // --- Radio de percepción sísmica -----------------------------------------
   const reachCollection = useMemo(
     () => toReachCollection(seismicList),
@@ -433,6 +464,17 @@ export default function App() {
     ],
   )
 
+  const historyControls = useMemo<HistoryFeedProps>(
+    () => ({
+      history: visibleHistory,
+      onMapCodes,
+      onFocus: focusIncident,
+      health: health.data,
+      ready: !isPending,
+    }),
+    [visibleHistory, onMapCodes, focusIncident, health.data, isPending],
+  )
+
   const referenceControls = useMemo(
     () => ({
       hazardEnabled: hazard.enabled,
@@ -503,6 +545,7 @@ export default function App() {
           closures={closures}
           incidents={mapIncidents}
           visibleFamilies={visibleFamilies}
+          offMap={offMap}
           outages={outages}
           waterCuts={mapWaterCuts}
           showWater={visibility.water}
@@ -533,16 +576,30 @@ export default function App() {
           <MobileMapControls
             incidents={incidentControls}
             reference={referenceControls}
+            history={historyControls}
             incidentCount={list.length}
           />
         ) : (
           <>
-            <div className="pointer-events-none absolute left-3 top-3 z-10 flex w-[15.5rem] flex-col gap-2">
-              <div className="animate-slide-in">
+            {/*
+              De arriba abajo: qué capas de contexto hay, qué pasó en las últimas
+              24 h y qué significan los colores. El historial es el único que
+              crece: toma el alto sobrante y desplaza su lista por dentro. El
+              riel termina sobre la escala del mapa (abajo a la izquierda).
+            */}
+            <div className="pointer-events-none absolute bottom-10 left-3 top-3 z-10 flex w-[15.5rem] flex-col gap-2">
+              <div className="animate-slide-in shrink-0">
                 <ReferenceDock {...referenceControls} />
               </div>
 
-              <div className="animate-slide-in stagger-1">
+              {/* El historial cede alto primero (`shrink-[10]`) a la leyenda
+                  abierta, pero nunca menos de 7 rem; lo que no quepa, la
+                  leyenda lo desplaza por dentro. */}
+              <div className="animate-slide-in stagger-1 flex min-h-[7rem] shrink-[10] flex-col">
+                <HistoryDock {...historyControls} />
+              </div>
+
+              <div className="animate-slide-in stagger-2 flex min-h-0 flex-col">
                 <MapLegend />
               </div>
             </div>
@@ -573,9 +630,11 @@ export default function App() {
             detail={
               confirmedOnly
                 ? 'Ninguna fuente verificó un incidente en terreno dentro de la ventana activa. Desmarca el filtro para ver los que tienen evidencia sin verificar.'
-                : all.length > 0
+                : current.length > 0
                   ? 'Hay incidentes vigentes, pero ninguno de las capas encendidas. Revisa el control de capas.'
-                  : 'El motor de correlación no tiene incidentes vigentes en la Región de Valparaíso.'
+                  : visibleHistory.length > 0
+                    ? 'Nada en curso ahora. Lo de las últimas 24 h está en el historial.'
+                    : 'El motor de correlación no tiene incidentes vigentes en la Región de Valparaíso.'
             }
           />
         )}
@@ -587,7 +646,12 @@ export default function App() {
           />
         )}
 
-        <SelectionDetails incidents={list} seismic={seismicList} waterCuts={visibleWaterCuts} />
+        {/* Busca también en el historial: una ficha se puede abrir desde ahí. */}
+        <SelectionDetails
+          incidents={visibleHistory}
+          seismic={seismicList}
+          waterCuts={visibleWaterCuts}
+        />
 
         {radarEnabled && (
           <Suspense fallback={null}>

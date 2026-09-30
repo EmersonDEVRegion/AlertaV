@@ -18,6 +18,8 @@ import { MobileMapControls } from './MobileMapControls'
 import { DEFAULT_LAYER_VISIBILITY, DEFAULT_PROVIDER_VISIBILITY } from './SidePanel'
 import { emptyByLayer, makeIncident } from '@/test/fixtures'
 
+const HISTORY = [makeIncident({ code: 'INC-2026-00009', title: 'Incendio estructural — Concón' })]
+
 function renderControls(
   over: { hazardEnabled?: boolean; closureEnabled?: boolean } = {},
 ) {
@@ -54,6 +56,12 @@ function renderControls(
         onClosureRetry: vi.fn(),
         theme: 'dark',
       }}
+      history={{
+        history: HISTORY,
+        onMapCodes: new Set<string>(),
+        onFocus: vi.fn(),
+        ready: true,
+      }}
     />,
   )
 
@@ -72,7 +80,7 @@ const panels = () => screen.queryAllByRole('region')
  * «más descriptivo» rompe sin que nada falle.
  */
 describe('el nombre accesible contiene la etiqueta visible', () => {
-  it.each(['Emergencias', 'Referencia', 'Leyenda'])('%s', (label) => {
+  it.each(['Emergencias', 'Historial', 'Capas'])('%s', (label) => {
     renderControls()
     const name = tab(new RegExp(label, 'i')).getAttribute('aria-label') ?? ''
     expect(name.toLowerCase()).toContain(label.toLowerCase())
@@ -95,10 +103,10 @@ describe('exclusión: la colisión deja de ser posible', () => {
     await user.click(tab(/emergencias/i))
     expect(panels()).toHaveLength(1)
 
-    await user.click(tab(/referencia/i))
+    await user.click(tab(/historial/i))
     expect(panels()).toHaveLength(1)
 
-    await user.click(tab(/leyenda/i))
+    await user.click(tab(/capas/i))
     expect(panels()).toHaveLength(1)
   })
 
@@ -124,10 +132,10 @@ describe('cada ficha abre su contenido', () => {
     expect(screen.getByRole('checkbox', { name: /incendios/i })).toBeInTheDocument()
   })
 
-  it('referencia monta los interruptores, sin un segundo plegado', async () => {
+  it('capas monta los interruptores, sin un segundo plegado', async () => {
     const user = userEvent.setup()
     renderControls()
-    await user.click(tab(/referencia/i))
+    await user.click(tab(/capas/i))
 
     // La ficha ya hace de cabecera: repetir acá el desplegable del riel de
     // escritorio sería un clic de más para llegar a lo mismo.
@@ -140,19 +148,27 @@ describe('cada ficha abre su contenido', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('leyenda monta la escala de confianza', async () => {
+  it('capas trae también la leyenda compacta, debajo de los interruptores', async () => {
     const user = userEvent.setup()
     renderControls()
-    await user.click(tab(/leyenda/i))
+    await user.click(tab(/capas/i))
 
-    expect(screen.getByText(/color: tipo y confianza/i)).toBeInTheDocument()
+    expect(screen.getByText(/el color mide evidencia/i)).toBeInTheDocument()
+  })
+
+  it('historial monta el feed de las últimas 24 h', async () => {
+    const user = userEvent.setup()
+    renderControls()
+    await user.click(tab(/historial/i))
+
+    expect(screen.getByText('Incendio estructural — Concón')).toBeInTheDocument()
   })
 
   it('los controles siguen operando sobre el estado de la aplicación', async () => {
     const user = userEvent.setup()
     const { onHazardToggle } = renderControls()
 
-    await user.click(tab(/referencia/i))
+    await user.click(tab(/capas/i))
     await user.click(screen.getByRole('switch', { name: /amenaza sísmica/i }))
 
     expect(onHazardToggle).toHaveBeenCalledTimes(1)
@@ -165,14 +181,19 @@ describe('la barra resume sin abrir nada', () => {
     expect(tab(/emergencias/i)).toHaveTextContent('3')
   })
 
-  it('la ficha de referencia cuenta sólo las capas encendidas', () => {
+  it('la ficha de capas cuenta sólo las de referencia encendidas', () => {
     renderControls({ hazardEnabled: true, closureEnabled: true })
-    expect(tab(/referencia/i)).toHaveTextContent('2')
+    expect(tab(/capas/i)).toHaveTextContent('2')
   })
 
   it('sin capas de referencia encendidas no muestra un cero', () => {
     // Un «0» permanente es ruido: la ausencia ya se lee sola.
     renderControls()
-    expect(tab(/referencia/i)).not.toHaveTextContent('0')
+    expect(tab(/capas/i)).not.toHaveTextContent('0')
+  })
+
+  it('la ficha del historial cuenta las últimas 24 h', () => {
+    renderControls()
+    expect(tab(/historial/i)).toHaveTextContent('1')
   })
 })

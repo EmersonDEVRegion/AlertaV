@@ -164,4 +164,70 @@ describe('App quieta', () => {
     expect(renders.header - base.header).toBe(0)
     client.clear()
   })
+
+  it('cuando un incidente sale del mapa por su ventana, repinta una sola vez', async () => {
+    // Un choque de hace 1 h 59 min 30 s: le quedan 30 s en el mapa (2 h).
+    const start = Date.now()
+    const crash = {
+      code: 'INC-2026-00900',
+      public_id: '3f2b6c1e-0000-4000-8000-000000000900',
+      type: 'accident',
+      status: 'active',
+      lat: -33.02,
+      lon: -71.55,
+      confidence: 0.7,
+      is_official_confirmed: false,
+      alert_confidence: 0,
+      alert_level: null,
+      title: 'Accidente — Viña del Mar',
+      commune: 'Viña del Mar',
+      province: 'Valparaíso',
+      event_count: 1,
+      source_count: 1,
+      sources: ['prensa'],
+      first_seen_at: new Date(start - 2 * 3_600_000 + 30_000).toISOString(),
+      last_seen_at: new Date(start - 2 * 3_600_000 + 30_000).toISOString(),
+      resolved_at: null,
+      correlated_at: new Date(start).toISOString(),
+      confidence_breakdown: {},
+      outage: null,
+      confidence_level: 'confirmed',
+      confidence_label: 'confirmado',
+      is_multi_source: false,
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) =>
+        String(input).includes('/incidents/active')
+          ? Promise.resolve(json([crash]))
+          : quietApi(input),
+      ),
+    )
+    const { client } = await mountApp()
+    const base = { ...renders }
+
+    for (let second = 0; second < 60; second += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000)
+      })
+    }
+
+    // Salió a los ~30 s: un repintado para sacarlo, y ninguno más en el resto
+    // del minuto. El historial lo conserva, pero eso no toca el mapa.
+    expect(renders.map - base.map).toBe(1)
+    expect(renders.header - base.header).toBe(1)
+    client.clear()
+  })
+
+  it('pide a la API las 48 h con los estados cerrados, para el historial', async () => {
+    const { client } = await mountApp()
+    const url = vi
+      .mocked(fetch)
+      .mock.calls.map(([input]) => String(input))
+      .find((u) => u.includes('/incidents/active'))
+    expect(url).toContain('hours=48')
+    expect(url).toContain('status=stale')
+    expect(url).toContain('status=extinguished')
+    client.clear()
+  })
 })
