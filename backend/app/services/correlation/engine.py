@@ -18,8 +18,16 @@ sector. Y dentro del Paso A, un racimo que no encuentra incidente a menos de
 `radius_m` prueba lo mismo antes de abrir uno nuevo. Ver `_incident_by_sector`.
 4. **Caducidad.** Dos reglas distintas y con criterios distintos: los
    incidentes sin señales nuevas pasan a `stale` tras horas, y los sostenidos
-   sólo por un reporte ciudadano sin corroborar se descartan tras minutos. Ver
-   `_expire`.
+   sólo por reportes ciudadanos que no juntaron el quórum se descartan tras
+   minutos. Ver `_expire`.
+
+Publicación (desde el 2026-09-30, §C)
+-------------------------------------
+`_refresh` escribe además `ciudadanos_independientes` y `publico`. Lo que tenga
+una fuente no ciudadana se publica como siempre. Lo sólo ciudadano, cuando lo
+reportan `CITIZEN_QUORUM` vecinos independientes (dispositivos Y redes
+distintos) y el freno global no está puesto. Los reportes repetidos de un mismo
+vecino no suman confianza. Ver `app.services.ciudadanos`.
 
 El Paso B se **reconstruye entero** en cada pasada: sus enlaces se borran y se
 recalculan. Una alerta levantada tiene que dejar de teñir el mapa, y
@@ -101,6 +109,7 @@ from app.repositories.incident_repository import (
     IncidentRepository,
     SectorSignal,
 )
+from app.services.ciudadanos import es_publico, seleccionar_independientes
 from app.services.correlation.communes import (
     AlertView,
     IncidentView,
@@ -249,7 +258,6 @@ class CorrelationEngine:
         sector_window_hours: int | None = None,
         stale_hours: int | None = None,
         citizen_ttl_minutes: int | None = None,
-        citizen_max_confidence: float | None = None,
         alert_validity_hours: int | None = None,
         min_signals: int | None = None,
         attach_regional_alerts: bool | None = None,
@@ -271,11 +279,7 @@ class CorrelationEngine:
         self.citizen_ttl_minutes = (
             citizen_ttl_minutes or settings.CITIZEN_UNCORROBORATED_TTL_MINUTES
         )
-        self.citizen_max_confidence = (
-            settings.CITIZEN_UNCORROBORATED_MAX_CONFIDENCE
-            if citizen_max_confidence is None
-            else citizen_max_confidence
-        )
+        self.citizen_only_stale_hours = settings.CITIZEN_ONLY_STALE_HOURS
         self.alert_validity_hours = (
             alert_validity_hours or settings.CORRELATION_ALERT_VALIDITY_HOURS
         )
@@ -293,6 +297,9 @@ class CorrelationEngine:
         #: ¿Existe `comunas_region`? Se pregunta una vez por pasada.
         self._hay_comunas: bool | None = None
         self._comunas_por_poligono = 0
+        #: Freno global de reportes ciudadanos (`CITIZEN_GLOBAL_BRAKE_PER_10MIN`).
+        #: Se mide una vez por pasada, al comienzo.
+        self._freno_ciudadano = False
 
     # -- Orquestación ---------------------------------------------------------
 
@@ -322,6 +329,7 @@ class CorrelationEngine:
             return result
 
         try:
+            self._freno_ciudadano = await self._freno_global(result, now=now)
             await self._step_a_spatial(result, now=now)
             await self._step_a_sector(result, now=now)
             await self._merge_converged(result, now=now)
@@ -769,11 +777,41 @@ class CorrelationEngine:
         """
         result.incidents_dismissed = await self.repo.expire_uncorroborated_citizen(
             older_than=now - timedelta(minutes=self.citizen_ttl_minutes),
-            max_confidence=self.citizen_max_confidence,
         )
 
+        # Lo sólo ciudadano que sí llegó al mapa se apaga antes que el resto:
+        # nadie oficial lo sostiene.
+        stale_ciudadano = await self.repo.stale_citizen_only(
+            threshold=now - timedelta(hours=self.citizen_only_stale_hours)
+        )
         threshold = now - timedelta(hours=self.stale_hours)
-        result.incidents_stale = await self.repo.mark_stale(threshold=threshold)
+        result.incidents_stale = stale_ciudadano + await self.repo.mark_stale(
+            threshold=threshold
+        )
+
+    async def _freno_global(self, result: CorrelationPass, *, now: datetime) -> bool:
+        """¿Entraron demasiados reportes ciudadanos en los últimos 10 minutos?
+
+        Con el freno puesto, ningún incidente sólo ciudadano se publica en esta
+        pasada. Lo que tenga otra fuente se publica igual.
+        """
+        tope = settings.CITIZEN_GLOBAL_BRAKE_PER_10MIN
+        if tope <= 0:
+            return False
+        recientes = await self.repo.count_recent_citizen_reports(
+            since=now - timedelta(minutes=10)
+        )
+        if recientes > tope:
+            result.warnings.append(
+                f"freno ciudadano: {recientes} reportes en 10 min (tope {tope}); "
+                "no se publica nada sólo ciudadano"
+            )
+            logger.warning(
+                "freno global de reportes ciudadanos",
+                extra={"recientes": recientes, "tope": tope},
+            )
+            return True
+        return False
 
     # -- Recálculo de un incidente -------------------------------------------
 
@@ -788,7 +826,18 @@ class CorrelationEngine:
         if not signals:
             return
 
-        views = [SignalView.from_orm(event) for event in signals]
+        # Un vecino cuenta una vez: los reportes ciudadanos repetidos (mismo
+        # dispositivo o misma red) no suman confianza ni cuentan para el quórum.
+        # Las demás fuentes pasan enteras, con su propio descuento por redundancia.
+        independientes = seleccionar_independientes(signals)
+        elegidos = {event.id for event in independientes}
+        puntuables = [
+            event
+            for event in signals
+            if event.source is not EventSource.CITIZEN or event.id in elegidos
+        ]
+
+        views = [SignalView.from_orm(event) for event in puntuables]
         # El tipo se resuelve ANTES de puntuar, y el orden importa: `score`
         # necesita la familia para rotular el tramo de confianza con el
         # sustantivo correcto ("Accidente confirmado" y no "Incendio
@@ -813,6 +862,12 @@ class CorrelationEngine:
             "event_count": len(signals),
             "source_count": len(scored.sources),
             "sources": [source.value for source in scored.sources],
+            "ciudadanos_independientes": len(independientes),
+            "publico": es_publico(
+                fuentes=scored.sources,
+                independientes=len(independientes),
+                freno=self._freno_ciudadano,
+            ),
             "first_seen_at": min(timestamps),
             "last_seen_at": max(timestamps),
             "correlated_at": now,

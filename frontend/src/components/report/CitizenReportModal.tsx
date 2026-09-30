@@ -8,8 +8,11 @@ import {
   successCallHint,
   type ReportCategory,
 } from '@/domain/reportCategories'
+import { env } from '@/config/env'
 import { useCitizenReport } from '@/hooks/useCitizenReport'
 import { useGeolocation } from '@/hooks/useGeolocation'
+import { reporterId } from '@/lib/reporterId'
+import { TurnstileWidget } from './TurnstileWidget'
 
 interface CitizenReportModalProps {
   onClose: () => void
@@ -20,6 +23,17 @@ const SUCCESS_DISMISS_MS = 2200
 
 /** Sobre este radio la lectura del GPS ya no describe un lugar, sino un barrio. */
 const COARSE_ACCURACY_M = 100
+
+/**
+ * Sobre este radio el backend rechaza el reporte (`CITIZEN_MAX_ACCURACY_M`): un
+ * navegador que ubica por IP informa kilómetros y ese punto no sirve para
+ * correlacionar nada. Se avisa antes de enviar para no gastar el intento.
+ */
+const MAX_ACCURACY_M = 1000
+
+/** Mensaje al terminar: lo que el reporte promete y lo que no. */
+const SUCCESS_BODY =
+  'Quedó en revisión. Aparecerá en el mapa cuando otra fuente lo confirme o lo reporten 3 personas distintas cerca. Tu comentario se publica sólo después de revisarlo.'
 
 function formatAccuracy(meters: number): string {
   return meters >= 1000
@@ -46,6 +60,11 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
    * decisión consciente cuesta un toque y ahorra un dato falso.
    */
   const [category, setCategory] = useState<ReportCategory | null>(null)
+  /** Token de Turnstile. Sólo cuenta si el sitio lo tiene activo. */
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
+  /** Cambiarlo rehace el widget: el token es de un solo uso. */
+  const [turnstileRound, setTurnstileRound] = useState(0)
+  const needsTurnstile = env.turnstileSiteKey !== ''
 
   const geo = useGeolocation()
   const { submit, isSubmitting, isSuccess, errorMessage, reset } = useCitizenReport()
@@ -139,28 +158,41 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
   const textTooShort = trimmed.length < REPORT_TEXT_MIN
   const showTextError = touched && textTooShort
   const showCategoryError = touched && category === null
+  const tooImprecise = !!geo.coords && geo.coords.accuracyM > MAX_ACCURACY_M
+  const waitingTurnstile = needsTurnstile && !turnstileToken
   const canSubmit =
     geo.status === 'ready' &&
     !!geo.coords &&
+    !tooImprecise &&
     !textTooShort &&
     category !== null &&
+    !waitingTurnstile &&
     !isSubmitting
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
     setTouched(true)
-    if (!geo.coords || textTooShort || category === null || isSubmitting) return
+    if (!geo.coords || tooImprecise || textTooShort || category === null || isSubmitting) return
+    if (waitingTurnstile) return
 
     try {
       await submit({
         lat: geo.coords.lat,
         lon: geo.coords.lon,
+        accuracy_m: Math.round(geo.coords.accuracyM),
         category,
         text: trimmed,
+        device_id: reporterId(),
+        ...(turnstileToken ? { turnstile_token: turnstileToken } : {}),
       })
     } catch {
       // `useCitizenReport` ya tradujo el error a `errorMessage`. Este catch solo
       // existe para que el rechazo de la promesa no escale a un unhandled.
+      // El token de Turnstile ya se gastó: se pide otro para el reintento.
+      if (needsTurnstile) {
+        setTurnstileToken(null)
+        setTurnstileRound((n) => n + 1)
+      }
     }
   }
 
@@ -222,9 +254,7 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
             </span>
             <p className="text-base font-bold text-ink">Reporte enviado</p>
             <p className="max-w-xs text-xs leading-snug text-ink-muted">
-              Quedó registrado como señal ciudadana. Si otras fuentes lo
-              corroboran, aparecerá en el mapa como incidente en los próximos
-              minutos.
+              {SUCCESS_BODY}
             </p>
             <p className="mt-2 text-xs font-semibold text-danger-ink">
               {category ? successCallHint(category) : null}
@@ -254,10 +284,14 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
                     <p className="mt-1.5 font-mono text-sm text-ink">
                       {geo.coords.lat.toFixed(5)}, {geo.coords.lon.toFixed(5)}
                     </p>
-                    <p className="mt-0.5 text-xs text-ink-muted">
+                    <p
+                      className={`mt-0.5 text-xs ${tooImprecise ? 'text-danger-ink' : 'text-ink-muted'}`}
+                    >
                       Precisión {formatAccuracy(geo.coords.accuracyM)}
-                      {geo.coords.accuracyM > COARSE_ACCURACY_M &&
-                        ' — poco precisa. Sé específico en la descripción (calle, cerro, referencia).'}
+                      {tooImprecise
+                        ? ' — demasiado imprecisa para enviar. Activa el GPS o sal a un lugar abierto y toca «Actualizar ubicación».'
+                        : geo.coords.accuracyM > COARSE_ACCURACY_M &&
+                          ' — poco precisa. Sé específico en la descripción (calle, cerro, referencia).'}
                     </p>
                     <button
                       type="button"
@@ -409,6 +443,21 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
                 </span>
               </div>
 
+              {needsTurnstile && (
+                <TurnstileWidget
+                  key={turnstileRound}
+                  siteKey={env.turnstileSiteKey}
+                  onToken={setTurnstileToken}
+                />
+              )}
+
+              <p className="mt-3 text-[11px] leading-snug text-ink-faint">
+                Tu reporte no aparece en el mapa de inmediato: se publica cuando
+                otra fuente lo confirma o lo reportan 3 personas distintas. Tu
+                comentario se muestra sólo después de revisarlo; no incluyas
+                nombres, teléfonos ni patentes.
+              </p>
+
               {errorMessage && (
                 <p
                   role="alert"
@@ -457,9 +506,13 @@ export function CitizenReportModal({ onClose }: CitizenReportModalProps) {
                   ? 'Enviando…'
                   : geo.status === 'locating'
                     ? 'Esperando ubicación…'
-                    : category === null
-                      ? 'Elige el tipo'
-                      : 'Enviar reporte'}
+                    : tooImprecise
+                      ? 'Ubicación imprecisa'
+                      : category === null
+                        ? 'Elige el tipo'
+                        : waitingTurnstile
+                          ? 'Verificando…'
+                          : 'Enviar reporte'}
               </button>
             </footer>
           </form>

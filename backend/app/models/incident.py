@@ -159,6 +159,26 @@ class Incident(Base):
         doc="Fuentes distintas que sostienen el incidente. Desnormalizado a propósito.",
     )
 
+    # -- Publicación (§C, migración 0018) ------------------------------------
+    ciudadanos_independientes: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=sa_text("0"),
+        doc=(
+            "Reportes ciudadanos de dispositivos y redes distintos. Lo escribe "
+            "el motor; ver `app.services.ciudadanos.seleccionar_independientes`."
+        ),
+    )
+    publico: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=sa_text("true"),
+        doc=(
+            "¿Se muestra en el mapa? Lo sólo ciudadano, sólo con quórum. Lo "
+            "escribe el motor; ver `app.services.ciudadanos.es_publico`."
+        ),
+    )
+
     # -- Descripción ---------------------------------------------------------
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     commune: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -211,6 +231,7 @@ class Incident(Base):
         CheckConstraint("lon >= -180.0 AND lon <= 180.0", name="lon"),
         CheckConstraint("last_seen_at >= first_seen_at", name="window"),
         CheckConstraint("event_count >= 0 AND source_count >= 0", name="counts"),
+        CheckConstraint("ciudadanos_independientes >= 0", name="ciudadanos_independientes"),
         # Invariante del ciclo de vida: `merged` y `merged_into_id` van juntos.
         CheckConstraint(
             "(status = 'merged') = (merged_into_id IS NOT NULL)", name="merged_pair"

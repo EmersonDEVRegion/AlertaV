@@ -224,6 +224,11 @@ export interface IncidentEventLink {
   timestamp: string
   confidence: number
   text: string | null
+  /**
+   * El reporte ciudadano trae un comentario que todavía no se aprobó (o se
+   * rechazó): `text` viene en `null`. Opcional: un backend anterior no lo manda.
+   */
+  texto_en_revision?: boolean
   lat: number | null
   lon: number | null
 
@@ -310,9 +315,9 @@ export interface IncidentDetail extends Incident {
  * servidor. Si el cliente pudiera declararse `conaf` o asignarse confianza 1.0,
  * falsificar un incidente confirmado seria trivial.
  *
- * El backend acepta ademas `type`, `reported_at`, `accuracy_m` y `media_url`.
- * Se dejan fuera por ahora: `type` cae al default `smoke` del servidor y el
- * resto no tiene UI todavia.
+ * La hora la fija el servidor (`reported_at` se ignora) y `media_url` no se
+ * publica: no se mandan. El reporte no aparece en el mapa hasta que otra fuente
+ * lo respalde o lo reporten 3 vecinos independientes (§C, 2026-09-30).
  */
 export interface CitizenReportPayload {
   lat: number
@@ -325,6 +330,15 @@ export interface CitizenReportPayload {
   category: ReportCategory
   /** Entre 3 y 2000 caracteres. El backend rechaza fuera de ese rango. */
   text: string
+  /**
+   * Precisión del GPS en metros. Obligatoria: sobre 1000 m el backend responde
+   * 422 (una ubicación por IP no sirve para correlacionar).
+   */
+  accuracy_m: number
+  /** Identificador anónimo de este navegador; ver `lib/reporterId.ts`. */
+  device_id?: string
+  /** Token de Cloudflare Turnstile, si el sitio lo tiene activo. */
+  turnstile_token?: string
 }
 
 /**

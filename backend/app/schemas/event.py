@@ -256,10 +256,11 @@ CITIZEN_INITIAL_CONFIDENCE = 0.40
 
 
 class CitizenReportCreate(BaseModel):
-    """Ingesta desde la PWA. La fuente y la confianza las fija el servidor.
+    """Ingesta desde la PWA. La fuente, la confianza y la hora las fija el servidor.
 
     Un cliente no puede declararse 'conaf' ni asignarse confianza propia: eso
-    sería un vector trivial de falsificación de incidentes.
+    sería un vector trivial de falsificación de incidentes. Tampoco elige la
+    hora: `reported_at` se acepta por compatibilidad y se ignora.
     """
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -274,22 +275,55 @@ class CitizenReportCreate(BaseModel):
         ),
     )
     text: str = Field(..., min_length=3, max_length=2_000)
+    accuracy_m: float = Field(
+        ...,
+        ge=0,
+        le=1_000_000,
+        description=(
+            "Precisión GPS informada por el dispositivo, en metros. Obligatoria: "
+            "por encima de `CITIZEN_MAX_ACCURACY_M` el reporte se rechaza."
+        ),
+    )
+    device_id: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_-]+$",
+        description=(
+            "Identificador anónimo que la PWA genera una vez y guarda en el "
+            "navegador. El servidor guarda sólo su HMAC: sirve para contar "
+            "vecinos distintos, no para saber quién es nadie."
+        ),
+    )
+    turnstile_token: str | None = Field(
+        default=None,
+        max_length=4_096,
+        description="Token de Cloudflare Turnstile, si el sitio lo tiene activo.",
+    )
     reported_at: datetime | None = Field(
-        default=None, description="Si se omite, se usa la hora del servidor."
+        default=None,
+        description="Ignorado desde el 2026-09-30: la hora la fija el servidor.",
     )
-    accuracy_m: float | None = Field(
-        default=None, ge=0, le=100_000, description="Precisión GPS informada por el dispositivo."
+    media_url: str | None = Field(
+        default=None,
+        max_length=1_000,
+        description="Ignorado: no hay subida de fotos y un enlace libre no se publica.",
     )
-    media_url: str | None = Field(default=None, max_length=1_000)
 
     @property
     def event_type(self) -> EventType:
         """Señal de dominio que corresponde a la categoría elegida."""
         return CITIZEN_CATEGORY_TO_TYPE[self.category]
 
-    def to_event_create(self) -> EventCreate:
+    def to_event_create(
+        self,
+        *,
+        huellas: dict[str, str] | None = None,
+        moderacion: dict[str, Any] | None = None,
+        ahora: datetime | None = None,
+    ) -> EventCreate:
         return EventCreate(
-            timestamp=self.reported_at or datetime.now(UTC),
+            timestamp=ahora or datetime.now(UTC),
             source=EventSource.CITIZEN,
             type=self.event_type,
             lat=self.lat,
@@ -297,7 +331,7 @@ class CitizenReportCreate(BaseModel):
             text=self.text,
             external_id=None,
             # Explícita, no la línea base de la fuente: de este número depende el
-            # ciclo de vida corto del reporte sin corroborar.
+            # peso del reporte en la suma de confianza.
             confidence=CITIZEN_INITIAL_CONFIDENCE,
             raw_data={
                 "channel": "pwa",
@@ -307,7 +341,10 @@ class CitizenReportCreate(BaseModel):
                 # justo lo que hará falta para calibrar el formulario.
                 "category": self.category.value,
                 "accuracy_m": self.accuracy_m,
-                "media_url": self.media_url,
+                # Huellas HMAC de dispositivo y red: ver `app.services.ciudadanos`.
+                "_ciudadano": dict(huellas or {}),
+                # Estado del texto: nace pendiente (o rechazado por el filtro).
+                "_moderacion": dict(moderacion or {"estado": "pendiente"}),
             },
         )
 

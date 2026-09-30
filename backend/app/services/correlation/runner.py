@@ -43,6 +43,7 @@ from app.core.shutdown import (
     sleep_unless_stopped,
 )
 from app.services.correlation.engine import CorrelationEngine, CorrelationPass
+from app.services.moderacion import PasadaModeracion, moderar_pendientes
 
 logger = logging.getLogger("alertav.correlation")
 
@@ -52,6 +53,12 @@ async def run_once(**overrides: object) -> CorrelationPass:
     async with AsyncSessionLocal() as session:
         engine = CorrelationEngine(session, **overrides)  # type: ignore[arg-type]
         return await engine.run()
+
+
+async def moderar_once() -> PasadaModeracion:
+    """Una pasada de moderación de textos ciudadanos en su propia sesión."""
+    async with AsyncSessionLocal() as session:
+        return await moderar_pendientes(session)
 
 
 async def run_loop(interval: int, **overrides: object) -> None:
@@ -65,6 +72,14 @@ async def run_loop(interval: int, **overrides: object) -> None:
             # fallaron; se registra y se reintenta en el ciclo siguiente en vez
             # de tumbar el worker y dejar el mapa congelado.
             logger.exception("pasada de correlación fallida; se reintenta")
+
+        # La moderación de textos ciudadanos va detrás del motor, en su propia
+        # sesión: un fallo de Gemini no puede tumbar una pasada de correlación,
+        # y una pasada fallida no tiene por qué dejar textos sin revisar.
+        try:
+            await moderar_once()
+        except Exception:
+            logger.exception("moderación de reportes fallida; se reintenta")
 
         if not await sleep_unless_stopped(interval):
             break

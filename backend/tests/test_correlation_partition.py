@@ -194,7 +194,7 @@ def test_un_reporte_ciudadano_de_incendio_cae_en_la_familia_fire():
     from app.schemas.event import CitizenReportCreate, ReportCategory
 
     reporte = CitizenReportCreate(
-        lat=CRUCE[0], lon=CRUCE[1], text="veo humo en el cerro",
+        lat=CRUCE[0], lon=CRUCE[1], accuracy_m=25, text="veo humo en el cerro",
         category=ReportCategory.FIRE,
     )
     assert family_of_event(reporte.event_type) == "fire"
@@ -204,7 +204,7 @@ def test_un_reporte_ciudadano_de_accidente_cae_en_la_familia_traffic():
     from app.schemas.event import CitizenReportCreate, ReportCategory
 
     reporte = CitizenReportCreate(
-        lat=CRUCE[0], lon=CRUCE[1], text="choque en la ruta",
+        lat=CRUCE[0], lon=CRUCE[1], accuracy_m=25, text="choque en la ruta",
         category=ReportCategory.TRAFFIC_ACCIDENT,
     )
     assert family_of_event(reporte.event_type) == "traffic"

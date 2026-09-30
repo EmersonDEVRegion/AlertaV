@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, NoReturn
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from app.api.deps import (
     HazardServiceDep,
     IngestServiceDep,
+    OperatorDep,
     RainGridServiceDep,
     SeismicServiceDep,
     WaterCutServiceDep,
@@ -40,18 +41,19 @@ from app.schemas.weather import (
     RainGridRead,
     TacticalWeatherRead,
 )
+from app.services import turnstile
+from app.services.ciudadanos import dentro_de_la_region, huellas_de, moderacion_inicial
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/events", tags=["events"])
 
-#: Limitador del endpoint ciudadano. Vive a nivel de módulo —una instancia por
-#: proceso— y sólo protege ese endpoint: el resto de este router es de lectura.
+#: Freno de ráfagas del endpoint ciudadano, en memoria y por IP. Es sólo la
+#: primera línea, antes de tocar la base: el límite de verdad (por dispositivo y
+#: por red, persistente) vive en `IngestService.citizen_retry_after`.
 #: (`POST /events` y `POST /events/batch`, que dejaban a cualquiera inyectar
 #: señales con cualquier fuente y confianza, se borraron el 2026-09-23.)
-citizen_report_limiter = RateLimiter(
-    interval_seconds=settings.CITIZEN_REPORT_MIN_INTERVAL_SECONDS
-)
+citizen_report_limiter = RateLimiter(interval_seconds=settings.CITIZEN_REPORT_BURST_SECONDS)
 
 
 @router.post(
@@ -60,18 +62,25 @@ citizen_report_limiter = RateLimiter(
     status_code=status.HTTP_201_CREATED,
     summary="Reporte ciudadano desde la PWA",
     description=(
-        "La fuente y la confianza las fija el servidor. Un reporte se guarda como "
-        "señal, nunca como incidente confirmado.\n\n"
-        "Limitado a un reporte por IP cada "
+        "La fuente, la confianza y la hora las fija el servidor. Un reporte se "
+        "guarda como señal, nunca como incidente confirmado, y **no aparece en "
+        "el mapa** hasta que otra fuente lo respalde o lo reporten "
+        f"{settings.CITIZEN_QUORUM} vecinos independientes (dispositivos y redes "
+        "distintos). El texto se publica sólo después de revisarlo.\n\n"
+        "Un reporte por dispositivo y hasta "
+        f"{settings.CITIZEN_REPORTS_PER_NETWORK} por red cada "
         f"{settings.CITIZEN_REPORT_MIN_INTERVAL_SECONDS // 60} minutos."
     ),
     responses={
+        403: {"description": "La verificación anti-bots (Turnstile) no pasó."},
+        422: {"description": "Fuera de la región, GPS impreciso o datos inválidos."},
         429: {
             "description": (
-                "Demasiados reportes desde la misma IP. La cabecera `Retry-After` "
-                "indica en cuántos segundos se puede reintentar."
+                "Demasiados reportes desde el mismo dispositivo o la misma red. "
+                "La cabecera `Retry-After` indica en cuántos segundos se puede "
+                "reintentar."
             )
-        }
+        },
     },
 )
 async def create_citizen_report(
@@ -81,26 +90,74 @@ async def create_citizen_report(
 
     decision = citizen_report_limiter.check(ip)
     if not decision.allowed:
-        # Se registra la IP truncada, no entera: para operar basta saber que
-        # alguien insiste desde el mismo lugar, y guardar direcciones completas
-        # de personas que reportan emergencias no hace falta para eso.
-        logger.info(
-            "reporte ciudadano rechazado por frecuencia",
-            extra={"ip": _anonimizar(ip), "retry_after_s": decision.retry_after_seconds},
-        )
+        _rechazo_por_frecuencia(ip, decision.retry_after_seconds, motivo="ráfaga")
+
+    # Lo barato primero: geocerca y precisión no necesitan red ni base.
+    if not dentro_de_la_region(report.lat, report.lon):
         raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
-                "Ya recibimos un reporte tuyo hace poco. Espera unos minutos "
-                "antes de enviar otro."
+                "Tu ubicación está fuera de la Región de Valparaíso. AlertaV sólo "
+                "recibe reportes de la región."
             ),
-            # Sin esta cabecera el 429 no dice cuánto esperar y el cliente sólo
-            # puede adivinar o reintentar en bucle.
-            headers={"Retry-After": str(decision.retry_after_seconds)},
+        )
+    if report.accuracy_m > settings.CITIZEN_MAX_ACCURACY_M:
+        metros = f"{report.accuracy_m:,.0f}".replace(",", ".")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Tu ubicación es muy imprecisa (±{metros} m). Activa el GPS o "
+                "sal a un lugar abierto y vuelve a intentarlo."
+            ),
         )
 
-    entity = await service.ingest_citizen_report(report)
-    return EventRead.model_validate(entity)
+    verificacion = await turnstile.verificar(report.turnstile_token, ip=ip)
+    if not verificacion.permitido:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "No pudimos verificar que el reporte lo envía una persona. "
+                "Recarga la página e inténtalo de nuevo."
+            ),
+        )
+
+    huellas = huellas_de(ip=ip, dispositivo=report.device_id)
+    espera = await service.citizen_retry_after(huellas=huellas)
+    if espera is not None:
+        _rechazo_por_frecuencia(ip, espera, motivo="cupo")
+
+    entity = await service.ingest_citizen_report(
+        report,
+        huellas={**huellas, "turnstile": "si" if verificacion.verificado else "no"},
+        moderacion=moderacion_inicial(report.text),
+    )
+    leido = EventRead.model_validate(entity)
+    # Quien reporta recibe su propio reporte, sin las huellas: no le sirven y no
+    # hay por qué devolverlas.
+    leido.raw_data = {
+        clave: valor for clave, valor in leido.raw_data.items() if clave != "_ciudadano"
+    }
+    return leido
+
+
+def _rechazo_por_frecuencia(ip: str, retry_after: int, *, motivo: str) -> NoReturn:
+    # Se registra la IP truncada, no entera: para operar basta saber que alguien
+    # insiste desde el mismo lugar, y guardar direcciones completas de personas
+    # que reportan emergencias no hace falta para eso.
+    logger.info(
+        "reporte ciudadano rechazado por frecuencia",
+        extra={"ip": _anonimizar(ip), "retry_after_s": retry_after, "motivo": motivo},
+    )
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=(
+            "Ya recibimos un reporte tuyo hace poco. Espera unos minutos antes de "
+            "enviar otro."
+        ),
+        # Sin esta cabecera el 429 no dice cuánto esperar y el cliente sólo puede
+        # adivinar o reintentar en bucle.
+        headers={"Retry-After": str(retry_after)},
+    )
 
 
 def _anonimizar(ip: str) -> str:
@@ -114,12 +171,15 @@ def _anonimizar(ip: str) -> str:
 
 # Las rutas de lectura cruda (`""`, `/geojson`, `/stats`, `/{id}` y
 # `/{id}/neighbours`) no las consume la PWA: sirven para calibrar el motor y para
-# `scripts/smoke_test.py`. Siguen activas, pero fuera del esquema público.
+# `scripts/smoke_test.py`. Desde el 2026-09-30 piden el token de operador: traen
+# los reportes ciudadanos con su texto sin revisar y su GPS exacto, que la API
+# pública ya no muestra (ver `app.services.ciudadanos`).
 @router.get(
     "",
     response_model=list[EventRead],
     summary="Listado de eventos",
     include_in_schema=False,
+    dependencies=[OperatorDep],
 )
 async def list_events(
     service: IngestServiceDep,
@@ -154,6 +214,7 @@ async def list_events(
 @router.get(
     "/geojson",
     include_in_schema=False,
+    dependencies=[OperatorDep],
     response_model=GeoJSONFeatureCollection,
     summary="Eventos como GeoJSON",
     description="Consumible directamente por MapLibre GL JS.",
@@ -181,6 +242,7 @@ async def events_geojson(
     response_model=EventStats,
     summary="Resumen de la recolección",
     include_in_schema=False,
+    dependencies=[OperatorDep],
 )
 async def events_stats(
     service: IngestServiceDep,
@@ -193,6 +255,7 @@ async def events_stats(
 @router.get(
     "/{public_id}/neighbours",
     include_in_schema=False,
+    dependencies=[OperatorDep],
     response_model=list[EventRead],
     summary="Señales cercanas en espacio y tiempo",
     description=(
@@ -626,6 +689,7 @@ async def water_cuts_geojson(service: WaterCutServiceDep) -> WaterCutCollection:
     response_model=EventRead,
     summary="Detalle de un evento",
     include_in_schema=False,
+    dependencies=[OperatorDep],
 )
 async def get_event(public_id: UUID, service: IngestServiceDep) -> EventRead:
     event = await service.repo.get_by_public_id(public_id)

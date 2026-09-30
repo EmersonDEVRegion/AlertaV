@@ -89,6 +89,15 @@ def test_con_el_token_correcto_pasa(cliente, monkeypatch):
         ("post", "/api/v1/collectors/transporte_informa/run"),
         ("post", "/api/v1/collectors/backfill-geocoding"),
         ("post", "/api/v1/incidents/correlate"),
+        # Moderación de comentarios ciudadanos (§C).
+        ("get", "/api/v1/moderacion"),
+        ("post", "/api/v1/moderacion/00000000-0000-0000-0000-000000000000"),
+        # Lecturas crudas: traen el texto ciudadano sin revisar y su GPS exacto.
+        ("get", "/api/v1/events"),
+        ("get", "/api/v1/events/geojson"),
+        ("get", "/api/v1/events/stats"),
+        ("get", "/api/v1/events/00000000-0000-0000-0000-000000000000"),
+        ("get", "/api/v1/events/00000000-0000-0000-0000-000000000000/neighbours"),
     ],
 )
 def test_todas_las_rutas_de_operacion_piden_token(cliente, monkeypatch, metodo, ruta):

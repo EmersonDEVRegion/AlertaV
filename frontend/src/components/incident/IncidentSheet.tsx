@@ -285,6 +285,12 @@ export const IncidentSheet = memo(function IncidentSheet({
                   ) : (
                     <p className="mt-1 line-clamp-3 text-ink-muted">{event.text}</p>
                   ))}
+                {!event.text && event.texto_en_revision && (
+                  /* El comentario de un vecino se publica sólo después de
+                     revisarlo (backend: `app/services/moderacion.py`). Se dice,
+                     en vez de callar, para que no parezca un reporte vacío. */
+                  <p className="mt-1 italic text-ink-faint">Comentario en revisión</p>
+                )}
                 {!event.text && event.source_url && (
                   /* Sin texto, el enlace necesita su propia etiqueta o queda un
                      `<a>` vacio: invisible para el mouse e ilegible para un

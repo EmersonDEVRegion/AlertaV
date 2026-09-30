@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import apify, collectors, events, feed, health, incidents, push
+from app.api.v1.endpoints import (
+    apify,
+    collectors,
+    events,
+    feed,
+    health,
+    incidents,
+    moderacion,
+    push,
+)
 
 api_router = APIRouter()
 api_router.include_router(health.router)
@@ -20,3 +29,5 @@ api_router.include_router(apify.router)
 api_router.include_router(push.router)
 # Feeds paralelos al mapa (hoy, vehículos de GBV). Prefijo propio (`/feed`).
 api_router.include_router(feed.router)
+# Moderación de los comentarios ciudadanos, sólo para el operador (`/moderacion`).
+api_router.include_router(moderacion.router)

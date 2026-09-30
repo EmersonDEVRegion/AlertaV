@@ -54,4 +54,13 @@ describe('CSP de producción', () => {
     expect(connect).not.toContain('*')
     expect(connect).not.toContain('https:')
   })
+
+  it('Turnstile puede cargar su script y su marco (reporte ciudadano)', () => {
+    const turnstile = 'https://challenges.cloudflare.com'
+    expect(csp().get('script-src')).toContain(turnstile)
+    expect(csp().get('frame-src')).toContain(turnstile)
+    // Sólo ese origen: nada de comodines en los scripts.
+    expect(csp().get('script-src')).not.toContain('*')
+    expect(csp().get('script-src')).not.toContain('https:')
+  })
 })

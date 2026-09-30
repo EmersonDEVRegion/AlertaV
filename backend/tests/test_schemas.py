@@ -168,6 +168,7 @@ class TestCitizenReport:
         report = CitizenReportCreate(
             lat=-33.025,
             lon=-71.52,
+            accuracy_m=25,
             text="Humo denso en el cerro",
             category=ReportCategory.FIRE,
         )
@@ -213,7 +214,7 @@ class TestCitizenReport:
     ) -> None:
         """Requisito de aislamiento: cada categoría en su familia y sin cruces."""
         report = CitizenReportCreate(
-            lat=-33.0, lon=-71.5, text="lo que veo", category=categoria
+            lat=-33.0, lon=-71.5, accuracy_m=25, text="lo que veo", category=categoria
         )
         assert report.event_type is esperado
         assert family_of_event(report.to_event_create().type) == familia
@@ -227,7 +228,7 @@ class TestCitizenReport:
         `possible_fire` —"Posible incendio"—, que es lo que el sistema sabe.
         """
         report = CitizenReportCreate(
-            lat=-33.0, lon=-71.5, text="veo humo en el cerro",
+            lat=-33.0, lon=-71.5, accuracy_m=25, text="veo humo en el cerro",
             category=ReportCategory.FIRE,
         )
         assert report.event_type is EventType.SMOKE
@@ -238,7 +239,7 @@ class TestCitizenReport:
     def test_la_categoria_cruda_queda_registrada(self) -> None:
         """Sin ella no se podría calibrar el formulario más adelante."""
         report = CitizenReportCreate(
-            lat=-33.0, lon=-71.5, text="choque en la ruta",
+            lat=-33.0, lon=-71.5, accuracy_m=25, text="choque en la ruta",
             category=ReportCategory.TRAFFIC_ACCIDENT,
         )
         assert report.to_event_create().raw_data["category"] == "traffic_accident"

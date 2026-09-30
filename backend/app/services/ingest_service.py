@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -78,16 +78,63 @@ class IngestService:
         )
 
 
-    async def ingest_citizen_report(self, report: CitizenReportCreate) -> RawEvent:
+    async def ingest_citizen_report(
+        self,
+        report: CitizenReportCreate,
+        *,
+        huellas: dict[str, str] | None = None,
+        moderacion: dict[str, Any] | None = None,
+    ) -> RawEvent:
         """Reporte desde la PWA.
 
         Se persiste como señal, nunca como incidente confirmado: la confianza
-        sale de la línea base de `citizen` y sólo sube cuando el motor de
-        correlación encuentra señales concordantes.
+        sale de la línea base de `citizen` y el incidente que abra no se publica
+        hasta juntar el quórum o una segunda fuente (ver `app.services.ciudadanos`).
         """
-        entity = await self.repo.add(report.to_event_create())
+        entity = await self.repo.add(
+            report.to_event_create(huellas=huellas, moderacion=moderacion)
+        )
         await self.session.commit()
         return entity
+
+    async def citizen_retry_after(
+        self, *, huellas: dict[str, str], ahora: datetime | None = None
+    ) -> int | None:
+        """Segundos que faltan para poder reportar, o None si puede ahora.
+
+        Dos cupos por ventana de `CITIZEN_REPORT_MIN_INTERVAL_SECONDS`:
+
+        * **Dispositivo:** uno. Quien vio algo ya lo dijo.
+        * **Red:** `CITIZEN_REPORTS_PER_NETWORK`. Varias personas de una misma
+          casa, oficina o CGNAT de operador pueden reportar, pero no cuentan
+          como vecinos distintos (eso lo decide el quórum, no este límite).
+        """
+        ventana = settings.CITIZEN_REPORT_MIN_INTERVAL_SECONDS
+        if ventana <= 0:
+            return None
+        ahora = ahora or datetime.now(UTC)
+        desde = ahora - timedelta(seconds=ventana)
+
+        def espera(horas: Sequence[datetime], cupo: int) -> int | None:
+            if len(horas) < cupo:
+                return None
+            # Se libera un cupo cuando vence el más viejo de los que lo llenan.
+            liberacion = horas[len(horas) - cupo] + timedelta(seconds=ventana)
+            return max(1, int((liberacion - ahora).total_seconds()) + 1)
+
+        esperas: list[int | None] = []
+        # Sin huella no hay a quién contar: una consulta sin filtro contaría a
+        # toda la región como si fuera una sola persona.
+        if huellas.get("dispositivo"):
+            del_dispositivo = await self.repo.citizen_reports_since(
+                since=desde, dispositivo=huellas["dispositivo"]
+            )
+            esperas.append(espera(del_dispositivo, 1))
+        if huellas.get("red"):
+            de_la_red = await self.repo.citizen_reports_since(since=desde, red=huellas["red"])
+            esperas.append(espera(de_la_red, settings.CITIZEN_REPORTS_PER_NETWORK))
+        pendientes = [valor for valor in esperas if valor is not None]
+        return max(pendientes) if pendientes else None
 
     # -- Trazabilidad de collectors -----------------------------------------
 

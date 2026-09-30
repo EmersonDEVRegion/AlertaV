@@ -185,6 +185,8 @@ class PushRepository:
         stmt = (
             select(Incident)
             .where(Incident.status == IncidentStatus.ACTIVE)
+            # Nada que el mapa no muestre puede despertar a alguien.
+            .where(Incident.publico.is_(True))
             .where(Incident.first_seen_at >= since)
             .order_by(Incident.first_seen_at.asc())
             .limit(500)

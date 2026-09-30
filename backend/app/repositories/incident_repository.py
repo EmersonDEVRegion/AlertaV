@@ -63,7 +63,7 @@ from app.models.enums import (
 )
 from app.models.event import CollectorRun, RawEvent
 from app.models.incident import Incident, IncidentEvent
-from app.repositories.confidence_filters import confidence_at_least, confidence_at_most
+from app.repositories.confidence_filters import confidence_at_least
 
 #: Distancias en metros reales sobre el elipsoide.
 _GEOGRAPHY = Geography(geometry_type="POINT", srid=4326)
@@ -765,44 +765,35 @@ class IncidentRepository:
         self,
         *,
         older_than: datetime,
-        max_confidence: float,
         citizen_sources: Sequence[EventSource] | None = None,
     ) -> int:
-        """Descarta incidentes que sólo sostiene un reporte ciudadano sin corroborar.
+        """Descarta incidentes sólo ciudadanos que no juntaron el quórum a tiempo.
 
-        Es la defensa anti-spam de fondo, y la que de verdad protege el mapa: el
-        límite por IP frena a quien insiste, pero cualquiera puede mandar UN
-        reporte falso. Éste hace que ese reporte tenga vida corta salvo que algo
-        más lo respalde.
+        Es la defensa de fondo contra el reporte falso. Hasta el 2026-09-30 la
+        condición era «confianza ≤ 0,40», y tenía un hueco: dos reportes (el
+        mismo teléfono con 4G y después con wifi) sumaban 0,58, se salían de la
+        regla y el incidente falso quedaba en el mapa hasta 12 horas. Ahora la
+        condición es **no publicado**: el motor sólo marca `publico` a lo sólo
+        ciudadano que juntó `CITIZEN_QUORUM` vecinos independientes, y eso no
+        se consigue repitiendo el reporte.
 
-        Tres condiciones, y las tres tienen que cumplirse:
+        Cuatro condiciones, y las cuatro tienen que cumplirse:
 
-        1. **Ninguna fuente ajena al reporte ciudadano.** Es la guarda que impide
-           que esto toque a las fuentes oficiales, y se evalúa sobre el array
-           `sources` que el motor mantiene: si contiene cualquier cosa que no sea
-           `citizen`, el incidente ya no es "sólo ciudadano" y queda fuera de la
-           consulta. Da igual si lo corroboró CONAF, un píxel de FIRMS o un
-           reporte de Waze — cualquiera de los tres lo saca de aquí.
-        2. **Confianza por debajo del umbral.** Redundante con la anterior por
-           construcción (la suma entre fuentes sube el número en cuanto entra
-           otra), y precisamente por eso vale la pena: son dos candados
-           independientes sobre la misma puerta. Si mañana alguien cambia la
-           política de confianza, la condición sobre `sources` sigue en pie.
-
-           Se compara con `confidence_at_most` y no con `<=` a secas. La columna
-           es `REAL` y devuelve el 0.40 que escribió el motor como
-           0.4000000059604645: comparado contra el 0.40 float8 del umbral, el
-           `<=` literal daba false y esta consulta no descartaba nunca nada.
-        3. **Edad medida desde `first_seen_at`.** No desde `last_seen_at`, que es
-           lo que usa `mark_stale`. La diferencia importa: un spammer que manda
-           el mismo reporte cada cuatro minutos refrescaría `last_seen_at`
-           indefinidamente y su incidente no moriría nunca. Con `first_seen_at`,
-           la ventana empieza a correr cuando nació y no se puede reiniciar.
+        1. **Ninguna fuente ajena al reporte ciudadano.** `sources <@
+           ARRAY['citizen']`: basta un píxel de FIRMS, un incendio de CONAF o un
+           reporte de Waze para quedar fuera.
+        2. **No confirmado en terreno.** Redundante con la anterior por
+           construcción, y por eso vale: dos candados independientes.
+        3. **No publicado.** Lo que ya juntó quórum sigue su propio plazo
+           (`stale_citizen_only`), no éste.
+        4. **Edad medida desde `first_seen_at`.** No desde `last_seen_at`: quien
+           repite el reporte cada pocos minutos refrescaría `last_seen_at` y su
+           incidente no moriría nunca. `first_seen_at` no se puede reiniciar.
 
         Se marca `DISMISSED` y no `STALE`. `STALE` significa "dejaron de llegar
-        señales" —un incendio real que el satélite ya no ve—; esto es un juicio
-        distinto: "nunca hubo evidencia suficiente". Confundirlos haría que un
-        operador leyera como incendio apagado lo que fue un reporte descartado.
+        señales"; esto es "nunca hubo evidencia suficiente". Confundirlos haría
+        que un operador leyera como incendio apagado lo que fue un reporte
+        descartado.
         """
         sources = list(citizen_sources or [EventSource.CITIZEN])
         etiquetas = [source.value for source in sources]
@@ -811,18 +802,47 @@ class IncidentRepository:
             update(Incident)
             .where(Incident.status.in_(_open_statuses()))
             .where(Incident.first_seen_at < older_than)
-            .where(confidence_at_most(Incident.confidence, max_confidence))
+            .where(Incident.publico.is_(False))
             # Una fuente institucional que fue al lugar jamás se descarta por
             # tiempo, pase lo que pase con las otras condiciones.
             .where(Incident.is_official_confirmed.is_(False))
             # `sources <@ ARRAY[...]`: "todo lo que hay está contenido en".
-            # Basta un elemento fuera del conjunto para que el incidente quede
-            # excluido, que es exactamente la semántica de "sin corroborar".
             .where(Incident.sources.contained_by(etiquetas))
             .values(status=IncidentStatus.DISMISSED)
         )
         result = await self.session.execute(stmt)
         return int(result.rowcount or 0)
+
+    async def stale_citizen_only(self, *, threshold: datetime) -> int:
+        """Lo sólo ciudadano ya publicado, sin reportes nuevos → `stale`.
+
+        Pasa antes que el resto (`CITIZEN_ONLY_STALE_HOURS`, 3 h, contra las 12
+        de `mark_stale`) porque ninguna fuente oficial lo sostiene.
+        """
+        stmt = (
+            update(Incident)
+            .where(Incident.status == IncidentStatus.ACTIVE)
+            .where(Incident.last_seen_at < threshold)
+            .where(Incident.is_official_confirmed.is_(False))
+            .where(Incident.sources.contained_by([EventSource.CITIZEN.value]))
+            .values(status=IncidentStatus.STALE)
+        )
+        result = await self.session.execute(stmt)
+        return int(result.rowcount or 0)
+
+    async def count_recent_citizen_reports(self, *, since: datetime) -> int:
+        """Reportes ciudadanos recibidos desde `since`, en toda la región.
+
+        El `timestamp` de un reporte lo fija el servidor al recibirlo, así que
+        acá mide llegada. Usa `ix_raw_events_source_timestamp`.
+        """
+        stmt = (
+            select(func.count())
+            .select_from(RawEvent)
+            .where(RawEvent.source == EventSource.CITIZEN)
+            .where(RawEvent.timestamp >= since)
+        )
+        return int((await self.session.execute(stmt)).scalar_one() or 0)
 
     async def find_mergeable(
         self,
@@ -935,6 +955,9 @@ class IncidentRepository:
         stmt = stmt.where(
             Incident.status.in_(list(statuses) if statuses else _open_statuses())
         )
+        # Lo sólo ciudadano sin quórum no sale por la API pública. Ver
+        # `app.services.ciudadanos.es_publico`.
+        stmt = stmt.where(Incident.publico.is_(True))
         if types:
             stmt = stmt.where(Incident.type.in_(list(types)))
         if min_confidence is not None:
