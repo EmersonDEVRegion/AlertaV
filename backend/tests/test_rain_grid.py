@@ -45,9 +45,10 @@ class TestGeometria:
         assert (grid.nx, grid.ny) == (17, 15)
         assert len(grid.points()) == 255
 
-    def test_la_caja_configurada_llega_a_la_alta_cordillera(self) -> None:
-        # El difuminado de la PWA apaga 1,5 celdas por borde: el este tiene que
-        # quedar al otro lado de la cordillera y no sobre ella (§H).
+    def test_la_caja_configurada_cubre_el_mapa_y_cabe_en_el_presupuesto(self) -> None:
+        # La caja es `MAP_MAX_BOUNDS` de la PWA: el borde del campo queda en el
+        # límite del mapa y no a la vista (§L). La PWA compara la caja con
+        # MAP_MAX_BOUNDS (`frontend/src/config/rainGridBounds.test.ts`).
         grid = build_grid(
             west=settings.RAIN_GRID_WEST,
             south=settings.RAIN_GRID_SOUTH,
@@ -55,10 +56,15 @@ class TestGeometria:
             north=settings.RAIN_GRID_NORTH,
             step=settings.RAIN_GRID_STEP_DEGREES,
         )
+        assert (grid.nx, grid.ny) == (25, 26)
         east = grid.west + (grid.nx - 1) * grid.step
-        assert east <= -69.6 + 1e-9
-        # Presupuesto de Open-Meteo: una corrida por hora más las comunas.
-        assert len(grid.points()) * 24 + 1728 < 10_000
+        south = grid.north - (grid.ny - 1) * grid.step
+        assert east == pytest.approx(settings.RAIN_GRID_EAST)
+        assert south == pytest.approx(settings.RAIN_GRID_SOUTH)
+        # Presupuesto de Open-Meteo: las corridas del día más las 36 comunas
+        # cada 30 min (1728).
+        corridas = 86_400 // settings.RAIN_GRID_POLL_INTERVAL_SECONDS
+        assert len(grid.points()) * corridas + 1728 < 10_000
 
     def test_filas_de_norte_a_sur_y_columnas_de_oeste_a_este(self) -> None:
         grid = build_grid(west=-72.0, south=-33.2, east=-71.8, north=-33.0, step=0.1)
@@ -135,7 +141,7 @@ class TestCorrida:
         session: Any = FakeSession()
         assert await refresh_rain_grid(session, now=NOW, fetch=fetch)
         assert repo.saved is not None and repo.saved["key"] == "lluvia"
-        assert len(repo.saved["values"]) == 285  # 19 × 15 con el borde este en −69,5°
+        assert len(repo.saved["values"]) == 650  # 25 × 26: la caja de MAP_MAX_BOUNDS
         assert repo.saved["hours"] == settings.RAIN_GRID_HOURS
 
     async def test_un_fallo_se_anota_y_no_pisa_la_foto(
@@ -182,7 +188,9 @@ class TestEstado:
         assert grid_state(self._row(generated_at=None), now=NOW) == "never"
         assert grid_state(self._row(), now=NOW) == "ok"
         assert grid_state(self._row(error="x"), now=NOW) == "failing"
-        assert grid_state(self._row(generated_at=NOW - timedelta(hours=5)), now=NOW) == "stale"
+        # Tres cadencias sin foto (3 × 3 h): el proceso de workers no corre.
+        assert grid_state(self._row(generated_at=NOW - timedelta(hours=5)), now=NOW) == "ok"
+        assert grid_state(self._row(generated_at=NOW - timedelta(hours=10)), now=NOW) == "stale"
 
 
 class FakeService:

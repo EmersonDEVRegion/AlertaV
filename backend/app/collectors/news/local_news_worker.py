@@ -196,6 +196,18 @@ class NewsPortal:
     #: Entrar por RSS no le agrega una redacción, así que entrar a 0.60 le
     #: subiría el peso sin que hubiera cambiado nada del mundo.
     confianza: float | None = None
+    #: Categoría que una nota del FEED tiene que traer para entrar. `None` = sin
+    #: filtro.
+    #:
+    #: Existe por Quinta Visión Ahora (§L, 30-09-2026): publica la región y el
+    #: país en el mismo feed, y lo único que separa lo de la V Región es la
+    #: etiqueta «Región Valparaíso». Sin esto, una nota nacional con un
+    #: «incendio» en el titular pasaría el prefiltro y el geocodificador la
+    #: buscaría en la región. Se compara normalizado (sin tildes ni mayúsculas)
+    #: y por igualdad, igual que `comuna_en_categorias`. Sólo aplica al camino
+    #: RSS: las tarjetas HTML no traen categorías, y un portal con este filtro
+    #: se declara sin portada.
+    categoria_requerida: str | None = None
 
     @property
     def base_url(self) -> str:
@@ -216,14 +228,19 @@ class NewsPortal:
 def parse_portals(raw: str | Sequence[str] | None) -> list[NewsPortal]:
     """Declaración textual del `.env` → portales.
 
-    Formato ``slug|nombre|feed_url|portada_url[|confianza]`` separando varios con
-    ``;``, el mismo idioma que `FIRMS_SOURCES` y `OPENMETEO_COMUNAS`. Cualquiera
-    de las dos URL puede ir vacía; las dos vacías es un error de configuración y
-    se dice.
+    Formato ``slug|nombre|feed_url|portada_url[|confianza[|categoria]]``
+    separando varios con ``;``, el mismo idioma que `FIRMS_SOURCES` y
+    `OPENMETEO_COMUNAS`. Cualquiera de las dos URL puede ir vacía; las dos
+    vacías es un error de configuración y se dice.
 
     El quinto campo es **opcional** y sobrescribe `LOCAL_NEWS_CONFIDENCE` para
     ese portal (ver `NewsPortal.confianza`). Omitirlo es lo normal; las filas
     escritas antes de que existiera siguen siendo válidas sin tocarlas.
+
+    El sexto, también opcional, es la categoría que una nota del feed tiene que
+    traer para entrar (ver `NewsPortal.categoria_requerida`). Sin portada ni
+    confianza propia, los campos cuarto y quinto van vacíos:
+    ``slug|nombre|https://…/feed/|||Región X``.
 
     Se valida al construir el collector —y no al leer— para que una fila mal
     escrita deje una corrida `failed` con el motivo en `collector_runs`, en vez
@@ -272,6 +289,15 @@ def parse_portals(raw: str | Sequence[str] | None) -> list[NewsPortal]:
                     f"la confianza de {slug!r} está fuera de [0, 1]: {confianza}"
                 )
 
+        categoria = partes[5] if len(partes) > 5 else ""
+        if categoria and portada_url:
+            # La portada no trae categorías: con el filtro, todo lo que llegara
+            # por HTML se descartaría en silencio. Mejor decirlo al configurar.
+            raise ValueError(
+                f"el portal {slug!r} exige la categoría {categoria!r} y declara "
+                f"portada: el camino HTML no trae categorías"
+            )
+
         portales.append(
             NewsPortal(
                 slug=slug,
@@ -279,6 +305,7 @@ def parse_portals(raw: str | Sequence[str] | None) -> list[NewsPortal]:
                 feed_url=feed_url or None,
                 portada_url=portada_url or None,
                 confianza=confianza,
+                categoria_requerida=categoria or None,
             )
         )
     return portales
@@ -577,6 +604,9 @@ def parse_feed(cuerpo: str, portal: NewsPortal) -> list[NewsItem]:
     """
     parsed = feedparser.parse(cuerpo)
     noticias: list[NewsItem] = []
+    requerida = (
+        normalise_text(portal.categoria_requerida) if portal.categoria_requerida else None
+    )
 
     for entry in parsed.entries:
         titular = strip_html(_entry_value(entry, "title") or "")
@@ -588,6 +618,11 @@ def parse_feed(cuerpo: str, portal: NewsPortal) -> list[NewsItem]:
 
         bajada = strip_html(_entry_value(entry, "summary", "description") or "")
         categorias = _entry_categorias(entry)
+        if requerida is not None and requerida not in {
+            normalise_text(c) for c in categorias
+        }:
+            # Fuera de la región según la propia fuente (Quinta Visión: «Nacional»).
+            continue
         # La categoría es la fuente diciendo dónde ocurrió y manda. Cuando no
         # nombra una comuna —Prensa Marga Marga etiqueta «Marga Marga»,
         # «Policial», «Destacado»: la provincia y la sección— se cae al texto,

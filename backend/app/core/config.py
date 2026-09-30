@@ -870,13 +870,28 @@ class Settings(BaseSettings):
     #: desde el 06-07. Lo que esos medios cuentan al minuto va a su Instagram,
     #: no a la web. Entran porque no cuestan nada y cubren territorio, no porque
     #: vayan a ser rápidos.
+    #:
+    #: **Quinta Prensa salió de rotación el 2026-09-30**: su última nota es del
+    #: 06-07-2026. Queda escrita y comentada, como Sitio del Suceso, por si vuelve:
+    #:
+    #:     quintaprensa|Quinta Prensa|https://www.quintaprensa.cl/feed/|
+    #:
+    #: **Quinta Visión Ahora entró el mismo día (§L).** WordPress con RSS, muy
+    #: activa (10 notas en dos horas y media el 30-09) y con «AHORA:» en lo
+    #: urgente. `<category>` trae «Región Valparaíso» y la comuna, pero el feed
+    #: mezcla notas nacionales: por eso el sexto campo exige «Región Valparaíso»
+    #: (ver `NewsPortal.categoria_requerida`). Sólo feed, sin portada, y con la
+    #: confianza de medio por defecto (0,60): tiene redacción propia. Está detrás
+    #: de Cloudflare como Sitio del Suceso; si Render recibe 403, la salida es el
+    #: proxy de Oracle en Chile.
     LOCAL_NEWS_SOURCES: str = (
         "alertanoticias|Alerta Noticias|"
         "https://alertanoticias.cl/category/valparaiso/feed/|"
         "https://alertanoticias.cl/category/valparaiso/|0.35;"
         "puranoticia|Pura Noticia||https://puranoticia.pnt.cl/region-valparaiso;"
         "margamarga|Prensa Marga Marga|https://prensamargamarga.cl/feed/|;"
-        "quintaprensa|Quinta Prensa|https://www.quintaprensa.cl/feed/|"
+        "quintavision|Quinta Visión Ahora|https://www.quintavisionahora.cl/feed/|||"
+        "Región Valparaíso"
     )
     #: Cabeceras de navegador. El `User-Agent` por defecto de httpx
     #: (`python-httpx/0.28.1`) es lo primero que mira una regla básica de
@@ -975,23 +990,30 @@ class Settings(BaseSettings):
     #: de la capa). La guarda un trabajo del proceso de workers en
     #: `weather_grids`; ver `app/services/rain_grid_service.py`.
     #:
-    #: Presupuesto: con paso 0,15° la caja de abajo son 19 × 15 = 285 puntos.
-    #: Si Open-Meteo contara cada punto como una llamada (su página de precios
-    #: no lo aclara), una corrida por hora son 6840 al día, que sumadas a las
-    #: 1728 de las comunas quedan bajo las 10.000 del nivel abierto. Un paso de
-    #: 0,1° pasaría el límite, y más fino que el modelo (~9-11 km) no agrega nada.
+    #: La caja es la MISMA que `MAP_MAX_BOUNDS` de la PWA (`config/map.ts`):
+    #: todo lo que el mapa deja mirar tiene dato, y el único borde del campo queda
+    #: en el límite del mapa, adonde casi nadie llega (§L, 30-09-2026). Antes la
+    #: caja era la región y el corte se veía como una recta sobre la cordillera.
+    #: Si se cambia `MAP_MAX_BOUNDS`, se cambia esto: lo vigila
+    #: `frontend/src/config/rainGridBounds.test.ts`.
     #:
-    #: El borde este va a −69,5° (última columna en −69,6°) y no en el límite
-    #: de la región: la PWA difumina 1,5 celdas en cada borde para que la caja
-    #: no se vea, y con el borde en −69,8° ese difuminado apagaba justo la alta
-    #: cordillera, donde se concentra la lluvia de un frente (§H, 30-09-2026).
+    #: Presupuesto: con paso 0,2° la caja son 25 × 26 = 650 puntos, leídos cada
+    #: 3 h (8 corridas al día). Si Open-Meteo contara cada punto como una llamada
+    #: (su página de precios no lo aclara), son 5200 al día, que sumadas a las
+    #: 1728 de las comunas quedan en 6928, bajo las 10.000 del nivel abierto y por
+    #: debajo de las 8568 que gastaba la caja anterior leída cada hora.
+    #:
+    #: Por qué cada 3 h y no cada hora: los modelos globales se recalculan cada 3
+    #: a 6 h, así que leer cada hora devolvía casi siempre la misma foto. Y por qué
+    #: 0,2° y no 0,15°: con 0,15° la caja entera son 1122 puntos y no cabe en el
+    #: presupuesto; la interpolación bilineal de la PWA suaviza la diferencia.
     RAIN_GRID_ENABLED: bool = True
-    RAIN_GRID_STEP_DEGREES: float = Field(default=0.15, ge=0.05, le=1.0)
-    RAIN_GRID_WEST: float = -72.3
-    RAIN_GRID_SOUTH: float = -34.0
-    RAIN_GRID_EAST: float = -69.5
-    RAIN_GRID_NORTH: float = -31.9
-    RAIN_GRID_POLL_INTERVAL_SECONDS: int = Field(default=3600, ge=900, le=86_400)
+    RAIN_GRID_STEP_DEGREES: float = Field(default=0.2, ge=0.05, le=1.0)
+    RAIN_GRID_WEST: float = -73.4
+    RAIN_GRID_SOUTH: float = -35.6
+    RAIN_GRID_EAST: float = -68.6
+    RAIN_GRID_NORTH: float = -30.6
+    RAIN_GRID_POLL_INTERVAL_SECONDS: int = Field(default=10_800, ge=900, le=86_400)
     #: Puntos por petición. Una sola variable × 48 pasos por punto: 25 puntos
     #: dejan cada respuesta en ~40 KB, lejos del truncado que describe
     #: `OPENMETEO_CHUNK_SIZE`.

@@ -11,8 +11,8 @@ mapa la pinta interpolada (`frontend/src/lib/rainRaster.ts`).
 
 Qué no es
 ---------
-No pasa por `raw_events` ni por el motor: son ~255 números que se reemplazan
-cada hora, no señales. El flag `riesgo_inundacion` sigue saliendo de las 36
+No pasa por `raw_events` ni por el motor: son ~650 números que se reemplazan
+cada 3 horas, no señales. El flag `riesgo_inundacion` sigue saliendo de las 36
 comunas (`collectors/weather`), con sus umbrales.
 
 Detalles que importan
