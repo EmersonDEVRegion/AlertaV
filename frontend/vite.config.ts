@@ -201,6 +201,19 @@ export default defineConfig(({ mode }) => {
               },
             },
             {
+              // Grilla de lluvia: una foto por hora. Sin red se ve la última,
+              // que para un pronóstico de 24 h sigue sirviendo unas horas.
+              urlPattern: ({ url }) => url.pathname === '/api/v1/events/weather/grid',
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'alertav-rain-grid',
+                networkTimeoutSeconds: 6,
+                expiration: { maxEntries: 2, maxAgeSeconds: 60 * 60 * 12 },
+                cacheableResponse: { statuses: [0, 200] },
+                matchOptions: { ignoreVary: true },
+              },
+            },
+            {
               /*
                * Amenaza sísmica: un modelo probabilístico que cambia cada varios
                * años. Se sirve la copia guardada al instante y se revalida

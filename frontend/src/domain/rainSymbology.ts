@@ -8,271 +8,98 @@
  * **no es una inundación**: es un pronóstico que cruza un umbral configurable
  * por `.env`, no una alerta declarada por SENAPRED.
  *
- * De ahí salen las tres decisiones visuales:
+ * # Un campo, no manchas (30-sep-2026)
  *
- *   1. **Mancha difusa, nunca un pin.** `circle-blur` alto y sin trazo en las
- *      dos capas de fondo. Un pin con ícono diría "hay un evento acá", que es
- *      exactamente lo que no hay. Además el dato es de escala comunal —celdas
- *      de 9 a 11 km— y un borde nítido insinuaría una precisión que no tiene.
- *   2. **Azul, fuera de la familia cálida.** Rojo, naranja y amarillo son de
- *      incendios, tráfico y sismos; el violeta ya lo tomó la amenaza sísmica.
- *      El azul translúcido se lee como condición ambiental.
- *   3. **El riesgo cambia el color y suma un anillo, no cambia de forma.** Sigue
- *      siendo la misma mancha: no asciende a la categoría de emergencia sólo
- *      por cruzar un umbral.
+ * Hasta el #16 la capa eran 36 círculos celestes, uno por comuna, y un mapa de
+ * calor que sólo aparecía muy cerca. Ahora es un **campo continuo**: la grilla
+ * de `/events/weather/grid` (~255 puntos del modelo, también sobre el mar)
+ * pintada con interpolación bilineal (`lib/rainRaster.ts`). Cada color es un
+ * valor de mm/h, así que la escala del widget puede llevar números.
  *
- * # Dos rampas, una por tema
+ * # La paleta: la de Windy, con dos cuidados
  *
- * Igual que en `hazardSymbology`: sobre un mapa **oscuro** el ojo lee intensidad
- * como más luz, así que el riesgo va hacia el azul claro; sobre uno **claro**, la
- * lectura se invierte y el riesgo va hacia el azul profundo. Una sola paleta
- * dejaría el caso más grave casi invisible en uno de los dos temas.
+ * Azul → cian → verde → amarillo → naranja → rojo es lo que la gente ya lee
+ * como «cuánto llueve» (Windy, el radar de la DMC). El naranja y el rojo, en
+ * este mapa, también son de incendios; para que no se confundan:
+ *
+ *   1. la capa va **debajo** de todo, semitransparente y sin bordes;
+ *   2. el rojo aparece recién sobre ~10 mm/h, que en la región es excepcional.
+ *
+ * El dominio es `mm_hora_max`: el máximo de las próximas 24 h.
  */
 
-/**
- * Dominio de la intensidad, en mm/h sobre `mm_hora_max`.
- *
- * El mínimo es el piso de emisión del collector: por debajo de 0,2 mm en 24 h no
- * emite evento. El máximo es una cota de presentación, no un umbral: MapLibre
- * satura fuera de rango, así que 30 mm/h se dibuja igual que 12 y nada
- * desaparece del mapa por caer fuera de la rampa.
- *
- * Ojo con el umbral real de riesgo (`OPENMETEO_INTENSITY_MM_H`, 5 mm/h por
- * defecto): queda a mitad de la rampa a propósito, para que una comuna en riesgo
- * ya se vea grande antes de que el anillo lo confirme. Pero **el tamaño no
- * decide el riesgo** — eso lo dice el booleano y sólo el booleano.
- */
-export const RAIN_MM_MIN = 0.2
-export const RAIN_MM_MAX = 12
-
-/**
- * Radios por zoom, en píxeles: `[zoom, radio con RAIN_MM_MIN, radio con RAIN_MM_MAX]`.
- *
- * El zoom es la RAÍZ de la interpolación y estos son sus topes; dentro de cada
- * uno se interpola por intensidad. La estructura importa: MapLibre sólo acepta
- * `["zoom"]` como entrada de un `interpolate` de nivel superior, y una capa
- * derivada que sumara sobre un radio ya interpolado dejaría el zoom anidado y
- * tiraría el estilo entero. Es el mismo problema que ya se resolvió en las capas
- * de incidentes y de sismos.
- *
- * Por encima de z14 satura, y está bien: a esa distancia una comuna llena la
- * pantalla y una mancha que siguiera creciendo taparía las calles.
- */
-export const RAIN_ZOOM_STOPS: readonly (readonly [number, number, number])[] = [
-  [7, 6, 15],
-  [11, 14, 34],
-  [14, 30, 70],
-]
-
-export interface RainPalette {
-  /** Lluvia sin riesgo. Halo y cuerpo. */
-  rain: string
-  /** Lluvia con `riesgo_inundacion === true`. Halo y cuerpo. */
-  risk: string
-  /**
-   * Disco interior, sin riesgo. Un escalón MÁS CALIENTE que `rain`.
-   *
-   * Es lo que separa esto de una mancha azul plana. Un radar real no pinta la
-   * celda de un color: el centro corre hacia el extremo caliente de la escala.
-   * Como `circle` no tiene degradados, el salto de matiz entre `rain` y
-   * `nucleus` —dos pasos de la misma rampa cian, no dos colores distintos— hace
-   * ese trabajo con una propiedad estática que no cuesta nada.
-   */
-  nucleus: string
-  /** Disco interior con riesgo. El punto más caliente de la rampa. */
-  nucleusRisk: string
-  /** Trazo del anillo de riesgo. */
-  ring: string
-  /** Halo exterior: la mancha difusa que da la sensación de nube. */
-  haloOpacity: number
-  coreOpacity: number
-  coreOpacityRisk: number
-  /** Disco interior. Tercer escalón del degradado simulado. */
-  nucleusOpacity: number
-  nucleusOpacityRisk: number
-  /**
-   * Extremos del pulso del anillo, `[mínimo, máximo]`.
-   *
-   * El máximo es además el valor en reposo: con `prefers-reduced-motion`, con la
-   * capa apagada o sin ninguna comuna en riesgo, el anillo se queda ahí. Nunca
-   * en el mínimo: si la animación no corre, el anillo tiene que verse igual.
-   */
-  ringOpacity: readonly [number, number]
+/** Un escalón de la escala: desde `mm` mm/h, este color (RGBA, alfa 0-1). */
+interface RainStop {
+  mm: number
+  rgba: readonly [number, number, number, number]
 }
 
 /**
- * # La rampa de radar
- *
- * Una sola familia —sky/cyan— recorrida en cuatro pasos, de frío a caliente:
- * halo y cuerpo en el paso frío, núcleo un paso más arriba, y el riesgo desplaza
- * los dos pares hacia el extremo caliente. Es la gramática de un radar
- * meteorológico moderno traducida a lo que `circle` sabe hacer.
- *
- * **Los hexadecimales subieron de luminosidad y las opacidades bajaron.** No es
- * casualidad ni son dos cambios: es el mismo cambio. Sobre Dark Matter un azul
- * profundo (`#2563eb`) a 0,2 de opacidad componía a un rgb(7,20,47) que se
- * confundía con el propio fondo — la mancha se veía sucia, no luminosa. Un cian
- * claro a 0,18 compone a un teal apagado y legible: el color llega del matiz,
- * no de la densidad, y por eso la capa puede seguir siendo translúcida sin
- * desaparecer. Bajar la opacidad al subir el brillo es lo que impide que el
- * conjunto sature la vista.
+ * La escala, de menos a más. Bajo el primer escalón no se pinta nada: menos de
+ * 0,2 mm/h es llovizna que no moja el suelo, y pintarla cubriría media región
+ * de azul cualquier día nublado.
  */
-export const RAIN_PALETTE: Record<'light' | 'dark', RainPalette> = {
-  light: {
-    // Sobre Positron (casi blanco): más riesgo = más oscuro. La rampa se
-    // recorre al revés, pero es la misma familia cian.
-    rain: '#38bdf8',
-    nucleus: '#0ea5e9',
-    risk: '#0369a1',
-    nucleusRisk: '#0c4a6e',
-    ring: '#0c4a6e',
-    haloOpacity: 0.1,
-    coreOpacity: 0.18,
-    coreOpacityRisk: 0.26,
-    nucleusOpacity: 0.22,
-    nucleusOpacityRisk: 0.34,
-    ringOpacity: [0.3, 0.8],
-  },
-  dark: {
-    // Sobre Dark Matter (casi negro): más riesgo = más brillante.
-    rain: '#38bdf8',
-    nucleus: '#7dd3fc',
-    risk: '#67e8f9',
-    nucleusRisk: '#cffafe',
-    ring: '#a5f3fc',
-    haloOpacity: 0.12,
-    coreOpacity: 0.18,
-    coreOpacityRisk: 0.26,
-    nucleusOpacity: 0.24,
-    nucleusOpacityRisk: 0.36,
-    ringOpacity: [0.28, 0.75],
-  },
-}
-
-/* ===========================================================================
- * Relevo por zoom: de la mancha comunal al campo de precipitación
- * ===========================================================================
- *
- * # Las dos escalas dicen cosas distintas
- *
- * El dato es **comunal**: una celda del modelo global de 9 a 11 km, resumida en
- * un punto por comuna. A escala regional eso se lee perfecto como una mancha —
- * treinta y seis discos repartidos por la V Región dicen «llueve acá y acá»,
- * que es toda la pregunta a esa distancia.
- *
- * Al acercarse a una ciudad la mancha deja de funcionar por dos motivos. Uno,
- * el disco crece hasta tapar las calles y el propio incidente que se está
- * mirando. Dos, y más importante: un círculo con borde —por difuso que sea—
- * afirma una frontera, y a nivel de ciudad esa frontera **no existe en el
- * dato**. La lluvia no se detiene en el límite comunal.
- *
- * El `heatmap` no tiene ese problema: es un campo continuo sin borde, que es
- * exactamente lo que el modelo describe. Interpola entre comunas vecinas, que
- * es una aproximación honesta y visiblemente aproximada.
- *
- * # Por qué `maxzoom` / `minzoom` Y ADEMÁS una interpolación de opacidad
- *
- * Hacen dos cosas distintas y las dos hacen falta:
- *
- *   - `maxzoom` y `minzoom` son cortes DUROS: sacan la capa del trabajo, no
- *     sólo del dibujo. Es lo que evita pagar cuatro capas `circle` sobre 36
- *     puntos a nivel de calle y un `heatmap` a nivel regional donde no aporta.
- *   - La interpolación de opacidad es lo que hace la transición SUAVE. Sin
- *     ella, cruzar el umbral sería un parpadeo: una capa desaparece y otra
- *     aparece en el mismo frame.
- *
- * Los cortes duros van deliberadamente MÁS AFUERA que la ventana del
- * desvanecido —`RAIN_SWAP` está contenida en ambos rangos—, para que ninguna
- * capa se corte mientras todavía se está viendo. Si el corte cayera dentro de
- * la rampa, el desvanecido terminaría de golpe a media opacidad.
- */
-
-/**
- * Ventana del relevo, en niveles de zoom: `[fin del dominio de los círculos,
- * inicio del dominio del calor]`.
- *
- * z11,2 no es arbitrario: a esa escala la pantalla cubre una comuna o dos, que
- * es justo cuando la mancha comunal deja de tener sentido. Coincide además con
- * la aparición del bloque de texto (`RAIN_TEXT_MIN_ZOOM`), así que el usuario
- * gana la cifra exacta en el mismo gesto en el que pierde el borde del disco —
- * la precisión no se va, cambia de soporte.
- */
-export const RAIN_SWAP: readonly [number, number] = [11.2, 12.6]
-
-/** Corte duro de los círculos. Por encima ni siquiera se teselan. */
-export const RAIN_CIRCLE_MAX_ZOOM = 13.2
-
-/** Corte duro del mapa de calor. Por debajo no entra al pipeline. */
-export const RAIN_HEAT_MIN_ZOOM = 10.6
-
-/**
- * Radio del kernel, en píxeles: `[zoom, radio]`.
- *
- * Duplica por nivel de zoom, igual que en la amenaza sísmica y por la misma
- * razón: el radio se declara en píxeles pero representa una distancia sobre el
- * terreno —acá, el paso de la grilla del modelo, 9 a 11 km—. Un radio fijo
- * sería la misma capa afirmando dos resoluciones distintas según cuánto se haya
- * acercado el usuario.
- *
- * Arranca generoso: con 36 puntos repartidos en toda la región, un kernel
- * pequeño daría lunares aislados en vez de un campo.
- */
-export const RAIN_HEAT_RADIUS: readonly (readonly [number, number])[] = [
-  [10.6, 44],
-  [12, 90],
-  [14, 220],
-  [16, 520],
+export const RAIN_SCALE: readonly RainStop[] = [
+  { mm: 0.2, rgba: [59, 130, 246, 0] },
+  { mm: 0.5, rgba: [59, 130, 246, 0.55] },
+  { mm: 1, rgba: [34, 211, 238, 0.65] },
+  { mm: 2, rgba: [74, 222, 128, 0.7] },
+  { mm: 4, rgba: [250, 204, 21, 0.75] },
+  { mm: 7, rgba: [249, 115, 22, 0.8] },
+  { mm: 10, rgba: [220, 38, 38, 0.85] },
+  { mm: 20, rgba: [190, 24, 93, 0.9] },
 ]
 
-/** Intensidad por zoom. Sube poco: ver la nota de `HAZARD_HEAT_INTENSITY`. */
-export const RAIN_HEAT_INTENSITY: readonly (readonly [number, number])[] = [
-  [10.6, 0.85],
-  [13, 1.15],
-  [16, 1.4],
-]
+/** Las marcas que se escriben bajo la tira de la escala. */
+export const RAIN_SCALE_TICKS: readonly number[] = [0.5, 2, 4, 10]
 
-export interface RainHeatRamp {
-  /**
-   * Paradas de `heatmap-density`, de 0 a 1.
-   *
-   * **La primera es transparente, sin excepción.** `heatmap-color` se evalúa
-   * sobre todo el lienzo, también donde la densidad es cero: un color opaco ahí
-   * pinta un velo azul sobre la ciudad entera, mar incluido.
-   */
-  stops: readonly (readonly [number, string])[]
-  opacity: number
+/** Opacidad de la capa entera, por tema: sobre el mapa claro satura antes. */
+export const RAIN_FIELD_OPACITY: Record<'light' | 'dark', number> = {
+  light: 0.7,
+  dark: 0.78,
 }
 
-/**
- * Rampa de densidad de la lluvia.
- *
- * Es la MISMA familia cian de las manchas, recorrida en el mismo sentido que la
- * rampa de discos de cada tema —en claro hacia el azul profundo, en oscuro
- * hacia el cian brillante—. Que el relevo no cambie de paleta es lo que hace
- * que se lea como una transformación de la misma capa y no como otra capa que
- * se encendió sola.
- */
-export const RAIN_HEAT: Record<'light' | 'dark', RainHeatRamp> = {
-  light: {
-    stops: [
-      [0, 'rgba(224, 242, 254, 0)'],
-      [0.2, 'rgba(125, 211, 252, 0.35)'],
-      [0.45, 'rgba(56, 189, 248, 0.5)'],
-      [0.7, 'rgba(2, 132, 199, 0.6)'],
-      [1, 'rgba(3, 105, 161, 0.72)'],
-    ],
-    opacity: 0.8,
-  },
-  dark: {
-    stops: [
-      [0, 'rgba(8, 47, 73, 0)'],
-      [0.2, 'rgba(3, 105, 161, 0.4)'],
-      [0.45, 'rgba(56, 189, 248, 0.55)'],
-      [0.7, 'rgba(103, 232, 249, 0.66)'],
-      [1, 'rgba(207, 250, 254, 0.78)'],
-    ],
-    opacity: 0.75,
-  },
+type Rgba = readonly [number, number, number, number]
+
+const lerp = (a: Rgba, b: Rgba, t: number): Rgba => [
+  a[0] + (b[0] - a[0]) * t,
+  a[1] + (b[1] - a[1]) * t,
+  a[2] + (b[2] - a[2]) * t,
+  a[3] + (b[3] - a[3]) * t,
+]
+
+/** Color de la escala para un valor, interpolado entre escalones. */
+export function rainColorAt(mm: number | null): Rgba {
+  const first = RAIN_SCALE[0]!
+  if (mm === null || !Number.isFinite(mm) || mm < first.mm) return [0, 0, 0, 0]
+  for (let i = 1; i < RAIN_SCALE.length; i += 1) {
+    const upper = RAIN_SCALE[i]!
+    if (mm <= upper.mm) {
+      const lower = RAIN_SCALE[i - 1]!
+      return lerp(lower.rgba, upper.rgba, (mm - lower.mm) / (upper.mm - lower.mm))
+    }
+  }
+  return RAIN_SCALE[RAIN_SCALE.length - 1]!.rgba
+}
+
+/** La tira de la escala como `linear-gradient` de CSS, para el widget. */
+export function rainScaleGradient(): string {
+  const last = RAIN_SCALE[RAIN_SCALE.length - 1]!.mm
+  const first = RAIN_SCALE[1]!.mm
+  // Escala logarítmica: con una lineal, 0,5–4 mm/h (casi toda la lluvia de la
+  // región) ocuparía un quinto de la tira.
+  const at = (mm: number) =>
+    Math.round(((Math.log(mm) - Math.log(first)) / (Math.log(last) - Math.log(first))) * 100)
+  return `linear-gradient(to right, ${RAIN_SCALE.slice(1)
+    .map(({ mm, rgba: [r, g, b] }) => `rgb(${r} ${g} ${b}) ${at(mm)}%`)
+    .join(', ')})`
+}
+
+/** Posición de una marca en la tira, en %. La misma escala que el degradado. */
+export function rainScalePosition(mm: number): number {
+  const last = RAIN_SCALE[RAIN_SCALE.length - 1]!.mm
+  const first = RAIN_SCALE[1]!.mm
+  return ((Math.log(mm) - Math.log(first)) / (Math.log(last) - Math.log(first))) * 100
 }
 
 /**

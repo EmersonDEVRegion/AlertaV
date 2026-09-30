@@ -236,7 +236,7 @@ export const WEATHER_TEXT = {
     'No hay ninguna corrida reciente del collector. No significa que esté todo tranquilo: significa que no se sabe.',
   loading: 'Consultando el pronóstico…',
   layerToggle: 'Lluvia en el mapa',
-  layerHint: 'Manchas de precipitación pronosticada por comuna',
+  layerHint: 'Máximo de lluvia de las próximas 24 h, en mm/h',
   /**
    * Se muestra SÓLO con el interruptor encendido y `con_lluvia === 0`.
    *

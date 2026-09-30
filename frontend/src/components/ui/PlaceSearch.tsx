@@ -174,7 +174,9 @@ export function PlaceSearch({ onPick }: { onPick: (area: ExploreArea) => void })
               }
             }}
             className={cn(
-              'h-8 w-full rounded-full bg-chrome-raised pl-8 pr-3 text-[12.5px] text-ink-on-chrome',
+              // 16 px en pantallas táctiles: con menos, iOS amplía la app entera al
+              // enfocar el campo y no la devuelve al cerrar el teclado.
+              'h-8 w-full rounded-full bg-chrome-raised pl-8 pr-3 text-[12.5px] text-ink-on-chrome pointer-coarse:text-base',
               'placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-accent',
               '[&::-webkit-search-cancel-button]:hidden',
             )}

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { EMPTY_RAIN, countFloodRisk, fetchRainGeojson } from '@/api/rain'
+import { fetchRainGrid } from '@/api/rainGrid'
+import { rasterizeRainGrid, type RainRaster } from '@/lib/rainRaster'
 import type { RainCollection, RainQuery } from '@/api/rainTypes'
 import { env } from '@/config/env'
 import { pollEvery } from '@/lib/polling'
@@ -48,6 +50,11 @@ export interface RainLayerState {
   status: RainStatus
   /** Nunca `undefined`: el estado "soleado" es una colección vacía, no un hueco. */
   data: RainCollection
+  /**
+   * El campo de lluvia (la grilla interpolada) listo para una fuente `image`.
+   * `null` sin grilla todavía, o si no llueve en ninguna parte.
+   */
+  raster: RainRaster | null
   /** Comunas con lluvia pronosticada. */
   count: number
   /** Comunas con `riesgo_inundacion`. */
@@ -125,6 +132,24 @@ export function useRainLayer(): RainLayerState {
     refetchInterval,
   })
 
+  // El campo continuo. Misma carga diferida y misma cadencia que las comunas:
+  // la grilla se recalcula cada hora en el servidor, así que pedirla más seguido
+  // devolvería la misma foto.
+  const gridQuery = useQuery({
+    queryKey: queryKeys.rain.grid(),
+    queryFn: ({ signal }) => fetchRainGrid(signal),
+    enabled,
+    staleTime: env.rainPollIntervalMs,
+    refetchInterval,
+  })
+  const grid = gridQuery.data?.grid ?? null
+  // Se dibuja una vez por foto nueva: react-query conserva la referencia
+  // mientras el contenido no cambie.
+  const raster = useMemo(() => {
+    const image = rasterizeRainGrid(grid)
+    return image?.wet ? image : null
+  }, [grid])
+
   // Se conserva en la interfaz —lo consumen el mapa y los tests— pero delega en
   // el store, que es quien posee la intención del usuario desde que el control
   // se mudó al widget.
@@ -159,12 +184,13 @@ export function useRainLayer(): RainLayerState {
       hasMounted,
       status,
       data,
+      raster,
       count: data.features.length,
       riskCount,
       hasRisk: riskCount > 0,
       toggle,
       retry,
     }),
-    [enabled, hasMounted, status, data, riskCount, toggle, retry],
+    [enabled, hasMounted, status, data, raster, riskCount, toggle, retry],
   )
 }

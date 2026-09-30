@@ -253,6 +253,34 @@ async def _inbox_loop(intervalo: float) -> None:
     logger.info("inbox del webhook detenido")
 
 
+async def _rain_grid_loop(intervalo: int) -> None:
+    """Refresca la grilla de lluvia del mapa de calor. Ver `rain_grid_service`.
+
+    No es un collector (no escribe señales), pero sale a la red como uno, así
+    que ocupa un cupo de `COLLECTOR_MAX_CONCURRENCY` mientras corre. Un fallo de
+    Open-Meteo queda anotado en la fila y no sube: la foto anterior sigue sirviendo.
+    """
+    from app.services.rain_grid_service import refresh_rain_grid
+
+    delay = random.uniform(5, 60)
+    logger.info(
+        "grilla de lluvia programada",
+        extra={"interval_s": intervalo, "first_run_in_s": round(delay)},
+    )
+    if not await sleep_unless_stopped(delay):
+        return
+    while not is_shutting_down():
+        try:
+            async with _cupos(), AsyncSessionLocal() as session:
+                await refresh_rain_grid(session)
+        except Exception:
+            # Base caída, por ejemplo. Se reintenta en el ciclo siguiente.
+            logger.exception("ciclo de la grilla de lluvia falló")
+        if not await sleep_unless_stopped(_next_delay(intervalo)):
+            break
+    logger.info("grilla de lluvia detenida")
+
+
 async def run_loop(
     names: Sequence[str] | None,
     interval: int | None = None,
@@ -271,6 +299,9 @@ async def run_loop(
     tareas = [_collector_loop(name, seconds) for name, seconds in plan.items()]
     if con_inbox:
         tareas.append(_inbox_loop(settings.APIFY_INBOX_POLL_SECONDS))
+    # Con la misma regla que el inbox: sólo al correr todos los collectors.
+    if con_inbox and settings.RAIN_GRID_ENABLED:
+        tareas.append(_rain_grid_loop(settings.RAIN_GRID_POLL_INTERVAL_SECONDS))
     await asyncio.gather(*tareas)
     logger.info("runner detenido")
 

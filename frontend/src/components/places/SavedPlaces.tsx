@@ -192,7 +192,7 @@ function AddPlaceForm({ taken, onDone }: { taken: readonly string[]; onDone: () 
           maxLength={40}
           placeholder="Casa de mis papás, colegio…"
           aria-label="Nombre del lugar"
-          className="h-8 w-full rounded-control bg-raised px-2 text-xs text-ink ring-1 ring-line placeholder:text-ink-faint focus:outline-none focus:ring-2 focus:ring-accent"
+          className="h-8 w-full rounded-control bg-raised px-2 text-xs text-ink pointer-coarse:h-9 pointer-coarse:text-base ring-1 ring-line placeholder:text-ink-faint focus:outline-none focus:ring-2 focus:ring-accent"
         />
       )}
 

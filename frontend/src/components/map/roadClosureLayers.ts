@@ -203,7 +203,7 @@ const hidden = (visible: boolean) => ({
  *
  * La versión obvia late: un `requestAnimationFrame` escribiendo
  * `circle-stroke-opacity` a ~12 Hz. La capa de lluvia tuvo exactamente eso y
- * **se quitó** —ver `rainRiskRingLayer`— para no dejar el mapa repintando de
+ * **se quitó** —como el anillo de la lluvia, que ya no existe— para no dejar el mapa repintando de
  * forma permanente por un adorno. Repetirlo acá reintroduciría el mismo costo
  * en la capa que menos lo justifica: un corte de ruta lleva días o semanas
  * vigente, así que no hay ninguna urgencia que un parpadeo esté comunicando.

@@ -29,11 +29,8 @@ import { validateStyleMin } from '@maplibre/maplibre-gl-style-spec'
 import type { LayerSpecification, StyleSpecification } from 'maplibre-gl'
 import { hazardFillLayer, hazardLineLayer } from './hazardLayers'
 import {
-  rainCoreLayer,
-  rainHaloLayer,
-  rainHeatLayer,
-  rainNucleusLayer,
-  rainRiskRingLayer,
+  rainFieldLayer,
+  rainRiskLabelLayer,
   rainTextLayer,
 } from './rainLayers'
 import {
@@ -65,20 +62,18 @@ function buildStyle(): StyleSpecification {
       } as LayerSpecification)
     }
 
-    for (const factory of [
-      rainHeatLayer,
-      rainHaloLayer,
-      rainCoreLayer,
-      rainNucleusLayer,
-      rainRiskRingLayer,
-      rainTextLayer,
-    ]) {
+    for (const factory of [rainRiskLabelLayer, rainTextLayer]) {
       layers.push({
         ...factory(theme, true),
         id: `${factory.name}-${theme}`,
         source: 'rain',
       } as LayerSpecification)
     }
+    layers.push({
+      ...rainFieldLayer(theme, true),
+      id: `rainFieldLayer-${theme}`,
+      source: 'rainField',
+    } as LayerSpecification)
 
     /*
      * Los cortes de ruta. La rampa de color interpola sobre `severidad` DENTRO
@@ -106,6 +101,16 @@ function buildStyle(): StyleSpecification {
     sources: {
       hazard: emptySource,
       rain: emptySource,
+      rainField: {
+        type: 'image' as const,
+        url: 'data:image/png;base64,',
+        coordinates: [
+          [-72.3, -31.9],
+          [-69.9, -31.9],
+          [-69.9, -34],
+          [-72.3, -34],
+        ],
+      },
       overlay: emptySource,
       closures: emptySource,
     },
@@ -139,7 +144,7 @@ describe('las capas compilan contra la spec de MapLibre', () => {
     // estado en el que ambas arrancan.
     const layers: LayerSpecification[] = [
       { ...hazardFillLayer('dark', false), source: 'hazard' } as LayerSpecification,
-      { ...rainHeatLayer('dark', false), source: 'rain' } as LayerSpecification,
+      { ...rainTextLayer('dark', false), source: 'rain' } as LayerSpecification,
       { ...closureBodyLayer('dark', false), source: 'closures' } as LayerSpecification,
     ]
 

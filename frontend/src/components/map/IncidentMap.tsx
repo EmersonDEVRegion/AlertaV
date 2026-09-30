@@ -635,6 +635,7 @@ export const IncidentMap = memo(function IncidentMap({
       {rain.hasMounted && (
         <RainLayer
           data={rain.data}
+          raster={rain.raster}
           visible={rain.enabled}
           theme={theme}
         />

@@ -19,6 +19,11 @@ import {
 } from '@/lib/tacticalWeatherStore'
 import type { WeatherSnapshot } from '@/lib/tacticalWeatherStore'
 import { cn } from '@/lib/cn'
+import {
+  RAIN_SCALE_TICKS,
+  rainScaleGradient,
+  rainScalePosition,
+} from '@/domain/rainSymbology'
 
 /**
  * Widget meteorológico táctico de la barra superior.
@@ -264,6 +269,36 @@ function Detail({ snapshot }: { snapshot: WeatherSnapshot }) {
           accentColor="#38bdf8"
         />
       </div>
+
+      {/*
+        La escala del campo de lluvia. Sólo con la capa encendida: es la leyenda
+        de lo que se está viendo, no un adorno del widget. Logarítmica como la
+        del mapa, para que 0,5–4 mm/h —casi toda la lluvia de la región— no
+        quede apretada en la punta.
+      */}
+      {snapshot.rainLayer && (
+        <div className="mt-2" aria-label="Escala de lluvia en milímetros por hora">
+          <div
+            aria-hidden
+            className="h-2 rounded-full"
+            style={{ backgroundImage: rainScaleGradient() }}
+          />
+          <div className="relative mt-0.5 h-3 text-[9.5px] text-ink-muted">
+            {RAIN_SCALE_TICKS.map((mm) => (
+              <span
+                key={mm}
+                className="absolute -translate-x-1/2 tabular-nums"
+                style={{ left: `${rainScalePosition(mm)}%` }}
+              >
+                {String(mm).replace('.', ',')}
+              </span>
+            ))}
+          </div>
+          <p className="text-[9.5px] leading-snug text-ink-faint">
+            mm/h · máximo de las próximas 24 h · Open-Meteo
+          </p>
+        </div>
+      )}
 
       {/*
         Capa encendida y cero milímetros pronosticados en toda la región.

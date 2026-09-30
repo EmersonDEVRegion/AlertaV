@@ -1299,8 +1299,12 @@ def test_el_runner_solo_levanta_el_inbox_con_todos_los_collectors(monkeypatch):
     async def collector(nombre, _intervalo):
         levantados.append(nombre)
 
+    async def grilla(_intervalo):
+        levantados.append("grilla")
+
     monkeypatch.setattr(runner, "_inbox_loop", inbox)
     monkeypatch.setattr(runner, "_collector_loop", collector)
+    monkeypatch.setattr(runner, "_rain_grid_loop", grilla)
 
     asyncio.run(runner.run_loop(["transporte_informa"]))
     assert levantados == ["transporte_informa"]
@@ -1308,6 +1312,8 @@ def test_el_runner_solo_levanta_el_inbox_con_todos_los_collectors(monkeypatch):
     levantados.clear()
     asyncio.run(runner.run_loop(None))
     assert "inbox" in levantados
+    # La grilla de lluvia va con la misma regla que el inbox.
+    assert "grilla" in levantados
 
 
 # --- 8. Ceguera: un Actor que corre y no ve (2026-09-29) ----------------------
