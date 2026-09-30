@@ -42,6 +42,7 @@ import { AppHeader } from '@/components/ui/AppHeader'
 import { BottomSheet } from '@/components/shell/BottomSheet'
 import { DesktopColumn } from '@/components/shell/DesktopColumn'
 import type { ExplorePanelProps } from '@/components/shell/ExplorePanel'
+import { lastBomberosDispatch } from '@/domain/lastDispatch'
 import { fitPadding, focusOffset } from '@/lib/cameraOffset'
 import { PlacePicker } from '@/components/places/PlacePicker'
 import { COMUNAS } from '@/domain/comunas'
@@ -237,6 +238,9 @@ export default function App() {
    * reloj que repinte `App`.
    */
   const { onMap: current, history } = useDisplaySplit(all)
+  // Sobre `all` y no sobre lo visible: apagar una capa no cambia cuándo
+  // despachó Bomberos. Ver `domain/lastDispatch.ts`.
+  const lastDispatchAt = useMemo(() => lastBomberosDispatch(all), [all])
 
   const isVisible = useCallback(
     (incident: Incident) => {
@@ -560,6 +564,7 @@ export default function App() {
         waterCuts: visibleWaterCuts,
       },
       incidentCount: list.length,
+      lastDispatchAt,
       onFocusArea: focusArea,
       onFocusCuartel: focusCuartel,
     }),
@@ -573,6 +578,7 @@ export default function App() {
       seismicList,
       visibleWaterCuts,
       list.length,
+      lastDispatchAt,
     ],
   )
 

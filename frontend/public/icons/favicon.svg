@@ -1,56 +1,28 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AlertaV — alerta general">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AlertaV">
   <!--
-    Marca de ALERTA GENERAL, no de incendio.
+    Marca de AlertaV: el triángulo de aviso con una V calada (§H, 30-09-2026).
 
-    La llama anterior era del hito en que el sistema sólo veía fuego. Hoy el mapa
-    lleva cortes eléctricos, sismos, accidentes viales, cortes de ruta y lluvia,
-    y un icono de llama afirma en la barra de pestañas —y en la pantalla de
-    inicio del teléfono— algo que la aplicación no es.
+    Fuente ÚNICA de todos los íconos: `npm run icons` (scripts/icons.mjs) genera
+    desde este archivo los PNG de la PWA, el de iOS, el maskable y el badge de
+    las notificaciones. No se editan los PNG a mano.
 
-    Dos piezas, y ninguna nombra un fenómeno:
+      * El triángulo es la forma universal del aviso (ISO 7010) y no nombra un
+        fenómeno: sirve igual para un incendio, un corte o un sismo.
+      * La V, en el lugar del «!», es Valparaíso: la V Región. Calada en el color
+        del fondo porque a 16 px un hueco se lee mejor que un trazo claro.
 
-      * el anillo de radar, que dice «esto vigila una zona»;
-      * el triángulo de advertencia, la forma universal del aviso (ISO 7010),
-        centrado en el barrido: donde el radar pone lo que encontró.
-
-    Las proporciones están puestas para 16 px, que es el tamaño real de la
-    pestaña, no para esta vista: el triángulo ocupa poco más de la mitad del
-    lienzo para que el anillo siga siendo un anillo y no dos astillas a los
-    lados. Trazo grueso, sin degradados y sin detalle interior — a ese tamaño
-    sólo sobreviven la silueta y el hueco del signo.
-
-    Los colores son los tokens del cromo (`#0f172a` de fondo, ámbar de aviso,
-    celeste de la capa de lluvia) para que el icono no traiga una paleta propia.
+    Centrado óptico: la caja del triángulo (con su trazo de redondeo) va de
+    y=11,5 a y=50,5, es decir, centrada en 31 y no en 32. Un triángulo carga el
+    peso abajo; subirlo un punto lo deja visualmente al medio. El `<g id="marca">`
+    es lo que el script escala para la zona segura del ícono maskable.
   -->
-  <rect width="64" height="64" rx="14" fill="#0f172a"/>
-
-  <!-- Anillo de radar. Discontinuo y girado para leerse como barrido y no como
-       borde: un círculo continuo compite con el redondeo del propio lienzo. -->
-  <circle
-    cx="32" cy="32" r="23"
-    fill="none"
-    stroke="#38bdf8"
-    stroke-width="2.5"
-    stroke-linecap="round"
-    stroke-dasharray="30 13"
-    stroke-dashoffset="8"
-    opacity="0.5"
-  />
-
-  <!-- Triángulo de advertencia. Vértices redondeados: a 16 px una esquina
-       aguda se convierte en un pixel suelto que ensucia la silueta. -->
-  <path
-    d="M32 17.5 47.6 43a2.9 2.9 0 0 1-2.5 4.4H18.9A2.9 2.9 0 0 1 16.4 43Z"
-    fill="#f59e0b"
-    stroke="#0f172a"
-    stroke-width="3.5"
-    stroke-linejoin="round"
-  />
-
-  <!-- Signo de exclamación recortado en el color del fondo: un hueco se lee
-       mejor que un trazo claro cuando el icono mide 16 px. -->
-  <g fill="#0f172a">
-    <rect x="29.7" y="27.5" width="4.6" height="10.5" rx="2.3"/>
-    <circle cx="32" cy="42.4" r="2.5"/>
+  <rect id="fondo" width="64" height="64" rx="14" fill="#0f172a"/>
+  <g id="marca">
+    <!-- Triángulo ámbar. El trazo del mismo color redondea las esquinas: a 16 px
+         una punta aguda se vuelve un pixel suelto. -->
+    <path d="M32 15 50.5 47H13.5Z" fill="#f59e0b" stroke="#f59e0b" stroke-width="7" stroke-linejoin="round"/>
+    <!-- La V: vértice en punta (miter) para que se lea como letra y no como
+         una «u»; puntas de los brazos redondeadas. -->
+    <path d="M26 28.2 32 41 38 28.2" fill="none" stroke="#0f172a" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="miter" stroke-miterlimit="10"/>
   </g>
 </svg>

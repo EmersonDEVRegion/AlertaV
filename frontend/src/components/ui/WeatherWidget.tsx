@@ -323,6 +323,17 @@ function Detail({ snapshot }: { snapshot: WeatherSnapshot }) {
         </p>
       )}
 
+      {/*
+        La imagen del campo no cargó en el mapa. Sin esto, el interruptor
+        encendido y la escala visible dicen «hay lluvia dibujada» sobre un mapa
+        vacío — exactamente lo que pasó con la CSP.
+      */}
+      {snapshot.rainLayer && snapshot.rainFieldFailed && (
+        <p role="alert" className="mt-1.5 text-[10.5px] leading-snug text-warn-ink">
+          {WEATHER_TEXT.layerFailed}
+        </p>
+      )}
+
       <p className="mt-2 text-[9.5px] leading-snug text-ink-faint">
         {WEATHER_TEXT.caveat}
         {status === 'error' && ' · No se pudo actualizar; el dato puede estar viejo.'}

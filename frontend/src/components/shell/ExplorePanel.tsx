@@ -11,6 +11,7 @@ import type { Incident } from '@/api/types'
 import type { WaterCut } from '@/api/waterCutTypes'
 import { SavedPlaces } from '@/components/places/SavedPlaces'
 import { cn } from '@/lib/cn'
+import { LastDispatch } from './LastDispatch'
 import { setExploreTab, useExploreTab, type ExploreArea, type ExploreTab } from '@/lib/exploreStore'
 
 /**
@@ -45,6 +46,11 @@ export interface ExplorePanelProps {
   selection: ExploreSelection
   /** Incidentes en el mapa con las capas encendidas. */
   incidentCount: number
+  /**
+   * Hora del último despacho de Bomberos (ms), `null` si no hubo en 48 h.
+   * Sin la prop (`undefined`) la línea no se muestra.
+   */
+  lastDispatchAt?: number | null
   /** «Mis lugares» y el buscador: encuadra el área y acota el historial. */
   onFocusArea: (area: ExploreArea) => void
   /** «Mis lugares»: vuela a un cuartel cercano y enciende su capa. */
@@ -76,6 +82,7 @@ export const ExplorePanel = memo(function ExplorePanel({
   history,
   selection,
   incidentCount,
+  lastDispatchAt,
   onFocusArea,
   onFocusCuartel,
   grip,
@@ -118,6 +125,8 @@ export const ExplorePanel = memo(function ExplorePanel({
             )}
             {headerAction && <span className="ml-auto self-center">{headerAction}</span>}
           </div>
+          {/* Calma o falla: sin esto, un mapa quieto se lee igual en los dos casos. */}
+          {history.ready && lastDispatchAt !== undefined && <LastDispatch at={lastDispatchAt} />}
         </div>
 
         <SelectionDetails

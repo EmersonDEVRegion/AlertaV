@@ -45,6 +45,21 @@ class TestGeometria:
         assert (grid.nx, grid.ny) == (17, 15)
         assert len(grid.points()) == 255
 
+    def test_la_caja_configurada_llega_a_la_alta_cordillera(self) -> None:
+        # El difuminado de la PWA apaga 1,5 celdas por borde: el este tiene que
+        # quedar al otro lado de la cordillera y no sobre ella (§H).
+        grid = build_grid(
+            west=settings.RAIN_GRID_WEST,
+            south=settings.RAIN_GRID_SOUTH,
+            east=settings.RAIN_GRID_EAST,
+            north=settings.RAIN_GRID_NORTH,
+            step=settings.RAIN_GRID_STEP_DEGREES,
+        )
+        east = grid.west + (grid.nx - 1) * grid.step
+        assert east <= -69.6 + 1e-9
+        # Presupuesto de Open-Meteo: una corrida por hora más las comunas.
+        assert len(grid.points()) * 24 + 1728 < 10_000
+
     def test_filas_de_norte_a_sur_y_columnas_de_oeste_a_este(self) -> None:
         grid = build_grid(west=-72.0, south=-33.2, east=-71.8, north=-33.0, step=0.1)
         points = grid.points()
@@ -120,7 +135,7 @@ class TestCorrida:
         session: Any = FakeSession()
         assert await refresh_rain_grid(session, now=NOW, fetch=fetch)
         assert repo.saved is not None and repo.saved["key"] == "lluvia"
-        assert len(repo.saved["values"]) == 255
+        assert len(repo.saved["values"]) == 285  # 19 × 15 con el borde este en −69,5°
         assert repo.saved["hours"] == settings.RAIN_GRID_HOURS
 
     async def test_un_fallo_se_anota_y_no_pisa_la_foto(

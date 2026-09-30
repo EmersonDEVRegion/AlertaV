@@ -84,6 +84,14 @@ export interface WeatherSnapshot {
   expanded: boolean
   /** ¿Está encendida la capa de lluvia del mapa? */
   rainLayer: boolean
+  /**
+   * ¿Falló el dibujo del campo de lluvia en el mapa?
+   *
+   * Lo marca `RainLayer` cuando MapLibre no puede cargar la imagen. Pasó en
+   * producción con la CSP (`connect-src` sin `data:`): el interruptor quedaba
+   * encendido, la escala se veía y el mapa no pintaba nada, sin ningún aviso.
+   */
+  rainFieldFailed: boolean
 }
 
 /**
@@ -97,6 +105,7 @@ const INITIAL: WeatherSnapshot = Object.freeze({
   updatedAt: null,
   expanded: false,
   rainLayer: false,
+  rainFieldFailed: false,
 })
 
 let snapshot: WeatherSnapshot = INITIAL
@@ -219,6 +228,16 @@ export function closeWeatherDetail(): void {
  */
 export function toggleRainLayer(): void {
   patch({ rainLayer: !snapshot.rainLayer })
+}
+
+/** `RainLayer` no pudo cargar la imagen del campo de lluvia. */
+export function reportRainFieldError(): void {
+  if (!snapshot.rainFieldFailed) patch({ rainFieldFailed: true })
+}
+
+/** La imagen del campo de lluvia cargó bien (o se volverá a intentar). */
+export function clearRainFieldError(): void {
+  if (snapshot.rainFieldFailed) patch({ rainFieldFailed: false })
 }
 
 /**
