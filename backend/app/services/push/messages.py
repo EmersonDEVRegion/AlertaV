@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
@@ -110,6 +110,22 @@ def format_distance(meters: float) -> str:
         # «5 km» y no «5,0 km»: el decimal cero es ruido en una pantalla chica.
         return f"{_decimal(km, 1).removesuffix(',0')} km"
     return f"{round(km)} km"
+
+
+#: Desde cuándo vale la pena decir que la ubicación es vieja. Menos de un día
+#: suele ser la casa o el trabajo de hoy; más, puede ser otra ciudad.
+STALE_LOCATION = timedelta(hours=24)
+
+
+def format_location_age(located_at: datetime, now: datetime) -> str | None:
+    """«de hace 3 días», o `None` si la ubicación es de las últimas 24 h."""
+    age = now - located_at
+    if age < STALE_LOCATION:
+        return None
+    days = age.days
+    if days >= 30:
+        return "de hace más de un mes"
+    return "de hace 1 día" if days <= 1 else f"de hace {days} días"
 
 
 def format_clock(moment: datetime) -> str:
@@ -201,10 +217,21 @@ def incident_message(
     is_official_confirmed: bool,
     alert_level: str | None,
     outage: OutageFacts | None = None,
+    place: str | None = None,
+    located_at: datetime | None = None,
+    now: datetime | None = None,
 ) -> PushMessage:
-    """Aviso de una emergencia cercana."""
+    """Aviso de una emergencia cercana.
+
+    Con `place` la distancia se midió desde un lugar guardado y el título lo
+    nombra: «Incendio forestal a 1,2 km de Casa». Sin él, se midió desde la
+    última ubicación del teléfono; si ésta tiene más de un día, el cuerpo lo
+    dice, porque «a 1,2 km» de donde uno estuvo el lunes no es lo mismo.
+    """
     noun = _NOUN.get(incident_type, "Emergencia")
     title = f"{noun} a {format_distance(distance_m)}"
+    if place:
+        title += f" de {place}"
 
     lines: list[str] = []
 
@@ -239,6 +266,11 @@ def incident_message(
 
     if alert_level in _ALERT_TEXT:
         lines.append(_ALERT_TEXT[alert_level])
+
+    if not place and located_at is not None and now is not None:
+        age = format_location_age(located_at, now)
+        if age:
+            lines.append(f"Distancia desde tu ubicación {age}")
 
     return PushMessage(
         title=title,
@@ -313,6 +345,7 @@ __all__ = [
     "PushMessage",
     "format_clock",
     "format_distance",
+    "format_location_age",
     "incident_message",
     "probe_message",
     "safe_topic",

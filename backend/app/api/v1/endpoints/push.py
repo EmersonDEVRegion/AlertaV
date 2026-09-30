@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.core.ratelimit import RateLimiter, client_ip_de
 from app.schemas.push import (
     PushEndpointRequest,
+    PushPlaceRead,
     PushProbeResult,
     PushStatus,
     PushSubscribeRequest,
@@ -84,7 +85,8 @@ async def push_status() -> PushStatus:
         "Idempotente por `subscription.endpoint`. La PWA lo llama al activar los "
         "avisos y de nuevo cada vez que se abre, con la ubicación actual: es la "
         "«última ubicación conocida» con la que el servidor calcula distancias. "
-        "La ubicación se guarda redondeada a ~110 m."
+        "La ubicación se guarda redondeada a ~110 m, igual que los lugares "
+        "guardados (`places`), que también se usan para medir distancias."
     ),
 )
 async def subscribe(payload: PushSubscribeRequest, service: PushServiceDep) -> PushSubscriptionRead:
@@ -95,8 +97,10 @@ async def subscribe(payload: PushSubscribeRequest, service: PushServiceDep) -> P
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Los avisos no están configurados en el servidor.",
         )
-    entity = await service.subscribe(payload)
-    return PushSubscriptionRead.model_validate(entity)
+    entity, places = await service.subscribe(payload)
+    read = PushSubscriptionRead.model_validate(entity)
+    read.places = [PushPlaceRead.model_validate(place) for place in places]
+    return read
 
 
 @router.post(

@@ -40,25 +40,12 @@ export const StalenessBanner = memo(function StalenessBanner({
   const isFetching = useIsFetching({ queryKey: ACTIVE_INCIDENTS_KEY }) > 0
 
   const showWarning = !isOnline || freshness.isStale || hasError
-  if (!showWarning && !isFetching) return null
-
-  if (!showWarning) {
-    /*
-     * Flota sobre el mapa en vez de empujarlo. Como línea del flujo, aparecía y
-     * desaparecía en cada sondeo, el `<main>` cambiaba de alto y MapLibre
-     * redimensionaba y repintaba el lienzo completo una vez por minuto.
-     */
-    return (
-      <div className="relative h-0">
-        <p className="pointer-events-none absolute inset-x-0 top-1 z-20 mx-auto w-fit rounded-full bg-raised px-3 py-0.5 text-[11px] text-ink-muted shadow-sm">
-          Actualizando…
-        </p>
-      </div>
-    )
-  }
+  // «Actualizando…» ya no flota sobre el mapa: lo dice la barra, bajo la
+  // marca (`LiveStatus`). Este cartel queda sólo para cuando hay un problema.
+  if (!showWarning) return null
 
   const message = !isOnline
-    ? 'Sin conexión. Estos datos pueden no reflejar la situacion actual.'
+    ? 'Sin conexión. Estos datos pueden no reflejar la situación actual.'
     : hasError
       ? 'No se pudo contactar al servidor. Mostrando el último dato recibido.'
       : 'Los datos podrían estar desactualizados.'

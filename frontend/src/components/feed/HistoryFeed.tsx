@@ -17,6 +17,8 @@ import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { formatClock, formatRelativeShort } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { useSelectedIncidentCode } from '@/lib/selectionStore'
+import { setExploreArea, useExploreArea, type ExploreArea } from '@/lib/exploreStore'
+import { areaLabel, inArea } from '@/domain/area'
 import { GlyphIcon } from '@/components/ui/GlyphIcon'
 
 /**
@@ -219,6 +221,27 @@ const OutageGroupItem = memo(function OutageGroupItem({
   )
 })
 
+/** El área activa, con la forma de quitarla. */
+function AreaChip({ area }: { area: ExploreArea }) {
+  const label = areaLabel(area)
+  return (
+    <div className="flex items-center gap-2 px-1.5 pt-1">
+      <span className="text-[10px] text-ink-muted">Mostrando</span>
+      <button
+        type="button"
+        onClick={() => setExploreArea(null)}
+        aria-label={`Quitar el filtro: ${label}`}
+        className="inline-flex min-w-0 items-center gap-1 rounded-full bg-accent-soft py-0.5 pl-2 pr-1.5 text-[10.5px] font-semibold text-accent transition hover:brightness-95"
+      >
+        <span className="truncate">{label}</span>
+        <svg viewBox="0 0 24 24" aria-hidden className="size-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round">
+          <path d="M6 6l12 12M18 6 6 18" />
+        </svg>
+      </button>
+    </div>
+  )
+}
+
 /** El contenido del historial, sin superficie: lo montan el riel y la ficha del teléfono. */
 export const HistoryFeed = memo(function HistoryFeed({
   history,
@@ -229,9 +252,16 @@ export const HistoryFeed = memo(function HistoryFeed({
 }: HistoryFeedProps) {
   const now = useNow(RELATIVE_TIME_TICK_MS)
   const selectedCode = useSelectedIncidentCode()
+  // El área del buscador o de «Mis lugares». Se lee acá y no en `App`: acotar
+  // la lista no tiene por qué repintar el mapa.
+  const area = useExploreArea()
+  const shown = useMemo(
+    () => (area ? history.filter((incident) => inArea(incident, area)) : history),
+    [history, area],
+  )
   const sections = useMemo(
-    () => historySections(history, onMapCodes, now),
-    [history, onMapCodes, now],
+    () => historySections(shown, onMapCodes, now),
+    [shown, onMapCodes, now],
   )
 
   if (!ready) {
@@ -240,6 +270,19 @@ export const HistoryFeed = memo(function HistoryFeed({
         {[0, 1, 2].map((i) => (
           <div key={i} className="shimmer h-8 rounded-control" />
         ))}
+      </div>
+    )
+  }
+
+  if (sections.length === 0 && area) {
+    return (
+      <div className="space-y-1">
+        <AreaChip area={area} />
+        <p className="px-2 py-3 text-center text-[10.5px] text-ink-muted">
+          {area.kind === 'commune'
+            ? 'Sin emergencias en las últimas 24 h en esta comuna.'
+            : `Sin emergencias en las últimas 24 h cerca de ${area.name}.`}
+        </p>
       </div>
     )
   }
@@ -262,6 +305,7 @@ export const HistoryFeed = memo(function HistoryFeed({
 
   return (
     <div className="space-y-2">
+      {area && <AreaChip area={area} />}
       {sections.map((section) => (
         // `group` y no `section`: con nombre, una sección es un `region`, y la
         // ficha del teléfono ya es la región de este contenido.

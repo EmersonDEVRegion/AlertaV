@@ -215,6 +215,14 @@ function communeKey(commune: string | null): string {
     .toLowerCase()
 }
 
+/**
+ * ¿El incidente es de esta comuna? Los feeds escriben «CONCON», «Concón» o
+ * «VIÑA DEL MAR»: se comparan sin tildes ni mayúsculas.
+ */
+export function sameCommune(a: string | null, b: string | null): boolean {
+  return a !== null && b !== null && communeKey(a) === communeKey(b)
+}
+
 /** Normaliza «VIÑA DEL MAR» y «Viña del Mar» a lo segundo. */
 export function communeLabel(commune: string | null): string | null {
   if (!commune) return null

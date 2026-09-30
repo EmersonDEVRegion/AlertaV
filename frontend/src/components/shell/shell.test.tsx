@@ -14,6 +14,7 @@ import { DEFAULT_LAYER_VISIBILITY, DEFAULT_PROVIDER_VISIBILITY } from '@/compone
 import { emptyByLayer, makeIncident, makeWaterCut } from '@/test/fixtures'
 import { resetSelection, selectWaterCut } from '@/lib/selectionStore'
 import { getSheetSnap, resetSheet } from '@/lib/sheetStore'
+import { resetExplore } from '@/lib/exploreStore'
 import { BottomSheet } from './BottomSheet'
 import { DesktopColumn } from './DesktopColumn'
 import type { ExplorePanelProps } from './ExplorePanel'
@@ -28,6 +29,7 @@ const CUT = makeWaterCut({ comuna: 'Zapallar' })
 function props(over: Partial<ExplorePanelProps> = {}): ExplorePanelProps {
   return {
     incidentCount: 1,
+    onFocusArea: vi.fn(),
     incidents: {
       visibility: DEFAULT_LAYER_VISIBILITY,
       onChange: vi.fn(),
@@ -74,6 +76,7 @@ function withQuery(ui: ReactNode) {
 afterEach(() => {
   resetSelection()
   resetSheet()
+  resetExplore()
 })
 
 describe('columna de escritorio', () => {
@@ -138,6 +141,18 @@ describe('hoja inferior del teléfono', () => {
     await user.click(screen.getByRole('tab', { name: /capas/i }))
     expect(getSheetSnap()).toBe('half')
     expect(sheet()).toHaveAttribute('data-snap', 'half')
+  })
+
+  it('mide lo visible, no la pantalla entera: la lista no queda bajo el borde', async () => {
+    const user = userEvent.setup()
+    render(withQuery(<BottomSheet {...props()} />))
+    // Asomada, sólo el resumen y las pestañas.
+    expect(sheet().style.height).toBe('7.25rem')
+
+    await user.click(screen.getByRole('tab', { name: /historial/i }))
+    // A media pantalla la hoja mide la mitad; no se desliza fuera de la pantalla.
+    expect(sheet().style.height).toBe('54%')
+    expect(sheet().style.translate).toBe('')
   })
 
   it('el asa alterna las tres alturas con el teclado', async () => {

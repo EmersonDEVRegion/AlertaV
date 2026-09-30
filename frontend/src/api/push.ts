@@ -20,6 +20,13 @@ export interface PushServerStatus {
   seismic_min_magnitude: number
 }
 
+/** Un lugar guardado, como lo guarda el servidor (redondeado a ~110 m). */
+interface PushPlace {
+  name: string
+  lat: number
+  lon: number
+}
+
 export interface PushSubscriptionRead {
   id: string
   lat: number
@@ -28,6 +35,8 @@ export interface PushSubscriptionRead {
   notify_incidents: boolean
   notify_seismic: boolean
   location_updated_at: string
+  /** Ausente en un servidor anterior a los lugares guardados. */
+  places?: PushPlace[]
 }
 
 export interface PushSubscribePayload {
@@ -38,6 +47,10 @@ export interface PushSubscribePayload {
   accuracy_m: number | null
   notify_incidents: boolean
   notify_seismic: boolean
+  /** Cuándo se obtuvo la ubicación (ISO). Sin él, el servidor usa la hora del registro. */
+  located_at?: string
+  /** Los lugares guardados. Reemplazan a los que había; ausente, no se tocan. */
+  places?: PushPlace[]
 }
 
 export interface PushProbeResult {

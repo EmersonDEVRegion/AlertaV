@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.exceptions import ValidationError
-from app.models.push import PushSubscription
+from app.models.push import MAX_PLACES_PER_SUBSCRIPTION, PushPlace, PushSubscription
 from app.repositories.push_repository import PushRepository
 from app.schemas.push import PushProbeResult, PushSubscribeRequest
 from app.services.push.config import get_push_config
@@ -60,7 +60,10 @@ class PushSubscriptionService:
         self.session = session
         self.repo = PushRepository(session)
 
-    async def subscribe(self, request: PushSubscribeRequest) -> PushSubscription:
+    async def subscribe(
+        self, request: PushSubscribeRequest
+    ) -> tuple[PushSubscription, list[PushPlace]]:
+        """Registra la suscripción y, si vienen, reemplaza sus lugares guardados."""
         endpoint = request.subscription.endpoint
         if not endpoint_host_allowed(endpoint, settings.PUSH_ALLOWED_ENDPOINT_HOSTS):
             raise ValidationError(
@@ -85,9 +88,21 @@ class PushSubscriptionService:
             radius_m=request.radius_m or settings.PUSH_INCIDENT_RADIUS_M,
             notify_incidents=request.notify_incidents,
             notify_seismic=request.notify_seismic,
+            located_at=request.located_at,
         )
+        if request.places is not None:
+            if len(request.places) > MAX_PLACES_PER_SUBSCRIPTION:
+                raise ValidationError(
+                    f"Se pueden guardar hasta {MAX_PLACES_PER_SUBSCRIPTION} lugares."
+                )
+            places = await self.repo.replace_places(
+                subscription.id,
+                [(place.name, *round_location(place.lat, place.lon)) for place in request.places],
+            )
+        else:
+            places = await self.repo.places_of(subscription.id)
         await self.session.commit()
-        return subscription
+        return subscription, places
 
     async def unsubscribe(self, endpoint: str) -> bool:
         removed = await self.repo.delete_by_endpoint(endpoint)

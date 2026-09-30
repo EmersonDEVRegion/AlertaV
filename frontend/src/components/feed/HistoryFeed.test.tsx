@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event'
 import type { Incident } from '@/api/types'
 import { makeIncident } from '@/test/fixtures'
 import { resetSelection, selectIncident } from '@/lib/selectionStore'
+import { act } from '@testing-library/react'
+import { resetExplore, setExploreArea } from '@/lib/exploreStore'
 import { HistoryFeed } from './HistoryFeed'
 
 /** 29-sep-2026, 19:00 en Chile. */
@@ -51,6 +53,7 @@ describe('historial', () => {
   afterEach(() => {
     vi.useRealTimers()
     resetSelection()
+    resetExplore()
   })
 
   function renderFeed(history: Incident[], onMap: string[] = [], over = {}) {
@@ -131,5 +134,28 @@ describe('historial', () => {
   it('antes de la primera respuesta no afirma nada', () => {
     renderFeed([], [], { ready: false })
     expect(screen.queryByText(/sin emergencias/i)).not.toBeInTheDocument()
+  })
+  it('acotado a una comuna muestra el chip y sólo lo de ahí; el chip lo quita', async () => {
+    vi.useRealTimers()
+    const concon = makeIncident({
+      code: 'INC-2026-00690',
+      commune: 'Concón',
+      title: 'Incendio forestal — Concón',
+      last_seen_at: ago(1),
+    })
+    setExploreArea({ kind: 'commune', name: 'CONCON' })
+    renderFeed([OLD, concon], [concon.code])
+
+    expect(screen.getByText('Incendio forestal — Concón')).toBeInTheDocument()
+    expect(screen.queryByText('Accidente — Viña del Mar')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /Quitar el filtro: Concon/i }))
+    expect(screen.getByText('Accidente — Viña del Mar')).toBeInTheDocument()
+  })
+
+  it('un área sin nada lo dice sin culpar a las capas', () => {
+    act(() => setExploreArea({ kind: 'place', id: 'a', name: 'Casa', lat: -32.5, lon: -71.4 }))
+    renderFeed([OLD, LIVE], [LIVE.code])
+    expect(screen.getByText('Sin emergencias en las últimas 24 h cerca de Casa.')).toBeInTheDocument()
   })
 })
