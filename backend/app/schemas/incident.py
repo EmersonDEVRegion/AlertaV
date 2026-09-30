@@ -285,6 +285,14 @@ class IncidentEventLink(BaseModel):
     timestamp: datetime
     confidence: float
     text: str | None = None
+    texto_en_revision: bool = Field(
+        default=False,
+        description=(
+            "El reporte ciudadano trae un comentario que todavía no se aprobó "
+            "(o se rechazó): `text` viaja en `null`. Siempre `false` para las "
+            "demás fuentes."
+        ),
+    )
     lat: float | None = None
     lon: float | None = None
 

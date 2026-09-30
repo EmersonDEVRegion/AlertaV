@@ -4,8 +4,14 @@ import { ApiError } from '@/api/client'
 import type { CitizenReportPayload, RawEvent } from '@/api/types'
 import { queryKeys } from '@/lib/queryClient'
 
-/** Texto legible para el 422 de FastAPI, que llega anidado en `detail[]`. */
-function readableError(error: unknown): string {
+/** Minutos de `Retry-After`, redondeados hacia arriba. `null` si no vino. */
+function retryMinutes(error: ApiError): number | null {
+  const ms = error.retryAfterMs
+  return ms !== null && Number.isFinite(ms) && ms > 0 ? Math.ceil(ms / 60_000) : null
+}
+
+/** Texto legible para cada error del endpoint. Exportado para los tests. */
+export function readableError(error: unknown): string {
   if (!(error instanceof ApiError)) {
     return 'No se pudo enviar el reporte. Intenta de nuevo.'
   }
@@ -15,15 +21,24 @@ function readableError(error: unknown): string {
   }
 
   if (error.status === 422) {
-    const body = error.body as { detail?: Array<{ msg?: string }> } | undefined
+    const body = error.body as { detail?: string | Array<{ msg?: string }> } | undefined
+    // Geocerca y precisión GPS llegan como texto listo para mostrar.
+    if (typeof body?.detail === 'string') return body.detail
     const first = body?.detail?.[0]?.msg
     return first
       ? `El servidor rechazó el reporte: ${first}`
       : 'El servidor rechazó el reporte por datos inválidos.'
   }
 
+  if (error.status === 403) {
+    return 'No pudimos verificar que el reporte lo envía una persona. Recarga la página e inténtalo de nuevo.'
+  }
+
   if (error.status === 429) {
-    return 'Demasiados reportes seguidos. Espera un momento antes de volver a enviar.'
+    const minutos = retryMinutes(error)
+    return minutos
+      ? `Ya recibimos un reporte tuyo hace poco. Podrás enviar otro en ${minutos} min.`
+      : 'Ya recibimos un reporte tuyo hace poco. Espera unos minutos antes de enviar otro.'
   }
 
   if (error.status >= 500) {

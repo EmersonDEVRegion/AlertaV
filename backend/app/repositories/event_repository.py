@@ -422,6 +422,49 @@ class EventRepository:
         await self.session.refresh(entity)
         return entity
 
+    async def citizen_reports_since(
+        self, *, since: datetime, dispositivo: str | None = None, red: str | None = None
+    ) -> list[datetime]:
+        """Horas de los reportes ciudadanos desde `since` con esa huella.
+
+        Alimenta el límite por dispositivo y por red. Vive en la base y no en
+        memoria para que un deploy o un reinicio no lo borren. La contención
+        JSONB (`@>`) filtra sobre las pocas filas ciudadanas de la ventana, que
+        ya acota `ix_raw_events_source_timestamp`.
+        """
+        huella: dict[str, str] = {}
+        if dispositivo:
+            huella["dispositivo"] = dispositivo
+        if red:
+            huella["red"] = red
+        stmt = (
+            select(RawEvent.timestamp)
+            .where(RawEvent.source == EventSource.CITIZEN)
+            .where(RawEvent.timestamp >= since)
+            .order_by(RawEvent.timestamp.asc())
+        )
+        if huella:
+            stmt = stmt.where(RawEvent.raw_data.contains({"_ciudadano": huella}))
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def pending_moderation(
+        self, *, since: datetime, limit: int, estados: Sequence[str] = ("pendiente",)
+    ) -> Sequence[RawEvent]:
+        """Reportes ciudadanos cuyo texto espera revisión, del más viejo al más nuevo."""
+        condiciones = [
+            RawEvent.raw_data.contains({"_moderacion": {"estado": estado}})
+            for estado in estados
+        ]
+        stmt = (
+            select(RawEvent)
+            .where(RawEvent.source == EventSource.CITIZEN)
+            .where(RawEvent.timestamp >= since)
+            .where(or_(*condiciones))
+            .order_by(RawEvent.timestamp.asc())
+            .limit(limit)
+        )
+        return (await self.session.execute(stmt)).scalars().all()
+
     # -- Lectura -------------------------------------------------------------
 
     async def get_by_public_id(self, public_id: UUID) -> RawEvent | None:

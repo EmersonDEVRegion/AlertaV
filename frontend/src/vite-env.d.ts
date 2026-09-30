@@ -24,6 +24,8 @@ interface ImportMetaEnv {
   /** Cortes de agua (Esval). Encendido por defecto; `off` lo apaga. */
   readonly VITE_WATER_CUTS?: string
   readonly VITE_WATER_CUT_POLL_INTERVAL_MS?: string
+  /** Clave pública del sitio en Cloudflare Turnstile. Vacía = sin verificación. */
+  readonly VITE_TURNSTILE_SITE_KEY?: string
 }
 
 interface ImportMeta {

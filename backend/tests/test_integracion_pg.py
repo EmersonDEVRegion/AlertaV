@@ -596,3 +596,152 @@ def test_los_lugares_guardados_cuentan_para_el_radio_y_se_avisa_una_vez():
     assert mine[0].distance_m < 1500
     assert mine[0].located_at is not None
     assert abs((mine[0].located_at - hace_tres_dias).total_seconds()) < 5
+
+
+# --- Reportes ciudadanos: quórum, cupo y moderación (§C) -----------------------
+
+MARCA_CIUDADANA = "integracion-ciudadana"
+
+
+async def _limpiar_ciudadanos() -> None:
+    from app.core.database import AsyncSessionLocal
+    from app.models.enums import EventSource
+    from app.models.event import RawEvent
+    from app.models.incident import Incident, IncidentEvent
+
+    async with AsyncSessionLocal() as session:
+        ids = (
+            await session.execute(
+                select(RawEvent.id).where(
+                    RawEvent.source == EventSource.CITIZEN,
+                    RawEvent.text.like(f"{MARCA_CIUDADANA}%"),
+                )
+            )
+        ).scalars().all()
+        if ids:
+            incidentes = (
+                await session.execute(
+                    select(IncidentEvent.incident_id).where(IncidentEvent.raw_event_id.in_(ids))
+                )
+            ).scalars().all()
+            await session.execute(delete(RawEvent).where(RawEvent.id.in_(ids)))
+            if incidentes:
+                await session.execute(delete(Incident).where(Incident.id.in_(incidentes)))
+        await session.commit()
+
+
+async def _reportar(lat: float, lon: float, *, dispositivo: str, red: str, texto: str = "humo"):
+    from app.core.database import AsyncSessionLocal
+    from app.schemas.event import CitizenReportCreate, ReportCategory
+    from app.services.ciudadanos import moderacion_inicial
+    from app.services.ingest_service import IngestService
+
+    reporte = CitizenReportCreate(
+        lat=lat,
+        lon=lon,
+        accuracy_m=20,
+        text=f"{MARCA_CIUDADANA} {texto}",
+        category=ReportCategory.FIRE,
+    )
+    async with AsyncSessionLocal() as session:
+        evento = await IngestService(session).ingest_citizen_report(
+            reporte,
+            huellas={"dispositivo": dispositivo, "red": red},
+            moderacion=moderacion_inicial(reporte.text),
+        )
+        return evento.id
+
+
+async def _correlacionar(ahora: datetime | None = None):
+    from app.core.database import AsyncSessionLocal
+    from app.services.correlation.engine import CorrelationEngine
+
+    async with AsyncSessionLocal() as session:
+        return await CorrelationEngine(session).run(now=ahora)
+
+
+async def _incidente_de(evento_id: int):
+    from app.core.database import AsyncSessionLocal
+    from app.models.event import RawEvent
+    from app.models.incident import Incident
+
+    async with AsyncSessionLocal() as session:
+        evento = await session.get(RawEvent, evento_id)
+        if evento is None or evento.incident_id is None:
+            return None
+        return await session.get(Incident, evento.incident_id)
+
+
+def test_tres_vecinos_publican_y_dos_de_la_misma_persona_no():
+    punto_a = (-33.0245, -71.5518)  # Viña del Mar
+    punto_b = (-33.0472, -71.6127)  # Valparaíso, a ~6 km
+
+    async def caso():
+        await _limpiar_ciudadanos()
+        vecinos = [
+            await _reportar(*punto_a, dispositivo=f"d{i}", red=f"r{i}") for i in range(3)
+        ]
+        misma = [
+            await _reportar(*punto_b, dispositivo="yo", red="4g"),
+            await _reportar(*punto_b, dispositivo="yo", red="wifi"),
+        ]
+        await _correlacionar()
+        publicado = await _incidente_de(vecinos[0])
+        oculto = await _incidente_de(misma[0])
+
+        from app.core.database import AsyncSessionLocal
+        from app.repositories.incident_repository import IncidentRepository
+
+        async with AsyncSessionLocal() as session:
+            visibles = await IncidentRepository(session).list_incidents(limit=500)
+        ids_visibles = {i.id for i in visibles}
+
+        # 16 minutos después, lo que no juntó quórum se descarta.
+        await _correlacionar(datetime.now(UTC) + timedelta(minutes=16))
+        despues = await _incidente_de(misma[0])
+        sigue = await _incidente_de(vecinos[0])
+        await _limpiar_ciudadanos()
+        return publicado, oculto, ids_visibles, despues, sigue
+
+    publicado, oculto, visibles, despues, sigue = correr(caso)
+    assert publicado is not None and oculto is not None
+    assert (publicado.ciudadanos_independientes, publicado.publico) == (3, True)
+    assert (oculto.ciudadanos_independientes, oculto.publico) == (1, False)
+    assert publicado.id in visibles and oculto.id not in visibles
+    assert despues.status.value == "dismissed"
+    assert sigue.status.value == "active"
+
+
+def test_el_cupo_y_la_moderacion_leen_la_base():
+    from app.core.database import AsyncSessionLocal
+    from app.repositories.event_repository import EventRepository
+    from app.services.ingest_service import IngestService
+
+    async def caso():
+        await _limpiar_ciudadanos()
+        await _reportar(-33.0245, -71.5518, dispositivo="cupo-d", red="cupo-r")
+        await _reportar(-33.0245, -71.5518, dispositivo="otro", red="x", texto="9 8765 4321")
+        async with AsyncSessionLocal() as session:
+            servicio = IngestService(session)
+            mismo = await servicio.citizen_retry_after(
+                huellas={"dispositivo": "cupo-d", "red": "otra-red"}
+            )
+            nuevo = await servicio.citizen_retry_after(
+                huellas={"dispositivo": "nuevo", "red": "otra-red"}
+            )
+            pendientes = await EventRepository(session).pending_moderation(
+                since=datetime.now(UTC) - timedelta(hours=1), limit=50
+            )
+            rechazados = await EventRepository(session).pending_moderation(
+                since=datetime.now(UTC) - timedelta(hours=1), limit=50, estados=("rechazado",)
+            )
+        textos_p = [e.text for e in pendientes if e.text and e.text.startswith(MARCA_CIUDADANA)]
+        textos_r = [e.text for e in rechazados if e.text and e.text.startswith(MARCA_CIUDADANA)]
+        await _limpiar_ciudadanos()
+        return mismo, nuevo, textos_p, textos_r
+
+    mismo, nuevo, pendientes, rechazados = correr(caso)
+    assert mismo is not None and 590 <= mismo <= 601
+    assert nuevo is None
+    assert pendientes == [f"{MARCA_CIUDADANA} humo"]
+    assert rechazados == [f"{MARCA_CIUDADANA} 9 8765 4321"]

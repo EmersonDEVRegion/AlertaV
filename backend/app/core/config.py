@@ -1236,19 +1236,70 @@ class Settings(BaseSettings):
     #: Cadencia del worker de correlación.
     CORRELATION_POLL_INTERVAL_SECONDS: int = Field(default=120, ge=15, le=86_400)
 
-    # -- Reportes ciudadanos: anti-spam --------------------------------------
-    #: Segundos entre reportes de una misma IP. 0 desactiva el límite, que es
-    #: lo que quieren los tests y una demo local.
+    # -- Reportes ciudadanos: anti-spam y publicación (§C, 2026-09-30) -------
+    #: Segundos entre reportes de un mismo DISPOSITIVO. Se cuenta en la base
+    #: (`raw_events`), así que sobrevive a un deploy o a un reinicio, que era lo
+    #: que borraba el límite en memoria. 0 desactiva los límites (tests, demo).
     CITIZEN_REPORT_MIN_INTERVAL_SECONDS: int = Field(default=600, ge=0, le=86_400)
-    #: Minutos que sobrevive un incidente sostenido SÓLO por reportes ciudadanos
-    #: sin corroborar. Pasado ese plazo se descarta y desaparece del mapa.
-    #: Ver `IncidentRepository.expire_uncorroborated_citizen`.
-    CITIZEN_UNCORROBORATED_TTL_MINUTES: int = Field(default=5, ge=1, le=1440)
-    #: Confianza por debajo o igual a la cual un incidente se considera "sin
-    #: corroborar" para el descarte temprano. Coincide con
-    #: `CITIZEN_INITIAL_CONFIDENCE`: en cuanto otra fuente aporta, la suma lo
-    #: sube por encima y el incidente sale solo de esta regla.
-    CITIZEN_UNCORROBORATED_MAX_CONFIDENCE: float = Field(default=0.40, ge=0.0, le=1.0)
+    #: Reportes que admite una misma RED (/24 en IPv4, /48 en IPv6) dentro de la
+    #: ventana de arriba. Más de uno a propósito: una familia, una oficina o el
+    #: CGNAT de un operador móvil salen por la misma dirección, y ver el mismo
+    #: incendio desde el mismo edificio no es spam.
+    CITIZEN_REPORTS_PER_NETWORK: int = Field(default=3, ge=1, le=100)
+    #: Segundos mínimos entre dos envíos de la misma IP, en memoria. Es sólo un
+    #: freno de ráfagas antes de tocar la base: el límite de verdad es el de
+    #: dispositivo y red.
+    CITIZEN_REPORT_BURST_SECONDS: int = Field(default=20, ge=0, le=3600)
+    #: Reportes ciudadanos independientes que hacen falta para que un incidente
+    #: sostenido SÓLO por ciudadanos aparezca en el mapa. Independientes = de
+    #: dispositivos distintos Y de redes distintas. Con cualquier otra fuente
+    #: (Bomberos, CONAF, FIRMS, prensa…) el incidente se publica igual que antes.
+    CITIZEN_QUORUM: int = Field(default=3, ge=1, le=20)
+    #: Minutos que tiene un incidente sólo ciudadano para juntar el quórum o una
+    #: segunda fuente. Pasado ese plazo sin lograrlo se descarta (`dismissed`).
+    #: Mientras tanto no se publica, así que el plazo puede ser holgado: es el
+    #: tiempo que tienen los vecinos para reportar lo mismo.
+    CITIZEN_UNCORROBORATED_TTL_MINUTES: int = Field(default=15, ge=1, le=1440)
+    #: Horas que un incidente sólo ciudadano ya publicado sigue en el mapa sin
+    #: reportes nuevos. Más corto que `CORRELATION_STALE_HOURS`: nadie oficial
+    #: lo sostiene.
+    CITIZEN_ONLY_STALE_HOURS: int = Field(default=3, ge=1, le=72)
+    #: Freno global: si en los últimos 10 minutos entran más reportes que esto
+    #: en toda la región, ningún incidente sólo ciudadano se publica hasta que
+    #: baje. En una emergencia real grande hay otras fuentes; una avalancha de
+    #: reportes sin ninguna otra señal huele a ataque. 0 lo desactiva.
+    CITIZEN_GLOBAL_BRAKE_PER_10MIN: int = Field(default=40, ge=0, le=10_000)
+    #: Precisión GPS máxima aceptada, en metros. Un navegador que ubica por IP
+    #: informa kilómetros: ese punto no sirve para correlacionar nada.
+    CITIZEN_MAX_ACCURACY_M: float = Field(default=1000.0, ge=10.0, le=100_000.0)
+    #: Margen de la geocerca alrededor de la caja de la región, en grados. Un
+    #: reporte fuera de la V Región continental se rechaza.
+    CITIZEN_GEOFENCE_MARGIN_DEG: float = Field(default=0.05, ge=0.0, le=2.0)
+    #: Sal del HMAC con que se guardan el dispositivo y la red de quien reporta.
+    #: Vacía = se usa `OPERATOR_TOKEN`; sin ninguna de las dos, una constante
+    #: (sólo aceptable fuera de producción). Cambiarla hace que los reportes
+    #: viejos y los nuevos dejen de reconocerse entre sí, nada más.
+    CITIZEN_HASH_SALT: str = ""
+    #: Clave secreta de Cloudflare Turnstile. Vacía = sin verificación (local y
+    #: hasta que se configure en Render). La clave del sitio va en el frontend
+    #: (`VITE_TURNSTILE_SITE_KEY`).
+    TURNSTILE_SECRET_KEY: str = ""
+    TURNSTILE_VERIFY_URL: str = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+    TURNSTILE_TIMEOUT_SECONDS: float = Field(default=5.0, ge=1.0, le=30.0)
+    #: Moderación del texto con Gemini. Sin `GEMINI_API_KEY` el texto queda
+    #: pendiente (oculto) hasta que un operador lo apruebe.
+    CITIZEN_MODERATION_ENABLED: bool = True
+    #: Tope de textos que se mandan a Gemini por pasada del motor.
+    CITIZEN_MODERATION_MAX_PER_PASS: int = Field(default=10, ge=1, le=100)
+    #: Textos más viejos que esto ya no se moderan solos: quedan para el operador.
+    CITIZEN_MODERATION_MAX_AGE_HOURS: int = Field(default=24, ge=1, le=720)
+
+    # -- Caché de respuestas de lectura ----------------------------------------
+    #: Segundos que se reutiliza una respuesta de las rutas que la PWA sondea
+    #: (incidentes, salud, sismos, cortes). Los datos cambian cada 2 minutos
+    #: como mínimo (el motor), así que 20 s no se notan, y convierten N personas
+    #: mirando el mapa en una sola consulta a la base cada 20 s. 0 la apaga.
+    API_RESPONSE_CACHE_SECONDS: int = Field(default=20, ge=0, le=300)
 
     # -- Notificaciones push (Web Push) --------------------------------------
     #: Clave privada VAPID: el escalar P-256 de 32 bytes en base64url. La

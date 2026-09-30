@@ -1,12 +1,14 @@
-"""Las dos defensas anti-spam del reporte ciudadano.
+"""Las defensas anti-spam del reporte ciudadano.
 
 Están escritas juntas porque se sostienen mutuamente y ninguna basta sola:
 
-* El **límite por IP** frena a quien insiste. No frena a quien manda un solo
-  reporte falso, ni a quien rota de IP.
-* El **ciclo de vida por confianza** hace que cualquier reporte sin corroborar
-  muera a los pocos minutos. Es la que de verdad protege el mapa, y la que
-  también cubre el caso que el límite por IP no puede ver.
+* El **freno de ráfagas por IP** (en memoria) frena a quien aprieta enviar
+  varias veces. El cupo por dispositivo y por red vive en la base y se prueba
+  en `test_reportes_ciudadanos.py`.
+* El **ciclo de vida sin quórum** hace que un incidente sólo ciudadano que no
+  junta `CITIZEN_QUORUM` vecinos independientes muera sin haberse publicado
+  nunca. Hasta el 2026-09-30 la regla era «confianza ≤ 0,40» y dos reportes de
+  la misma persona la esquivaban.
 
 El riesgo de la segunda es el opuesto al de la primera: si se pasa de estricta,
 mata reportes ciudadanos legítimos que simplemente fueron los primeros en llegar.
@@ -15,8 +17,6 @@ Por eso la mayoría de estos tests verifican lo que **no** debe descartarse.
 
 from __future__ import annotations
 
-import re
-import struct
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -126,7 +126,7 @@ def test_client_ip_nunca_devuelve_vacio():
     assert client_ip(forwarded_for=" , , ", real_ip=None, peer=None) == "desconocida"
 
 
-# --- Nivel 2: ciclo de vida por confianza ------------------------------------
+# --- Nivel 2: ciclo de vida sin quórum ----------------------------------------
 
 
 def sql_de_caducidad(**overrides) -> str:
@@ -137,6 +137,13 @@ def sql_de_caducidad(**overrides) -> str:
     modo de fallo distinto, y perder cualquiera de ellas rompería la garantía sin
     que ningún test de integración lo notara necesariamente.
     """
+    return _sql_de(
+        "expire_uncorroborated_citizen",
+        {"older_than": AHORA - timedelta(minutes=15), **overrides},
+    )
+
+
+def _sql_de(metodo: str, kwargs: dict) -> str:
     import asyncio
     from unittest.mock import MagicMock
 
@@ -151,13 +158,7 @@ def sql_de_caducidad(**overrides) -> str:
     session = MagicMock()
     session.execute = execute
     repo = IncidentRepository(session)
-
-    kwargs = {
-        "older_than": AHORA - timedelta(minutes=5),
-        "max_confidence": 0.40,
-        **overrides,
-    }
-    asyncio.run(repo.expire_uncorroborated_citizen(**kwargs))
+    asyncio.run(getattr(repo, metodo)(**kwargs))
     return str(
         capturado["stmt"].compile(
             dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
@@ -194,63 +195,17 @@ def test_la_caducidad_mide_la_edad_desde_el_nacimiento():
     assert "last_seen_at" not in sql
 
 
-def test_la_caducidad_respeta_el_umbral_de_confianza():
-    sql = sql_de_caducidad(max_confidence=0.40)
-    assert "confidence <= 0.4" in sql
+def test_la_caducidad_se_decide_por_publicacion_y_no_por_confianza():
+    """El hueco del 2026-09-30.
 
-
-def real(valor: float) -> float:
-    """El valor tal como vuelve de una columna `REAL` de PostgreSQL.
-
-    float4 tiene 24 bits de mantisa; el ida y vuelta por `struct` reproduce
-    exactamente el redondeo que hace la base al guardar un float8.
+    Con «confianza ≤ 0,40», dos reportes de la misma persona (4G y wifi) sumaban
+    0,58, se salían del descarte y el incidente falso quedaba 12 horas. La
+    condición ahora es no estar publicado, y publicar exige quórum de vecinos
+    independientes, que repetir el reporte no consigue.
     """
-    return struct.unpack("f", struct.pack("f", valor))[0]
-
-
-def umbral_del_sql(sql: str) -> float:
-    coincidencia = re.search(r"confidence <= ([0-9.eE+-]+)", sql)
-    assert coincidencia is not None, f"no hay guarda de confianza en:\n{sql}"
-    return float(coincidencia.group(1))
-
-
-def test_la_caducidad_tolera_la_precision_de_la_columna():
-    """El bug de producción: los reportes no morían nunca.
-
-    `incidents.confidence` es `REAL`. El motor escribe 0.40 en float8 y la
-    columna devuelve 0.4000000059604645, **estrictamente mayor** que 0.40: el
-    `confidence <= 0.40` literal no matcheaba con el mismo número que el motor
-    acababa de escribir, el UPDATE afectaba 0 filas y no había error que mirar.
-
-    Este test fija el fallo como número, no como cadena: si alguien vuelve a
-    comparar contra el umbral pelado, falla acá y no en el mapa.
-    """
-    guardado = real(0.40)
-    assert guardado > 0.40, "premisa del test: float4 redondea 0.40 hacia arriba"
-
-    assert umbral_del_sql(sql_de_caducidad(max_confidence=0.40)) >= guardado
-
-
-def test_la_tolerancia_no_afloja_la_regla():
-    """La otra mitad: una tolerancia demasiado ancha descartaría reportes buenos.
-
-    Con umbral 0.40, un incidente de 0.41 —ciudadano con foto más una segunda
-    señal— tiene que sobrevivir. El margen vive muy por debajo de la resolución
-    de la política, que redondea la confianza a 4 decimales.
-    """
-    umbral = umbral_del_sql(sql_de_caducidad(max_confidence=0.40))
-    assert umbral < 0.4001
-    assert real(0.41) > umbral, "0.41 quedaría dentro del descarte"
-
-
-@pytest.mark.parametrize("valor", [0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60])
-def test_el_umbral_siempre_alcanza_al_valor_que_se_escribio(valor):
-    """Cualquier umbral tiene que incluir su propio valor, venga como venga.
-
-    float4 redondea unas veces hacia arriba (0.40, 0.30, 0.60) y otras hacia
-    abajo (0.35, 0.45). La guarda no puede depender de cuál le tocó.
-    """
-    assert umbral_del_sql(sql_de_caducidad(max_confidence=valor)) >= real(valor)
+    sql = sql_de_caducidad()
+    assert "publico IS false" in sql
+    assert "confidence" not in sql
 
 
 def test_la_caducidad_marca_dismissed_y_no_stale():
@@ -260,9 +215,7 @@ def test_la_caducidad_marca_dismissed_y_no_stale():
     ve). `dismissed` = "nunca hubo evidencia suficiente".
     """
     sql = sql_de_caducidad()
-    assert "SET status='DISMISSED'" in sql.upper().replace('"', "").replace(
-        "SET STATUS=", "SET status="
-    ) or "dismissed" in sql.lower()
+    assert "dismissed" in sql.lower()
     assert "stale" not in sql.lower()
 
 
@@ -279,6 +232,15 @@ def test_las_fuentes_consideradas_ciudadanas_son_configurables():
         citizen_sources=[EventSource.CITIZEN, EventSource.SOCIAL_MEDIA]
     )
     assert "ARRAY['citizen', 'social_media']" in sql
+
+
+def test_lo_solo_ciudadano_publicado_se_apaga_antes():
+    """3 horas sin reportes nuevos, no 12: nadie oficial lo sostiene."""
+    sql = _sql_de("stale_citizen_only", {"threshold": AHORA - timedelta(hours=3)})
+    assert "sources <@ ARRAY['citizen']" in sql
+    assert "last_seen_at <" in sql
+    assert "is_official_confirmed IS false" in sql
+    assert "stale" in sql.lower()
 
 
 def test_dismissed_no_es_un_estado_abierto():

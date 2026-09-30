@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.endpoints.push import close_probe_sender
 from app.api.v1.router import api_router
+from app.core.cache_respuestas import CacheDeLectura, ServerTiming
 from app.core.config import settings
 from app.core.database import dispose_engine
 from app.core.exceptions import register_exception_handlers
@@ -53,6 +54,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Caché de 20 s de las lecturas que la PWA sondea y `Server-Timing`. Se
+# registran ANTES que CORS a propósito: `add_middleware` apila hacia afuera, así
+# que CORS queda por fuera y pone las cabeceras de origen de cada petición sobre
+# la respuesta guardada. Al revés, la caché devolvería las del primero que pidió.
+# Ver `app/core/cache_respuestas.py`.
+app.add_middleware(CacheDeLectura)
+app.add_middleware(ServerTiming)
+
 # El frontend vive en Vercel, en otro origen: sin esto el navegador descarta
 # toda respuesta de la API. Dos listas complementarias:
 #   - CORS_ORIGINS: dominios exactos (producción y localhost).
@@ -79,6 +88,8 @@ app.add_middleware(
         "Retry-After",
         "X-AlertaV-Hazard-Stale",
         "X-AlertaV-Hazard-Generated-At",
+        "X-AlertaV-Cache",
+        "Server-Timing",
     ],
     # El preflight de un endpoint que no cambia de forma no necesita repetirse
     # en cada carga del mapa.

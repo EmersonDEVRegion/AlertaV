@@ -48,6 +48,8 @@ def secretos_configurados() -> tuple[str, ...]:
         settings.APIFY_WEBHOOK_SECRET,
         settings.VAPID_PRIVATE_KEY,
         settings.OPERATOR_TOKEN,
+        settings.TURNSTILE_SECRET_KEY,
+        settings.CITIZEN_HASH_SALT,
         settings.POSTGRES_PASSWORD,
         dsn_password,
         unquote(dsn_password),

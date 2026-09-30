@@ -38,6 +38,7 @@ from app.schemas.incident import (
     OutageDetail,
     confidence_label,
 )
+from app.services.ciudadanos import texto_publico
 from app.services.congestion import CHILE_TZ, arteria_de, estimar
 from app.services.correlation.engine import CorrelationEngine, CorrelationPass
 from app.services.source_links import source_label_for, source_url_for, unidades_for
@@ -124,7 +125,9 @@ class IncidentService:
             incident = await self.repo.get_by_public_id(public_id)
         else:
             incident = None
-        if incident is None:
+        if incident is None or not incident.publico:
+            # Lo sólo ciudadano sin quórum no existe para la API pública: ni en
+            # el mapa, ni en la ficha, ni por folio.
             return None
 
         pairs = await self.repo.links_with_events(incident.id)
@@ -146,9 +149,12 @@ class IncidentService:
                 type=event.type.value,
                 timestamp=event.timestamp,
                 confidence=event.confidence,
-                text=event.text,
-                lat=event.lat,
-                lon=event.lon,
+                # El texto ciudadano sólo sale aprobado (Gemini u operador), y
+                # su punto, redondeado: el GPS de quien reporta puede ser su casa.
+                text=texto_publico(event.source, event.raw_data, event.text)[0],
+                texto_en_revision=texto_publico(event.source, event.raw_data, event.text)[1],
+                lat=_punto_publico(event.source, event.lat),
+                lon=_punto_publico(event.source, event.lon),
                 link_method=link.link_method,
                 link_confidence=link.link_confidence,
                 distance_m=link.distance_m,
@@ -359,6 +365,13 @@ def _congestion_for(
         duration_minutes=ventana.duracion_min,
         source_time=origen,
     )
+
+
+def _punto_publico(source: EventSource, valor: float | None) -> float | None:
+    """Coordenada de una señal para la ficha. La de un ciudadano, a ~110 m."""
+    if valor is None or source is not EventSource.CITIZEN:
+        return valor
+    return round(valor, 3)
 
 
 def _outage_provider(incident: Incident) -> str | None:

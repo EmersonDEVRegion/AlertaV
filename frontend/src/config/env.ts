@@ -215,6 +215,12 @@ export const env = {
    * un corte no cambia minuto a minuto: cinco minutos basta.
    */
   waterCutPollIntervalMs: num(import.meta.env.VITE_WATER_CUT_POLL_INTERVAL_MS, 300_000),
+  /**
+   * Clave PÚBLICA del sitio en Cloudflare Turnstile (la verificación anti-bots
+   * del reporte ciudadano). Vacía = sin verificación; el backend tampoco la
+   * pide mientras no tenga su `TURNSTILE_SECRET_KEY`.
+   */
+  turnstileSiteKey: (import.meta.env.VITE_TURNSTILE_SITE_KEY ?? '').trim(),
   /** A partir de aquí la UI avisa que el dato puede no describir el presente. */
   staleAfterMs: num(import.meta.env.VITE_STALE_AFTER_MS, 180_000),
   mapStyle: url(
