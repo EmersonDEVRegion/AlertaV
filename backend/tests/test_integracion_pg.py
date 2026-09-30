@@ -546,3 +546,53 @@ def test_la_capa_de_agua_ve_lo_que_el_collector_escribio_y_suelta_lo_que_salio(m
     assert {f.properties["sisda"] for f in dos.features} == {"2916567"}
     assert dos.fuente.ultima_lectura is not None
     assert dos.fuente.ultima_lectura > uno.fuente.ultima_lectura
+
+
+def test_los_lugares_guardados_cuentan_para_el_radio_y_se_avisa_una_vez():
+    """Ubicación en Valparaíso y Casa en Quilpué: un incendio en Quilpué avisa
+    una sola vez, medido desde Casa, aunque Trabajo también quede cerca."""
+    from app.core.database import AsyncSessionLocal
+    from app.models.push import PushSubscription
+    from app.repositories.push_repository import PushRepository
+
+    endpoint = "https://fcm.googleapis.com/fcm/send/integracion-lugares"
+
+    async def caso():
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                delete(PushSubscription).where(PushSubscription.endpoint == endpoint)
+            )
+            repo = PushRepository(session)
+            hace_tres_dias = datetime.now(UTC) - timedelta(days=3)
+            sub = await repo.upsert_subscription(
+                endpoint=endpoint,
+                p256dh="B" * 87,
+                auth="A" * 22,
+                lat=-33.045,
+                lon=-71.620,
+                accuracy_m=None,
+                radius_m=5000.0,
+                notify_incidents=True,
+                notify_seismic=False,
+                located_at=hace_tres_dias,
+            )
+            await repo.replace_places(
+                sub.id, [("Casa", -33.047, -71.442), ("Trabajo", -33.060, -71.460)]
+            )
+            await session.flush()
+            recipients = await repo.recipients_for_incident(
+                incident_id=-1, code="INC-INTEGRACION-LUGARES", lat=-33.055, lon=-71.440
+            )
+            await session.execute(
+                delete(PushSubscription).where(PushSubscription.endpoint == endpoint)
+            )
+            await session.commit()
+            return recipients, hace_tres_dias
+
+    recipients, hace_tres_dias = correr(caso)
+    mine = [r for r in recipients if r.endpoint == endpoint]
+    assert len(mine) == 1
+    assert mine[0].place == "Casa"
+    assert mine[0].distance_m < 1500
+    assert mine[0].located_at is not None
+    assert abs((mine[0].located_at - hace_tres_dias).total_seconds()) < 5

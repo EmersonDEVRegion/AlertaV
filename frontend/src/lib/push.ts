@@ -104,10 +104,23 @@ export function sameServerKey(current: ArrayBuffer | null | undefined, expected:
 export interface PushMemo {
   /** Última vez que el servidor recibió la suscripción, en ms. */
   syncedAt: number
+  /**
+   * Cuándo se obtuvo la ubicación que tiene el servidor, en ms. Puede ser
+   * anterior a `syncedAt`: cambiar un lugar guardado reenvía la suscripción
+   * sin pedir el GPS de nuevo.
+   */
+  locatedAt: number
   lat: number
   lon: number
   notifyIncidents: boolean
   notifySeismic: boolean
+  /** Los lugares que tiene el servidor (`placesKey`), para saber si reenviarlos. */
+  placesKey: string
+}
+
+/** Huella de una lista de lugares: nombre y coordenadas, en orden. */
+export function placesKey(places: readonly { name: string; lat: number; lon: number }[]): string {
+  return places.map((p) => `${p.name}@${p.lat.toFixed(3)},${p.lon.toFixed(3)}`).join('|')
 }
 
 const MEMO_KEY = 'alertav:push'
@@ -140,10 +153,14 @@ export function loadPushMemo(): PushMemo | null {
     }
     return {
       syncedAt: parsed.syncedAt,
+      // Un memo anterior a este campo: la ubicación es de cuando se sincronizó.
+      locatedAt: typeof parsed.locatedAt === 'number' ? parsed.locatedAt : parsed.syncedAt,
       lat: parsed.lat,
       lon: parsed.lon,
       notifyIncidents: parsed.notifyIncidents !== false,
       notifySeismic: parsed.notifySeismic !== false,
+      // Sin huella: el servidor no tiene lugares (o es anterior a ellos).
+      placesKey: typeof parsed.placesKey === 'string' ? parsed.placesKey : '',
     }
   } catch {
     return null

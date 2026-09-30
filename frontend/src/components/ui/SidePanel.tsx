@@ -7,6 +7,7 @@ import {
   AccordionTrigger,
   Badge,
   Checkbox,
+  Switch,
 } from '@/components/ui/primitives'
 import { LAYER_LABEL } from '@/domain/families'
 import type { CollectorsHealth, HealthStatus } from '@/api/health'
@@ -131,6 +132,13 @@ export interface SidePanelProps {
   health?: CollectorsHealth
   /** La fila de los cortes de agua, o nada si todavía no hay datos. */
   water?: WaterPanel | null
+  /**
+   * Sólo lo verificado por una fuente que fue al lugar (CONAF, Bomberos, la
+   * distribuidora). Es `confirmed_only` del backend: no el tramo `confirmed`.
+   * `undefined` en las pruebas que no lo usan.
+   */
+  confirmedOnly?: boolean
+  onConfirmedOnlyChange?: (next: boolean) => void
 }
 
 interface Row {
@@ -178,6 +186,8 @@ export function IncidentFilters({
   onProvidersChange,
   health,
   water,
+  confirmedOnly,
+  onConfirmedOnlyChange,
 }: SidePanelProps) {
   const [expanded, setExpanded] = useState<keyof LayerVisibility | null>(null)
   // Un solo reloj para todas las filas: las edades avanzan aunque no llegue nada.
@@ -404,6 +414,28 @@ export function IncidentFilters({
           )
         })}
       </ul>
+
+      {/*
+        Antes era una casilla en la barra superior. Es un filtro del mapa, así
+        que vive con las capas; en la barra, sin contexto, nadie sabía qué
+        significaba «Verificados».
+      */}
+      {onConfirmedOnlyChange && (
+        <div className="mt-2 flex items-center gap-2.5 border-t border-line px-1.5 pt-2.5">
+          <span className="min-w-0 flex-1">
+            <span className="block text-xs font-semibold text-ink">Sólo verificados en terreno</span>
+            <span className="block text-[10.5px] leading-tight text-ink-muted">
+              Confirmados por CONAF, Bomberos o la distribuidora
+            </span>
+          </span>
+          <Switch
+            checked={Boolean(confirmedOnly)}
+            onCheckedChange={() => onConfirmedOnlyChange(!confirmedOnly)}
+            label="Sólo verificados en terreno"
+            accentColor="var(--accent)"
+          />
+        </div>
+      )}
     </fieldset>
   )
 }

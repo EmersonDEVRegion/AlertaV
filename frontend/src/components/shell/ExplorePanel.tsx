@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo } from 'react'
 import type { HTMLAttributes, ReactNode } from 'react'
 import { LegendBody } from '@/components/map/MapLegend'
 import { HistoryFeed, type HistoryFeedProps } from '@/components/feed/HistoryFeed'
@@ -9,7 +9,9 @@ import { ReferenceDock, type ReferenceDockProps } from '@/components/ui/Referenc
 import type { SeismicEvent } from '@/api/seismicTypes'
 import type { Incident } from '@/api/types'
 import type { WaterCut } from '@/api/waterCutTypes'
+import { SavedPlaces } from '@/components/places/SavedPlaces'
 import { cn } from '@/lib/cn'
+import { setExploreTab, useExploreTab, type ExploreArea, type ExploreTab } from '@/lib/exploreStore'
 
 /**
  * El contenido de la columna (escritorio) y de la hoja inferior (teléfono).
@@ -20,8 +22,8 @@ import { cn } from '@/lib/cn'
  * de contenido y el mapa libre al lado. Acá la columna tiene tres pestañas y,
  * cuando hay algo seleccionado, la ficha las reemplaza en el mismo lugar:
  *
- *   - **Historial** (por defecto): las capas de referencia, plegadas arriba, y
- *     el feed de las últimas 24 h debajo.
+ *   - **Historial** (por defecto): «Mis lugares», las capas de referencia
+ *     plegadas y el feed de las últimas 24 h debajo.
  *   - **Capas**: las familias de emergencia con sus contadores, su salud, las
  *     empresas de luz y el filtro de sismos. Es el panel derecho de antes.
  *   - **Leyenda**: la leyenda compacta.
@@ -43,6 +45,8 @@ export interface ExplorePanelProps {
   selection: ExploreSelection
   /** Incidentes en el mapa con las capas encendidas. */
   incidentCount: number
+  /** «Mis lugares» y el buscador: encuadra el área y acota el historial. */
+  onFocusArea: (area: ExploreArea) => void
 }
 
 interface ExploreChrome {
@@ -54,11 +58,11 @@ interface ExploreChrome {
   onInteract?: () => void
   /** Una acción a la derecha del resumen: «Reportar» en el teléfono. */
   headerAction?: ReactNode
+  /** El área con scroll de las pestañas: la hoja le engancha el gesto de la lista. */
+  scrollRef?: (el: HTMLDivElement | null) => void
 }
 
-type Tab = 'history' | 'layers' | 'legend'
-
-const TABS: readonly { key: Tab; label: string }[] = [
+const TABS: readonly { key: ExploreTab; label: string }[] = [
   { key: 'history', label: 'Historial' },
   { key: 'layers', label: 'Capas' },
   { key: 'legend', label: 'Leyenda' },
@@ -70,16 +74,20 @@ export const ExplorePanel = memo(function ExplorePanel({
   history,
   selection,
   incidentCount,
+  onFocusArea,
   grip,
   headerProps,
   onInteract,
   headerAction,
+  scrollRef,
 }: ExplorePanelProps & ExploreChrome) {
-  const [tab, setTab] = useState<Tab>('history')
+  // En un store y no en estado local: el menú «⋯» de la barra abre la leyenda
+  // y el buscador vuelve al historial, sin pasar por `App`.
+  const tab = useExploreTab()
   const historyCount = history.history.length
 
-  const choose = (next: Tab) => {
-    setTab(next)
+  const choose = (next: ExploreTab) => {
+    setExploreTab(next)
     onInteract?.()
   }
 
@@ -147,6 +155,7 @@ export const ExplorePanel = memo(function ExplorePanel({
           </div>
 
           <div
+            ref={scrollRef}
             id="explore-tabpanel"
             role="tabpanel"
             aria-labelledby={`explore-tab-${tab}`}
@@ -154,6 +163,11 @@ export const ExplorePanel = memo(function ExplorePanel({
           >
             {tab === 'history' && (
               <div className="space-y-2">
+                <SavedPlaces
+                  history={history.history}
+                  onMapCodes={history.onMapCodes}
+                  onFocusArea={onFocusArea}
+                />
                 {/* Las capas de referencia arriba del historial, plegadas: se
                     encienden de vez en cuando y no pueden empujar la lista. */}
                 <ReferenceDock {...reference} inline defaultOpen={false} />

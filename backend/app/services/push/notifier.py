@@ -292,6 +292,9 @@ class PushNotifier:
                     is_official_confirmed=snap.is_official_confirmed,
                     alert_level=snap.alert_level,
                     outage=outage,
+                    place=recipient.place,
+                    located_at=recipient.located_at,
+                    now=now,
                 )
 
             await self._deliver(

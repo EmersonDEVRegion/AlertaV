@@ -140,6 +140,54 @@ class PushSubscription(Base):
         return f"<PushSubscription {self.id} ({self.lat:.3f},{self.lon:.3f})>"
 
 
+#: Lugares guardados por suscripción. Tres alcanza para Casa, Trabajo y uno más;
+#: más que eso deja de ser «mis lugares» y pasa a ser vigilar la región.
+MAX_PLACES_PER_SUBSCRIPTION = 3
+
+
+class PushPlace(Base):
+    """Un lugar guardado de una suscripción: «Casa», «Trabajo».
+
+    Se avisa de lo que pase a menos del radio de la suscripción de cualquiera
+    de sus lugares, además de su última ubicación. Resuelve lo que la
+    ubicación sola no puede: una PWA no conoce la ubicación con la app cerrada,
+    y a la gente le importa su casa aunque no esté ahí.
+
+    Se guarda redondeado como la ubicación (~110 m, ver `LOCATION_DECIMALS`):
+    alcanza para un radio de kilómetros y no señala una casa.
+    """
+
+    __tablename__ = "push_places"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    subscription_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(f"{_SCHEMA}.push_subscriptions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(40), nullable=False)
+    lat: Mapped[float] = mapped_column(Float, nullable=False)
+    lon: Mapped[float] = mapped_column(Float, nullable=False)
+    geom: Mapped[Any] = mapped_column(
+        Geometry(geometry_type="POINT", srid=4326, spatial_index=False),
+        Computed(_GEOM_EXPR, persisted=True),
+        nullable=False,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False, server_default=sa_text("0"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("lat >= -90.0 AND lat <= 90.0", name="lat"),
+        CheckConstraint("lon >= -180.0 AND lon <= 180.0", name="lon"),
+        CheckConstraint("length(btrim(name)) > 0", name="name"),
+        Index("ix_push_places_subscription", "subscription_id"),
+        Index("ix_push_places_geog", sa_text("(geom::geography)"), postgresql_using="gist"),
+        {"schema": _SCHEMA},
+    )
+
+
 class PushDelivery(Base):
     """Un aviso enviado (o intentado) a una suscripción.
 

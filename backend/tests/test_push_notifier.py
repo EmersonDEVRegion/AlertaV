@@ -167,6 +167,37 @@ class TestIncidentes:
         assert {kwargs["topic"] for _, _, kwargs in sender.sent} == {"INC-2026-00142"}
         assert all(o.status == "sent" for o in repo.outcomes)
 
+    async def test_desde_un_lugar_guardado_el_aviso_lo_nombra(self) -> None:
+        home = Recipient(
+            subscription_id=3,
+            endpoint="https://fcm.googleapis.com/fcm/send/3",
+            p256dh="p",
+            auth="a",
+            distance_m=1200,
+            place="Casa",
+        )
+        stale = Recipient(
+            subscription_id=4,
+            endpoint="https://fcm.googleapis.com/fcm/send/4",
+            p256dh="p",
+            auth="a",
+            distance_m=2000,
+            located_at=NOW - timedelta(days=4),
+        )
+        repo = FakeRepo(
+            incidents=[_incident()],
+            incident_recipients={"INC-2026-00142": [home, stale]},
+        )
+        sender = FakeSender()
+        notifier, _ = _notifier(repo, sender)
+
+        await notifier.run(now=NOW)
+
+        by_endpoint = {sub.endpoint: payload for sub, payload, _ in sender.sent}
+        assert by_endpoint[home.endpoint]["title"] == "Incendio forestal a 1,2 km de Casa"
+        assert by_endpoint[stale.endpoint]["title"] == "Incendio forestal a 2 km"
+        assert "de hace 4 días" in by_endpoint[stale.endpoint]["body"]
+
     async def test_una_senal_aislada_no_avisa_a_nadie(self) -> None:
         repo = FakeRepo(
             incidents=[_incident(confidence=0.40, source_count=1)],

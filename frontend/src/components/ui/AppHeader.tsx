@@ -1,65 +1,55 @@
 import { memo } from 'react'
 import type { ReactNode } from 'react'
-import { LEVEL, LEVEL_ORDER } from '@/domain/symbology'
 import { WeatherWidget } from '@/components/ui/WeatherWidget'
+import { LiveStatus } from '@/components/ui/LiveStatus'
+import { PlaceSearch } from '@/components/ui/PlaceSearch'
+import type { ExploreArea } from '@/lib/exploreStore'
 import { cn } from '@/lib/cn'
 
 /**
  * Barra superior.
  *
- * # La decisión de composición: una barra, tres zonas
+ * # Menos es más serio
  *
- * La versión anterior apilaba el título y el desglose de confianza en una
- * columna a la izquierda, y empujaba el filtro y el tema a la derecha. Con
- * cinco números en la segunda línea, el bloque izquierdo crecía hasta ocupar
- * media barra y la jerarquía se perdía: el título —lo único fijo— quedaba
- * compitiendo por atención con cifras que cambian solas cada minuto.
+ * La versión anterior llenaba la barra de cápsulas con números («5 activos ·
+ * 0 · 0 · 5») y una casilla de filtro. Se leía como un tablero a medio hacer:
+ * cinco cifras sin rótulo que cambian solas y compiten con el mapa. Los sitios
+ * de este tipo (Watch Duty, VicEmergency, Apple Maps) dejan la barra casi
+ * vacía: marca, un buscador y lo imprescindible.
  *
- * Ahora son tres zonas con roles distintos:
+ *   [marca · en vivo] │ [buscador de comunas] │ [clima] [radar] [avisos] [⋯]
  *
- *   [marca] │ [telemetría, centrada y en cápsulas] │ [controles]
- *
- * La marca no cambia nunca, así que se queda quieta a la izquierda y se
- * comprime a lo mínimo. La telemetría vive en cápsulas separadas —cada tramo
- * de confianza en la suya, con su punto de color— porque son cinco datos
- * independientes y no una frase; leer «12 activos · 3 · 5 · 4 · 2 con alerta»
- * exigía contar posiciones. Y los controles se agrupan al otro extremo, que es
- * donde la mano espera encontrarlos.
+ * - El conteo ya está en la columna («5 en curso»), que es donde se usa.
+ * - «Verificados en terreno» pasó a la pestaña Capas: es un filtro del mapa.
+ * - El tema pasó al menú «⋯», junto a la leyenda.
  *
  * # Sobre la barra oscura en los dos temas
  *
- * Se mantiene, y no por inercia: es el cromo de la aplicación, no una
- * superficie de contenido. Un borde superior constante es lo que hace que una
- * PWA a pantalla completa se lea como aplicación y no como una página web. Lo
- * que cambió es el color —de azul pizarra a casi negro— para que no compita con
- * el agua del mapa base.
+ * Es el cromo de la aplicación, no una superficie de contenido. Un borde
+ * superior constante es lo que hace que una PWA a pantalla completa se lea
+ * como aplicación y no como una página web.
  */
 
 interface AppHeaderProps {
-  total: number
-  /** Conteo por tramo de `confidence_level`. */
-  byLevel: { unsafe: number; possible: number; confirmed: number }
-  withAlert: number
-  confirmedOnly: boolean
-  onToggleConfirmedOnly: (value: boolean) => void
-  /** Se inyecta desde `App`, que es quien posee el estado del tema. */
-  themeToggle?: ReactNode
-  /** La campana de avisos push. Se inyecta por la misma razón que el tema. */
+  /** El buscador eligió una comuna o un lugar guardado. */
+  onPickArea: (area: ExploreArea) => void
+  /** La campana de avisos push. Se inyecta desde `App`. */
   notifications?: ReactNode
   /**
    * El botón del radar de vehículos. Se inyecta porque su estado (abierto o
-   * cerrado) vive en `App`, que es quien cierra la ficha del incidente al
-   * abrirlo. `undefined` con el interruptor `VITE_VEHICLE_RADAR` apagado.
+   * cerrado) vive en `App`. `undefined` con `VITE_VEHICLE_RADAR` apagado.
    */
   radar?: ReactNode
+  /** El menú «⋯» (tema, leyenda). Lleva el tema, que vive en `App`. */
+  menu?: ReactNode
 }
 
 /**
  * Marca.
  *
- * El punto que late no es adorno: es la única señal permanente de que la
- * aplicación está viva. Un mapa de emergencias sin incidentes se ve idéntico a
- * un mapa de emergencias congelado, y esa ambigüedad es cara.
+ * Debajo del nombre, «● En vivo · hace 1 min»: la única señal permanente de
+ * que la aplicación está viva. Un mapa de emergencias sin incidentes se ve
+ * idéntico a uno congelado, y esa ambigüedad es cara.
  */
 function Brand() {
   return (
@@ -82,60 +72,34 @@ function Brand() {
         </svg>
       </span>
 
-      <h1 className="text-[15px] font-semibold leading-none tracking-[-0.01em]">
-        Alerta
-        {/*
-          La V no es sólo la inicial de Valparaíso: es lo único cromático de la
-          marca, así que carga con toda la identidad. Va en el naranja de la
-          familia de incendios porque es la capa fundacional del proyecto.
-        */}
-        <span className="text-orange-400">V</span>
-      </h1>
+      <div className="min-w-0">
+        <h1 className="text-[15px] font-semibold leading-none tracking-[-0.01em]">
+          Alerta
+          {/*
+            La V no es sólo la inicial de Valparaíso: es lo único cromático de la
+            marca, así que carga con toda la identidad. Va en el naranja de la
+            familia de incendios porque es la capa fundacional del proyecto.
+          */}
+          <span className="text-orange-400">V</span>
+        </h1>
+        <div className="mt-1">
+          <LiveStatus />
+        </div>
+      </div>
     </div>
   )
 }
 
-/** Cápsula de un dato de telemetría. */
-function Stat({
-  value,
-  label,
-  dot,
-  title,
-}: {
-  value: number
-  label: string
-  /** Color del punto. Valor y no clase: viene de la paleta de datos. */
-  dot?: string
-  title?: string
-}) {
-  return (
-    <span
-      title={title}
-      className="inline-flex items-center gap-1.5 rounded-full bg-chrome-raised px-2 py-1 text-[11px] leading-none"
-    >
-      {dot && (
-        <span aria-hidden className="size-1.5 rounded-full" style={{ backgroundColor: dot }} />
-      )}
-      <span className="count font-semibold text-ink-on-chrome">{value}</span>
-      <span className="text-white/45">{label}</span>
-    </span>
-  )
-}
-
 export const AppHeader = memo(function AppHeader({
-  total,
-  byLevel,
-  withAlert,
-  confirmedOnly,
-  onToggleConfirmedOnly,
-  themeToggle,
+  onPickArea,
   notifications,
   radar,
+  menu,
 }: AppHeaderProps) {
   return (
     <header
       className={cn(
-        'relative z-20 flex items-center gap-3 bg-chrome px-3 py-2',
+        'relative z-20 flex items-center gap-2 bg-chrome px-3 py-2 sm:gap-3',
         'pt-[max(0.5rem,env(safe-area-inset-top))] text-ink-on-chrome',
         // El hilo inferior en vez de una sombra: separa la barra del mapa sin
         // ensuciar los primeros píxeles de cartografía con un degradado gris.
@@ -144,88 +108,15 @@ export const AppHeader = memo(function AppHeader({
     >
       <Brand />
 
-      {/*
-        Telemetría. `overflow-x-auto` con `scrollbar` oculto: en un teléfono
-        estrecho las cápsulas se deslizan en vez de partirse en dos líneas, que
-        es lo que hacía crecer la barra y empujar el mapa hacia abajo.
-      */}
-      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <Stat value={total} label="activos" title="Incidentes vigentes en las capas encendidas" />
-
-        <span aria-hidden className="h-4 w-px shrink-0 bg-chrome-edge" />
-
-        {LEVEL_ORDER.map((key) => (
-          <Stat
-            key={key}
-            value={byLevel[key]}
-            label=""
-            dot={LEVEL[key].color}
-            title={`${LEVEL[key].label} — ${LEVEL[key].range}`}
-          />
-        ))}
-
-        {/* Sólo si hay alguna. Una cápsula con un cero permanente es ruido que
-            el ojo aprende a ignorar, y el día que valga 1 no lo verá. */}
-        {withAlert > 0 && (
-          <>
-            <span aria-hidden className="h-4 w-px shrink-0 bg-chrome-edge" />
-            <Stat value={withAlert} label="con alerta" title="Con alerta vigente de SENAPRED" />
-          </>
-        )}
-      </div>
+      <PlaceSearch onPick={onPickArea} />
 
       <div className="flex shrink-0 items-center gap-1.5">
-        {/*
-          El widget meteorológico va ANTES del filtro y del tema, y ese orden no
-          es casual: es lo único de esta zona que puede cambiar solo. Los otros
-          dos son controles —hacen lo que el usuario les pidió la última vez— y
-          éste es un indicador. Ponerlo al principio del grupo lo deja pegado a
-          la telemetría, que es la otra cosa de la barra que se mueve sola,
-          mientras los controles quedan agrupados en el extremo donde la mano
-          los busca.
-
-          Fuera de la franja con `overflow-x-auto` a propósito: la telemetría se
-          desliza cuando no cabe, y una alerta meteorológica que haya que
-          desplazar para ver no es una alerta.
-        */}
+        {/* Indicadores que cambian solos (clima, radar) antes que los
+            controles (avisos, menú), que quedan en el extremo de la mano. */}
         <WeatherWidget />
-
-        <label
-          className={cn(
-            'flex cursor-pointer select-none items-center gap-2 rounded-full px-2.5 py-1.5',
-            'text-[11px] font-medium leading-none transition-colors duration-150',
-            confirmedOnly
-              ? 'bg-orange-500/20 text-orange-200'
-              : 'bg-chrome-raised text-white/70 hover:text-ink-on-chrome',
-          )}
-        >
-          <input
-            type="checkbox"
-            checked={confirmedOnly}
-            onChange={(event) => onToggleConfirmedOnly(event.target.checked)}
-            className="size-3 accent-orange-500"
-          />
-          {/* `confirmed_only` del backend filtra por verificación institucional
-              (CONAF/Bomberos), no por el tramo `confirmed`. El texto lo dice. */}
-          <span className="hidden sm:inline">Verificados en terreno</span>
-          <span className="sm:hidden">Verificados</span>
-        </label>
-
-        {/*
-          El radar va antes de la campana. Como el widget meteorológico, es un
-          indicador que cambia solo —su contador—, y los controles que sólo
-          hacen lo que se les pidió (campana, tema) quedan en el extremo.
-          Tampoco es una capa del mapa: sus avisos no tienen coordenadas.
-        */}
         {radar}
-
-        {/*
-          La campana va junto al tema porque las dos son preferencias del
-          teléfono, no del mapa: los avisos siguen llegando con la app cerrada.
-        */}
         {notifications}
-
-        {themeToggle}
+        {menu}
       </div>
     </header>
   )

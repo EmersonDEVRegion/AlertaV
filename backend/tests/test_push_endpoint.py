@@ -55,9 +55,15 @@ class FakeService:
         self.subscribed: list[PushSubscribeRequest] = []
         self.unsubscribed: list[str] = []
 
-    async def subscribe(self, request: PushSubscribeRequest) -> SimpleNamespace:
+    async def subscribe(
+        self, request: PushSubscribeRequest
+    ) -> tuple[SimpleNamespace, list[SimpleNamespace]]:
         self.subscribed.append(request)
         lat, lon = round_location(request.lat, request.lon)
+        places = []
+        for p in request.places or []:
+            plat, plon = round_location(p.lat, p.lon)
+            places.append(SimpleNamespace(name=p.name, lat=plat, lon=plon))
         return SimpleNamespace(
             public_id=uuid.uuid4(),
             lat=lat,
@@ -66,7 +72,7 @@ class FakeService:
             notify_incidents=request.notify_incidents,
             notify_seismic=request.notify_seismic,
             location_updated_at=datetime(2026, 9, 23, tzinfo=UTC),
-        )
+        ), places
 
     async def unsubscribe(self, endpoint: str) -> bool:
         self.unsubscribed.append(endpoint)
@@ -117,6 +123,14 @@ class TestSuscripcion:
         assert data["lat"] == -33.025 and data["lon"] == -71.551
         assert data["notify_incidents"] is True and data["notify_seismic"] is True
         assert service.subscribed[0].subscription.endpoint == ENDPOINT
+        assert data["places"] == []
+
+    def test_devuelve_los_lugares_guardados(self, client: Any) -> None:
+        http, _ = client
+        body = _body(places=[{"name": "Casa", "lat": -33.0456789, "lon": -71.4012345}])
+        response = http.post("/api/v1/push/subscriptions", json=body)
+        assert response.status_code == 200, response.text
+        assert response.json()["places"] == [{"name": "Casa", "lat": -33.046, "lon": -71.401}]
 
     def test_rechaza_endpoints_sin_https(self, client: Any) -> None:
         http, _ = client

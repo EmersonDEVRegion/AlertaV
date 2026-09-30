@@ -12,6 +12,7 @@ import {
   clearPushMemo,
   detectPushSupport,
   loadPushMemo,
+  placesKey,
   readPushEnvironment,
   sameServerKey,
   savePushMemo,
@@ -20,6 +21,7 @@ import {
   type PushMemo,
   type PushSupport,
 } from '@/lib/push'
+import { getPlaces, usePlaces } from '@/lib/placesStore'
 
 /**
  * Estado de los avisos en este teléfono.
@@ -53,8 +55,12 @@ export interface PushNotificationsState {
   message: string | null
   server: PushServerStatus | undefined
   preferences: PushPreferences
-  /** Cuándo recibió el servidor la última ubicación, en ms. */
-  locationSyncedAt: number | null
+  /**
+   * Cuándo se obtuvo la ubicación con la que el servidor mide distancias, en
+   * ms. No es cuándo se sincronizó: puede ser de hace días si la app no se
+   * abrió con permiso de ubicación.
+   */
+  locatedAt: number | null
   probeResult: string | null
   enable: () => Promise<void>
   disable: () => Promise<void>
@@ -96,6 +102,8 @@ interface Position {
   lat: number
   lon: number
   accuracyM: number | null
+  /** Cuándo se obtuvo, en ms. */
+  at: number
 }
 
 /**
@@ -117,6 +125,9 @@ function locate(): Promise<Position> {
           accuracyM: Number.isFinite(position.coords.accuracy)
             ? position.coords.accuracy
             : null,
+          // Con `maximumAge` el navegador puede devolver una lectura de hace
+          // unos minutos: su hora es la que vale, no la de ahora.
+          at: position.timestamp || Date.now(),
         }),
       (error) =>
         reject(
@@ -203,13 +214,13 @@ export function usePushNotifications(): PushNotificationsState {
 
   const busy = useRef(false)
 
-  /** Registra en el servidor la suscripción actual con una ubicación. */
+  /**
+   * Registra en el servidor la suscripción actual con una ubicación y los
+   * lugares guardados de este teléfono.
+   */
   const sync = useCallback(
-    async (
-      subscription: PushSubscription,
-      position: { lat: number; lon: number; accuracyM: number | null },
-      preferences: PushPreferences,
-    ) => {
+    async (subscription: PushSubscription, position: Position, preferences: PushPreferences) => {
+      const places = getPlaces().map(({ name, lat, lon }) => ({ name, lat, lon }))
       const saved = await registerPushSubscription({
         subscription: subscription.toJSON(),
         lat: position.lat,
@@ -217,13 +228,17 @@ export function usePushNotifications(): PushNotificationsState {
         accuracy_m: position.accuracyM,
         notify_incidents: preferences.notifyIncidents,
         notify_seismic: preferences.notifySeismic,
+        located_at: new Date(position.at).toISOString(),
+        places,
       })
       const next: PushMemo = {
         syncedAt: Date.now(),
+        locatedAt: position.at,
         lat: saved.lat,
         lon: saved.lon,
         notifyIncidents: saved.notify_incidents,
         notifySeismic: saved.notify_seismic,
+        placesKey: placesKey(places),
       }
       savePushMemo(next)
       setMemo(next)
@@ -294,7 +309,8 @@ export function usePushNotifications(): PushNotificationsState {
           position = await locate().catch(() => null)
         }
         if (cancelled || !shouldResync(current, position, Date.now())) return
-        const target = position ?? (current ? { ...current, accuracyM: null } : null)
+        const target =
+          position ?? (current ? { ...current, accuracyM: null, at: current.locatedAt } : null)
         if (target) await sync(existing, target, preferences)
       } catch {
         // La resincronización es un extra: si falla, los avisos siguen
@@ -306,6 +322,36 @@ export function usePushNotifications(): PushNotificationsState {
       cancelled = true
     }
   }, [support, server, publicKey, status.isError, sync])
+
+  // --- Lugares guardados --------------------------------------------------------
+  /*
+   * Guardar o borrar «Casa» con los avisos activos se lo cuenta al servidor
+   * enseguida, con la ubicación que ya tenía (y su hora): no hace falta el GPS
+   * para eso. Si falla, se reintenta la próxima vez que cambie algo o que se
+   * abra la app (el memo sigue con la huella vieja).
+   */
+  const places = usePlaces()
+  useEffect(() => {
+    if (phase !== 'on' || !memo || placesKey(places) === memo.placesKey) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const registration = await serviceWorkerReady()
+        const subscription = await registration.pushManager.getSubscription()
+        if (cancelled || !subscription) return
+        await sync(
+          subscription,
+          { lat: memo.lat, lon: memo.lon, accuracyM: null, at: memo.locatedAt },
+          memo,
+        )
+      } catch {
+        // Ver arriba: se reintenta.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [phase, memo, places, sync])
 
   // --- Acciones ----------------------------------------------------------------
 
@@ -404,7 +450,11 @@ export function usePushNotifications(): PushNotificationsState {
             setPhase('off')
             return
           }
-          await sync(subscription, { lat: previous.lat, lon: previous.lon, accuracyM: null }, next)
+          await sync(
+            subscription,
+            { lat: previous.lat, lon: previous.lon, accuracyM: null, at: previous.locatedAt },
+            next,
+          )
         } catch (error) {
           setMemo(previous)
           setMessage(readable(error))
@@ -461,7 +511,7 @@ export function usePushNotifications(): PushNotificationsState {
     preferences: memo
       ? { notifyIncidents: memo.notifyIncidents, notifySeismic: memo.notifySeismic }
       : DEFAULT_PREFERENCES,
-    locationSyncedAt: memo?.syncedAt ?? null,
+    locatedAt: memo?.locatedAt ?? null,
     probeResult,
     enable,
     disable,

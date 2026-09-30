@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { PushNotificationsState } from '@/hooks/usePushNotifications'
+import { resetPlaces } from '@/lib/placesStore'
 import { NotificationPanel, PUSH_TEXT } from './NotificationBell'
 
 function state(overrides: Partial<PushNotificationsState> = {}): PushNotificationsState {
@@ -19,7 +20,7 @@ function state(overrides: Partial<PushNotificationsState> = {}): PushNotificatio
       seismic_min_magnitude: 3.5,
     },
     preferences: { notifyIncidents: true, notifySeismic: true },
-    locationSyncedAt: null,
+    locatedAt: null,
     probeResult: null,
     enable: vi.fn(async () => undefined),
     disable: vi.fn(async () => undefined),
@@ -50,10 +51,13 @@ describe('NotificationPanel', () => {
   })
 
   it('encendido: preferencias, prueba y baja', async () => {
-    const push = state({ phase: 'on', locationSyncedAt: Date.now() - 5 * 60_000 })
+    const push = state({ phase: 'on', locatedAt: Date.now() - 5 * 60_000 })
     render(<NotificationPanel push={push} />)
 
-    expect(screen.getByText(/Ubicación informada hace 5 minutos/)).toBeInTheDocument()
+    expect(screen.getByText(/Tu ubicación es de hace 5 minutos/)).toBeInTheDocument()
+    // En jsdom no hay puntero táctil: es un computador, y lo dice.
+    expect(screen.getByText('Activos en este computador')).toBeInTheDocument()
+    expect(screen.getByText(/Guarda tu casa o tu trabajo/)).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('switch', { name: PUSH_TEXT.seismic }))
     expect(push.setPreferences).toHaveBeenCalledWith({
@@ -79,6 +83,31 @@ describe('NotificationPanel', () => {
     )
     expect(screen.getByRole('switch', { name: PUSH_TEXT.incidents })).toBeDisabled()
     expect(screen.getByRole('switch', { name: PUSH_TEXT.seismic })).toBeEnabled()
+  })
+
+  it('una ubicación de hace días se nota, y los lugares guardados se nombran', () => {
+    localStorage.setItem(
+      'alertav:lugares',
+      JSON.stringify([
+        { id: 'a', name: 'Casa', lat: -33.04, lon: -71.44 },
+        { id: 'b', name: 'Trabajo', lat: -33.02, lon: -71.55 },
+      ]),
+    )
+    resetPlaces()
+    render(
+      <NotificationPanel push={state({ phase: 'on', locatedAt: Date.now() - 3 * 86_400_000 })} />,
+    )
+    expect(screen.getByText(/Tu ubicación es de hace 3 días/)).toHaveTextContent(
+      /Si ya no estás ahí/,
+    )
+    expect(screen.getByText('También te avisamos cerca de Casa y Trabajo.')).toBeInTheDocument()
+    localStorage.removeItem('alertav:lugares')
+    resetPlaces()
+  })
+
+  it('en un computador explica que la ubicación es aproximada', () => {
+    render(<NotificationPanel push={state()} />)
+    expect(screen.getByText(PUSH_TEXT.desktopNote)).toBeInTheDocument()
   })
 
   it('bloqueado: dice dónde desbloquearlo', () => {

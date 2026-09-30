@@ -34,17 +34,21 @@ import { useTheme } from '@/hooks/useTheme'
 import { useRainLayer } from '@/hooks/useRainLayer'
 import { useRoadClosures } from '@/hooks/useRoadClosures'
 import { useSeismicHazard } from '@/hooks/useSeismicHazard'
-import { ThemeToggle } from '@/components/ui/ThemeToggle'
+import { AppMenu } from '@/components/ui/AppMenu'
 import { NotificationBell } from '@/components/ui/NotificationBell'
 import { CitizenReportControl } from '@/components/report/CitizenReportControl'
 import { AppHeader } from '@/components/ui/AppHeader'
 import { BottomSheet } from '@/components/shell/BottomSheet'
 import { DesktopColumn } from '@/components/shell/DesktopColumn'
 import type { ExplorePanelProps } from '@/components/shell/ExplorePanel'
-import { focusOffset } from '@/lib/cameraOffset'
+import { fitPadding, focusOffset } from '@/lib/cameraOffset'
+import { PlacePicker } from '@/components/places/PlacePicker'
+import { COMUNAS } from '@/domain/comunas'
+import { sameCommune } from '@/domain/displayWindow'
+import { setExploreArea, type ExploreArea } from '@/lib/exploreStore'
+import { setSheetSnap } from '@/lib/sheetStore'
 import { MapOverlayState } from '@/components/ui/MapOverlayState'
 import { StalenessBanner } from '@/components/ui/StalenessBanner'
-import { levelOf } from '@/domain/symbology'
 import { useActiveIncidents } from '@/hooks/useActiveIncidents'
 import { useCollectorHealth } from '@/hooks/useCollectorHealth'
 import { useSeismicEvents } from '@/hooks/useSeismicEvents'
@@ -82,6 +86,9 @@ const RadarPanelHost = lazy(() =>
 const NO_INCIDENTS: Incident[] = []
 const NO_SEISMIC: SeismicEvent[] = []
 const NO_WATER: WaterCut[] = []
+
+/** Zoom al tocar un lugar guardado: se ve el radio de 5 km alrededor. */
+const PLACE_ZOOM = 12
 
 /** Las familias que viven en la fuente de incidentes. Los cortes tienen la suya. */
 const MAP_FAMILIES = ['fire', 'traffic', 'otros'] as const satisfies readonly IncidentLayerKey[]
@@ -359,6 +366,33 @@ export default function App() {
     [flyTo],
   )
 
+  /**
+   * El buscador de la barra o «Mis lugares»: encuadra el área y acota el
+   * historial. El filtro vive en `exploreStore`; `App` sólo mueve la cámara.
+   */
+  const focusArea = useCallback(
+    (area: ExploreArea) => {
+      setExploreArea(area)
+      // En el teléfono la hoja sube para mostrar el historial acotado.
+      setSheetSnap('half')
+      if (area.kind === 'place') {
+        flyTo(area.lon, area.lat, PLACE_ZOOM)
+        return
+      }
+      const commune = COMUNAS.find((c) => sameCommune(c.nombre, area.name))
+      if (!commune) return
+      const [west, south, east, north] = commune.caja
+      mapRef.current?.fitBounds(
+        [
+          [west, south],
+          [east, north],
+        ],
+        { padding: fitPadding(), duration: 900, maxZoom: 13, essential: true },
+      )
+    },
+    [flyTo],
+  )
+
   const waterPanel = useMemo<WaterPanel | null>(
     () =>
       water.available
@@ -413,13 +447,6 @@ export default function App() {
     }
   }, [pendingLink, clearLink, all, isPending, isFetching, confirmedOnly, flyTo, focusIncident])
 
-  const byLevel = useMemo(() => {
-    const counts = { unsafe: 0, possible: 0, confirmed: 0 }
-    for (const incident of list) counts[levelOf(incident)] += 1
-    return counts
-  }, [list])
-  const withAlert = list.filter((incident) => incident.alert_level !== null).length
-
   /*
    * Las dos bolsas de propiedades, armadas una sola vez.
    *
@@ -445,8 +472,11 @@ export default function App() {
       // propiedades dos veces garantiza que una se quede atrás.
       health: health.data,
       water: waterPanel,
+      confirmedOnly,
+      onConfirmedOnlyChange: setConfirmedOnly,
     }),
     [
+      confirmedOnly,
       visibility,
       countsByLayer,
       seismicList,
@@ -510,8 +540,10 @@ export default function App() {
         waterCuts: visibleWaterCuts,
       },
       incidentCount: list.length,
+      onFocusArea: focusArea,
     }),
     [
+      focusArea,
       incidentControls,
       referenceControls,
       historyControls,
@@ -525,8 +557,8 @@ export default function App() {
   const reportInline = useMemo(() => <CitizenReportControl placement="inline" />, [])
 
   const retryIncidents = useCallback(() => void refetch(), [refetch])
-  const themeToggle = useMemo(
-    () => <ThemeToggle theme={theme} onToggle={toggleTheme} />,
+  const menu = useMemo(
+    () => <AppMenu theme={theme} onToggleTheme={toggleTheme} />,
     [theme, toggleTheme],
   )
   const notifications = useMemo(() => <NotificationBell />, [])
@@ -545,14 +577,10 @@ export default function App() {
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-app">
       <AppHeader
-        total={list.length}
-        byLevel={byLevel}
-        withAlert={withAlert}
-        confirmedOnly={confirmedOnly}
-        onToggleConfirmedOnly={setConfirmedOnly}
-        themeToggle={themeToggle}
+        onPickArea={focusArea}
         notifications={notifications}
         radar={radarButton}
+        menu={menu}
       />
 
       <StalenessBanner
@@ -598,6 +626,9 @@ export default function App() {
         */}
         {!isCompact && <CitizenReportControl />}
 
+        {/* «Elegir en el mapa» de Mis lugares: la mira y su barra. */}
+        <PlacePicker mapRef={mapRef} />
+
         {isPending && (
           <MapOverlayState
             busy
@@ -611,7 +642,7 @@ export default function App() {
             title="Sin incidentes activos"
             detail={
               confirmedOnly
-                ? 'Ninguna fuente verificó un incidente en terreno dentro de la ventana activa. Desmarca el filtro para ver los que tienen evidencia sin verificar.'
+                ? 'Ninguna fuente verificó un incidente en terreno dentro de la ventana activa. Apaga «Sólo verificados en terreno» en Capas para ver los que tienen evidencia sin verificar.'
                 : current.length > 0
                   ? 'Hay incidentes vigentes, pero ninguno de las capas encendidas. Revisa el control de capas.'
                   : visibleHistory.length > 0

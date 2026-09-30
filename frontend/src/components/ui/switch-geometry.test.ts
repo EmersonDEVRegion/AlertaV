@@ -110,7 +110,10 @@ describe('altura del panel', () => {
     // barra de la app.
     expect(PANEL).not.toMatch(/\b(max-)?h-\[calc\(100vh/)
     expect(PANEL).toContain('bottom-3 left-3 top-3')
-    expect(PANEL).toContain('inset-x-0 bottom-0 top-2')
+    // La hoja se ancla abajo y mide lo visible (ver `BottomSheet`): su lista
+    // no puede quedar bajo el borde de la pantalla.
+    expect(PANEL).toContain('inset-x-0 bottom-0 z-20')
+    expect(PANEL).toContain("half: '54%'")
   })
 
   it('pone el scroll en el panel y no anida barras en las listas', () => {

@@ -14,7 +14,19 @@ from datetime import datetime
 from typing import Any
 
 from geoalchemy2 import Geography
-from sqlalchemy import and_, delete, exists, func, or_, select, update
+from sqlalchemy import (
+    String,
+    and_,
+    cast,
+    delete,
+    exists,
+    func,
+    null,
+    or_,
+    select,
+    union_all,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -22,7 +34,7 @@ from sqlalchemy.orm import aliased
 from app.models.enums import EventSource, EventType, IncidentStatus
 from app.models.event import RawEvent
 from app.models.incident import Incident
-from app.models.push import PushDelivery, PushSubscription
+from app.models.push import PushDelivery, PushPlace, PushSubscription
 from app.models.seismic import SeismicDetail
 from app.services.push.rules import QuakeView
 
@@ -44,6 +56,11 @@ class Recipient:
     p256dh: str
     auth: str
     distance_m: float
+    #: Lugar guardado desde el que se midió (`"Casa"`), o `None` si fue desde la
+    #: última ubicación del teléfono.
+    place: str | None = None
+    #: Cuándo se obtuvo esa última ubicación. Sólo importa si `place` es `None`.
+    located_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +91,7 @@ class PushRepository:
         radius_m: float,
         notify_incidents: bool,
         notify_seismic: bool,
+        located_at: datetime | None = None,
     ) -> PushSubscription:
         """Crea la suscripción o la actualiza si el navegador ya la tenía.
 
@@ -85,6 +103,10 @@ class PushRepository:
 
         Reiniciar `consecutive_failures` también es deliberado: que el navegador
         vuelva a registrarse es la mejor prueba de que el canal está vivo.
+
+        `located_at` es cuándo el teléfono obtuvo la ubicación, que puede ser
+        anterior al registro (la PWA reenvía la suscripción al cambiar un lugar
+        guardado sin volver a pedir el GPS). Nunca se acepta una hora futura.
         """
         values: dict[str, Any] = {
             "endpoint": endpoint,
@@ -97,17 +119,45 @@ class PushRepository:
             "notify_incidents": notify_incidents,
             "notify_seismic": notify_seismic,
         }
-        insert = pg_insert(PushSubscription).values(**values)
+        located = func.now() if located_at is None else func.least(located_at, func.now())
+        insert = pg_insert(PushSubscription).values(**values, location_updated_at=located)
         stmt = insert.on_conflict_do_update(
             index_elements=[PushSubscription.endpoint],
             set_={
                 **{key: insert.excluded[key] for key in values if key != "endpoint"},
-                "location_updated_at": func.now(),
+                "location_updated_at": insert.excluded.location_updated_at,
                 "consecutive_failures": 0,
             },
         ).returning(PushSubscription)
         result = await self.session.execute(stmt, execution_options={"populate_existing": True})
         return result.scalar_one()
+
+    async def replace_places(
+        self, subscription_id: int, places: Sequence[tuple[str, float, float]]
+    ) -> list[PushPlace]:
+        """Reemplaza los lugares guardados de una suscripción por `places`.
+
+        Reemplazar y no fusionar: el teléfono es la fuente de verdad (los
+        lugares viven en su `localStorage`) y manda la lista completa.
+        """
+        await self.session.execute(
+            delete(PushPlace).where(PushPlace.subscription_id == subscription_id)
+        )
+        rows = [
+            PushPlace(subscription_id=subscription_id, name=name, lat=lat, lon=lon, position=i)
+            for i, (name, lat, lon) in enumerate(places)
+        ]
+        self.session.add_all(rows)
+        await self.session.flush()
+        return rows
+
+    async def places_of(self, subscription_id: int) -> list[PushPlace]:
+        stmt = (
+            select(PushPlace)
+            .where(PushPlace.subscription_id == subscription_id)
+            .order_by(PushPlace.position.asc(), PushPlace.id.asc())
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
 
     async def get_by_endpoint(self, endpoint: str) -> PushSubscription | None:
         stmt = select(PushSubscription).where(PushSubscription.endpoint == endpoint)
@@ -197,15 +247,53 @@ class PushRepository:
     ) -> list[Recipient]:
         """Suscripciones dentro de su propio radio que todavía no recibieron el aviso.
 
+        «Dentro de su radio» se mide desde la última ubicación del teléfono Y
+        desde cada uno de sus lugares guardados; manda el más cercano, y ése es
+        el que nombra el aviso («a 1,2 km de Casa»). Un teléfono recibe un solo
+        aviso por incidente aunque tenga Casa y Trabajo dentro del radio.
+
         «Todavía no recibieron» incluye a los incidentes absorbidos: si el
         INC-00280 se fusionó dentro del INC-00281, quien ya supo del 280 no
         tiene que enterarse de nuevo por el 281. Es el mismo incendio con otro
         folio.
         """
         merged = aliased(Incident)
-        sub_geog = func.cast(PushSubscription.geom, _GEOGRAPHY)
         point_geog = func.cast(func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326), _GEOGRAPHY)
-        distance = func.ST_Distance(sub_geog, point_geog)
+
+        # Candidatos: la ubicación de cada suscripción y cada lugar guardado.
+        # El prefiltro con radio constante es el que usa los índices GiST.
+        sub_geog = func.cast(PushSubscription.geom, _GEOGRAPHY)
+        own = select(
+            PushSubscription.id.label("subscription_id"),
+            cast(null(), String(40)).label("place"),
+            func.ST_Distance(sub_geog, point_geog).label("distance_m"),
+        ).where(
+            PushSubscription.notify_incidents.is_(True),
+            func.ST_DWithin(sub_geog, point_geog, MAX_SUBSCRIPTION_RADIUS_M),
+        )
+        place_geog = func.cast(PushPlace.geom, _GEOGRAPHY)
+        saved = select(
+            PushPlace.subscription_id.label("subscription_id"),
+            PushPlace.name.label("place"),
+            func.ST_Distance(place_geog, point_geog).label("distance_m"),
+        ).where(func.ST_DWithin(place_geog, point_geog, MAX_SUBSCRIPTION_RADIUS_M))
+        candidates = union_all(own, saved).subquery("candidates")
+
+        # El más cercano de cada suscripción, dentro de SU radio. A igual
+        # distancia gana el lugar guardado: «de Casa» dice más que nada.
+        within = aliased(PushSubscription)
+        nearest = (
+            select(candidates.c.subscription_id, candidates.c.place, candidates.c.distance_m)
+            .join(within, within.id == candidates.c.subscription_id)
+            .where(candidates.c.distance_m <= within.radius_m)
+            .distinct(candidates.c.subscription_id)
+            .order_by(
+                candidates.c.subscription_id,
+                candidates.c.distance_m.asc(),
+                candidates.c.place.is_(None),
+            )
+            .subquery("nearest")
+        )
 
         known_codes = (
             select(merged.code).where(merged.merged_into_id == incident_id).scalar_subquery()
@@ -225,13 +313,14 @@ class PushRepository:
                 PushSubscription.endpoint,
                 PushSubscription.p256dh,
                 PushSubscription.auth,
-                distance.label("distance_m"),
+                PushSubscription.location_updated_at,
+                nearest.c.place,
+                nearest.c.distance_m,
             )
+            .join(nearest, nearest.c.subscription_id == PushSubscription.id)
             .where(PushSubscription.notify_incidents.is_(True))
-            .where(func.ST_DWithin(sub_geog, point_geog, MAX_SUBSCRIPTION_RADIUS_M))
-            .where(distance <= PushSubscription.radius_m)
             .where(~already)
-            .order_by(distance.asc())
+            .order_by(nearest.c.distance_m.asc())
             .limit(limit)
         )
         return [
@@ -241,6 +330,8 @@ class PushRepository:
                 p256dh=row.p256dh,
                 auth=row.auth,
                 distance_m=float(row.distance_m),
+                place=row.place,
+                located_at=row.location_updated_at,
             )
             for row in (await self.session.execute(stmt)).all()
         ]

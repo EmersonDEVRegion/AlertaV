@@ -8,6 +8,8 @@ import {
 import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { formatRelative } from '@/lib/format'
 import { dismissInvite, inviteDismissed } from '@/lib/push'
+import { isHandheld, thisDevice } from '@/lib/device'
+import { usePlaces } from '@/lib/placesStore'
 import { cn } from '@/lib/cn'
 
 /**
@@ -32,7 +34,7 @@ import { cn } from '@/lib/cn'
 const INVITE_DELAY_MS = 20_000
 
 export const PUSH_TEXT = {
-  title: 'Avisos en este teléfono',
+  title: 'Avisos de emergencias',
   on: 'Activos',
   off: 'Desactivados',
   enable: 'Activar avisos',
@@ -51,7 +53,21 @@ export const PUSH_TEXT = {
     'Los temblores llegan unos minutos después del movimiento: no es una alerta temprana. Si estás en la costa y el sismo te impide mantenerte en pie, evacúa a una zona segura sin esperar ningún aviso.',
   locationNote:
     'Usamos la última ubicación que la app conoce: se actualiza cada vez que la abres. La guardamos redondeada (unos 100 m) y la borramos si desactivas los avisos.',
+  desktopNote:
+    'En un computador la ubicación es aproximada (sale de la red) y los avisos llegan mientras el navegador esté abierto. Para tu casa, guárdala en «Mis lugares».',
+  noPlaces:
+    'Guarda tu casa o tu trabajo en «Mis lugares» (pestaña Historial) para recibir avisos de ahí aunque estés en otra parte.',
+  staleLocation: 'Si ya no estás ahí, actualízala: los avisos se miden desde ese punto.',
 } as const
+
+/** Más de un día: la ubicación puede ser de otra ciudad. */
+const STALE_LOCATION_MS = 24 * 60 * 60 * 1000
+
+/** «Casa», «Casa y Trabajo», «Casa, Trabajo y Colegio». */
+function joinNames(names: readonly string[]): string {
+  if (names.length <= 1) return names.join('')
+  return `${names.slice(0, -1).join(', ')} y ${names[names.length - 1]}`
+}
 
 function km(meters: number): string {
   return `${Math.round(meters / 100) / 10}`.replace('.', ',') + ' km'
@@ -97,7 +113,10 @@ function WhatWeSend({ push }: { push: PushNotificationsState }) {
   return (
     <ul className="mt-2 space-y-1.5 text-[11px] leading-snug text-ink-muted">
       <Bullet>
-        <span className="font-semibold text-ink">Emergencias a menos de {km(radius)}</span>:
+        <span className="font-semibold text-ink">
+          Emergencias a menos de {km(radius)} de ti o de tus lugares guardados
+        </span>
+        :
         incendios, accidentes, cortes de luz y otras, con su distancia. Cuando lo confirma
         CONAF o Bomberos, cuando la distribuidora informa el corte, o cuando al menos{' '}
         {sources} fuentes distintas coinciden.
@@ -117,7 +136,7 @@ function stepLabel(step: PushNotificationsState['step']): string {
     case 'location':
       return 'Obteniendo tu ubicación…'
     case 'subscribing':
-      return 'Registrando este teléfono…'
+      return `Registrando ${thisDevice()}…`
     case 'unsubscribing':
       return 'Desactivando…'
     case 'saving':
@@ -157,7 +176,12 @@ function PrimaryButton({
 export function NotificationPanel({ push }: { push: PushNotificationsState }) {
   const { phase } = push
   const now = useNow(RELATIVE_TIME_TICK_MS)
+  const places = usePlaces()
   const paused = Boolean(push.server && !push.server.enabled && push.server.public_key)
+  // «Avisos en este teléfono» se leía raro desde un computador: el aparato
+  // va en la línea de estado, y dice cuál es.
+  const device = thisDevice()
+  const staleLocation = push.locatedAt !== null && now - push.locatedAt > STALE_LOCATION_MS
 
   return (
     <div className="w-[19rem] max-w-[calc(100vw-1.5rem)] p-3">
@@ -174,7 +198,13 @@ export function NotificationPanel({ push }: { push: PushNotificationsState }) {
         <div className="min-w-0 flex-1">
           <p className="text-xs font-semibold leading-tight text-ink">{PUSH_TEXT.title}</p>
           <p className="mt-0.5 text-[10.5px] leading-tight text-ink-muted">
-            {phase === 'on' ? PUSH_TEXT.on : phase === 'working' ? stepLabel(push.step) : PUSH_TEXT.off}
+            {phase === 'on'
+              ? `${PUSH_TEXT.on} en ${device}`
+              : phase === 'working'
+                ? stepLabel(push.step)
+                : phase === 'off'
+                  ? `${PUSH_TEXT.off} en ${device}`
+                  : PUSH_TEXT.off}
           </p>
         </div>
       </div>
@@ -206,6 +236,11 @@ export function NotificationPanel({ push }: { push: PushNotificationsState }) {
         <>
           <WhatWeSend push={push} />
           <p className="mt-2 text-[10.5px] leading-snug text-ink-faint">{PUSH_TEXT.locationNote}</p>
+          {!isHandheld() && (
+            <p className="mt-1.5 text-[10.5px] leading-snug text-ink-faint">
+              {PUSH_TEXT.desktopNote}
+            </p>
+          )}
           <div className="mt-2.5">
             <PrimaryButton onClick={() => void push.enable()} disabled={phase === 'working'}>
               {phase === 'working' ? stepLabel(push.step) : PUSH_TEXT.enable}
@@ -245,10 +280,18 @@ export function NotificationPanel({ push }: { push: PushNotificationsState }) {
             />
           </div>
 
-          <p className="mt-2.5 text-[10.5px] leading-snug text-ink-muted">
-            {push.locationSyncedAt
-              ? `Ubicación informada ${formatRelative(push.locationSyncedAt, now)}.`
-              : 'Ubicación informada.'}{' '}
+          <p
+            className={cn(
+              'mt-2.5 text-[10.5px] leading-snug',
+              staleLocation ? 'text-warn-ink' : 'text-ink-muted',
+            )}
+          >
+            {push.locatedAt === null
+              ? 'Ubicación informada.'
+              : now - push.locatedAt < 60_000
+                ? 'Tu ubicación está al día.'
+                : `Tu ubicación es de ${formatRelative(push.locatedAt, now)}.`}{' '}
+            {staleLocation && `${PUSH_TEXT.staleLocation} `}
             <button
               type="button"
               onClick={() => void push.refreshLocation()}
@@ -257,6 +300,12 @@ export function NotificationPanel({ push }: { push: PushNotificationsState }) {
             >
               {push.step === 'location' ? 'Ubicando…' : PUSH_TEXT.refresh}
             </button>
+          </p>
+
+          <p className="mt-1.5 text-[10.5px] leading-snug text-ink-muted">
+            {places.length > 0
+              ? `También te avisamos cerca de ${joinNames(places.map((p) => p.name))}.`
+              : PUSH_TEXT.noPlaces}
           </p>
 
           <div className="mt-2.5 flex gap-2">
@@ -390,7 +439,7 @@ export function NotificationBell() {
           if (invite) closeInvite()
         }}
         aria-expanded={open}
-        aria-label={`${PUSH_TEXT.title}: ${active ? PUSH_TEXT.on : PUSH_TEXT.off}`}
+        aria-label={`${PUSH_TEXT.title}: ${active ? 'activos' : 'desactivados'}`}
         title={PUSH_TEXT.title}
         className={cn(
           'relative grid size-8 shrink-0 place-items-center rounded-full',

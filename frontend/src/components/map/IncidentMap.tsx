@@ -20,6 +20,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 // Debe ejecutarse antes de que se instancie el mapa: sin esto el worker queda
 // apuntando a una URL inexistente en produccion y el lienzo sale en blanco.
 import '@/lib/maplibreWorker'
+import { SavedPlaceMarkers } from './SavedPlaceMarkers'
 
 import type { FeatureCollection, Point } from 'geojson'
 import type { SeismicEvent } from '@/api/seismicTypes'
@@ -739,6 +740,9 @@ export const IncidentMap = memo(function IncidentMap({
       </Source>
 
       <GhostSelection offMap={offMap} />
+
+      {/* Casa, Trabajo: encima de todo, pero sin capturar toques. */}
+      <SavedPlaceMarkers />
     </Map>
   )
 })

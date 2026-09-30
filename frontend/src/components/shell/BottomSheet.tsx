@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 import { useSelection } from '@/lib/selectionStore'
@@ -6,43 +6,62 @@ import { getSheetSnap, setSheetSnap, useSheetSnap, type SheetSnap } from '@/lib/
 import { ExplorePanel, type ExplorePanelProps } from './ExplorePanel'
 
 /**
- * La hoja inferior del teléfono: el patrón de Google Maps y Watch Duty.
+ * La hoja inferior del teléfono: el patrón de Apple Maps, Google Maps y Watch Duty.
  *
  * Tres alturas (ver `lib/sheetStore`): asomada con el resumen y las pestañas,
- * a media pantalla con la lista o la ficha, y completa. Se arrastra desde el
- * encabezado; un toque en el asa alterna entre asomada y media.
+ * a media pantalla con la lista o la ficha, y completa.
  *
- * # Por qué `translate` y no `height`
+ * # Por qué `height` y no `translate`
  *
- * La hoja mide siempre el alto completo y se desliza. Animar `height` obliga
- * a recalcular el layout de toda la lista en cada cuadro; `translate` lo
- * resuelve el compositor. Los porcentajes de `translate` se refieren al alto
- * de la propia hoja, así que las tres posiciones son CSS puro.
+ * La primera versión medía siempre el alto completo y se deslizaba con
+ * `translate`. Se animaba barato, pero a media pantalla la mitad de la lista
+ * quedaba bajo el borde: el área con scroll creía medir 764 px y se veían 361.
+ * En el iPhone el scroll «se acababa» antes del final del historial (medido en
+ * producción a 430 × 932: 403 px inalcanzables). Ahora la hoja mide lo que se
+ * ve, así que su lista también. Animar `height` recalcula el layout de unas
+ * decenas de filas por cuadro, y eso un teléfono lo hace sin esfuerzo.
  *
- * # Lo que desplaza
+ * # Los gestos
  *
- * El borde inferior del teléfono era de tres cosas —el botón de reporte, la
- * ficha y la atribución— y arriba había una barra de fichas. Ahora arriba sólo
- * quedan la barra de la app y los controles del mapa, y la ficha y el botón
- * de reporte viven dentro de la hoja.
+ * - **Encabezado** (asa, resumen): arrastrar mueve la hoja; un toque alterna
+ *   entre asomada y media.
+ * - **Lista**, como en Apple Maps: a media pantalla, empujar hacia arriba
+ *   primero abre la hoja completa; con la lista arriba de todo, tirar hacia
+ *   abajo la baja. En el resto de los casos la lista se desplaza sola, con la
+ *   inercia nativa. Esos listeners van con `passive: false`, porque para tomar
+ *   el gesto hay que cancelar el scroll del navegador.
  */
 
-/** Alto de la hoja asomada. Lo repiten el botón de reporte y `index.css`. */
+/** Alto de la hoja asomada. Lo repite `index.css` (controles del mapa). */
 const SHEET_PEEK_REM = 7.25
 
-const TRANSLATE: Record<SheetSnap, string> = {
-  full: '0px',
-  half: '46%',
-  peek: `calc(100% - ${SHEET_PEEK_REM}rem)`,
+/** Alto por posición, relativo al `main` que la contiene. */
+const HEIGHT: Record<SheetSnap, string> = {
+  peek: `${SHEET_PEEK_REM}rem`,
+  half: '54%',
+  full: 'calc(100% - 0.5rem)',
 }
 
 /** Más rápido que esto (px/ms) es un gesto, no una posición. */
 const FLICK = 0.45
+/** Lo que tiene que moverse el dedo antes de que la lista ceda el gesto. */
+const SLOP = 6
+
+const ORDER: readonly SheetSnap[] = ['full', 'half', 'peek']
 
 const SNAP_LABEL: Record<SheetSnap, string> = {
   peek: 'Expandir la lista',
   half: 'Expandir la lista a pantalla completa',
   full: 'Contraer la lista',
+}
+
+interface Drag {
+  startY: number
+  startH: number
+  lastY: number
+  lastT: number
+  /** Velocidad del dedo, en px/ms; positiva hacia abajo. */
+  v: number
 }
 
 export const BottomSheet = memo(function BottomSheet({
@@ -51,9 +70,13 @@ export const BottomSheet = memo(function BottomSheet({
 }: ExplorePanelProps & { headerAction?: ReactNode }) {
   const snap = useSheetSnap()
   const sheet = useRef<HTMLDivElement>(null)
-  const drag = useRef<{ startY: number; startPx: number; lastY: number; lastT: number; v: number } | null>(
-    null,
-  )
+  /*
+   * La lista en estado y no en un ref: se desmonta cuando se abre una ficha y
+   * vuelve a montarse al cerrarla, y los listeners tienen que ir al elemento
+   * nuevo.
+   */
+  const [listEl, setListEl] = useState<HTMLDivElement | null>(null)
+  const drag = useRef<Drag | null>(null)
 
   /*
    * Abrir una ficha desde el mapa sube la hoja a media pantalla: la ficha vive
@@ -67,85 +90,141 @@ export const BottomSheet = memo(function BottomSheet({
     if (opensDetail && getSheetSnap() === 'peek') setSheetSnap('half')
   }, [selection])
 
-  const positions = useCallback((): Record<SheetSnap, number> => {
-    const height = sheet.current?.offsetHeight ?? window.innerHeight
+  /** Las tres alturas en píxeles, contra el `main` de hoy (gira el teléfono). */
+  const heights = useCallback((): Record<SheetSnap, number> => {
+    const host = sheet.current?.parentElement?.clientHeight || window.innerHeight
     const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
-    return { full: 0, half: height * 0.46, peek: height - SHEET_PEEK_REM * rem }
+    return { peek: SHEET_PEEK_REM * rem, half: host * 0.54, full: host - 0.5 * rem }
   }, [])
 
-  const onPointerDown = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      // Las pestañas y los botones del encabezado se tocan, no se arrastran.
-      if ((event.target as HTMLElement).closest('button, [role="tab"], a, input')) return
-      if (event.pointerType === 'mouse' && event.button !== 0) return
+  const begin = useCallback((y: number, t: number) => {
+    const node = sheet.current
+    if (!node) return
+    drag.current = { startY: y, startH: node.offsetHeight, lastY: y, lastT: t, v: 0 }
+    node.style.transition = 'none'
+  }, [])
+
+  const move = useCallback(
+    (y: number, t: number) => {
+      const state = drag.current
       const node = sheet.current
-      if (!node) return
-      const startPx = positions()[getSheetSnap()]
-      drag.current = {
-        startY: event.clientY,
-        startPx,
-        lastY: event.clientY,
-        lastT: event.timeStamp,
-        v: 0,
-      }
-      node.style.transition = 'none'
-      event.currentTarget.setPointerCapture(event.pointerId)
+      if (!state || !node) return
+      state.v = (y - state.lastY) / Math.max(t - state.lastT, 1)
+      state.lastY = y
+      state.lastT = t
+      const at = heights()
+      const h = Math.min(Math.max(state.startH - (y - state.startY), at.peek), at.full)
+      node.style.height = `${h}px`
     },
-    [positions],
+    [heights],
   )
 
-  const onPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const state = drag.current
-    const node = sheet.current
-    if (!state || !node) return
-    const dt = Math.max(event.timeStamp - state.lastT, 1)
-    state.v = (event.clientY - state.lastY) / dt
-    state.lastY = event.clientY
-    state.lastT = event.timeStamp
-    const px = Math.max(0, state.startPx + (event.clientY - state.startY))
-    node.style.translate = `0 ${px}px`
-  }, [])
-
-  const onPointerUp = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
+  /**
+   * Suelta la hoja en la altura más cercana, o en la siguiente si fue un
+   * gesto rápido. La altura final se escribe también a mano: si termina donde
+   * empezó, React no vuelve a aplicar el estilo (para él no cambió nada) y la
+   * hoja se quedaría donde la soltó el dedo.
+   */
+  const end = useCallback(
+    (y: number, { tapToggles }: { tapToggles: boolean }) => {
       const state = drag.current
       const node = sheet.current
       drag.current = null
       if (!state || !node) return
       node.style.transition = ''
-      const moved = event.clientY - state.startY
-      /*
-       * La posición final se escribe también a mano: si el gesto termina en la
-       * misma altura en que empezó, React no vuelve a aplicar el estilo (para
-       * él no cambió nada) y la hoja se quedaría donde la soltó el dedo.
-       */
       const settle = (next: SheetSnap) => {
-        node.style.translate = `0 ${TRANSLATE[next]}`
+        node.style.height = HEIGHT[next]
         setSheetSnap(next)
       }
-
-      // Un toque (sin arrastre) alterna entre asomada y media pantalla.
-      if (Math.abs(moved) < 6) {
-        settle(getSheetSnap() === 'peek' ? 'half' : 'peek')
+      const moved = y - state.startY
+      if (Math.abs(moved) < SLOP) {
+        settle(tapToggles ? (getSheetSnap() === 'peek' ? 'half' : 'peek') : getSheetSnap())
         return
       }
-
-      const order: SheetSnap[] = ['full', 'half', 'peek']
-      const at = positions()
-      const current = state.startPx + moved
-      let next = order.reduce((best, key) =>
-        Math.abs(at[key] - current) < Math.abs(at[best] - current) ? key : best,
+      const at = heights()
+      const h = state.startH - moved
+      let next = ORDER.reduce((best, key) =>
+        Math.abs(at[key] - h) < Math.abs(at[best] - h) ? key : best,
       )
-      // Un gesto rápido avanza una posición en su dirección aunque no llegue.
       if (Math.abs(state.v) > FLICK) {
-        const from = order.indexOf(getSheetSnap())
-        const step = state.v > 0 ? 1 : -1
-        next = order[Math.min(Math.max(from + step, 0), order.length - 1)]!
+        const from = ORDER.indexOf(getSheetSnap())
+        next = ORDER[Math.min(Math.max(from + (state.v > 0 ? 1 : -1), 0), ORDER.length - 1)]!
       }
       settle(next)
     },
-    [positions],
+    [heights],
   )
+
+  // --- Encabezado: arrastre con puntero (dedo o mouse) ---------------------
+  const onPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      // Las pestañas y los botones del encabezado se tocan, no se arrastran.
+      if ((event.target as HTMLElement).closest('button, [role="tab"], a, input')) return
+      if (event.pointerType === 'mouse' && event.button !== 0) return
+      begin(event.clientY, event.timeStamp)
+      event.currentTarget.setPointerCapture?.(event.pointerId)
+    },
+    [begin],
+  )
+  const onPointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => move(event.clientY, event.timeStamp),
+    [move],
+  )
+  const onPointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => end(event.clientY, { tapToggles: true }),
+    [end],
+  )
+
+  // --- Lista: el gesto de Apple Maps ---------------------------------------
+  useEffect(() => {
+    const el = listEl
+    if (!el) return
+    let start: { y: number; scrollTop: number; snap: SheetSnap } | null = null
+    let taking = false
+    let lastY = 0
+
+    const onStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1 || drag.current) return
+      const y = event.touches[0]!.clientY
+      start = { y, scrollTop: el.scrollTop, snap: getSheetSnap() }
+      taking = false
+      lastY = y
+    }
+    const onMove = (event: TouchEvent) => {
+      if (!start || event.touches.length !== 1) return
+      const y = event.touches[0]!.clientY
+      lastY = y
+      if (!taking) {
+        const dy = y - start.y
+        // A media pantalla, empujar hacia arriba abre la hoja antes de desplazar.
+        const expand = start.snap === 'half' && dy < -SLOP
+        // Con la lista arriba de todo, tirar hacia abajo baja la hoja.
+        const collapse =
+          start.snap !== 'peek' && start.scrollTop <= 0 && el.scrollTop <= 0 && dy > SLOP
+        if (!expand && !collapse) return
+        taking = true
+        begin(start.y, event.timeStamp)
+      }
+      event.preventDefault()
+      move(y, event.timeStamp)
+    }
+    const onEnd = () => {
+      if (taking) end(lastY, { tapToggles: false })
+      start = null
+      taking = false
+    }
+
+    el.addEventListener('touchstart', onStart, { passive: true })
+    el.addEventListener('touchmove', onMove, { passive: false })
+    el.addEventListener('touchend', onEnd)
+    el.addEventListener('touchcancel', onEnd)
+    return () => {
+      el.removeEventListener('touchstart', onStart)
+      el.removeEventListener('touchmove', onMove)
+      el.removeEventListener('touchend', onEnd)
+      el.removeEventListener('touchcancel', onEnd)
+    }
+  }, [listEl, begin, move, end])
 
   const cycle = useCallback(() => {
     const current = getSheetSnap()
@@ -199,12 +278,13 @@ export const BottomSheet = memo(function BottomSheet({
       role="complementary"
       aria-label="Emergencias e historial"
       className={cn(
-        'pointer-events-auto absolute inset-x-0 bottom-0 top-2 z-20 flex flex-col',
+        // Anclada abajo y con alto propio: nada de `top`, o el alto no manda.
+        'pointer-events-auto absolute inset-x-0 bottom-0 z-20 flex flex-col',
         'rounded-t-[var(--radius-surface)] bg-raised shadow-[var(--shadow-raised)]',
-        'transition-[translate] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform',
+        'transition-[height] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
         'motion-reduce:transition-none',
       )}
-      style={{ translate: `0 ${TRANSLATE[snap]}` }}
+      style={{ height: HEIGHT[snap] }}
     >
       <ExplorePanel
         {...props}
@@ -212,6 +292,7 @@ export const BottomSheet = memo(function BottomSheet({
         headerProps={headerProps}
         onInteract={expandIfPeek}
         headerAction={headerAction}
+        scrollRef={setListEl}
       />
     </div>
   )

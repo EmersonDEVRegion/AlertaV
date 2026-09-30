@@ -213,9 +213,10 @@ describe('App quieta', () => {
     }
 
     // Salió a los ~30 s: un repintado para sacarlo, y ninguno más en el resto
-    // del minuto. El historial lo conserva, pero eso no toca el mapa.
+    // del minuto. El historial lo conserva, pero eso no toca el mapa. La barra
+    // ya no lleva conteos (están en la columna), así que ni se entera.
     expect(renders.map - base.map).toBe(1)
-    expect(renders.header - base.header).toBe(1)
+    expect(renders.header - base.header).toBe(0)
     client.clear()
   })
 

@@ -34,6 +34,30 @@ class BrowserSubscription(BaseModel):
         return value
 
 
+class PushPlaceIn(BaseModel):
+    """Un lugar guardado en el teléfono («Casa»). Se redondea al guardar."""
+
+    name: str = Field(..., min_length=1, max_length=40)
+    lat: float = Field(..., ge=-90.0, le=90.0)
+    lon: float = Field(..., ge=-180.0, le=180.0)
+
+    @field_validator("name")
+    @classmethod
+    def _trim(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("el lugar necesita un nombre")
+        return value
+
+
+class PushPlaceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str
+    lat: float
+    lon: float
+
+
 class PushSubscribeRequest(BaseModel):
     subscription: BrowserSubscription
     lat: float = Field(..., ge=-90.0, le=90.0)
@@ -47,6 +71,21 @@ class PushSubscribeRequest(BaseModel):
         le=20_000.0,
         description="Radio de aviso de emergencias. Por defecto, PUSH_INCIDENT_RADIUS_M.",
     )
+    located_at: datetime | None = Field(
+        default=None,
+        description=(
+            "Cuándo se obtuvo la ubicación en el teléfono. Sin él, se toma la hora "
+            "del registro. Sirve para decir «tu ubicación es de hace 3 días»."
+        ),
+    )
+    places: list[PushPlaceIn] | None = Field(
+        default=None,
+        max_length=3,
+        description=(
+            "Lugares guardados. `null` los deja como estaban; una lista (vacía "
+            "incluida) los reemplaza."
+        ),
+    )
 
 
 class PushSubscriptionRead(BaseModel):
@@ -59,6 +98,7 @@ class PushSubscriptionRead(BaseModel):
     notify_incidents: bool
     notify_seismic: bool
     location_updated_at: datetime
+    places: list[PushPlaceRead] = Field(default_factory=list)
 
 
 class PushEndpointRequest(BaseModel):

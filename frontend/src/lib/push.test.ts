@@ -5,6 +5,7 @@ import {
   clearPushMemo,
   detectPushSupport,
   loadPushMemo,
+  placesKey,
   parseDeepLink,
   sameServerKey,
   savePushMemo,
@@ -97,10 +98,12 @@ describe('shouldResync', () => {
   const NOW = 1_790_000_000_000
   const memo: PushMemo = {
     syncedAt: NOW - RESYNC_MIN_INTERVAL_MS - 1,
+    locatedAt: NOW - RESYNC_MIN_INTERVAL_MS - 1,
     lat: -33.025,
     lon: -71.551,
     notifyIncidents: true,
     notifySeismic: true,
+    placesKey: '',
   }
 
   it('sin registro previo, siempre', () => {
@@ -131,14 +134,25 @@ describe('memoria local', () => {
 
   it('guarda y recupera', () => {
     const memo: PushMemo = {
-      syncedAt: 1,
+      syncedAt: 5,
+      locatedAt: 1,
       lat: -33,
       lon: -71.5,
       notifyIncidents: false,
       notifySeismic: true,
+      placesKey: placesKey([{ name: 'Casa', lat: -33.0456, lon: -71.4012 }]),
     }
     savePushMemo(memo)
     expect(loadPushMemo()).toEqual(memo)
+    expect(memo.placesKey).toBe('Casa@-33.046,-71.401')
+  })
+
+  it('un memo anterior a los lugares sigue sirviendo', () => {
+    localStorage.setItem(
+      'alertav:push',
+      JSON.stringify({ syncedAt: 7, lat: -33, lon: -71.5, notifyIncidents: true }),
+    )
+    expect(loadPushMemo()).toMatchObject({ syncedAt: 7, locatedAt: 7, placesKey: '' })
   })
 
   it('ignora basura', () => {
