@@ -24,9 +24,9 @@ vi.mock('@/components/map/IncidentMap', () => ({
   }),
 }))
 
-vi.mock('@/components/ui/SidePanel', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/components/ui/SidePanel')>()),
-  SidePanel: memo(function SidePanel() {
+// La columna de escritorio: contenido, historial y ficha.
+vi.mock('@/components/shell/DesktopColumn', () => ({
+  DesktopColumn: memo(function DesktopColumn() {
     renders.panel += 1
     return null
   }),

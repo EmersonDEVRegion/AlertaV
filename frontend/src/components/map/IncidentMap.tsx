@@ -69,6 +69,7 @@ import type { RoadClosureState } from '@/hooks/useRoadClosures'
 import type { SeismicHazardState } from '@/hooks/useSeismicHazard'
 import { toSeismicFeatureCollection } from '@/lib/seismicGeojson'
 import { attachMapDiagnostics } from '@/lib/mapDiagnostics'
+import { focusOffset } from '@/lib/cameraOffset'
 import {
   INCIDENT_HIT_LAYER_ID,
   INCIDENT_SOURCE_ID,
@@ -184,8 +185,6 @@ const TOUCH_ZOOM_ROTATE = { around: 'center' } as const
 const GEOLOCATE_OPTIONS = { enableHighAccuracy: true } as const
 const SEISMIC_ICON_COLOR = MAGNITUDE_COLOR_EXPRESSION as unknown as ExpressionSpecification
 
-/** Desplazamiento que saca el punto de detrás de la ficha, que en teléfono ocupa el tercio inferior. */
-const sheetOffset = (): [number, number] => [0, -Math.min(window.innerHeight * 0.18, 160)]
 
 type WithFilter = { filter?: FilterSpecification }
 
@@ -422,7 +421,7 @@ export const IncidentMap = memo(function IncidentMap({
 
       if (incident) {
         selectIncident(String(incident.properties!['code']))
-        map.easeTo({ center: event.lngLat, offset: sheetOffset(), duration: 450 })
+        map.easeTo({ center: event.lngLat, offset: focusOffset(), duration: 450 })
         return
       }
 
@@ -453,7 +452,7 @@ export const IncidentMap = memo(function IncidentMap({
 
       if (water) {
         selectWaterCut(String(water.properties!['water_id']))
-        map.easeTo({ center: event.lngLat, offset: sheetOffset(), duration: 450 })
+        map.easeTo({ center: event.lngLat, offset: focusOffset(), duration: 450 })
         return
       }
 

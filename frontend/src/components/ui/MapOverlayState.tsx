@@ -17,7 +17,7 @@ interface MapOverlayStateProps {
 /** Estado vacío o de carga, superpuesto al mapa sin taparlo del todo. */
 export function MapOverlayState({ title, detail, busy = false }: MapOverlayStateProps) {
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-1/2 z-10 flex -translate-y-1/2 justify-center px-6">
+    <div className="pointer-events-none absolute inset-x-0 top-1/2 z-10 flex -translate-y-1/2 justify-center px-6 md:pl-[23.5rem]">
       <div className="animate-rise surface-floating relative max-w-xs overflow-hidden px-4 py-3 text-center">
         {busy && (
           /*

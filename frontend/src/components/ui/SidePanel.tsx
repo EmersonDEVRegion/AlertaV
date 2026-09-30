@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { useState } from 'react'
 import type { SeismicEvent } from '@/api/seismicTypes'
 import type { Incident, OutageProvider } from '@/api/types'
 import type { WaterCut } from '@/api/waterCutTypes'
@@ -7,7 +7,6 @@ import {
   AccordionTrigger,
   Badge,
   Checkbox,
-  Sheet,
 } from '@/components/ui/primitives'
 import { LAYER_LABEL } from '@/domain/families'
 import type { CollectorsHealth, HealthStatus } from '@/api/health'
@@ -159,16 +158,11 @@ function isIncidentRow(key: keyof LayerVisibility): key is IncidentLayerKey {
 }
 
 /**
- * El contenido, sin la hoja que lo envuelve.
+ * Las capas de emergencia: casilla, contador, salud y la lista de cada una.
  *
- * Existe separado porque en teléfono **no hay hoja**: los dos paneles flotantes
- * no caben a la vez a 430 px, así que ahí este mismo contenido se muestra dentro
- * de la barra de fichas de `MobileMapControls`, que abre uno por vez. Ver la
- * nota de `hooks/useMediaQuery.ts`.
- *
- * La separación es la mínima posible: `SidePanel` sigue siendo el componente
- * público de escritorio y no cambió ni su firma ni su comportamiento. Lo único
- * que se movió es dónde empieza el `<Sheet>`.
+ * Antes era el panel flotante de la derecha (`SidePanel`, dentro de un
+ * `<Sheet>`). Con la columna única es la pestaña «Capas» de
+ * `components/shell/ExplorePanel.tsx`, en escritorio y en teléfono.
  */
 export function IncidentFilters({
   visibility,
@@ -413,12 +407,3 @@ export function IncidentFilters({
     </fieldset>
   )
 }
-
-/** El panel de escritorio: el mismo contenido dentro de la hoja lateral. */
-export const SidePanel = memo(function SidePanel(props: SidePanelProps) {
-  return (
-    <Sheet>
-      <IncidentFilters {...props} />
-    </Sheet>
-  )
-})

@@ -24,10 +24,10 @@ const SOURCE = readFileSync(
   resolve(process.cwd(), 'src/components/ui/primitives/Switch.tsx'),
   'utf8',
 )
-const PANEL = readFileSync(
-  resolve(process.cwd(), 'src/components/ui/primitives/Sheet.tsx'),
-  'utf8',
-)
+/** La columna y la hoja: el contenido (`ExplorePanel`) y sus dos contenedores. */
+const PANEL = ['ExplorePanel', 'DesktopColumn', 'BottomSheet']
+  .map((n) => readFileSync(resolve(process.cwd(), `src/components/shell/${n}.tsx`), 'utf8'))
+  .join('\n')
 
 /** Tailwind: 1 unidad = 0,25 rem = 4 px. */
 const px = (units: number) => units * 4
@@ -103,11 +103,14 @@ describe('interruptor de capas de referencia', () => {
 })
 
 describe('altura del panel', () => {
-  it('acota con `dvh`, no con `vh`', () => {
+  it('se acota con el contenedor, nunca con `vh`', () => {
     // En móvil la barra del navegador se retrae y `vh` conserva el valor de la
-    // ventana expandida: el panel se cortaría fuera del área visible.
-    expect(PANEL).toMatch(/max-h-\[calc\(100dvh-[\d.]+rem\)\]/)
-    expect(PANEL).not.toMatch(/max-h-\[calc\(100vh-/)
+    // ventana expandida: el panel se cortaría fuera del área visible. La
+    // columna y la hoja se anclan al `main` (top/bottom), que ya descuenta la
+    // barra de la app.
+    expect(PANEL).not.toMatch(/\b(max-)?h-\[calc\(100vh/)
+    expect(PANEL).toContain('bottom-3 left-3 top-3')
+    expect(PANEL).toContain('inset-x-0 bottom-0 top-2')
   })
 
   it('pone el scroll en el panel y no anida barras en las listas', () => {

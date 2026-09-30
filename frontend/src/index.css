@@ -827,3 +827,23 @@ html.dark .maplibregl-map .maplibregl-ctrl-attrib-button {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Controles del mapa con la columna o la hoja encima
+ * ---------------------------------------------------------------------------
+ *
+ * La escala (abajo a la izquierda) y la atribución (abajo a la derecha) son de
+ * MapLibre y se posicionan solas contra el borde del lienzo. Con la columna de
+ * escritorio, la escala quedaba debajo del panel; con la hoja del teléfono,
+ * las dos quedaban debajo de la hoja asomada. Se corren lo que ocupa cada una:
+ * 22 rem + 0,75 de margen de la columna, y los 7,25 rem de la hoja asomada
+ * (`SHEET_PEEK_REM` en `components/shell/BottomSheet.tsx`).
+ */
+[data-shell='column'] .maplibregl-ctrl-bottom-left {
+  left: 22.75rem;
+}
+
+[data-shell='sheet'] .maplibregl-ctrl-bottom-left,
+[data-shell='sheet'] .maplibregl-ctrl-bottom-right {
+  bottom: 7.25rem;
+}

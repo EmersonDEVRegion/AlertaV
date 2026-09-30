@@ -4,12 +4,9 @@ import type { SeismicEvent } from '@/api/seismicTypes'
 import type { ActiveIncidentsQuery, Incident } from '@/api/types'
 import type { WaterCut } from '@/api/waterCutTypes'
 import { IncidentMap } from '@/components/map/IncidentMap'
-import { MapLegend } from '@/components/map/MapLegend'
-import { SelectionDetails } from '@/components/incident/SelectionDetails'
 import {
   DEFAULT_LAYER_VISIBILITY,
   DEFAULT_PROVIDER_VISIBILITY,
-  SidePanel,
 } from '@/components/ui/SidePanel'
 import type {
   LayerVisibility,
@@ -41,8 +38,10 @@ import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { NotificationBell } from '@/components/ui/NotificationBell'
 import { CitizenReportControl } from '@/components/report/CitizenReportControl'
 import { AppHeader } from '@/components/ui/AppHeader'
-import { MobileMapControls } from '@/components/ui/MobileMapControls'
-import { ReferenceDock } from '@/components/ui/ReferenceDock'
+import { BottomSheet } from '@/components/shell/BottomSheet'
+import { DesktopColumn } from '@/components/shell/DesktopColumn'
+import type { ExplorePanelProps } from '@/components/shell/ExplorePanel'
+import { focusOffset } from '@/lib/cameraOffset'
 import { MapOverlayState } from '@/components/ui/MapOverlayState'
 import { StalenessBanner } from '@/components/ui/StalenessBanner'
 import { levelOf } from '@/domain/symbology'
@@ -54,7 +53,6 @@ import { useVehicleFeed } from '@/hooks/useVehicleFeed'
 import { useWaterCuts } from '@/hooks/useWaterCuts'
 import { useDisplaySplit } from '@/hooks/useDisplaySplit'
 import { INCIDENT_QUERY_HOURS, INCIDENT_QUERY_STATUSES } from '@/domain/displayWindow'
-import { HistoryDock } from '@/components/feed/HistoryDock'
 import type { HistoryFeedProps } from '@/components/feed/HistoryFeed'
 import { env } from '@/config/env'
 import {
@@ -98,10 +96,9 @@ export default function App() {
   /*
    * Punto de quiebre del cromo del mapa.
    *
-   * Por debajo de `md`, los dos paneles flotantes no caben a la vez —488 px de
-   * cromo sobre una pantalla de 430— y se relevan por una barra de fichas que
-   * abre uno por vez. No es un cambio de estilo sino de árbol; el porqué está en
-   * `hooks/useMediaQuery.ts` y en `components/ui/MobileMapControls.tsx`.
+   * Desde `md`, una columna a la izquierda con el mapa libre al lado; por
+   * debajo, la misma columna como hoja inferior de tres alturas. Es el mismo
+   * contenido (`components/shell/ExplorePanel`) en dos contenedores.
    */
   const isCompact = useIsCompact()
 
@@ -322,9 +319,9 @@ export default function App() {
   /**
    * Vuela hasta un punto y lo selecciona.
    *
-   * El desplazamiento vertical compensa la ficha, que en teléfono ocupa el
-   * tercio inferior: sin él la cámara centraría el incidente justo detrás de la
-   * tarjeta que se acaba de abrir.
+   * El desplazamiento compensa lo que tapa el mapa: la columna en escritorio,
+   * la hoja a media pantalla en el teléfono. Sin él la cámara centraría el
+   * incidente justo detrás de la ficha que se acaba de abrir.
    */
   const flyTo = useCallback((lon: number, lat: number, zoom: number) => {
     mapRef.current?.flyTo({
@@ -332,7 +329,7 @@ export default function App() {
       zoom,
       duration: 900,
       essential: true,
-      offset: [0, -Math.min(window.innerHeight * 0.18, 160)],
+      offset: focusOffset(),
     })
   }, [])
 
@@ -498,6 +495,35 @@ export default function App() {
    * identidad entre renders: un objeto, una función o un elemento JSX nuevo en
    * cada render anula el `memo` del hijo sin que nada avise.
    */
+  /*
+   * La ficha busca también en el historial: se puede abrir desde ahí algo que
+   * ya salió del mapa (con su pin fantasma).
+   */
+  const exploreProps = useMemo<ExplorePanelProps>(
+    () => ({
+      incidents: incidentControls,
+      reference: referenceControls,
+      history: historyControls,
+      selection: {
+        incidents: visibleHistory,
+        seismic: seismicList,
+        waterCuts: visibleWaterCuts,
+      },
+      incidentCount: list.length,
+    }),
+    [
+      incidentControls,
+      referenceControls,
+      historyControls,
+      visibleHistory,
+      seismicList,
+      visibleWaterCuts,
+      list.length,
+    ],
+  )
+
+  const reportInline = useMemo(() => <CitizenReportControl placement="inline" />, [])
+
   const retryIncidents = useCallback(() => void refetch(), [refetch])
   const themeToggle = useMemo(
     () => <ThemeToggle theme={theme} onToggle={toggleTheme} />,
@@ -535,7 +561,7 @@ export default function App() {
         onRetry={retryIncidents}
       />
 
-      <main className="relative flex-1">
+      <main className="relative flex-1" data-shell={isCompact ? 'sheet' : 'column'}>
         <IncidentMap
           mapRef={mapRef}
           theme={theme}
@@ -554,67 +580,23 @@ export default function App() {
         />
 
         {/*
-          Riel izquierdo. Dos superficies apiladas en una sola columna, y el
-          orden dice para qué sirve cada una:
-
-          **Sólo desde `md`.** Debajo de esa medida este riel y la hoja derecha
-          suman más ancho que la pantalla, y los reemplaza `MobileMapControls`.
-
-            1. **Capas de referencia** — qué se está mostrando. Es un control.
-            2. **Leyenda** — qué significa lo que se muestra. Es documentación.
-
-          Antes la leyenda se anclaba sola a esta esquina y las capas de
-          referencia vivían al final del panel derecho. Juntarlas acá deja el
-          panel derecho dedicado a una sola cosa —las emergencias— y agrupa a
-          este lado todo lo que responde «qué estoy viendo».
-
-          `pointer-events-none` en el contenedor y `auto` en cada hijo: el
-          hueco entre ambas superficies tiene que dejar pasar el arrastre del
-          mapa, o el riel se convierte en una franja muerta de 250 px.
+          La columna (escritorio) o la hoja inferior (teléfono): el mismo
+          contenido —historial, capas, leyenda y la ficha de lo seleccionado—
+          en dos contenedores. Ver `components/shell/ExplorePanel.tsx`.
         */}
         {isCompact ? (
-          <MobileMapControls
-            incidents={incidentControls}
-            reference={referenceControls}
-            history={historyControls}
-            incidentCount={list.length}
-          />
+          <BottomSheet {...exploreProps} headerAction={reportInline} />
         ) : (
-          <>
-            {/*
-              De arriba abajo: qué capas de contexto hay, qué pasó en las últimas
-              24 h y qué significan los colores. El historial es el único que
-              crece: toma el alto sobrante y desplaza su lista por dentro. El
-              riel termina sobre la escala del mapa (abajo a la izquierda).
-            */}
-            <div className="pointer-events-none absolute bottom-10 left-3 top-3 z-10 flex w-[15.5rem] flex-col gap-2">
-              <div className="animate-slide-in shrink-0">
-                <ReferenceDock {...referenceControls} />
-              </div>
-
-              {/* El historial cede alto primero (`shrink-[10]`) a la leyenda
-                  abierta, pero nunca menos de 7 rem; lo que no quepa, la
-                  leyenda lo desplaza por dentro. */}
-              <div className="animate-slide-in stagger-1 flex min-h-[7rem] shrink-[10] flex-col">
-                <HistoryDock {...historyControls} />
-              </div>
-
-              <div className="animate-slide-in stagger-2 flex min-h-0 flex-col">
-                <MapLegend />
-              </div>
-            </div>
-
-            <SidePanel {...incidentControls} />
-          </>
+          <DesktopColumn {...exploreProps} />
         )}
 
         {/*
           El botón vive dentro del `main` relativo, no en el árbol del mapa: así
           no compite con los controles de MapLibre ni se pierde en un repintado
-          del canvas. En teléfono se oculta sola mientras la ficha del incidente
-          o el radar están abiertos: ocupan el mismo borde inferior.
+          del canvas. En teléfono no flota: va en el encabezado de la hoja
+          (`reportInline`).
         */}
-        <CitizenReportControl />
+        {!isCompact && <CitizenReportControl />}
 
         {isPending && (
           <MapOverlayState
@@ -645,13 +627,6 @@ export default function App() {
             detail="No se pudo contactar al servidor y no hay nada en cache. Revisa tu conexión o que el backend esté corriendo."
           />
         )}
-
-        {/* Busca también en el historial: una ficha se puede abrir desde ahí. */}
-        <SelectionDetails
-          incidents={visibleHistory}
-          seismic={seismicList}
-          waterCuts={visibleWaterCuts}
-        />
 
         {radarEnabled && (
           <Suspense fallback={null}>

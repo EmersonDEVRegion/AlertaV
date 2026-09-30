@@ -1,4 +1,5 @@
 import { Suspense, lazy, memo, useEffect, useMemo } from 'react'
+import type { ReactNode } from 'react'
 import type { SeismicEvent } from '@/api/seismicTypes'
 import type { Incident } from '@/api/types'
 import type { WaterCut } from '@/api/waterCutTypes'
@@ -24,6 +25,12 @@ interface SelectionDetailsProps {
   seismic: readonly SeismicEvent[]
   /** Los cortes de agua vigentes, si su fila está encendida; si no, vacío. */
   waterCuts: readonly WaterCut[]
+  /**
+   * Lo que se muestra cuando no hay nada seleccionado (o lo seleccionado ya no
+   * está). La columna y la hoja pasan su contenido acá: la ficha lo reemplaza
+   * en el mismo lugar y cerrarla lo devuelve.
+   */
+  children?: ReactNode
 }
 
 const closeIncident = () => clearIf('incident')
@@ -41,6 +48,7 @@ export const SelectionDetails = memo(function SelectionDetails({
   incidents,
   seismic,
   waterCuts,
+  children = null,
 }: SelectionDetailsProps) {
   const code = useSelectedIncidentCode()
   const usgsId = useSelectedSeismicId()
@@ -106,5 +114,5 @@ export const SelectionDetails = memo(function SelectionDetails({
     )
   }
 
-  return null
+  return children
 })

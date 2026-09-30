@@ -21,6 +21,7 @@ import { ConfidenceBar } from './ConfidenceBar'
 import { CongestionNotice } from './CongestionNotice'
 import { OutageDetails } from './OutageDetails'
 import { SourceChips } from './SourceChips'
+import { DetailSurface, useDetailEmbedded } from './DetailSurface'
 
 interface IncidentSheetProps {
   incident: Incident
@@ -52,6 +53,7 @@ export const IncidentSheet = memo(function IncidentSheet({
   // aparecen cuando llegan.
   const { data: detail, isLoading: loadingDetail } = useIncidentDetail(incident.code)
   const now = useNow(RELATIVE_TIME_TICK_MS)
+  const embedded = useDetailEmbedded()
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -72,17 +74,19 @@ export const IncidentSheet = memo(function IncidentSheet({
   const events = detail?.events ?? []
 
   return (
-    <section
-      role="dialog"
-      aria-label={`Incidente ${incident.code}`}
-      className="pointer-events-auto fixed inset-x-0 bottom-0 z-20 flex max-h-[78dvh] flex-col
+    <DetailSurface
+      label={`Incidente ${incident.code}`}
+      floating="pointer-events-auto fixed inset-x-0 bottom-0 z-20 flex max-h-[78dvh] flex-col
         rounded-t-2xl bg-raised shadow-[var(--shadow-raised)]
         md:inset-y-0 md:left-auto md:right-0 md:max-h-none md:w-[26rem] md:rounded-none
-        md:rounded-l-2xl md:shadow-[var(--shadow-raised)]
- "
+        md:rounded-l-2xl md:shadow-[var(--shadow-raised)]"
+      embedded="flex min-h-0 flex-1 flex-col"
     >
-      {/* Asa de arrastre: señal visual de que la tarjeta es una hoja inferior. */}
-      <div aria-hidden className="mx-auto mt-2 h-1 w-10 rounded-full bg-line-strong md:hidden" />
+      {/* Asa de arrastre: señal visual de que la tarjeta es una hoja inferior.
+          Incrustada, el asa es la de la hoja que la contiene. */}
+      {!embedded && (
+        <div aria-hidden className="mx-auto mt-2 h-1 w-10 rounded-full bg-line-strong md:hidden" />
+      )}
 
       <header className="flex items-start gap-3 px-4 pb-3 pt-3">
         <span
@@ -375,6 +379,6 @@ export const IncidentSheet = memo(function IncidentSheet({
           )}
         </p>
       </div>
-    </section>
+    </DetailSurface>
   )
 })

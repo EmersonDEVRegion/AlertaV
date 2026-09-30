@@ -88,11 +88,17 @@ frontend/
 │   │   └── useOnlineStatus.ts
 │   ├── components/
 │   │   ├── map/
-│   │   │   ├── IncidentMap.tsx     # MapLibre + fuente GeoJSON
+│   │   │   ├── IncidentMap.tsx     # MapLibre + fuente GeoJSON (+ pin fantasma)
 │   │   │   ├── incidentLayers.ts   # las 4 capas de círculos
-│   │   │   └── MapLegend.tsx
+│   │   │   └── MapLegend.tsx       # leyenda compacta en dos niveles (LegendBody)
+│   │   ├── shell/
+│   │   │   ├── ExplorePanel.tsx    # resumen + Historial · Capas · Leyenda, o la ficha
+│   │   │   ├── DesktopColumn.tsx   # la columna izquierda de escritorio
+│   │   │   └── BottomSheet.tsx     # la hoja inferior de tres alturas del teléfono
+│   │   ├── feed/
+│   │   │   └── HistoryFeed.tsx     # historial de 24 h: En el mapa · Hoy · Ayer
 │   │   ├── incident/
-│   │   │   ├── IncidentSheet.tsx   # BottomSheet en móvil, panel lateral en desktop
+│   │   │   ├── IncidentSheet.tsx   # ficha; incrustada en la columna/hoja (DetailSurface)
 │   │   │   ├── ConfidenceBar.tsx   # una barra por eje, rotulada
 │   │   │   ├── ConfidenceAudit.tsx # despliegue de confidence_breakdown
 │   │   │   ├── SourceChips.tsx
@@ -326,6 +332,46 @@ La consulta se apaga con la capa (`enabled` en `useSeismicEvents`): no tiene
 sentido gastar red trayendo sismos que nadie está mirando. Su cadencia es más
 lenta que la de incidentes (3 min contra 1) porque el collector del USGS corre
 cada 5 y un sismo no cambia de estado una vez ocurrido.
+
+### 1e. Cuánto se queda algo en el mapa, y el historial
+
+El motor pasa un incidente a `stale` tras 12 h sin señales: ese reloj mide si
+una señal nueva es el mismo hecho, y no se toca. Lo que se ve en el mapa tiene
+su propia ventana, por familia y desde la última señal
+(`domain/displayWindow.ts`):
+
+| Familia | En el mapa |
+|---|---|
+| Incendios | 6 h |
+| Accidentes viales | 2 h |
+| Otras emergencias | 4 h |
+| Cortes de luz | mientras la empresa lo liste (`outage.vigente`); 4 h si el backend no sabe |
+
+Lo que sale del mapa baja al **historial de 24 h** (pestaña «Historial»), con
+un estado que nunca inventa un fin: «Sin novedades» (dejaron de llegar
+señales), «Ya no figura» (la empresa dejó de listar el corte), «Controlado» o
+«Extinguido». Los cortes de luz de una comuna se agrupan en una fila. Abrir
+algo que ya salió del mapa lo marca con un pin fantasma gris.
+
+Una sola consulta alimenta mapa e historial (`hours=48` con `active`,
+`controlled`, `stale` y `extinguished`). `useDisplaySplit` agenda un único
+temporizador para el instante en que algo vence: no hay reloj en `App`.
+
+### 1f. Una columna en escritorio, una hoja en el teléfono
+
+Como en Watch Duty o VicEmergency: el contenido en una columna y el mapa libre
+al lado. Es el mismo componente (`components/shell/ExplorePanel.tsx`) en dos
+contenedores:
+
+- **Escritorio** (≥ 768 px): columna izquierda de 22 rem. La escala del mapa y
+  el botón «Reportar emergencia» se corren a la derecha de ella, y la cámara
+  centra lo enfocado en el mapa visible (`lib/cameraOffset.ts`).
+- **Teléfono**: hoja inferior asomada, a media pantalla o completa
+  (`lib/sheetStore.ts`); se arrastra desde el encabezado. «Reportar» va en el
+  encabezado de la hoja, siempre a mano.
+
+La ficha de un incidente, un sismo o un corte de agua reemplaza al contenido de
+la columna en el mismo lugar (`DetailSurface`); cerrarla lo devuelve.
 
 ### 2. Offline sí, pero con la edad del dato a la vista
 
