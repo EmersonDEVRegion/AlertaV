@@ -1,4 +1,9 @@
-"""Quinta Visión Ahora en la rotación de prensa local (§L, 2026-09-30).
+"""Quinta Visión Ahora y el filtro por categoría (§L, 2026-09-30).
+
+Entró y salió de la rotación el mismo día: Cloudflare le responde a Render con
+un desafío (403) y no se esquiva (ver `LOCAL_NEWS_SOURCES`). La fila quedó
+comentada en la configuración y el filtro `categoria_requerida` queda para
+cuando vuelva o para otro medio con el mismo problema.
 
 El feed de abajo reproduce la estructura real de
 `www.quintavisionahora.cl/feed/` verificada ese día: `<category>` trae la
@@ -55,11 +60,19 @@ FEED = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+#: La fila comentada en `LOCAL_NEWS_SOURCES`, tal cual.
+FILA = (
+    "quintavision|Quinta Visión Ahora|https://www.quintavisionahora.cl/feed/|||"
+    "Región Valparaíso"
+)
+
+
 def _portal() -> NewsPortal:
-    return {p.slug: p for p in parse_portals(settings.LOCAL_NEWS_SOURCES)}["quintavision"]
+    [portal] = parse_portals(FILA)
+    return portal
 
 
-def test_esta_en_la_rotacion_por_defecto_solo_por_feed() -> None:
+def test_la_fila_comentada_sigue_siendo_valida() -> None:
     portal = _portal()
     assert portal.feed_url == "https://www.quintavisionahora.cl/feed/"
     assert portal.portada_url is None
@@ -68,10 +81,10 @@ def test_esta_en_la_rotacion_por_defecto_solo_por_feed() -> None:
     assert portal.categoria_requerida == "Región Valparaíso"
 
 
-def test_quinta_prensa_salio_de_la_rotacion() -> None:
+def test_fuera_de_rotacion_quinta_vision_y_quinta_prensa() -> None:
+    # Quinta Vision: Cloudflare desafía a Render. Quinta Prensa: sin publicar desde julio.
     slugs = [p.slug for p in parse_portals(settings.LOCAL_NEWS_SOURCES)]
-    assert "quintaprensa" not in slugs
-    assert slugs == ["alertanoticias", "puranoticia", "margamarga", "quintavision"]
+    assert slugs == ["alertanoticias", "puranoticia", "margamarga"]
 
 
 def test_solo_entra_lo_de_la_region_y_con_su_comuna() -> None:

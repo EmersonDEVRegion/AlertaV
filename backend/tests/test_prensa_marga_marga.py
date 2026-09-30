@@ -72,7 +72,6 @@ def test_los_portales_nuevos_no_tienen_portada_de_respaldo():
     portales = {p.slug: p for p in parse_portals(settings.LOCAL_NEWS_SOURCES)}
 
     assert portales["margamarga"].portada_url is None
-    assert portales["quintavision"].portada_url is None
 
 
 def test_los_portales_de_antes_siguen_donde_estaban():
