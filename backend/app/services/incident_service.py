@@ -40,7 +40,7 @@ from app.schemas.incident import (
 )
 from app.services.congestion import CHILE_TZ, arteria_de, estimar
 from app.services.correlation.engine import CorrelationEngine, CorrelationPass
-from app.services.source_links import source_label_for, source_url_for
+from app.services.source_links import source_label_for, source_url_for, unidades_for
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +161,7 @@ class IncidentService:
                 # Salen dos campos derivados y ya validados.
                 source_url=source_url_for(event.source, event.raw_data),
                 source_label=source_label_for(event.source, event.raw_data),
+                unidades=unidades_for(event.source, event.raw_data),
             )
             for link, event in pairs
         ]

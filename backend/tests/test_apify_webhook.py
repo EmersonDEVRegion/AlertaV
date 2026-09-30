@@ -575,6 +575,11 @@ class SesionFalsa:
     async def refresh(self, _obj) -> None:
         return None
 
+    async def execute(self, *_a, **_k):
+        """Consultas del colapso de seguimientos: la base no tiene originales."""
+        vacio = type("Vacio", (), {"all": lambda _self: []})()
+        return type("Resultado", (), {"scalars": lambda _self: vacio})()
+
     async def __aenter__(self):
         return self
 
@@ -602,6 +607,7 @@ class ServicioFalso:
     ultimo: ServicioFalso | None = None
 
     def __init__(self, _session) -> None:
+        self.session = _session
         self.status: CollectorStatus | None = None
         self.error: str | None = None
         self.eventos: list = []
@@ -1251,7 +1257,7 @@ def test_procesar_siguiente_no_deja_escapar_un_fallo_de_la_base(monkeypatch, cap
     """La fila queda `en_proceso` y el inbox la vuelve a reclamar al vencer."""
 
     async def una():
-        return (9, DATASET_ID, "traza", 1)
+        return (9, DATASET_ID, "traza", 1, False)
 
     async def revienta(*_a, **_k):
         raise ConnectionResetError("se cayó la conexión")
@@ -1470,3 +1476,143 @@ def test_estado_de_entrega():
     assert svc.estado_de_entrega(ciegas=[], esperadas=dos, problemas=True) is parcial
     assert svc.estado_de_entrega(ciegas=[], esperadas=dos, problemas=False) is exito
     assert svc.estado_de_entrega(ciegas=[], esperadas=[], problemas=False) is exito
+
+
+# --- Canario y ventana de tiempo (desde el 2026-09-30) ----------------------
+#
+# El Task principal pide sólo lo publicado en los últimos minutos, así que una
+# entrega vacía es calma. La ceguera la mide el canario diario.
+
+TASK_CANARIO = "canarioTask0001"
+
+
+@pytest.fixture
+def con_canario(monkeypatch, exigir_centrales):
+    monkeypatch.setattr(settings, "APIFY_X_CANARIO_IDS", [TASK_CANARIO])
+
+
+@respx.mock
+def test_con_canario_una_entrega_principal_vacia_es_calma(servicio, con_canario):
+    respx.get(ITEMS_URL).mock(return_value=httpx.Response(200, json=[]))
+
+    asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
+
+    hecho = ServicioFalso.ultimo
+    assert hecho.status is CollectorStatus.SUCCESS
+    assert hecho.collector == svc.COLLECTOR_NAME
+
+
+@respx.mock
+def test_con_canario_el_relleno_sigue_siendo_ceguera(servicio, con_canario):
+    respx.get(ITEMS_URL).mock(return_value=httpx.Response(200, json=RELLENO_APIDOJO))
+
+    asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
+
+    assert ServicioFalso.ultimo.status is CollectorStatus.DEGRADED
+
+
+@respx.mock
+def test_el_canario_exige_cada_cuenta_y_se_registra_aparte(servicio, con_canario):
+    respx.get(ITEMS_URL).mock(
+        return_value=httpx.Response(
+            200, json=[tuit_de("CGI_CBV", "81 * SIERRA / REPUBLICA * CLAVE 12", id_="1", minutos=600)]
+        )
+    )
+
+    asyncio.run(svc.process_dataset(DATASET_ID, payload_apify(task_id=TASK_CANARIO)))
+
+    hecho = ServicioFalso.ultimo
+    assert hecho.collector == svc.CANARIO_NAME
+    assert hecho.status is CollectorStatus.PARTIAL
+    assert "@cbvm132" in (hecho.error or "").lower()
+
+
+def test_sin_canario_configurado_se_mide_en_cada_entrega(monkeypatch):
+    monkeypatch.setattr(settings, "APIFY_X_CANARIO_IDS", [])
+    assert svc.mide_ceguera(canario=False) is True
+    monkeypatch.setattr(settings, "APIFY_X_CANARIO_IDS", [TASK_CANARIO])
+    assert svc.mide_ceguera(canario=False) is False
+    assert svc.mide_ceguera(canario=True) is True
+    assert svc.es_entrega_canario(payload_apify(task_id=TASK_CANARIO)) is True
+    assert svc.es_entrega_canario(payload_apify()) is False
+
+
+# --- Centrales nuevas por el webhook ----------------------------------------
+
+
+@respx.mock
+def test_los_andes_ingiere_la_familia_10_y_no_la_radio(servicio):
+    respx.get(ITEMS_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                tuit_de("despachoscbla", "10-0-1 (LLAMADO ESTRUCTURAL), MEMBRILLAR /CHACABUCO, QB-2,RB-3,BT-5", id_="1"),
+                tuit_de("despachoscbla", "10-5-5 (HIGIENIZACION), ESMERALDA 130, B-1", id_="2"),
+                tuit_de("despachoscbla", "6-3 MATERIAL MAYOR EN EL LUGAR", id_="3"),
+            ],
+        )
+    )
+
+    asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
+
+    hecho = ServicioFalso.ultimo
+    assert len(hecho.eventos) == 1
+    evento = hecho.eventos[0]
+    assert evento.type.value == "structural_fire"
+    assert evento.raw_data["_bomberos"]["cuerpo"] == "cbla"
+    assert evento.raw_data["_bomberos"]["unidades"] == ["QB-2", "RB-3", "BT-5"]
+    # Ni la higienización ni la radio son «claves no configuradas».
+    assert hecho.status is CollectorStatus.SUCCESS
+
+
+@respx.mock
+def test_quilpue_no_ingiere_la_17_ni_avisa_por_ella(servicio):
+    respx.get(ITEMS_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                tuit_de("CBQuilpue", "Clave 17-4 Copec Marga-Marga /  M-13", id_="1"),
+                tuit_de("CBQuilpue", "Clave 5-1 AYMARAS / LOS CARRERA M-43, M-11", id_="2"),
+            ],
+        )
+    )
+
+    asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
+
+    hecho = ServicioFalso.ultimo
+    assert [e.type.value for e in hecho.eventos] == ["accident"]
+    assert hecho.status is CollectorStatus.SUCCESS
+
+
+@respx.mock
+def test_el_sale_a_del_mismo_lote_se_anexa_al_despacho(servicio):
+    respx.get(ITEMS_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                tuit_de("cbquillota", "SALE M-34 A CLAVE 5-1 AVENIDA LAS ARAUCARIAS / ALMIRANTE LATORRE", id_="2", minutos=3),
+                tuit_de("cbquillota", "CLAVE 5-1 AVENIDA LAS ARAUCARIAS / ALMIRANTE LATORRE M-32", id_="1", minutos=8),
+            ],
+        )
+    )
+
+    asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
+
+    hecho = ServicioFalso.ultimo
+    assert len(hecho.eventos) == 1
+    assert hecho.eventos[0].raw_data["_bomberos"]["unidades"] == ["M-32", "M-34"]
+    assert "1 seguimientos" in (hecho.error or "")
+
+
+@respx.mock
+def test_un_sale_a_sin_original_entra_como_despacho(servicio):
+    respx.get(ITEMS_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json=[tuit_de("cbquillota", "SALE M-34 A CLAVE 5-1 AVENIDA LAS ARAUCARIAS / ALMIRANTE LATORRE", id_="2")],
+        )
+    )
+
+    asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
+
+    assert len(ServicioFalso.ultimo.eventos) == 1

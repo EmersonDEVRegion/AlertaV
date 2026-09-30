@@ -493,6 +493,56 @@ class Settings(BaseSettings):
             "15",                          # accidente aéreo
         ]
     )
+    #: Claves de Los Andes - Calle Larga (@despachoscbla) que se ingieren.
+    #:
+    #: Esquema NACIONAL: las emergencias son la familia 10 y el `0` del medio
+    #: NO se colapsa (`10-0-4` es un incendio, `10-4` un rescate vehicular). Ver
+    #: `CBLA` en `vocabulary`. Se configuran por familia; lo que cada familia
+    #: tiene de servicio (10-5-5 higienización, 10-8-3 monitoreo, 10-8-7
+    #: apertura de inmueble, 10-8-9 presunta desgracia) lo saca
+    #: `CBLA_INTERNAS` aunque comparta prefijo. Quedan fuera 10-9 (servicios),
+    #: 10-10 (re-ignición), 10-11, 10-12, 10-15 y toda la radio (familias 0–9).
+    BOMBEROS_CBLA_KEYS: CsvList = Field(
+        default_factory=lambda: [
+            "10-0",                        # estructural (10-0-1 … 10-0-6)
+            "10-1",                        # incendio vehicular
+            "10-2",                        # vegetación, basural, contenedor
+            "10-3",                        # rescates (animales y 10-3-10 incluidos)
+            "10-4",                        # rescate vehicular
+            "10-5",                        # materiales peligrosos
+            "10-6",                        # gas
+            "10-7",                        # eléctrico
+            "10-8",                        # no clasificado (árboles, clima, agua…)
+            "10-14",                       # aparato aéreo caído
+            "10-16",                       # incendio en túnel
+        ]
+    )
+    #: Claves PROVISIONALES de Quilpué (@CBQuilpue) y Quillota (@cbquillota).
+    #:
+    #: No hay tabla publicada de ninguno de los dos: sólo se ingieren las
+    #: familias 1–6 de la costa, que coinciden en el CBV, el CBVM y Villa
+    #: Alemana (ver `CBQUILPUE` en `vocabulary`). La 17-x de Quilpué y la 15 de
+    #: Quillota son internas; el resto avisa «clave no configurada».
+    BOMBEROS_QUILPUE_KEYS: CsvList = Field(
+        default_factory=lambda: [
+            "1-1", "1-2", "1-3",
+            "2-1", "2-2", "2-3", "2-4",
+            "3",
+            "4-1", "4-2", "4-3",
+            "5-1", "5-2", "5-3", "5-4",
+            "6-1", "6-2", "6-3", "6-5", "6-6", "6-7",
+        ]
+    )
+    BOMBEROS_QUILLOTA_KEYS: CsvList = Field(
+        default_factory=lambda: [
+            "1-1", "1-2", "1-3",
+            "2-1", "2-2", "2-3", "2-4",
+            "3",
+            "4-1", "4-2", "4-3",
+            "5-1", "5-2", "5-3", "5-4",
+            "6-1", "6-2", "6-3", "6-5", "6-6", "6-7",
+        ]
+    )
     #: Tope de consultas a Nominatim por entrega del webhook.
     #:
     #: Mismo mecanismo y mismo motivo que `TRANSPORTE_INFORMA_MAX_GEOCODES`: el
@@ -639,7 +689,7 @@ class Settings(BaseSettings):
     # -- Apify ----------------------------------------------------------------
     #
     # Desde 2026-09-22 Apify queda para UNA cosa: el Task de X que raspa a las
-    # centrales de Bomberos (@CGI_CBV y @CBVM132) y entrega por
+    # centrales de Bomberos (desde el 2026-09-30, cinco: ver `SISTEMAS_CLAVES`) y entrega por
     # `/apify/webhook`. Las capas de Instagram y de prensa por X se borraron el
     # 2026-09-23: lo que cubrían lo toma la prensa local por RSS, sin costo.
     #
@@ -724,8 +774,26 @@ class Settings(BaseSettings):
     #:
     #: Vacía = no se exige nada (así corren los tests).
     APIFY_X_CUENTAS_ESPERADAS: CsvList = Field(
-        default_factory=lambda: ["CGI_CBV", "CBVM132"]
+        default_factory=lambda: [
+            "CGI_CBV", "CBVM132", "despachoscbla", "CBQuilpue", "cbquillota",
+        ]
     )
+    #: Tasks (o Actors) cuya entrega es el **canario** diario, no la corrida
+    #: con ventana de tiempo.
+    #:
+    #: Desde el 2026-09-30 el Task principal pide sólo lo publicado en los
+    #: últimos minutos (`within_time`), así que una entrega vacía es normal y
+    #: la ceguera ya no se puede medir en ella. La mide el canario: un Task sin
+    #: ventana, una vez al día, con los últimos tuits de cada cuenta. Sus
+    #: entregas se registran como `bomberos_apify_canario` y SÓLO en ellas se
+    #: exige ver cada cuenta de `APIFY_X_CUENTAS_ESPERADAS`.
+    #:
+    #: Vacía = no hay canario y la ceguera se mide en cada entrega, como antes
+    #: (así corren los tests viejos y un despliegue sin ventana).
+    APIFY_X_CANARIO_IDS: CsvList = Field(default_factory=list)
+    #: Cada cuántas horas corre el canario. Es lo que la salud espera de él:
+    #: tres cadencias sin entrega = `stale`.
+    APIFY_X_CANARIO_HORAS: int = Field(default=24, ge=1, le=168)
     #: Cada cuánto el proceso de workers mira el inbox del webhook. Es la
     #: latencia máxima entre el aviso de Apify y el despacho en el mapa: una
     #: consulta indexada cada 10 s cuesta nada y mantiene la promesa de
@@ -1224,7 +1292,12 @@ class Settings(BaseSettings):
         "USGS_EVENT_TYPES",
         "BOMBEROS_ACCIDENT_KEYS",
         "BOMBEROS_CBVM_KEYS",
+        "BOMBEROS_CBLA_KEYS",
+        "BOMBEROS_QUILPUE_KEYS",
+        "BOMBEROS_QUILLOTA_KEYS",
         "APIFY_BOMBEROS_ACTOR_IDS",
+        "APIFY_X_CUENTAS_ESPERADAS",
+        "APIFY_X_CANARIO_IDS",
         "PUSH_ALLOWED_ENDPOINT_HOSTS",
         mode="before",
     )

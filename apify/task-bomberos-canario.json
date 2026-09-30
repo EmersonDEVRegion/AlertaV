@@ -1,7 +1,6 @@
 {
   "twitterHandles": ["CGI_CBV", "CBVM132", "despachoscbla", "CBQuilpue", "cbquillota"],
-  "maxItemsPerTarget": 6,
-  "maxItems": 15,
-  "queryType": "Latest",
-  "within_time": "45m"
+  "maxItemsPerTarget": 2,
+  "maxItems": 10,
+  "queryType": "Latest"
 }

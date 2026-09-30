@@ -11,6 +11,20 @@
 # Es idempotente: busca por nombre antes de crear, y actualiza si ya existe. Se
 # puede correr las veces que haga falta.
 #
+# DESDE EL 2026-09-30: CINCO CENTRALES, VENTANA DE TIEMPO Y CANARIO
+# -----------------------------------------------------------------
+# Se sumaron @despachoscbla (Los Andes), @CBQuilpue y @cbquillota. Con cinco
+# cuentas a 6 tuits cada media hora el peor caso era US$ 6,70 al mes: no cabia
+# en Free. Ahora son DOS Tasks:
+#
+#   alertav-bomberos  cada 30 min, `within_time` 45m: SOLO lo publicado en los
+#                     ultimos 45 minutos. xquik filtra antes de cobrar, asi que
+#                     una media hora tranquila cuesta solo la plataforma.
+#   alertav-canario   una vez al dia, sin ventana, 2 tuits por cuenta. Es lo
+#                     que prueba que el Actor VE cada cuenta: con la ventana, una
+#                     entrega vacia es calma y ya no sirve para eso. El backend
+#                     lo reconoce por APIFY_X_CANARIO_IDS y lo registra aparte.
+#
 # DESDE EL 2026-09-29 EL ACTOR ES xquik/x-tweet-scraper
 # ------------------------------------------------------
 # apidojo/tweet-scraper dejo de raspar en el plan Free cuando lo lanza el
@@ -61,6 +75,8 @@ param(
     # cabe en Free, ver COSTO. Si se cambia, APIFY_X_SCHEDULE_MINUTES en Render
     # tiene que cambiar con el (el script lo imprime al final).
     [string]$Cron = "*/30 * * * *",
+    # El canario: una vez al dia (hora de Chile). Ver arriba.
+    [string]$CronCanario = "10 12 * * *",
     # Tope de gasto de UNA corrida (opcion maxTotalChargeUsd del Task). Con
     # maxItems = 12 y US$ 0,00015 por tuit, una corrida normal cuesta US$ 0,002.
     [double]$MaxCostoPorCorrida = 0.01
@@ -212,7 +228,7 @@ function Show-Consumo {
 # (Con apidojo, a US$ 0,0004, cada 30 min con 25 tuits eran US$ 14,88.)
 #
 # El plan Free tiene US$ 5 al mes y ademas cobra storage y transferencia (unos
-# centavos). Si el peor caso pasa de US$ 4,50 el script se niega a seguir sin
+# centavos). Si el peor caso pasa de US$ 4 el script se niega a seguir sin
 # -AceptarCosto, que es para cuando la cuenta tenga un plan de pago.
 #
 # Lo que se pierde con 6 tuits por central cada 30 minutos: si una central
@@ -221,7 +237,12 @@ function Show-Consumo {
 # puede dejar fuera a Valparaiso.
 
 $PrecioPorTuit = 0.00015
-$TopePlanFree = 4.5
+# Lo que cobra la plataforma por corrida (memoria y CPU de unos segundos), aparte
+# de los tuits. Medido el 2026-09-30: entre US$ 0,00012 y 0,00018. Se redondea
+# para arriba. Con 1.488 corridas al mes son unos US$ 0,30: ya no es despreciable.
+$PlataformaPorCorrida = 0.0002
+# US$ 4 y no 5: el margen cubre lo ya gastado en el periodo y las pruebas.
+$TopePlanFree = 4.0
 
 # Corridas al mes de un cron simple: "M * * * *", "*/N * * * *", "0 */N * * *",
 # listas con comas. Devuelve $null si el cron es de otra forma (dia, mes o dia de
@@ -278,9 +299,9 @@ function Resumir-Tuits($items) {
     return "$($items.Count) items, $relleno de relleno: $cuentas"
 }
 
-# Las centrales que cada corrida tiene que traer. Mismo valor por defecto que
+# Las centrales que el CANARIO tiene que traer. Mismo valor por defecto que
 # APIFY_X_CUENTAS_ESPERADAS en el backend.
-$CuentasEsperadas = @("cgi_cbv", "cbvm132")
+$CuentasEsperadas = @("cgi_cbv", "cbvm132", "despachoscbla", "cbquilpue", "cbquillota")
 
 Show-Consumo
 
@@ -331,13 +352,25 @@ if ($Auditar) {
     # Lo que trajeron las ultimas corridas del Task. Es lo que habria delatado
     # el problema de septiembre de 2026 en un minuto: SUCCEEDED, 10 items,
     # todos {"noResults": true}.
-    $bomberos = $tareas | Where-Object { $_.name -eq "alertav-bomberos" } | Select-Object -First 1
-    if ($bomberos) {
-        Write-Host "`n=== ULTIMAS CORRIDAS de alertav-bomberos ===" -ForegroundColor Cyan
-        $corridas = (Api GET "/actor-tasks/$($bomberos.id)/runs?desc=1&limit=5").data.items
+    foreach ($nombre in @("alertav-bomberos", "alertav-canario")) {
+        $t = $tareas | Where-Object { $_.name -eq $nombre } | Select-Object -First 1
+        if (-not $t) { continue }
+        Write-Host "`n=== ULTIMAS CORRIDAS de $nombre ===" -ForegroundColor Cyan
+        $corridas = (Api GET "/actor-tasks/$($t.id)/runs?desc=1&limit=5").data.items
         foreach ($c in $corridas) {
             $muestra = Api GET "/datasets/$($c.defaultDatasetId)/items?clean=true&limit=50"
-            Write-Host ("  {0} {1}  {2}" -f $c.startedAt, $c.status, (Resumir-Tuits $muestra))
+            # El costo total de la corrida (tuits + plataforma), para no tener
+            # que ir a la consola a mirarlo.
+            $costo = ""
+            try {
+                $detalle = (Api GET "/actor-runs/$($c.id)").data
+                if ($null -ne $detalle.usageTotalUsd) {
+                    $tuits = [double]$detalle.chargedEventCounts."apify-default-dataset-item" * $PrecioPorTuit
+                    $costo = " (US$ {0:N4} = tuits {1:N4} + plataforma {2:N4})" -f ($tuits + [double]$detalle.usageTotalUsd), $tuits, [double]$detalle.usageTotalUsd
+                }
+            }
+            catch { }
+            Write-Host ("  {0} {1}  {2}{3}" -f $c.startedAt, $c.status, (Resumir-Tuits $muestra), $costo)
         }
     }
     Write-Host ""
@@ -360,8 +393,12 @@ if ($Auditar) {
 #      archivo = "task-instagram.json"; webhook = $null }
 
 $tasks = @(
-    @{ nombre = "alertav-bomberos";  actor = "xquik~x-tweet-scraper";
-       archivo = "task-bomberos.json";  webhook = "/api/v1/apify/webhook" }
+    @{ nombre = "alertav-bomberos"; actor = "xquik~x-tweet-scraper";
+       archivo = "task-bomberos.json"; webhook = "/api/v1/apify/webhook";
+       schedule = "alertav"; cron = $Cron; canario = $false }
+    @{ nombre = "alertav-canario"; actor = "xquik~x-tweet-scraper";
+       archivo = "task-bomberos-canario.json"; webhook = "/api/v1/apify/webhook";
+       schedule = "alertav-canario"; cron = $CronCanario; canario = $true }
 )
 
 # Timeout 180s y no 0 (=sin limite): una corrida colgada se come el credito.
@@ -378,20 +415,27 @@ $runOptions = @{
 
 # --- Estimacion de costo, antes de tocar nada ---------------------------------
 
-$corridasDia = Get-CorridasPorDia $Cron
-$maxItems = 0
+# Peor caso: cada corrida trae su `maxItems` completo. Con la ventana de tiempo
+# eso solo pasa si una central publica mas de 6 cosas en 45 minutos; lo normal
+# es mucho menos (se ve con -Auditar).
+$peorCaso = 0.0
+$cadenciaMin = $null
+$estimable = $true
 foreach ($t in $tasks) {
     $e = Get-Content (Join-Path $PSScriptRoot $t.archivo) -Raw -Encoding UTF8 | ConvertFrom-Json
-    $maxItems += [int]$e.maxItems
+    $porDia = Get-CorridasPorDia $t.cron
+    if ($null -eq $porDia) {
+        Write-Host "No se puede estimar el costo del cron '$($t.cron)' de $($t.nombre) (forma no simple). Revisalo a mano." -ForegroundColor Yellow
+        $estimable = $false
+        continue
+    }
+    $mes = $porDia * 31 * ([int]$e.maxItems * $PrecioPorTuit + $PlataformaPorCorrida)
+    $peorCaso += $mes
+    if (-not $t.canario) { $cadenciaMin = [math]::Ceiling(1440 / $porDia) }
+    Write-Host ("{0} '{1}': {2} corridas al dia, hasta {3} tuits -> peor caso US$ {4:N2} al mes" -f $t.nombre, $t.cron, $porDia, $e.maxItems, $mes)
 }
-$cadenciaMin = $null
-if ($null -eq $corridasDia) {
-    Write-Host "No se puede estimar el costo del cron '$Cron' (forma no simple). Revisalo a mano." -ForegroundColor Yellow
-}
-else {
-    $cadenciaMin = [math]::Ceiling(1440 / $corridasDia)
-    $peorCaso = $corridasDia * 31 * $maxItems * $PrecioPorTuit
-    Write-Host ("Cadencia '{0}': {1} corridas al dia, hasta {2} tuits cada una -> peor caso US$ {3:N2} al mes" -f $Cron, $corridasDia, $maxItems, $peorCaso)
+if ($estimable) {
+    Write-Host ("Peor caso total: US$ {0:N2} al mes (tope del script: US$ {1:N2})" -f $peorCaso, $TopePlanFree)
     if ($peorCaso -gt $TopePlanFree -and -not $AceptarCosto) {
         throw @"
 El peor caso (US$ $([math]::Round($peorCaso, 2)) al mes) no cabe en el plan gratuito de Apify.
@@ -400,6 +444,7 @@ Con la cuenta en Free, al pasar los US$ 5 Apify detiene TODOS los Actors hasta
 el periodo siguiente, y Bomberos deja de entregar por dias. Opciones:
   - una cadencia mas espaciada:  -Cron "0 */2 * * *"
   - menos tuits por corrida: bajar maxItems (y maxItemsPerTarget) en task-bomberos.json
+  - una ventana mas corta: within_time en task-bomberos.json
   - si la cuenta ya tiene plan de pago, repetir con -AceptarCosto
 "@
     }
@@ -416,12 +461,12 @@ $avisos = @()
 # definitivo. Solo un Task que todavia no existe se queda sin id hasta crearlo.
 function Show-VariablesRender {
     Write-Host "`n--- Variables para Render ---" -ForegroundColor Yellow
-    foreach ($r in $script:resultado) {
-        switch ($r.Task) {
-            "alertav-bomberos" { Write-Host "APIFY_BOMBEROS_ACTOR_IDS = $($r.TaskId)" }
-            "alertav-prensa"   { Write-Host "APIFY_PRENSA_ACTOR_IDS   = $($r.TaskId)" }
-        }
-    }
+    # Los dos Tasks entregan por el mismo webhook: los dos van en la lista de
+    # autorizados, y el canario ademas en APIFY_X_CANARIO_IDS.
+    $ids = @($script:resultado | ForEach-Object { $_.TaskId })
+    $canarios = @($script:resultado | Where-Object { $_.Canario } | ForEach-Object { $_.TaskId })
+    Write-Host "APIFY_BOMBEROS_ACTOR_IDS = $($ids -join ',')"
+    if ($canarios) { Write-Host "APIFY_X_CANARIO_IDS      = $($canarios -join ',')" }
     if ($script:cadenciaMin) { Write-Host "APIFY_X_SCHEDULE_MINUTES = $($script:cadenciaMin)" }
     Write-Host "APIFY_X_CUENTAS_ESPERADAS = $(($CuentasEsperadas | ForEach-Object { $_.ToUpper() }) -join ',')   (es el valor por defecto: no hace falta ponerla)"
 }
@@ -446,6 +491,7 @@ foreach ($t in $tasks) {
             Write-Host "RENOMBRARIA $($t.nombre) -> $retiro (usa $($viejo.username)/$($viejo.name)) y CREARIA uno nuevo sobre $($t.actor)"
             $resultado += [pscustomobject]@{
                 Task = $t.nombre; TaskId = "(nuevo: se asigna al crearlo)"; Webhook = $t.webhook
+                Canario = $t.canario; Schedule = $t.schedule; Cron = $t.cron
             }
             continue
         }
@@ -460,6 +506,7 @@ foreach ($t in $tasks) {
         $idHoy = if ($previo) { $previo.id } else { "(se asigna al crearlo: correr sin -DryRun)" }
         $resultado += [pscustomobject]@{
             Task = $t.nombre; TaskId = $idHoy; Webhook = $t.webhook
+            Canario = $t.canario; Schedule = $t.schedule; Cron = $t.cron
         }
         continue
     }
@@ -492,11 +539,12 @@ foreach ($t in $tasks) {
 
     $resultado += [pscustomobject]@{
         Task = $t.nombre; TaskId = $taskId; Webhook = $t.webhook
+        Canario = $t.canario; Schedule = $t.schedule; Cron = $t.cron
     }
 }
 
 if ($DryRun) {
-    Write-Host "Dejaria el Schedule 'alertav' con: $(($tasks | ForEach-Object { $_.nombre }) -join ', ') ($Cron)"
+    foreach ($t in $tasks) { Write-Host "Dejaria el Schedule '$($t.schedule)' con $($t.nombre) ($($t.cron))" }
     Show-VariablesRender
     Write-Host "`n(DryRun: no se cambio nada. Repetir sin -DryRun para aplicar.)" -ForegroundColor DarkGray
     return
@@ -519,6 +567,16 @@ if (-not $SinProbar) {
         $items = Api POST "/actor-tasks/$($r.TaskId)/run-sync-get-dataset-items?timeout=170&clean=true"
         $resumen = Resumir-Tuits $items
         Write-Host "  $resumen"
+        $relleno = @(@($items) | Where-Object { $_.noResults -or $_.demo }).Count
+        if (-not $r.Canario) {
+            # Con ventana de tiempo, cero tuits es posible y no dice nada: lo que
+            # SI delata a un Actor que no ve es el relleno. La visibilidad de
+            # cada cuenta la prueba el canario.
+            if ($relleno -gt 0) {
+                throw "La prueba de $($r.Task) trajo $relleno items de relleno: el Actor no esta entregando. El Schedule NO se toco."
+            }
+            continue
+        }
         $vistas = @(@($items) | ForEach-Object { Get-CuentaDeTuit $_ } | Where-Object { $_ } | Sort-Object -Unique)
         $faltan = @($CuentasEsperadas | Where-Object { $_ -notin $vistas })
         if ($faltan.Count -eq $CuentasEsperadas.Count) {
@@ -548,28 +606,25 @@ le alcanza, hay que elegir otro Actor en `$tasks.
 # que la cadencia, o un despacho publicado justo despues de una corrida llega
 # viejo a la siguiente y se descarta.
 
-$acciones = @($resultado | ForEach-Object {
-    @{ type = "RUN_ACTOR_TASK"; actorTaskId = $_.TaskId }
-})
-
-$previo = (Api GET "/schedules?limit=1000").data.items |
-          Where-Object { $_.name -eq "alertav" } | Select-Object -First 1
-
-$cuerpoSchedule = @{
-    name           = "alertav"
-    cronExpression = $Cron
-    isEnabled      = $true
-    isExclusive    = $true
-    timezone       = "America/Santiago"
-    actions        = $acciones
-}
-
-if ($previo) {
-    Api PUT "/schedules/$($previo.id)" $cuerpoSchedule | Out-Null
-    Write-Host "Schedule 'alertav' actualizado ($Cron): solo $(($resultado | ForEach-Object { $_.Task }) -join ', ')" -ForegroundColor Cyan
-} else {
-    Api POST "/schedules" $cuerpoSchedule | Out-Null
-    Write-Host "Schedule 'alertav' creado ($Cron)" -ForegroundColor Green
+# Un Schedule por Task: tienen cadencias distintas (cada 30 min y una vez al dia).
+$schedulesHoy = (Api GET "/schedules?limit=1000").data.items
+foreach ($r in $resultado) {
+    $previo = $schedulesHoy | Where-Object { $_.name -eq $r.Schedule } | Select-Object -First 1
+    $cuerpoSchedule = @{
+        name           = $r.Schedule
+        cronExpression = $r.Cron
+        isEnabled      = $true
+        isExclusive    = $true
+        timezone       = "America/Santiago"
+        actions        = @(@{ type = "RUN_ACTOR_TASK"; actorTaskId = $r.TaskId })
+    }
+    if ($previo) {
+        Api PUT "/schedules/$($previo.id)" $cuerpoSchedule | Out-Null
+        Write-Host "Schedule '$($r.Schedule)' actualizado ($($r.Cron)): solo $($r.Task)" -ForegroundColor Cyan
+    } else {
+        Api POST "/schedules" $cuerpoSchedule | Out-Null
+        Write-Host "Schedule '$($r.Schedule)' creado ($($r.Cron)): $($r.Task)" -ForegroundColor Green
+    }
 }
 
 # --- 3. Webhooks, SOLO sobre el Task ------------------------------------------

@@ -23,6 +23,7 @@ from app.api.deps import (
     WeatherServiceDep,
 )
 from app.api.v1.params import parse_bbox
+from app.collectors.cuarteles import cargar_artefacto
 from app.core.config import settings
 from app.core.ratelimit import RateLimiter, client_ip_de
 from app.models.enums import EventSource, EventType
@@ -335,6 +336,33 @@ async def seismic_hazard(service: HazardServiceDep, request: Request) -> Respons
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
 
     return JSONResponse(content=artifact.payload, headers=headers)
+
+
+@router.get(
+    "/cuarteles",
+    summary="Cuarteles de Bomberos de la V Región (SIG Bomberos de Chile)",
+    response_class=Response,
+    responses={
+        200: {"description": "GeoJSON de Cuerpos y compañías con nombre, dirección y comuna."},
+        304: {"description": "La instantánea no cambió desde el `ETag` que trae el cliente."},
+        502: {"description": "La instantánea no está publicada; el cuerpo dice cómo regenerarla."},
+    },
+    description=(
+        "Instantánea **estática** de los cuarteles de la región, tomada a mano del "
+        "SIG de Bomberos de Chile con `scripts/sig_bomberos.py`. No es una fuente "
+        "en vivo ni dice qué compañía despacha a cada lugar: sirve para ubicar los "
+        "cuarteles en el mapa y los más cercanos a un lugar guardado."
+    ),
+)
+async def cuarteles(request: Request) -> Response:
+    artefacto = cargar_artefacto()
+    headers = {
+        "ETag": artefacto.etag,
+        "Cache-Control": "public, max-age=0, must-revalidate",
+    }
+    if request.headers.get("if-none-match") == artefacto.etag:
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    return JSONResponse(content=artefacto.payload, headers=headers)
 
 
 # -- Meteorología (Open-Meteo) -----------------------------------------------

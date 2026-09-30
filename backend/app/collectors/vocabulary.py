@@ -52,7 +52,7 @@ menos cuatro decisiones tomadas por ese motivo (ver "anegad", "derrumb",
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from app.collectors.geoservices import normalise_text
@@ -117,7 +117,7 @@ _CODE_SPLIT = re.compile(r"[\s\-–—/.]+")
 _MAX_GROUP_DIGITS = 2
 
 
-def normalise_code(token: str) -> tuple[int, ...] | None:
+def normalise_code(token: str, *, colapsar_cero: bool = True) -> tuple[int, ...] | None:
     """Token con forma de código → tupla de enteros comparable. None si no lo es.
 
     Aplica las dos reglas del dominio:
@@ -149,8 +149,12 @@ def normalise_code(token: str) -> tuple[int, ...] | None:
     except ValueError:  # pragma: no cover — la regex sólo captura dígitos
         return None
 
-    # El 0 en segunda posición es separador de familia, no un valor.
-    if len(groups) > 2 and groups[1] == 0:
+    # El 0 en segunda posición es separador de familia, no un valor. Salvo en
+    # los Cuerpos que usan el esquema nacional de la familia 10 (Los Andes),
+    # donde `10-0-4` es un incendio en sector de alto riesgo y `10-4` un rescate
+    # vehicular: colapsarlos confundiría un incendio con un choque. Ver
+    # `SistemaClaves.colapsa_cero`.
+    if colapsar_cero and len(groups) > 2 and groups[1] == 0:
         groups = [groups[0], *groups[2:]]
     return tuple(groups)
 
@@ -165,7 +169,7 @@ def find_codes(text: str) -> list[tuple[int, ...]]:
     return found
 
 
-def parse_key(token: str) -> tuple[int, ...] | None:
+def parse_key(token: str, *, colapsar_cero: bool = True) -> tuple[int, ...] | None:
     """Una clave **configurada** → tupla comparable. None si no lo es.
 
     Es el lado de la configuración de lo que `normalise_code` hace del lado del
@@ -199,7 +203,7 @@ def parse_key(token: str) -> tuple[int, ...] | None:
 
     # La forma con familia (`10-4`, `10-0-4`, `10.4`) es la de siempre y manda:
     # se prueba primero para que nada de lo que ya funcionaba cambie de camino.
-    code = normalise_code(limpio)
+    code = normalise_code(limpio, colapsar_cero=colapsar_cero)
     if code is not None:
         return code
 
@@ -216,7 +220,13 @@ def parse_key(token: str) -> tuple[int, ...] | None:
     return None
 
 
-def matches_key(text: str, keys: Sequence[str]) -> str | None:
+def matches_key(
+    text: str,
+    keys: Sequence[str],
+    *,
+    colapsar_cero: bool = True,
+    excluir: Callable[[tuple[int, ...]], bool] | None = None,
+) -> str | None:
     """Devuelve la clave buscada que aparece en el texto, o None.
 
     La comparación es **por prefijo de tupla**: un aviso con `10-4-1` responde a
@@ -246,17 +256,25 @@ def matches_key(text: str, keys: Sequence[str]) -> str | None:
     de sinónimos que hoy no existe. Para capturar las dos formas, configurar
     las dos claves.
     """
-    present = find_claves(text)
+    present = find_claves(text, colapsar_cero=colapsar_cero)
     if not present:
         return None
 
     for key in keys:
-        wanted = parse_key(key)
+        wanted = parse_key(key, colapsar_cero=colapsar_cero)
         if wanted is None:
             continue
         for code in present:
-            if code[: len(wanted)] == wanted:
-                return key
+            if code[: len(wanted)] != wanted:
+                continue
+            # `excluir` saca lo que el Cuerpo nombra pero no ingiere aunque
+            # comparta prefijo con una clave configurada: en Los Andes `10-5`
+            # (materiales peligrosos) entra y su `10-5-5` (higienización) no.
+            # Una clave configurada TAL CUAL manda sobre la exclusión: quien
+            # escribe `12` en la lista la quiere, aunque sea interna.
+            if excluir is not None and code != wanted and excluir(code):
+                continue
+            return key
     return None
 
 
@@ -730,7 +748,7 @@ CLAVE_MEANINGS: dict[tuple[int, ...], str] = {
 _CLAVE_LITERAL = re.compile(r"\bclave\s*(?:n[o°º]?\s*)?(\d{1,2})(?!\s*[-–—/.]\s*\d)(?!\d)")
 
 
-def find_claves(texto: str) -> list[tuple[int, ...]]:
+def find_claves(texto: str, *, colapsar_cero: bool = True) -> list[tuple[int, ...]]:
     """Códigos y claves literales del texto, en orden de aparición.
 
     Superconjunto de `find_codes`: suma la forma "CLAVE N" que aquella no puede
@@ -747,7 +765,7 @@ def find_claves(texto: str) -> list[tuple[int, ...]]:
     encontrados: list[tuple[int, tuple[int, ...]]] = []
 
     for match in _CODE_TOKEN.finditer(limpio):
-        code = normalise_code(match.group(1))
+        code = normalise_code(match.group(1), colapsar_cero=colapsar_cero)
         if code is not None:
             encontrados.append((match.start(), code))
 
@@ -854,7 +872,8 @@ def dispatch_event_type(texto: str, sistema: SistemaClaves | None = None) -> Eve
         if sistema is not None
         else (CODE_TYPES, SUPPORT_CODES)
     )
-    for code in find_claves(texto):
+    colapsar = sistema.colapsa_cero if sistema is not None else True
+    for code in find_claves(texto, colapsar_cero=colapsar):
         for tabla in tablas:
             for wanted, event_type in tabla.items():
                 if code[: len(wanted)] == wanted:
@@ -879,7 +898,8 @@ def resolve_clave(
     >>> resolve_clave("Clave 10 ALVAREZ / QUILLOTA U-12", CBVM)
     ('Clave 10', 'Otros servicios')
     """
-    for code in find_claves(texto):
+    colapsar = sistema.colapsa_cero if sistema is not None else True
+    for code in find_claves(texto, colapsar_cero=colapsar):
         meaning = clave_meaning(code, sistema)
         if meaning is not None:
             return (clave_label(code), meaning)
@@ -1030,6 +1050,18 @@ class SistemaClaves:
     formato: str = "campos"
     #: Despacho real para el ejemplo del prompt: `(texto, clave, calle 1, calle 2)`.
     ejemplo: tuple[str, str, str, str | None] = ("", "", "", None)
+    #: ¿El `0` del medio de `10-0-x` es separador (se colapsa a `10-x`)? Sí en
+    #: la costa. **No** en Los Andes, que usa el esquema nacional: allí
+    #: `10-0-4` y `10-4` son un incendio y un rescate vehicular.
+    colapsa_cero: bool = True
+    #: Prefijos de claves que el Cuerpo usa y que NO describen una emergencia
+    #: del mapa: procedimiento radial (familias 0 a 9 de Los Andes), servicios
+    #: internos (la 17-x de Quilpué). Como `non_incident`, pero por prefijo:
+    #: `(17,)` cubre `17-2`, `17-3` y `17-4` sin enumerarlas.
+    internas_por_prefijo: frozenset[tuple[int, ...]] = frozenset()
+    #: `True` cuando la tabla no tiene fuente publicada y se infirió de los
+    #: despachos y de un Cuerpo vecino. Va al glosario del prompt y al log.
+    provisional: bool = False
 
     @property
     def handle(self) -> str:
@@ -1043,7 +1075,9 @@ class SistemaClaves:
         acuartelamiento, es una clave que nadie registró, y tiene que seguir
         apareciendo en el aviso de «clave no configurada».
         """
-        return code in self.non_incident
+        if code in self.non_incident:
+            return True
+        return any(code[: len(prefijo)] == prefijo for prefijo in self.internas_por_prefijo)
 
 
 CBV = SistemaClaves(
@@ -1081,9 +1115,255 @@ CBVM = SistemaClaves(
     ),
 )
 
+# =============================================================================
+#  Claves del Cuerpo de Bomberos de Los Andes - Calle Larga (@despachoscbla)
+# =============================================================================
+#
+# Fuente: tabla publicada por Wurtlitzer
+# (wurtlitzer.com/bomberos/claves/detalle/?region=valparaiso&cuerpo=los_andes_calle_larga),
+# leída el 2026-09-30 y contrastada con despachos reales de @despachoscbla
+# («10-0-1 (LLAMADO ESTRUCTURAL), MEMBRILLAR /CHACABUCO, QB-2,RB-3,BT-5»,
+# «10-4-1 (RESCATE VEHICULAR), AUTOPISTA LIBERTADORES , R-1,H-2»). Seis
+# compañías; cubre Los Andes y Calle Larga.
+#
+# ## Es el esquema NACIONAL, no el de la costa
+#
+# Las emergencias son la familia 10 entera (`10-0` estructural, `10-1`
+# vehicular, `10-2` vegetación, `10-3` rescate, `10-4` rescate vehicular…).
+# **Las familias 0 a 9 son procedimiento de radio**: en Los Andes `1-1` es
+# «solicite apoyo aéreo», `5-1` es «frecuencia principal» y `6-3` es «material
+# mayor en el lugar». Leído con la tabla del CBV, cada `6-3` sería un rescate
+# con peso 1.00. Por eso van en `internas_por_prefijo`.
+#
+# ## El 0 del medio NO se colapsa
+#
+# En la costa `10-0-4` y `10-4` son la misma clave. Aquí `10-0-4` es «incendio
+# en sectores de alto riesgo» y `10-4` «rescate vehicular»: `colapsa_cero=False`.
+
+CBLA_CODE_TYPES: dict[tuple[int, ...], EventType] = {
+    (10, 0): EventType.STRUCTURAL_FIRE,  # llamado estructural (10-0-1 … 10-0-6)
+    # Mismo criterio que el 3-x del CBV: el auto ardiendo va a la familia fuego.
+    (10, 1): EventType.STRUCTURAL_FIRE,  # incendio vehicular
+    (10, 2): EventType.WILDFIRE,  # árbol, pastizal, basural, contenedor, interfaz
+    (10, 3): EventType.RESCUE,  # rescates (incluye animales y 10-3-10)
+    (10, 4): EventType.ACCIDENT,  # rescate vehicular
+    (10, 5): EventType.OTHER,  # materiales peligrosos
+    (10, 6): EventType.OTHER,  # emanación de gas
+    (10, 7): EventType.OTHER,  # llamado eléctrico
+    # Antes que (10, 8): el camillaje a SAMU es una atención a una persona.
+    (10, 8, 2): EventType.RESCUE,
+    (10, 8): EventType.OTHER,  # no clasificado: árboles, clima, anegamientos…
+    (10, 14): EventType.OTHER,  # aparato aéreo caído
+    (10, 16): EventType.STRUCTURAL_FIRE,  # incendio al interior de túnel
+}
+
+CBLA_CLAVE_MEANINGS: dict[tuple[int, ...], str] = {
+    (10, 0): "Llamado estructural",
+    (10, 0, 1): "Incendio de casa habitación",
+    (10, 0, 2): "Incendio de edificio",
+    (10, 0, 3): "Incendio en lugar con gran afluencia de público",
+    (10, 0, 4): "Incendio en sector de alto riesgo",
+    (10, 0, 5): "Incendio en industria",
+    (10, 0, 6): "Incendio en infraestructura crítica",
+    (10, 1): "Incendio vehicular",
+    (10, 1, 1): "Incendio de vehículo menor",
+    (10, 1, 2): "Incendio de vehículo mayor",
+    (10, 1, 3): "Incendio de vehículo de transporte de pasajeros",
+    (10, 1, 4): "Fuego en frenos o cabina de vehículo mayor",
+    (10, 2): "Fuego en árbol, arbustos o basural",
+    (10, 2, 1): "Fuego en pastizales o matorrales",
+    (10, 2, 2): "Fuego en contenedor de basura",
+    (10, 2, 3): "Fuego en basural",
+    (10, 2, 4): "Fuego de interfaz urbano-forestal",
+    (10, 2, 5): "Incendio en Ruta Los Libertadores o en zona alejada de alto riesgo",
+    (10, 3): "Rescate de emergencia",
+    (10, 3, 1): "Rescate de persona con riesgo vital",
+    (10, 3, 2): "Rescate agreste",
+    (10, 3, 3): "Rescate en río o curso de agua",
+    (10, 3, 4): "Rescate en altura",
+    (10, 3, 5): "Rescate en estructura colapsada",
+    (10, 3, 6): "Rescate de animal",
+    (10, 3, 7): "Rescate técnico de animal",
+    (10, 3, 8): "Recuperación de cadáver en curso de agua",
+    (10, 3, 9): "Liberación de persona atrapada",
+    (10, 3, 10): "Atención de persona (desmayo, descompensación o herida)",
+    (10, 3, 11): "Búsqueda de persona en zona agreste",
+    (10, 3, 12): "Liberación de persona encerrada",
+    (10, 4): "Rescate vehicular",
+    (10, 4, 1): "Accidente vehicular menor",
+    (10, 4, 2): "Accidente vehicular mayor",
+    (10, 4, 3): "Accidente vehicular con materiales peligrosos",
+    (10, 4, 4): "Vehículo desbarrancado",
+    (10, 5): "Llamado con materiales peligrosos",
+    (10, 5, 1): "Materiales peligrosos o derrame mayor de combustible",
+    (10, 5, 2): "Derrame de combustible en la vía pública",
+    (10, 5, 3): "Olor desconocido en el ambiente",
+    (10, 5, 4): "Ingesta de producto químico",
+    (10, 6): "Emanación de gas",
+    (10, 6, 1): "Fuga de gas en casa o edificio",
+    (10, 6, 2): "Fuga de gas en lugar con afluencia de público",
+    (10, 6, 3): "Fuga de gas con explosión",
+    (10, 7): "Llamado eléctrico",
+    (10, 8): "Llamado no clasificado",
+    (10, 8, 1): "Olor a quemado o alarma activada",
+    (10, 8, 2): "Apoyo con camillaje a SAMU",
+    (10, 8, 4): "Caída de árboles",
+    (10, 8, 5): "Emergencia por condiciones climáticas",
+    (10, 8, 6): "Evacuación de agua por anegamiento",
+    (10, 8, 8): "Emergencia sin clasificación",
+    (10, 14): "Aparato aéreo caído",
+    (10, 16): "Incendio al interior de túnel",
+    # -- Nombradas pero NO ingeridas --------------------------------------
+    (10, 5, 5): "Higienización y desinfección",
+    (10, 5, 6): "Rotura de termómetro",
+    (10, 8, 3): "Monitoreo preventivo",
+    (10, 8, 7): "Apertura de inmueble sin personas",
+    (10, 8, 9): "Presunta desgracia",
+    (10, 9): "Otros servicios",
+    (10, 10): "Re-ignición de incendio",
+    (10, 11): "Apoyo a traslado de pacientes",
+    (10, 12): "Apoyo a otro Cuerpo de Bomberos",
+    (10, 15): "Entrenamiento o demostración",
+}
+
+#: Lo que Los Andes despacha y no es una emergencia del mapa. Por prefijo:
+#: la radio entera (familias 0 a 9, 11 y 12) y los servicios de la familia 10.
+#: La `10-13` (Carabineros por explosivos) queda FUERA de las dos listas, a
+#: propósito, como la 14 del CBVM: si aparece, el webhook avisa «clave no
+#: configurada» y se decide con el caso a la vista.
+CBLA_INTERNAS: frozenset[tuple[int, ...]] = frozenset(
+    {(familia,) for familia in (*range(0, 10), 11, 12)}
+    | {(10, 5, 5), (10, 5, 6), (10, 8, 3), (10, 8, 7), (10, 8, 9)}
+    | {(10, 9), (10, 10), (10, 11), (10, 12), (10, 15)}
+)
+
+CBLA = SistemaClaves(
+    slug="cbla",
+    nombre="Cuerpo de Bomberos de Los Andes",
+    cuentas=("despachoscbla",),
+    comunas=("Los Andes", "Calle Larga"),
+    code_types=CBLA_CODE_TYPES,
+    non_incident=frozenset(),
+    meanings=CBLA_CLAVE_MEANINGS,
+    formato="clave_parentesis",
+    ejemplo=(
+        "10-0-1 (LLAMADO ESTRUCTURAL), MEMBRILLAR /CHACABUCO, QB-2,RB-3,BT-5",
+        "10-0-1",
+        "MEMBRILLAR",
+        "CHACABUCO",
+    ),
+    colapsa_cero=False,
+    internas_por_prefijo=CBLA_INTERNAS,
+)
+
+
+# =============================================================================
+#  Quilpué (@CBQuilpue) y Quillota (@cbquillota): tablas PROVISIONALES
+# =============================================================================
+#
+# Ninguno de los dos Cuerpos tiene tabla publicada (Wurtlitzer: «Aún no
+# tenemos listadas las claves», revisado el 2026-09-30; tampoco en
+# clavesradiales.cl, bomberos.cl ni Scribd). Lo que sigue se infirió:
+#
+# * Las dos cuentas (automatizadas por Viper) despachan con la familia 1–6 de
+#   la costa: `1-1`, `4-2` y `5-1` con calles y varias unidades en Quilpué;
+#   `5-1` en Quillota.
+# * Villa Alemana, vecina de Quilpué y de la misma provincia, sí publica su
+#   tabla, y coincide con el CBV y el CBVM en las familias 1, 2, 4, 5 y 6:
+#   estructural, forestal, materiales peligrosos, rescate vehicular, rescate.
+#
+# Así que sólo se ingieren esas familias (y la 3, incendio vehicular, en sus
+# dos formas: `Clave 3` y `3-x`). Todo lo demás cae en «clave no configurada»
+# para que el webhook avise y se decida con datos, igual que la 14 del CBVM.
+#
+# * Quilpué usa una familia **17** que no está en ninguna tabla y que por los
+#   destinos es interna: `17-4 Copec Marga-Marga`, `17-4 Aramco` (combustible),
+#   `17-3 Comandancia`, `17-2 Quinta Compañía`.
+# * En Quillota la **`CLAVE 15`** es la más frecuente y casi siempre va a
+#   «CUARTEL GENERAL» o «PRIMERA COMPAÑIA». Se nombra y no se ingiere; si
+#   resulta ser «emergencia no clasificada» (como en Villa Alemana), se mueve.
+#
+# Cuando los Cuerpos publiquen su tabla, estas se reemplazan.
+
+_COSTA_PROVISIONAL_TYPES: dict[tuple[int, ...], EventType] = {
+    (1,): EventType.STRUCTURAL_FIRE,  # emergencia estructural
+    (2,): EventType.WILDFIRE,  # forestal / vegetación
+    (3,): EventType.STRUCTURAL_FIRE,  # incendio vehicular (familia fuego)
+    (4,): EventType.OTHER,  # materiales peligrosos
+    (5,): EventType.ACCIDENT,  # rescate vehicular
+    (6,): EventType.RESCUE,  # rescate de personas
+}
+
+_COSTA_PROVISIONAL_MEANINGS: dict[tuple[int, ...], str] = {
+    (1, 1): "Emergencia estructural",
+    (1, 2): "Emergencia estructural en altura",
+    (1, 3): "Emergencia estructural en lugar público",
+    (2, 1): "Incendio forestal o de vegetación",
+    (2, 2): "Incendio forestal o de vegetación",
+    (2, 3): "Incendio forestal o de vegetación",
+    (2, 4): "Incendio en vertedero o basural",
+    (3,): "Incendio vehicular",
+    (4, 1): "Emergencia con materiales peligrosos",
+    (4, 2): "Emergencia con materiales peligrosos",
+    (4, 3): "Emergencia con materiales peligrosos",
+    (5, 1): "Rescate vehicular",
+    (5, 2): "Rescate vehicular pesado",
+    (5, 3): "Rescate vehicular con materiales peligrosos",
+    (5, 4): "Rescate vehicular especial",
+    (6, 1): "Rescate de personas",
+    (6, 2): "Rescate de personas",
+    (6, 3): "Rescate de personas",
+    (6, 5): "Rescate de personas",
+    (6, 6): "Rescate de personas",
+    (6, 7): "Rescate de personas",
+}
+
+CBQUILPUE = SistemaClaves(
+    slug="cbquilpue",
+    nombre="Cuerpo de Bomberos de Quilpué",
+    cuentas=("cbquilpue",),
+    comunas=("Quilpué",),
+    code_types=_COSTA_PROVISIONAL_TYPES,
+    non_incident=frozenset(),
+    meanings={
+        **_COSTA_PROVISIONAL_MEANINGS,
+        (17,): "Servicio interno (combustible, cuarteles)",
+    },
+    formato="clave_primero",
+    ejemplo=(
+        "Clave 5-1 AYMARAS / LOS CARRERA M-43, M-11",
+        "5-1",
+        "AYMARAS",
+        "LOS CARRERA",
+    ),
+    internas_por_prefijo=frozenset({(17,)}),
+    provisional=True,
+)
+
+CBQUILLOTA = SistemaClaves(
+    slug="cbquillota",
+    nombre="Cuerpo de Bomberos de Quillota",
+    cuentas=("cbquillota",),
+    comunas=("Quillota",),
+    code_types=_COSTA_PROVISIONAL_TYPES,
+    non_incident=frozenset({(15,)}),
+    meanings={
+        **_COSTA_PROVISIONAL_MEANINGS,
+        (15,): "Clave 15 (sin verificar: probable servicio interno)",
+    },
+    formato="clave_primero",
+    ejemplo=(
+        "CLAVE 5-1 AVENIDA LAS ARAUCARIAS M-32",
+        "5-1",
+        "AVENIDA LAS ARAUCARIAS",
+        None,
+    ),
+    provisional=True,
+)
+
 #: Todos los sistemas conocidos. Agregar una central es agregar una entrada acá
 #: con su tabla; sin entrada, sus tuits no se ingieren (ver `sistema_de_cuenta`).
-SISTEMAS_CLAVES: tuple[SistemaClaves, ...] = (CBV, CBVM)
+SISTEMAS_CLAVES: tuple[SistemaClaves, ...] = (CBV, CBVM, CBLA, CBQUILPUE, CBQUILLOTA)
 
 
 def sistema_de_cuenta(cuenta: str | None) -> SistemaClaves | None:
@@ -1868,6 +2148,12 @@ def clasificar_noticia(texto: str) -> EventType | None:
 __all__ = [
     "ACCIDENT_TERMS",
     "AGENCY_TERMS",
+    "CBLA",
+    "CBLA_CLAVE_MEANINGS",
+    "CBLA_CODE_TYPES",
+    "CBLA_INTERNAS",
+    "CBQUILLOTA",
+    "CBQUILPUE",
     "CBV",
     "CBVM",
     "CBVM_CLAVE_MEANINGS",

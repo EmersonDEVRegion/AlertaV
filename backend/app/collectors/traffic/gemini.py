@@ -506,6 +506,20 @@ unidad no es parte de la dirección.
 - A veces la clave trae su significado pegado ("Clave 5-1 RESCATE VEHICULAR \
 LIVIANO ..."): ese texto no es una calle.
 - Los enlaces (https://t.co/...) no son parte del despacho.""",
+    "clave_parentesis": """\
+- El despacho abre con la clave y su significado entre paréntesis, y sigue \
+con la dirección y las unidades, separados por comas: "10-0-1 (LLAMADO \
+ESTRUCTURAL), MEMBRILLAR /CHACABUCO, QB-2,RB-3,BT-5".
+- El texto entre paréntesis es el significado de la clave, NO una calle.
+- Las unidades o carros ("QB-2", "RB-3", "BT-5", "H-2", "R-1") NO son calles: \
+descártalas.
+- "ALTURA 491" es la numeración de la calle: la dirección es la calle con ese \
+número.
+- "SALE RB-3, A 10-6-1 EN …" significa que la unidad RB-3 sale hacia lo que \
+sigue a "EN"; la unidad no es parte de la dirección.
+- "EMERGENCIA:" y la hora ("12:00") al comienzo no son parte de la dirección.
+- Las claves de las familias 0 a 9 son procedimiento de radio (pedir \
+ambulancia, frecuencias, material en el lugar), no el tipo de emergencia.""",
 }
 
 
@@ -517,7 +531,9 @@ def build_dispatch_instruction(sistema: SistemaClaves) -> str:
     telegráfico de esa central (ver `_NOTAS_FORMATO`).
     """
     texto, clave, calle_1, calle_2 = sistema.ejemplo
-    significado = sistema.meanings.get(normalise_code(clave) or (), "") or None
+    significado = sistema.meanings.get(
+        normalise_code(clave, colapsar_cero=sistema.colapsa_cero) or (), ""
+    ) or None
     ejemplo_json = json.dumps(
         {
             "clave": clave,
@@ -537,6 +553,20 @@ def build_dispatch_instruction(sistema: SistemaClaves) -> str:
         ensure_ascii=False,
     )
     notas = _NOTAS_FORMATO.get(sistema.formato, _NOTAS_FORMATO["campos"])
+    # En el esquema nacional (Los Andes) el cero del medio NO es separador:
+    # `10-0-4` es un incendio y `10-4` un rescate vehicular.
+    nota_cero = (
+        "- El cero intermedio es separador de familia: 5-0-1 es 5-1.\n"
+        if sistema.colapsa_cero
+        else "- El cero intermedio SÍ es parte de la clave: 10-0-4 y 10-4 son "
+        "claves distintas. Cópiala completa.\n"
+    )
+    nota_provisional = (
+        "- Este diccionario es provisional: si la clave no está, deja "
+        "significado en null.\n"
+        if sistema.provisional
+        else ""
+    )
     resumen_generico = SUMMARY_TEMPLATE.format(
         clave="Clave",
         significado="Significado de la clave",
@@ -560,7 +590,7 @@ despacho; otros Cuerpos usan los mismos números con otro significado:
 
 Notas del diccionario:
 - Las claves admiten sufijo de subtipo: 5-1-2 es un 5-1.
-- El cero intermedio es separador de familia: 5-0-1 es 5-1.
+{nota_cero}{nota_provisional}\
 - Si el despacho trae más de una clave, la del despacho es la PRIMERA: la \
 central abre con lo que ocurrió y después pide recursos.
 
@@ -734,7 +764,9 @@ def format_dispatch_summary(
         # ("12"), que `resolve_clave` no reconoce porque un número suelto en un
         # despacho es casi siempre el carro. Acá el campo YA está aislado, así
         # que el número suelto sí es la clave.
-        codigo = normalise_code(texto_clave) or (
+        codigo = normalise_code(
+            texto_clave, colapsar_cero=sistema.colapsa_cero if sistema else True
+        ) or (
             (int(texto_clave),) if texto_clave.isdigit() and len(texto_clave) <= 2 else None
         )
         canonico = clave_meaning(codigo, sistema) if codigo is not None else None
@@ -946,7 +978,9 @@ _URL = re.compile(r"https?://\S+", re.IGNORECASE)
 #: «info ->» del formato viejo de la cuenta, con la flecha escapada o no.
 _INFO_FLECHA = re.compile(r"\binfo\s*-(?:>|&gt;)", re.IGNORECASE)
 #: «SALE T-1 A …»: la unidad que sale, no la dirección.
-_SALE_UNIDAD = re.compile(r"^\s*sale\s+[A-Za-z]{1,3}-?\d{1,3}\s+a\s+", re.IGNORECASE)
+_SALE_UNIDAD = re.compile(
+    r"^\s*sale\s+(?:[A-Za-z]{1,3}-?\d{1,3}[\s,]*)+a\s+", re.IGNORECASE
+)
 #: La clave al principio del aviso, con o sin subtipo.
 _CLAVE_INICIAL = re.compile(r"^\s*clave\s*(\d{1,2}(?:\s*-\s*\d{1,2}){0,2})(?!\d)", re.IGNORECASE)
 #: Unidades despachadas: U-63, CJ-1, T-1, B-12. Sólo en MAYÚSCULAS, que es como
@@ -1019,7 +1053,9 @@ def reordenar_clave_primero(texto: str, sistema: SistemaClaves) -> tuple[str, st
 
     clave = re.sub(r"\s+", "", inicial.group(1))
     resto = _UNIDAD_CBVM.sub(" ", sin_sale[inicial.end():])
-    codigo = normalise_code(clave) or ((int(clave),) if clave.isdigit() else None)
+    codigo = normalise_code(clave, colapsar_cero=sistema.colapsa_cero) or (
+        (int(clave),) if clave.isdigit() else None
+    )
     significado = clave_meaning(codigo, sistema) if codigo else None
     resto = _sin_significado(" ".join(resto.split()), significado)
 
@@ -1029,6 +1065,96 @@ def reordenar_clave_primero(texto: str, sistema: SistemaClaves) -> tuple[str, st
     if not direccion:
         return (f"Clave {clave}", comuna)
     return (f"{direccion} * Clave {clave}", comuna)
+
+
+# -- Formato «clave (significado), dirección, unidades» (@despachoscbla) ------
+#
+#     10-0-1 (LLAMADO ESTRUCTURAL), MEMBRILLAR /CHACABUCO, QB-2,RB-3,BT-5
+#     10-6-1 (ESCAPE DE GAS), JARDINES DE LOS ANDES ALTURA 491, H-2
+#     SALE RB-3, A 10-6-1 EN JARDINES DE LOS ANDES ALTURA 491
+#     EMERGENCIA: 12:00 10-4-2 RESCATE VEHICULAR PESADO), ACCESO AUTOPISTA … / …, R-1 H-2
+#
+# Se lleva a «VÍAS * CLAVE», igual que el formato de Viña.
+
+#: «EMERGENCIA:» y la hora que la central antepone a veces.
+_PREFIJO_EMERGENCIA = re.compile(
+    r"^\s*emergencia\s*:?\s*(?:\d{1,2}:\d{2}\s*(?:hrs?\.?|h)?\s*)?", re.IGNORECASE
+)
+#: «SALE RB-3, A 10-6-1 EN …»: se queda la clave y lo que sigue a «EN».
+_SALE_A_CLAVE_EN = re.compile(
+    r"^\s*sale\s+(?:[A-Za-z]{1,3}-?\d{1,3}[\s,]*)+a\s+(?P<clave>\d{1,2}(?:\s*-\s*\d{1,2}){1,3})\s+en\s+",
+    re.IGNORECASE,
+)
+_CLAVE_NUMERICA_INICIAL = re.compile(r"^\s*(\d{1,2}(?:\s*-\s*\d{1,2}){1,3})(?!\d)")
+#: Unidades de Los Andes: «QB-2», «RB-3», «BT-5», «H-2», «K-015885».
+_UNIDAD_CBLA = re.compile(r"(?<![\w-])[A-Z]{1,3}-\d{1,6}(?![-\w])")
+_ALTURA = re.compile(r"\baltura\b", re.IGNORECASE)
+
+
+def reordenar_clave_parentesis(texto: str, sistema: SistemaClaves) -> tuple[str, str | None]:
+    """Aviso «clave (significado), dirección, unidades» → `("VÍAS * clave", comuna|None)`."""
+    limpio = " ".join(_URL.sub(" ", texto).split())
+    comuna = _comuna_nombrada(limpio, sistema)
+    limpio = _PREFIJO_EMERGENCIA.sub("", limpio)
+
+    sale = _SALE_A_CLAVE_EN.match(limpio)
+    if sale is not None:
+        clave = re.sub(r"\s+", "", sale.group("clave"))
+        resto = limpio[sale.end():]
+    else:
+        inicial = _CLAVE_NUMERICA_INICIAL.match(limpio)
+        if inicial is None:
+            return (limpio, comuna)
+        clave = re.sub(r"\s+", "", inicial.group(1))
+        resto = limpio[inicial.end():]
+        # El significado: entre paréntesis, o hasta el «)» que a veces queda
+        # huérfano («10-4-2 RESCATE VEHICULAR PESADO), ACCESO …»).
+        resto = re.sub(r"^\s*\([^)]*\)", "", resto)
+        if ")" in resto.split(",", 1)[0]:
+            resto = resto.split(")", 1)[1]
+
+    resto = _UNIDAD_CBLA.sub(" ", resto)
+    resto = _ALTURA.sub(" ", resto)
+    segmentos = [seg.strip(" ,.-") for seg in resto.split(",")]
+    direccion = next(
+        (seg for seg in segmentos if seg and re.search(r"[A-Za-zÁÉÍÓÚÑáéíóúñ]", seg)), ""
+    )
+    direccion = " ".join(direccion.split())
+    if not direccion:
+        return (clave, comuna)
+    return (f"{direccion} * {clave}", comuna)
+
+
+#: «SALE M-34 A …», «SALE RB-3, A 10-6-1 EN …»: el aviso anuncia unidades que
+#: se suman a una emergencia ya despachada.
+_SEGUIMIENTO = re.compile(r"^\s*sale\s+[A-Za-z]{1,3}-?\d", re.IGNORECASE)
+#: Unidades tal como las escriben las centrales automatizadas: «M-32», «U-12»,
+#: «CJ-1», «QB-2». Mismo cuidado con las rutas que `_UNIDAD_CBVM`.
+_UNIDAD_CUALQUIERA = re.compile(
+    r"(?<!RUTA )(?<!Ruta )(?<!ruta )(?<![\w-])[A-Z]{1,3}-\d{1,3}(?![-\w])"
+)
+
+
+def es_seguimiento(texto: str | None) -> bool:
+    """¿El aviso es un «SALE <unidades> A …» y no un despacho nuevo?"""
+    return bool(_SEGUIMIENTO.match(_URL.sub(" ", texto or "")))
+
+
+def unidades_del_aviso(texto: str | None, sistema: SistemaClaves) -> list[str]:
+    """Las unidades despachadas que nombra el aviso, en orden y sin repetir.
+
+    En el formato del CBV (`91, 31 * CALLE / CALLE * CLAVE 1-1`) son el primer
+    campo; en los demás, los códigos con letra y guion («M-32», «QB-2»).
+    """
+    limpio = " ".join(_URL.sub(" ", texto or "").split())
+    if not limpio:
+        return []
+    if sistema.formato == "campos":
+        primero = _CAMPO_SPLIT.split(limpio, 1)[0]
+        if not _UNIDAD.match(primero):
+            return []
+        return list(dict.fromkeys(u.strip() for u in primero.split(",") if u.strip()))
+    return list(dict.fromkeys(_UNIDAD_CUALQUIERA.findall(limpio)))
 
 
 def dispatch_summary_heuristic(
@@ -1056,6 +1182,8 @@ def dispatch_summary_heuristic(
     ciudad: str | None = None
     if elegido.formato == "clave_primero":
         limpio, ciudad = reordenar_clave_primero(limpio, elegido)
+    elif elegido.formato == "clave_parentesis":
+        limpio, ciudad = reordenar_clave_parentesis(limpio, elegido)
 
     # Mismo motivo que en `format_dispatch_summary`: `resolve_clave` devuelve
     # `tuple[str, str]` y desempaquetarlo primero haría que mypy fijara ambas
@@ -1073,7 +1201,7 @@ def dispatch_summary_heuristic(
         # lo marque. Perder también el número dejaría un resumen que dice "Sin
         # clave" sobre un despacho que sí traía una, y eso oculta justo el caso
         # que hay que ir a corregir al diccionario.
-        presentes = find_claves(limpio)
+        presentes = find_claves(limpio, colapsar_cero=elegido.colapsa_cero)
         clave = clave_label(presentes[0]) if presentes else None
         significado = None
 
@@ -1085,7 +1213,7 @@ def dispatch_summary_heuristic(
         if _UNIDAD.match(campo):
             continue
         # El campo de la clave no es una dirección.
-        if find_claves(campo) and not _VIA_SPLIT.search(campo):
+        if find_claves(campo, colapsar_cero=elegido.colapsa_cero) and not _VIA_SPLIT.search(campo):
             continue
         partes = [parte.strip(" ,.") for parte in _VIA_SPLIT.split(campo) if parte.strip(" ,.")]
         if not partes:
@@ -1173,6 +1301,7 @@ __all__ = [
     "decode_dispatch",
     "dispatch_instruction",
     "dispatch_summary_heuristic",
+    "es_seguimiento",
     "extract_dispatch",
     "extract_streets",
     "format_dispatch_summary",
@@ -1180,6 +1309,8 @@ __all__ = [
     "parse_dispatch_response",
     "parse_response",
     "registrar_uso",
+    "reordenar_clave_parentesis",
     "reordenar_clave_primero",
     "response_text",
+    "unidades_del_aviso",
 ]
