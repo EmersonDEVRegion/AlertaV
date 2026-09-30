@@ -47,6 +47,8 @@ export interface ExplorePanelProps {
   incidentCount: number
   /** «Mis lugares» y el buscador: encuadra el área y acota el historial. */
   onFocusArea: (area: ExploreArea) => void
+  /** «Mis lugares»: vuela a un cuartel cercano y enciende su capa. */
+  onFocusCuartel: (lon: number, lat: number) => void
 }
 
 interface ExploreChrome {
@@ -75,6 +77,7 @@ export const ExplorePanel = memo(function ExplorePanel({
   selection,
   incidentCount,
   onFocusArea,
+  onFocusCuartel,
   grip,
   headerProps,
   onInteract,
@@ -167,6 +170,7 @@ export const ExplorePanel = memo(function ExplorePanel({
                   history={history.history}
                   onMapCodes={history.onMapCodes}
                   onFocusArea={onFocusArea}
+                  onFocusCuartel={onFocusCuartel}
                 />
                 {/* Las capas de referencia arriba del historial, plegadas: se
                     encienden de vez en cuando y no pueden empujar la lista. */}

@@ -1,7 +1,10 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { Cuartel } from '@/api/cuarteles'
 import type { Incident } from '@/api/types'
 import { Button } from '@/components/ui/primitives'
+import { useCuartelesData } from '@/hooks/useCuarteles'
 import { useGeolocation } from '@/hooks/useGeolocation'
+import { NUMERO_BOMBEROS, cuartelesCercanos, formatDistancia } from '@/domain/cuarteles'
 import { distanceKm } from '@/lib/geo'
 import { cn } from '@/lib/cn'
 import { forgetPlaceArea, type ExploreArea } from '@/lib/exploreStore'
@@ -30,6 +33,8 @@ interface SavedPlacesProps {
   history: readonly Incident[]
   onMapCodes: ReadonlySet<string>
   onFocusArea: (area: ExploreArea) => void
+  /** Vuela a un cuartel y enciende la capa. */
+  onFocusCuartel: (lon: number, lat: number) => void
 }
 
 const NAME_CHOICES = ['Casa', 'Trabajo'] as const
@@ -72,18 +77,92 @@ function nearby(place: SavedPlace, live: readonly Incident[]): number {
   return n
 }
 
+/**
+ * Los tres cuarteles más cercanos a un punto, plegados bajo una línea.
+ *
+ * Dice «en línea recta» siempre: no es el tiempo de respuesta ni la compañía
+ * que va a despachar la central. El teléfono del cuartel NO se muestra a
+ * propósito: en una emergencia se llama al 132, y llamar a un cuartel retrasa
+ * el despacho.
+ */
+function CuartelesCerca({
+  cuarteles,
+  lat,
+  lon,
+  onFocusCuartel,
+  idBase,
+}: {
+  cuarteles: readonly Cuartel[]
+  lat: number
+  lon: number
+  onFocusCuartel: (lon: number, lat: number) => void
+  idBase: string
+}) {
+  const [open, setOpen] = useState(false)
+  const cercanos = useMemo(() => cuartelesCercanos(cuarteles, lat, lon, 3), [cuarteles, lat, lon])
+  const primero = cercanos[0]
+  if (!primero) return null
+  const panelId = `${idBase}-cuarteles`
+  return (
+    <div className="pb-1 pl-[46px] pr-1.5">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls={panelId}
+        className="w-full truncate text-left text-[10.5px] leading-tight text-ink-muted underline-offset-2 hover:text-ink hover:underline"
+      >
+        Cuartel más cercano: {primero.cuartel.nombre} · {formatDistancia(primero.km)}
+      </button>
+      {open && (
+        <div id={panelId} className="mt-1 space-y-0.5">
+          <ul>
+            {cercanos.map(({ cuartel, km }) => (
+              <li key={cuartel.id} className="flex items-center gap-2">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[10.5px] font-medium text-ink">
+                    {cuartel.nombre}
+                  </span>
+                  <span className="block truncate text-[9.5px] text-ink-faint">
+                    {[cuartel.direccion, formatDistancia(km)].filter(Boolean).join(' · ')}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onFocusCuartel(cuartel.lon, cuartel.lat)}
+                  className="shrink-0 text-[10px] font-semibold text-accent underline-offset-2 hover:underline"
+                >
+                  Ver en el mapa
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="text-[9.5px] leading-snug text-ink-faint">
+            Distancia en línea recta. La central de Bomberos decide qué compañía va.
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const PlaceRow = memo(function PlaceRow({
   place,
   count,
   onFocus,
+  cuarteles,
+  onFocusCuartel,
 }: {
   place: SavedPlace
   count: number
   onFocus: (place: SavedPlace) => void
+  cuarteles: readonly Cuartel[]
+  onFocusCuartel: (lon: number, lat: number) => void
 }) {
   const alert = count > 0
   return (
-    <li className="flex items-center gap-1">
+    <li>
+    <div className="flex items-center gap-1">
       <button
         type="button"
         onClick={() => onFocus(place)}
@@ -134,9 +213,102 @@ const PlaceRow = memo(function PlaceRow({
           <path d="M6 6l12 12M18 6 6 18" />
         </svg>
       </button>
+    </div>
+    <CuartelesCerca
+      cuarteles={cuarteles}
+      lat={place.lat}
+      lon={place.lon}
+      onFocusCuartel={onFocusCuartel}
+      idBase={`lugar-${place.id}`}
+    />
     </li>
   )
 })
+
+/** «Cuarteles cerca de mí»: con la ubicación del momento, sin guardarla. */
+function CuartelesCercaDeMi({
+  cuarteles,
+  onFocusCuartel,
+  onPedir,
+}: {
+  cuarteles: readonly Cuartel[]
+  onFocusCuartel: (lon: number, lat: number) => void
+  /** Pide la lista de cuarteles si todavía no se había pedido. */
+  onPedir: () => void
+}) {
+  const geo = useGeolocation()
+  if (geo.status === 'ready' && geo.coords) {
+    if (cuarteles.length === 0) {
+      return <p className="px-1.5 pt-1 text-[10.5px] text-ink-muted">Cargando cuarteles…</p>
+    }
+    return (
+      <div className="pt-1">
+        <p className="px-1.5 text-[10.5px] font-semibold text-ink">Cerca de tu ubicación</p>
+        <CuartelesCercaAbierto
+          cuarteles={cuarteles}
+          lat={geo.coords.lat}
+          lon={geo.coords.lon}
+          onFocusCuartel={onFocusCuartel}
+        />
+      </div>
+    )
+  }
+  return (
+    <div className="px-1.5 pt-1">
+      <button
+        type="button"
+        onClick={() => {
+          onPedir()
+          geo.request()
+        }}
+        disabled={geo.status === 'locating'}
+        className="text-[10.5px] font-semibold text-accent underline-offset-2 hover:underline disabled:text-ink-faint"
+      >
+        {geo.status === 'locating' ? 'Ubicando…' : 'Cuarteles cerca de mí'}
+      </button>
+      {geo.error && (
+        <p role="alert" className="text-[10.5px] leading-snug text-danger-ink">
+          {geo.error}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function CuartelesCercaAbierto({
+  cuarteles,
+  lat,
+  lon,
+  onFocusCuartel,
+}: {
+  cuarteles: readonly Cuartel[]
+  lat: number
+  lon: number
+  onFocusCuartel: (lon: number, lat: number) => void
+}) {
+  const cercanos = useMemo(() => cuartelesCercanos(cuarteles, lat, lon, 3), [cuarteles, lat, lon])
+  return (
+    <ul className="px-1.5">
+      {cercanos.map(({ cuartel, km }) => (
+        <li key={cuartel.id} className="flex items-center gap-2 py-0.5">
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[10.5px] font-medium text-ink">{cuartel.nombre}</span>
+            <span className="block truncate text-[9.5px] text-ink-faint">
+              {formatDistancia(km)} en línea recta
+            </span>
+          </span>
+          <button
+            type="button"
+            onClick={() => onFocusCuartel(cuartel.lon, cuartel.lat)}
+            className="shrink-0 text-[10px] font-semibold text-accent underline-offset-2 hover:underline"
+          >
+            Ver en el mapa
+          </button>
+        </li>
+      ))}
+    </ul>
+  )
+}
 
 /** Elegir el nombre y dónde: la ubicación actual o un punto del mapa. */
 function AddPlaceForm({ taken, onDone }: { taken: readonly string[]; onDone: () => void }) {
@@ -245,9 +417,18 @@ export const SavedPlaces = memo(function SavedPlaces({
   history,
   onMapCodes,
   onFocusArea,
+  onFocusCuartel,
 }: SavedPlacesProps) {
   const places = usePlaces()
   const [adding, setAdding] = useState(false)
+  /*
+   * Los cuarteles se piden sólo si hay un lugar guardado: sin lugares no hay
+   * nada que medir (y «cerca de mí» los pide al tocarlo, vía `pedirCuarteles`).
+   */
+  const [pedirCuarteles, setPedirCuarteles] = useState(false)
+  const cuartelesQuery = useCuartelesData(places.length > 0 || pedirCuarteles)
+  const cuarteles = cuartelesQuery.data?.cuarteles ?? SIN_CUARTELES
+  const pedir = useCallback(() => setPedirCuarteles(true), [])
   const live = useMemo(
     () => history.filter((incident) => onMapCodes.has(incident.code)),
     [history, onMapCodes],
@@ -281,6 +462,8 @@ export const SavedPlaces = memo(function SavedPlaces({
               place={place}
               count={nearby(place, live)}
               onFocus={focus}
+              cuarteles={cuarteles}
+              onFocusCuartel={onFocusCuartel}
             />
           ))}
         </ul>
@@ -310,8 +493,30 @@ export const SavedPlaces = memo(function SavedPlaces({
           </button>
         )
       )}
+
+      {!adding && (
+        <CuartelesCercaDeMi
+          cuarteles={cuarteles}
+          onFocusCuartel={onFocusCuartel}
+          onPedir={pedir}
+        />
+      )}
+
+      {/* Siempre a mano, y en vez del teléfono de cada cuartel: en una
+          emergencia se llama a la central, que despacha la compañía. */}
+      <p className="px-1.5 pt-1.5 text-[10.5px] text-ink-muted">
+        Emergencias Bomberos:{' '}
+        <a
+          href={`tel:${NUMERO_BOMBEROS}`}
+          className="font-semibold text-urgent underline-offset-2 hover:underline"
+        >
+          {NUMERO_BOMBEROS}
+        </a>
+      </p>
     </section>
   )
 })
+
+const SIN_CUARTELES: readonly Cuartel[] = []
 
 export { PlaceGlyph }

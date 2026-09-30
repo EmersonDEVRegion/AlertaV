@@ -7,9 +7,11 @@ import {
   ROAD_CLOSURE_LEGEND_TEXT,
   ROAD_CLOSURE_PALETTE,
 } from '@/domain/roadClosureSymbology'
+import type { CuartelesStatus } from '@/hooks/useCuarteles'
 import type { HazardStatus } from '@/hooks/useSeismicHazard'
 import type { RoadClosureStatus } from '@/hooks/useRoadClosures'
 import type { Theme } from '@/hooks/useTheme'
+import { CUARTEL_PALETTE } from '@/domain/cuarteles'
 import { cn } from '@/lib/cn'
 
 /**
@@ -56,6 +58,12 @@ export interface ReferenceDockProps {
   closureCutCount: number
   onClosureToggle: () => void
   onClosureRetry: () => void
+  cuartelesEnabled: boolean
+  cuartelesStatus: CuartelesStatus
+  cuartelesCount: number
+  cuartelesError: string | null
+  onCuartelesToggle: () => void
+  onCuartelesRetry: () => void
   theme: Theme
 }
 
@@ -108,6 +116,26 @@ function RoadIcon() {
       <path d="M12 5v2" />
       <path d="M12 11v2" />
       <path d="M12 17v2" />
+    </svg>
+  )
+}
+
+function StationIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className="size-4"
+    >
+      {/* Un cuartel: techo a dos aguas y el portón del carro. */}
+      <path d="M3 10.5 12 4l9 6.5" />
+      <path d="M5 9.5V20h14V9.5" />
+      <path d="M9 20v-6h6v6" />
     </svg>
   )
 }
@@ -284,6 +312,23 @@ function closureDescription(
   }
 }
 
+function cuartelesDescription(
+  status: CuartelesStatus,
+  count: number,
+  error: string | null,
+): string {
+  switch (status) {
+    case 'loading':
+      return 'Cargando cuarteles…'
+    case 'error':
+      return error ?? 'No se pudo cargar'
+    case 'ready':
+      return `${count} cuarteles en la región`
+    default:
+      return 'Cuerpos y compañías de la región'
+  }
+}
+
 function hazardDescription(status: HazardStatus, error: string | null): string {
   switch (status) {
     case 'loading':
@@ -318,6 +363,12 @@ function ReferenceLayers({
   closureCutCount,
   onClosureToggle,
   onClosureRetry,
+  cuartelesEnabled,
+  cuartelesStatus,
+  cuartelesCount,
+  cuartelesError,
+  onCuartelesToggle,
+  onCuartelesRetry,
   theme,
 }: ReferenceDockProps) {
   const hazardAccent = HAZARD_RAMP[theme].stops[2]![1]
@@ -331,6 +382,8 @@ function ReferenceLayers({
    * leyenda y en el mapa, que es donde significa algo.
    */
   const closureAccent = ROAD_CLOSURE_PALETTE[theme].low
+  // Pizarra: un cuartel es referencia, no una emergencia (ver `CUARTEL_PALETTE`).
+  const cuartelAccent = CUARTEL_PALETTE[theme].stroke
 
   return (
     <div className="space-y-0.5">
@@ -460,6 +513,58 @@ function ReferenceLayers({
           )}
         </div>
       </LayerCard>
+
+      {/* --- Cuarteles de Bomberos -------------------------------------- */}
+      <LayerCard
+        label="Cuarteles de Bomberos"
+        description={cuartelesDescription(cuartelesStatus, cuartelesCount, cuartelesError)}
+        icon={<StationIcon />}
+        checked={cuartelesEnabled}
+        accentHex={cuartelAccent}
+        failed={cuartelesStatus === 'error'}
+        busy={cuartelesStatus === 'loading'}
+        onToggle={onCuartelesToggle}
+        {...(cuartelesStatus === 'error' ? { onRetry: onCuartelesRetry } : {})}
+      >
+        <div className="px-0.5 pb-0.5 pt-2">
+          <ul className="space-y-1">
+            <li className="flex items-center gap-1.5">
+              <span
+                aria-hidden
+                className="size-3 shrink-0 rounded-full border-[2.5px]"
+                style={{
+                  borderColor: CUARTEL_PALETTE[theme].stroke,
+                  backgroundColor: CUARTEL_PALETTE[theme].fill,
+                }}
+              />
+              <span className="text-[9.5px] leading-tight text-ink-muted">
+                Cuartel del Cuerpo (comandancia)
+              </span>
+            </li>
+            <li className="flex items-center gap-1.5">
+              <span
+                aria-hidden
+                className="size-2.5 shrink-0 rounded-full border-2"
+                style={{
+                  borderColor: CUARTEL_PALETTE[theme].stroke,
+                  backgroundColor: CUARTEL_PALETTE[theme].fill,
+                }}
+              />
+              <span className="text-[9.5px] leading-tight text-ink-muted">Compañía</span>
+            </li>
+          </ul>
+          <p className="mt-1.5 text-[9.5px] leading-tight text-ink-faint">
+            Se ven al acercar el mapa. Fuente: SIG Bomberos de Chile. Puede faltar
+            alguna compañía.
+          </p>
+          {/* No es negociable: el cuartel más cercano no es necesariamente el
+              que va a responder, y en una emergencia se llama a la central. */}
+          <p className="mt-1.5 text-[9.5px] leading-tight text-ink-faint">
+            En una emergencia llama al 132: la central despacha la compañía que
+            corresponde.
+          </p>
+        </div>
+      </LayerCard>
     </div>
   )
 }
@@ -481,8 +586,9 @@ export const ReferenceDock = memo(function ReferenceDock({
   defaultOpen?: boolean
 }) {
   const [open, setOpen] = useState(defaultOpen)
-  // Dos y no tres: la lluvia se cuenta sola en el widget de la barra superior.
-  const activeCount = Number(props.hazardEnabled) + Number(props.closureEnabled)
+  // La lluvia no: se cuenta sola en el widget de la barra superior.
+  const activeCount =
+    Number(props.hazardEnabled) + Number(props.closureEnabled) + Number(props.cuartelesEnabled)
 
   return (
     <Panel

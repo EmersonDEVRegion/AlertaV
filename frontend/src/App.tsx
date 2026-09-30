@@ -34,6 +34,7 @@ import { useTheme } from '@/hooks/useTheme'
 import { useRainLayer } from '@/hooks/useRainLayer'
 import { useRoadClosures } from '@/hooks/useRoadClosures'
 import { useSeismicHazard } from '@/hooks/useSeismicHazard'
+import { mostrarCuarteles, useCuarteles } from '@/hooks/useCuarteles'
 import { AppMenu } from '@/components/ui/AppMenu'
 import { NotificationBell } from '@/components/ui/NotificationBell'
 import { CitizenReportControl } from '@/components/report/CitizenReportControl'
@@ -89,6 +90,8 @@ const NO_WATER: WaterCut[] = []
 
 /** Zoom al tocar un lugar guardado: se ve el radio de 5 km alrededor. */
 const PLACE_ZOOM = 12
+/** Zoom al tocar un cuartel cercano: se ve el nombre (ver `cuartelesLayers.ts`). */
+const CUARTEL_ZOOM = 14
 
 /** Las familias que viven en la fuente de incidentes. Los cortes tienen la suya. */
 const MAP_FAMILIES = ['fire', 'traffic', 'otros'] as const satisfies readonly IncidentLayerKey[]
@@ -126,6 +129,7 @@ export default function App() {
    */
   const rain = useRainLayer()
   const closures = useRoadClosures()
+  const cuarteles = useCuarteles()
   // Sin `enabled`: su valor aparece justamente cuando el mapa está vacío, que
   // es cuando nadie está tocando nada y nadie iría a buscarlo.
   const health = useCollectorHealth()
@@ -393,6 +397,16 @@ export default function App() {
     [flyTo],
   )
 
+  /** «Ver en el mapa» de un cuartel cercano: enciende la capa y vuela hasta él. */
+  const focusCuartel = useCallback(
+    (lon: number, lat: number) => {
+      mostrarCuarteles()
+      setSheetSnap('peek')
+      flyTo(lon, lat, CUARTEL_ZOOM)
+    },
+    [flyTo],
+  )
+
   const waterPanel = useMemo<WaterPanel | null>(
     () =>
       water.available
@@ -515,9 +529,15 @@ export default function App() {
       closureCutCount: closures.cutCount,
       onClosureToggle: closures.toggle,
       onClosureRetry: closures.retry,
+      cuartelesEnabled: cuarteles.enabled,
+      cuartelesStatus: cuarteles.status,
+      cuartelesCount: cuarteles.count,
+      cuartelesError: cuarteles.errorMessage,
+      onCuartelesToggle: cuarteles.toggle,
+      onCuartelesRetry: cuarteles.retry,
       theme,
     }),
-    [hazard, closures, theme],
+    [hazard, closures, cuarteles, theme],
   )
 
   /*
@@ -541,9 +561,11 @@ export default function App() {
       },
       incidentCount: list.length,
       onFocusArea: focusArea,
+      onFocusCuartel: focusCuartel,
     }),
     [
       focusArea,
+      focusCuartel,
       incidentControls,
       referenceControls,
       historyControls,
@@ -597,6 +619,7 @@ export default function App() {
           hazard={hazard}
           rain={rain}
           closures={closures}
+          cuarteles={cuarteles}
           incidents={mapIncidents}
           visibleFamilies={visibleFamilies}
           offMap={offMap}

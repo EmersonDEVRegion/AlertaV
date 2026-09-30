@@ -234,6 +234,12 @@ export interface IncidentEventLink {
   note: string | null
 
   /**
+   * Carros de Bomberos despachados («M-32», «QB-2»), incluidos los que se
+   * sumaron con un «SALE … A …». Opcional: un backend anterior no lo manda.
+   */
+  unidades?: string[]
+
+  /**
    * Enlace publico de la senal: la nota de prensa, el post.
    *
    * **Ya viene validado por el backend** (`services/source_links.py`): solo

@@ -18,6 +18,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ReferenceDock } from './ReferenceDock'
 import type { ReferenceDockProps } from './ReferenceDock'
+import type { CuartelesStatus } from '@/hooks/useCuarteles'
 import type { HazardStatus } from '@/hooks/useSeismicHazard'
 import type { RoadClosureStatus } from '@/hooks/useRoadClosures'
 
@@ -29,6 +30,9 @@ type Override = Partial<{
   closureStatus: RoadClosureStatus
   closureCount: number
   closureCutCount: number
+  cuartelesEnabled: boolean
+  cuartelesStatus: CuartelesStatus
+  cuartelesCount: number
 }>
 
 function renderDock(over: Override = {}) {
@@ -36,6 +40,7 @@ function renderDock(over: Override = {}) {
   const onHazardRetry = vi.fn()
   const onClosureToggle = vi.fn()
   const onClosureRetry = vi.fn()
+  const onCuartelesToggle = vi.fn()
 
   const props: ReferenceDockProps = {
     hazardEnabled: over.hazardEnabled ?? false,
@@ -49,6 +54,12 @@ function renderDock(over: Override = {}) {
     closureCutCount: over.closureCutCount ?? 0,
     onClosureToggle,
     onClosureRetry,
+    cuartelesEnabled: over.cuartelesEnabled ?? false,
+    cuartelesStatus: over.cuartelesStatus ?? 'idle',
+    cuartelesCount: over.cuartelesCount ?? 0,
+    cuartelesError: null,
+    onCuartelesToggle,
+    onCuartelesRetry: vi.fn(),
     theme: 'light',
   }
 
@@ -58,6 +69,7 @@ function renderDock(over: Override = {}) {
     onHazardRetry,
     onClosureToggle,
     onClosureRetry,
+    onCuartelesToggle,
   }
 }
 
@@ -176,5 +188,19 @@ describe('plegado del dock', () => {
     await user.click(header)
 
     expect(header).toHaveTextContent('2')
+  })
+})
+
+describe('Cuarteles de Bomberos', () => {
+  it('el interruptor avisa y la tarjeta cuenta los cuarteles', async () => {
+    const { onCuartelesToggle } = renderDock({ cuartelesStatus: 'ready', cuartelesCount: 146 })
+    expect(screen.getByText('146 cuarteles en la región')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('switch', { name: /cuarteles de bomberos/i }))
+    expect(onCuartelesToggle).toHaveBeenCalledOnce()
+  })
+
+  it('encendida, recuerda que en una emergencia se llama al 132', () => {
+    renderDock({ cuartelesEnabled: true, cuartelesStatus: 'ready', cuartelesCount: 146 })
+    expect(screen.getByText(/llama al 132/)).toBeInTheDocument()
   })
 })

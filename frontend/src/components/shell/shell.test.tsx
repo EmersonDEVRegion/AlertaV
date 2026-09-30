@@ -30,6 +30,7 @@ function props(over: Partial<ExplorePanelProps> = {}): ExplorePanelProps {
   return {
     incidentCount: 1,
     onFocusArea: vi.fn(),
+    onFocusCuartel: vi.fn(),
     incidents: {
       visibility: DEFAULT_LAYER_VISIBILITY,
       onChange: vi.fn(),
@@ -55,6 +56,12 @@ function props(over: Partial<ExplorePanelProps> = {}): ExplorePanelProps {
       closureCutCount: 0,
       onClosureToggle: vi.fn(),
       onClosureRetry: vi.fn(),
+      cuartelesEnabled: false,
+      cuartelesStatus: 'idle',
+      cuartelesCount: 0,
+      cuartelesError: null,
+      onCuartelesToggle: vi.fn(),
+      onCuartelesRetry: vi.fn(),
       theme: 'light',
     },
     history: {
