@@ -266,6 +266,54 @@ async def refresh_rain_grid(
 # ---------------------------------------------------------------------------
 
 
+def seconds_until_due(
+    row: WeatherGrid | None, grid: GridSpec, *, now: datetime
+) -> float:
+    """Cuánto falta para que toque leer la grilla. 0 = ya toca.
+
+    Para qué: el bucle de la grilla arrancaba con una lectura completa en cada
+    arranque del proceso, y un arranque es cada deploy (seis el 30-09) y cada
+    reinicio de Render. Con 650 puntos, cada uno costaba ~650 llamadas de la
+    cuota diaria de Open-Meteo (10 000), y ese día se agotó (§L). La foto de la
+    base sirve igual aunque el proceso sea nuevo.
+
+    * **Sin foto, o foto de otra forma** (caja, paso, modelo u horas distintos
+      a los configurados): toca ya. Es el caso de un deploy que cambia la caja.
+    * **Último intento fallido**: se respeta `RAIN_GRID_RETRY_SECONDS` desde ese
+      intento, para que un deploy durante un 429 no martille la API.
+    * **Foto vigente**: toca al cumplirse la cadencia desde que se generó.
+    """
+    if row is None:
+        return 0.0
+    if row.error and row.attempted_at is not None:
+        retry = row.attempted_at + timedelta(seconds=settings.RAIN_GRID_RETRY_SECONDS)
+        return max(0.0, (retry - now).total_seconds())
+    if row.generated_at is None:
+        return 0.0
+    same_shape = (
+        row.nx == grid.nx
+        and row.ny == grid.ny
+        and row.step is not None
+        and row.west is not None
+        and row.north is not None
+        and math.isclose(row.step, grid.step)
+        and math.isclose(row.west, grid.west)
+        and math.isclose(row.north, grid.north)
+        and row.model == settings.OPENMETEO_MODEL
+        and row.hours == settings.RAIN_GRID_HOURS
+    )
+    if not same_shape:
+        return 0.0
+    due = row.generated_at + timedelta(seconds=settings.RAIN_GRID_POLL_INTERVAL_SECONDS)
+    return max(0.0, (due - now).total_seconds())
+
+
+async def rain_grid_wait(session: AsyncSession, *, now: datetime | None = None) -> float:
+    """`seconds_until_due` contra la foto guardada. Ver ahí."""
+    row = await WeatherGridRepository(session).get(RAIN_GRID_KEY)
+    return seconds_until_due(row, grid_from_settings(), now=now or datetime.now(UTC))
+
+
 def grid_state(row: WeatherGrid | None, *, now: datetime) -> str:
     """`ok`, `stale`, `failing` o `never`, con la cadencia de la grilla.
 
