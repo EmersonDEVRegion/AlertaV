@@ -25,7 +25,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { WeatherWidget } from './WeatherWidget'
-import { __resetWeatherStore } from '@/lib/tacticalWeatherStore'
+import {
+  __resetWeatherStore,
+  clearRainFieldError,
+  reportRainFieldError,
+} from '@/lib/tacticalWeatherStore'
 
 /* --- Fábricas --------------------------------------------------------------
  *
@@ -368,6 +372,23 @@ describe('el interruptor de la capa de lluvia, heredado del riel', () => {
       'aria-checked',
       'true',
     )
+  })
+})
+
+describe('si el campo de lluvia no se puede dibujar', () => {
+  it('lo dice junto al interruptor en vez de mostrar la escala sobre un mapa vacío', async () => {
+    // Pasó en producción: la CSP bloqueaba la imagen y el widget no avisaba.
+    const user = userEvent.setup()
+    await montar(CALMA)
+    await user.click(widget())
+    await user.click(screen.getByRole('switch', { name: /lluvia en el mapa/i }))
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    act(() => reportRainFieldError())
+    expect(screen.getByRole('alert')).toHaveTextContent(/no se pudo dibujar la lluvia/i)
+
+    act(() => clearRainFieldError())
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 })
 

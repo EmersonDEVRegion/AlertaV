@@ -1,5 +1,6 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Layer, Source, useMap } from 'react-map-gl/maplibre'
+import type { ErrorEvent, MapSourceDataEvent } from 'maplibre-gl'
 import type { RainCollection } from '@/api/rainTypes'
 import type { RainRaster } from '@/lib/rainRaster'
 import type { Theme } from '@/hooks/useTheme'
@@ -14,6 +15,7 @@ import {
   rainTextLayer,
 } from './rainLayers'
 import { useLayerReanchor } from './useLayerReanchor'
+import { clearRainFieldError, reportRainFieldError } from '@/lib/tacticalWeatherStore'
 
 /**
  * Capa de lluvia pronosticada.
@@ -70,6 +72,42 @@ export function RainLayer({ data, raster, visible, theme }: RainLayerProps) {
    * y la de amenaza sísmica.
    */
   useLayerReanchor(instance, RAIN_LAYER_IDS, RAIN_ANCHORS)
+
+  /*
+   * ¿Se dibujó el campo?
+   *
+   * La imagen es un `data:` que MapLibre 6 descarga con `fetch()`. Si algo lo
+   * impide —la CSP sin `data:` en `connect-src`, como pasó en producción— el
+   * error sólo llegaba a la consola y el widget seguía mostrando la escala sobre
+   * un mapa vacío. Los eventos de fuente del mapa traen `sourceId`, así que se
+   * filtra el del campo y se avisa por el store, que es lo que lee el widget.
+   *
+   * Una carga correcta (o una imagen nueva, que es otro intento) limpia el aviso.
+   */
+  useEffect(() => {
+    if (!instance) return
+    // El `error` del mapa no tipa `sourceId`, pero MapLibre se lo agrega a los
+    // eventos que reenvía desde una fuente (ver `Style.addSource`).
+    const onError = (event: ErrorEvent) => {
+      if ((event as ErrorEvent & { sourceId?: string }).sourceId === RAIN_FIELD_SOURCE_ID) {
+        reportRainFieldError()
+      }
+    }
+    const onData = (event: MapSourceDataEvent) => {
+      if (event.sourceId === RAIN_FIELD_SOURCE_ID && event.isSourceLoaded) clearRainFieldError()
+    }
+    instance.on('error', onError)
+    instance.on('sourcedata', onData)
+    return () => {
+      instance.off('error', onError)
+      instance.off('sourcedata', onData)
+    }
+  }, [instance])
+
+  const rasterUrl = raster?.url
+  useEffect(() => {
+    if (rasterUrl) clearRainFieldError()
+  }, [rasterUrl])
 
   // Las especificaciones sólo cambian con el tema o con el encendido. react-map-gl
   // compara propiedad por propiedad, así que un objeto nuevo con los mismos

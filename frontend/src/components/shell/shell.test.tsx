@@ -99,6 +99,20 @@ describe('columna de escritorio', () => {
     expect(screen.getByText('Incendio estructural — Concón')).toBeInTheDocument()
   })
 
+  it('bajo el resumen dice cuándo fue el último despacho de Bomberos', () => {
+    const at = Date.now() - 2 * 3_600_000
+    render(withQuery(<DesktopColumn {...props({ lastDispatchAt: at })} />))
+    expect(screen.getByText(/Último despacho de Bomberos/)).toHaveTextContent(/hace 2 h/)
+  })
+
+  it('sin despachos en 48 h lo dice, y sin el dato no muestra la línea', () => {
+    const { unmount } = render(withQuery(<DesktopColumn {...props({ lastDispatchAt: null })} />))
+    expect(screen.getByText(/Sin despachos de Bomberos/)).toBeInTheDocument()
+    unmount()
+    render(withQuery(<DesktopColumn {...props()} />))
+    expect(screen.queryByText(/despacho/i)).not.toBeInTheDocument()
+  })
+
   it('las capas de referencia van arriba del historial, plegadas', () => {
     render(withQuery(<DesktopColumn {...props()} />))
     const dock = screen.getByRole('button', { name: /capas de referencia/i })

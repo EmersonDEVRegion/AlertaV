@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "oxlint -c .oxlintrc.json src",
     "knip": "knip",
+    "icons": "node scripts/icons.mjs",
     "check": "npm run typecheck && npm run lint && npm run knip && npm test",
     "analyze": "vite build --sourcemap && npx --yes source-map-explorer@2 \"dist/assets/*.js\" --no-border-checks --html dist/stats.html"
   },
@@ -27,6 +28,7 @@
   },
   "devDependencies": {
     "@maplibre/maplibre-gl-style-spec": "^26.2.1",
+    "@resvg/resvg-js": "^2.6.2",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.2",

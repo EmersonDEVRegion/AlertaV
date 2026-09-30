@@ -975,16 +975,21 @@ class Settings(BaseSettings):
     #: de la capa). La guarda un trabajo del proceso de workers en
     #: `weather_grids`; ver `app/services/rain_grid_service.py`.
     #:
-    #: Presupuesto: con paso 0,15° la caja de abajo son 17 × 15 = 255 puntos.
+    #: Presupuesto: con paso 0,15° la caja de abajo son 19 × 15 = 285 puntos.
     #: Si Open-Meteo contara cada punto como una llamada (su página de precios
-    #: no lo aclara), una corrida por hora son 6120 al día, que sumadas a las
+    #: no lo aclara), una corrida por hora son 6840 al día, que sumadas a las
     #: 1728 de las comunas quedan bajo las 10.000 del nivel abierto. Un paso de
     #: 0,1° pasaría el límite, y más fino que el modelo (~9-11 km) no agrega nada.
+    #:
+    #: El borde este va a −69,5° (última columna en −69,6°) y no en el límite
+    #: de la región: la PWA difumina 1,5 celdas en cada borde para que la caja
+    #: no se vea, y con el borde en −69,8° ese difuminado apagaba justo la alta
+    #: cordillera, donde se concentra la lluvia de un frente (§H, 30-09-2026).
     RAIN_GRID_ENABLED: bool = True
     RAIN_GRID_STEP_DEGREES: float = Field(default=0.15, ge=0.05, le=1.0)
     RAIN_GRID_WEST: float = -72.3
     RAIN_GRID_SOUTH: float = -34.0
-    RAIN_GRID_EAST: float = -69.8
+    RAIN_GRID_EAST: float = -69.5
     RAIN_GRID_NORTH: float = -31.9
     RAIN_GRID_POLL_INTERVAL_SECONDS: int = Field(default=3600, ge=900, le=86_400)
     #: Puntos por petición. Una sola variable × 48 pasos por punto: 25 puntos

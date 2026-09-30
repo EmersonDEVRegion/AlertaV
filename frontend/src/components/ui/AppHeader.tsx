@@ -55,20 +55,32 @@ function Brand() {
   return (
     <div className="flex shrink-0 items-center gap-2">
       <span className="relative grid size-7 place-items-center">
-        {/* Diafragma sísmico: tres arcos concéntricos saliendo de un punto. */}
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2}
-          strokeLinecap="round"
-          aria-hidden
-          className="size-[22px] text-orange-400"
-        >
-          <circle cx="12" cy="17" r="1.6" fill="currentColor" stroke="none" />
-          <path d="M8.6 13.6a4.8 4.8 0 0 1 6.8 0" />
-          <path d="M5.8 10.2a8.8 8.8 0 0 1 12.4 0" />
-          <path d="M3 6.8a12.8 12.8 0 0 1 18 0" opacity="0.45" />
+        {/*
+          La marca: el mismo triángulo con V de `public/icons/favicon.svg` (§H).
+          Antes iban tres arcos fijos que se leían como el ícono de Wi-Fi —como
+          si midieran la conexión— y no cambiaban con nada. El estado vivo ya lo
+          dice el punto de `LiveStatus`; la marca sólo identifica.
+
+          La V se cala con el color de la barra (`stroke-chrome`) y no con el
+          azul marino del ícono, para que siga siendo un hueco en la barra.
+        */}
+        <svg viewBox="10 10 44 44" aria-hidden className="size-[24px]">
+          <path
+            d="M32 15 50.5 47H13.5Z"
+            fill="#f59e0b"
+            stroke="#f59e0b"
+            strokeWidth={7}
+            strokeLinejoin="round"
+          />
+          <path
+            d="M26 28.2 32 41 38 28.2"
+            fill="none"
+            className="stroke-chrome"
+            strokeWidth={4.4}
+            strokeLinecap="round"
+            strokeLinejoin="miter"
+            strokeMiterlimit={10}
+          />
         </svg>
       </span>
 
@@ -76,9 +88,9 @@ function Brand() {
         <h1 className="text-[15px] font-semibold leading-none tracking-[-0.01em]">
           Alerta
           {/*
-            La V no es sólo la inicial de Valparaíso: es lo único cromático de la
-            marca, así que carga con toda la identidad. Va en el naranja de la
-            familia de incendios porque es la capa fundacional del proyecto.
+            La V no es sólo la inicial de Valparaíso: repite la V calada del
+            triángulo de al lado. Va en el naranja de la familia de incendios
+            porque es la capa fundacional del proyecto.
           */}
           <span className="text-orange-400">V</span>
         </h1>

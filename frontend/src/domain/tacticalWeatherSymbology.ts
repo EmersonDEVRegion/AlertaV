@@ -250,6 +250,8 @@ export const WEATHER_TEXT = {
    * que nadie emitió. Ver la nota de los tres estados en `WeatherWidget`.
    */
   layerEmpty: 'Sin precipitaciones pronosticadas para hoy',
+  /** El campo de lluvia no se pudo dibujar (la imagen no cargó en el mapa). */
+  layerFailed: 'No se pudo dibujar la lluvia en el mapa. Recarga la página para reintentar.',
   /** La aclaración que esta capa arrastra en todos sus textos. */
   caveat:
     'Pronóstico a escala comunal (celdas de 9-11 km). No es una alerta oficial: esas las declara SENAPRED.',
