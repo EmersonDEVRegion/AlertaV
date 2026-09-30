@@ -30,6 +30,7 @@ Detalles que importan
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 from collections.abc import Mapping, Sequence
@@ -164,6 +165,11 @@ def parse_chunk(
     ]
 
 
+#: La espera entre lotes. Un nombre propio para que los tests la reemplacen sin
+#: tocar `asyncio.sleep` de todo el proceso.
+_pausa = asyncio.sleep
+
+
 async def fetch_grid(
     grid: GridSpec,
     *,
@@ -183,6 +189,10 @@ async def fetch_grid(
     )
     try:
         for number, batch in enumerate(batches, start=1):
+            if number > 1 and settings.RAIN_GRID_BATCH_PAUSE_SECONDS > 0:
+                # Bajo el límite por minuto de Open-Meteo. Ver
+                # `RAIN_GRID_BATCH_PAUSE_SECONDS`.
+                await _pausa(settings.RAIN_GRID_BATCH_PAUSE_SECONDS)
             origin = f"open-meteo grilla [lote {number}/{len(batches)}]"
             params = {
                 "latitude": ",".join(f"{lat:.4f}" for lat, _ in batch),
@@ -218,7 +228,7 @@ async def refresh_rain_grid(
     """Una corrida: pide la grilla y guarda la foto. `True` si salió bien.
 
     Un fallo no revienta: se anota en la fila (la foto anterior se conserva) y
-    se reintenta en la próxima corrida.
+    el runner reintenta a los `RAIN_GRID_RETRY_SECONDS`, no a la cadencia.
     """
     moment = now or datetime.now(UTC)
     grid = grid_from_settings()

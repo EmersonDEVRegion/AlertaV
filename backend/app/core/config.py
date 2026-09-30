@@ -881,17 +881,23 @@ class Settings(BaseSettings):
     #: urgente. `<category>` trae «Región Valparaíso» y la comuna, pero el feed
     #: mezcla notas nacionales: por eso el sexto campo exige «Región Valparaíso»
     #: (ver `NewsPortal.categoria_requerida`). Sólo feed, sin portada, y con la
-    #: confianza de medio por defecto (0,60): tiene redacción propia. Está detrás
-    #: de Cloudflare como Sitio del Suceso; si Render recibe 403, la salida es el
-    #: proxy de Oracle en Chile.
+    #: confianza de medio por defecto (0,60): tiene redacción propia.
+    #:
+    #: **Y salió de rotación esa misma tarde**, como Sitio del Suceso: Cloudflare
+    #: le responde a Render con el desafío «Just a moment…» (HTTP 403). Desde una
+    #: IP chilena el feed responde, pero pasarlo por el proxy de Oracle sería
+    #: esquivar a propósito su protección contra bots, y la regla de este
+    #: collector es no hacerlo (ver `LocalNewsCollector._client`). Vuelve si el
+    #: medio nos habilita o si afloja la regla; la fila queda escrita:
+    #:
+    #:     quintavision|Quinta Visión Ahora|https://www.quintavisionahora.cl/feed/|||
+    #:     Región Valparaíso
     LOCAL_NEWS_SOURCES: str = (
         "alertanoticias|Alerta Noticias|"
         "https://alertanoticias.cl/category/valparaiso/feed/|"
         "https://alertanoticias.cl/category/valparaiso/|0.35;"
         "puranoticia|Pura Noticia||https://puranoticia.pnt.cl/region-valparaiso;"
-        "margamarga|Prensa Marga Marga|https://prensamargamarga.cl/feed/|;"
-        "quintavision|Quinta Visión Ahora|https://www.quintavisionahora.cl/feed/|||"
-        "Región Valparaíso"
+        "margamarga|Prensa Marga Marga|https://prensamargamarga.cl/feed/|"
     )
     #: Cabeceras de navegador. El `User-Agent` por defecto de httpx
     #: (`python-httpx/0.28.1`) es lo primero que mira una regla básica de
@@ -1018,6 +1024,15 @@ class Settings(BaseSettings):
     #: dejan cada respuesta en ~40 KB, lejos del truncado que describe
     #: `OPENMETEO_CHUNK_SIZE`.
     RAIN_GRID_CHUNK_SIZE: int = Field(default=25, ge=1, le=100)
+    #: Pausa entre lotes de la grilla, en segundos. Open-Meteo corta con HTTP 429
+    #: por encima de ~600 puntos por minuto (cuenta cada coordenada como una
+    #: llamada): la primera corrida de la caja de 650 puntos, sin pausa, cayó en
+    #: el lote 25 de 26 (§L, 30-09-2026). Con 4 s, los 26 lotes toman ~100 s y
+    #: quedan en ~375 puntos por minuto.
+    RAIN_GRID_BATCH_PAUSE_SECONDS: float = Field(default=4.0, ge=0, le=60)
+    #: Reintento tras una corrida fallida. Con la cadencia de 3 h, esperar la
+    #: próxima corrida dejaba el mapa con la foto vieja media tarde.
+    RAIN_GRID_RETRY_SECONDS: int = Field(default=900, ge=60, le=86_400)
     #: Horas hacia adelante sobre las que se toma el máximo.
     RAIN_GRID_HOURS: int = Field(default=24, ge=1, le=48)
     #: Umbrales de `riesgo_inundacion`. Cualquiera de los tres levanta el flag.

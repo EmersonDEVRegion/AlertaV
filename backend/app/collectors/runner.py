@@ -270,13 +270,18 @@ async def _rain_grid_loop(intervalo: int) -> None:
     if not await sleep_unless_stopped(delay):
         return
     while not is_shutting_down():
+        ok = False
         try:
             async with _cupos(), AsyncSessionLocal() as session:
-                await refresh_rain_grid(session)
+                ok = await refresh_rain_grid(session)
         except Exception:
-            # Base caída, por ejemplo. Se reintenta en el ciclo siguiente.
+            # Base caída, por ejemplo.
             logger.exception("ciclo de la grilla de lluvia falló")
-        if not await sleep_unless_stopped(_next_delay(intervalo)):
+        # Una corrida fallida (un 429 de Open-Meteo, la base caída) se reintenta
+        # pronto: con la cadencia de 3 h, esperar la próxima dejaba la foto
+        # vieja en el mapa media tarde.
+        espera = intervalo if ok else min(intervalo, settings.RAIN_GRID_RETRY_SECONDS)
+        if not await sleep_unless_stopped(_next_delay(espera)):
             break
     logger.info("grilla de lluvia detenida")
 

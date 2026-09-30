@@ -169,12 +169,24 @@ class TestCorrida:
             return [_item([0.5])] * n
 
         monkeypatch.setattr(svc, "request_json", request_json)
+        pausas: list[float] = []
+
+        async def sleep(seconds: float) -> None:
+            pausas.append(seconds)
+
+        monkeypatch.setattr(svc, "_pausa", sleep)
         grid = build_grid(west=-72.3, south=-34.0, east=-69.8, north=-31.9, step=0.15)
         http: Any = SimpleNamespace()
         values = await svc.fetch_grid(grid, now=NOW, client=http)
         assert len(values) == 255
         assert sum(pedidos) == 255
         assert max(pedidos) <= settings.RAIN_GRID_CHUNK_SIZE
+        # Una pausa ENTRE lotes (no antes del primero): el límite por minuto de
+        # Open-Meteo cortó la primera corrida de la caja grande en el lote 25.
+        assert len(pausas) == len(pedidos) - 1
+        assert all(p == settings.RAIN_GRID_BATCH_PAUSE_SECONDS for p in pausas)
+        pausa = settings.RAIN_GRID_BATCH_PAUSE_SECONDS
+        assert settings.RAIN_GRID_CHUNK_SIZE * 60 / pausa < 600  # puntos por minuto
 
 
 class TestEstado:
