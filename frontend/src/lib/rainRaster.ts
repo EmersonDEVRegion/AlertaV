@@ -15,8 +15,8 @@ import { rainColorAt } from '@/domain/rainSymbology'
  *
  * # Resolución
  *
- * Doce píxeles por celda (~200 × 180 para la grilla de la región). Más no agrega
- * nada: la celda del modelo mide ~16 km, y el suavizado lo hace el propio
+ * Doce píxeles por celda (~290 × 300 para la grilla de §L, 25 × 26). Más no agrega
+ * nada: la celda de la grilla mide ~20 km, y el suavizado lo hace el propio
  * `raster-resampling: linear` al acercarse.
  */
 
@@ -59,8 +59,32 @@ export function sampleGrid(grid: RainGrid, gx: number, gy: number): number | nul
  * Cuántas celdas se desvanece el borde de la imagen. La grilla termina en una
  * caja y el modelo no: sin esto, un frente que cruza el borde se vería cortado
  * a cuchillo en una línea recta que no existe.
+ *
+ * Desde §L la caja es la misma que `MAP_MAX_BOUNDS`, así que el borde sólo se
+ * ve en el límite del mapa. Con celdas de 0,2°, dos celdas son ~40 km.
  */
-const EDGE_FEATHER_CELLS = 1.5
+const EDGE_FEATHER_CELLS = 2
+
+/**
+ * Cuánto se ondula el final del difuminado, en celdas.
+ *
+ * Un degradado recto sigue leyéndose como una recta cuando llueve fuerte justo
+ * en el borde: el ojo ve la línea donde el color empieza a caer (§L, la
+ * cordillera del 30-09). Correr ese comienzo con una onda suave lo vuelve un
+ * final de nubosidad, no un corte.
+ */
+const EDGE_WOBBLE_CELLS = 1.4
+
+/**
+ * Ondulación determinista en [0, 1]: dos senos de frecuencias que no se
+ * sincronizan. Ni `Math.random` ni ruido con semilla: la misma grilla tiene que
+ * dar siempre la misma imagen, o el borde "respiraría" en cada refresco.
+ * Longitudes de onda de 5 a 8 celdas: ondas amplias, no un borde dentado.
+ */
+export function edgeWobble(gx: number, gy: number): number {
+  const w = 0.6 * Math.sin(gx * 0.9 + gy * 0.35) + 0.4 * Math.sin(gy * 1.25 - gx * 0.55 + 1.7)
+  return (w + 1) / 2
+}
 
 const smooth = (t: number) => {
   const x = Math.max(0, Math.min(1, t))
@@ -73,6 +97,7 @@ export function rainPixels(
   width: number,
   height: number,
   feather = EDGE_FEATHER_CELLS,
+  wobble = EDGE_WOBBLE_CELLS,
 ): Uint8ClampedArray<ArrayBuffer> {
   const out = new Uint8ClampedArray(new ArrayBuffer(width * height * 4))
   for (let py = 0; py < height; py += 1) {
@@ -82,7 +107,10 @@ export function rainPixels(
       const [r, g, b, a] = rainColorAt(sampleGrid(grid, gx, gy))
       // Distancia al borde más cercano, en celdas.
       const edge = Math.min(gx, gy, grid.nx - 1 - gx, grid.ny - 1 - gy)
-      const fade = feather > 0 ? smooth(edge / feather) : 1
+      // El comienzo del difuminado se corre hacia adentro entre 0 y `wobble`
+      // celdas. En el borde mismo (`edge = 0`) sigue siendo transparente.
+      const inset = wobble > 0 ? wobble * edgeWobble(gx, gy) : 0
+      const fade = feather > 0 ? smooth((edge - inset) / feather) : 1
       const i = (py * width + px) * 4
       out[i] = r
       out[i + 1] = g

@@ -1,6 +1,7 @@
-"""Prensa Marga Marga y Quinta Prensa en la rotación de prensa local.
+"""Prensa Marga Marga en la rotación de prensa local.
 
-Entraron el 2026-09-22, cuando se retiraron de Apify los Tasks de Instagram y
+Entró el 2026-09-22 junto con Quinta Prensa, que salió el 2026-09-30 (sin
+publicar desde julio; ver `test_quinta_vision.py`). Entraron el 2026-09-22, cuando se retiraron de Apify los Tasks de Instagram y
 de prensa. El feed de abajo reproduce la estructura real de
 `prensamargamarga.cl/feed/` verificada ese día (WordPress 7.1.2): las
 categorías son la provincia y la sección —«Marga Marga», «Policial»,
@@ -57,11 +58,10 @@ FEED_MARGA = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
-def test_los_dos_portales_nuevos_estan_en_la_rotacion_por_defecto():
+def test_marga_marga_esta_en_la_rotacion_por_defecto():
     portales = {p.slug: p for p in parse_portals(settings.LOCAL_NEWS_SOURCES)}
 
     assert portales["margamarga"].feed_url == "https://prensamargamarga.cl/feed/"
-    assert portales["quintaprensa"].feed_url == "https://www.quintaprensa.cl/feed/"
 
 
 def test_los_portales_nuevos_no_tienen_portada_de_respaldo():
@@ -72,7 +72,7 @@ def test_los_portales_nuevos_no_tienen_portada_de_respaldo():
     portales = {p.slug: p for p in parse_portals(settings.LOCAL_NEWS_SOURCES)}
 
     assert portales["margamarga"].portada_url is None
-    assert portales["quintaprensa"].portada_url is None
+    assert portales["quintavision"].portada_url is None
 
 
 def test_los_portales_de_antes_siguen_donde_estaban():

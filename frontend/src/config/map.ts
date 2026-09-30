@@ -18,6 +18,10 @@ export const INITIAL_VIEW_STATE = {
  * Si se usara sólo el primero, volar a un sismo del borde sur —que el backend
  * sí entrega, porque su recorte es más ancho a propósito— quedaría bloqueado
  * por `maxBounds` y la cámara se detendría a mitad de camino sin explicación.
+ *
+ * La grilla de lluvia del backend (`RAIN_GRID_*`) cubre esta misma caja, para
+ * que el borde del campo quede en el límite del mapa (§L). Si esto cambia, esa
+ * caja también: lo vigila `rainGridBounds.test.ts`.
  */
 export const MAP_MAX_BOUNDS: [number, number, number, number] = [
   -73.4, -35.6, -68.6, -30.6,
