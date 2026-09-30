@@ -20,10 +20,12 @@ from app.services import rain_grid_service as svc
 from app.services.rain_grid_service import (
     RainGridService,
     build_grid,
+    grid_from_settings,
     grid_state,
     max_next_hours,
     parse_chunk,
     refresh_rain_grid,
+    seconds_until_due,
 )
 
 NOW = datetime(2026, 9, 30, 14, 25, tzinfo=UTC)
@@ -187,6 +189,55 @@ class TestCorrida:
         assert all(p == settings.RAIN_GRID_BATCH_PAUSE_SECONDS for p in pausas)
         pausa = settings.RAIN_GRID_BATCH_PAUSE_SECONDS
         assert settings.RAIN_GRID_CHUNK_SIZE * 60 / pausa < 600  # puntos por minuto
+
+
+class TestArranque:
+    """Un arranque del proceso no relee la grilla si la foto sirve (§L)."""
+
+    def _row(self, **over: Any) -> SimpleNamespace:
+        grid = grid_from_settings()
+        base: dict[str, Any] = {
+            "generated_at": NOW - timedelta(hours=1),
+            "attempted_at": NOW - timedelta(hours=1),
+            "error": None,
+            "nx": grid.nx,
+            "ny": grid.ny,
+            "step": grid.step,
+            "west": grid.west,
+            "north": grid.north,
+            "model": settings.OPENMETEO_MODEL,
+            "hours": settings.RAIN_GRID_HOURS,
+        }
+        base.update(over)
+        return SimpleNamespace(**base)
+
+    def _wait(self, row: Any) -> float:
+        return seconds_until_due(row, grid_from_settings(), now=NOW)
+
+    def test_foto_vigente_espera_el_resto_de_la_cadencia(self) -> None:
+        restante = settings.RAIN_GRID_POLL_INTERVAL_SECONDS - 3600
+        assert self._wait(self._row()) == pytest.approx(restante)
+
+    def test_foto_vencida_o_ausente_toca_ya(self) -> None:
+        vieja = NOW - timedelta(seconds=settings.RAIN_GRID_POLL_INTERVAL_SECONDS + 1)
+        assert self._wait(self._row(generated_at=vieja)) == 0
+        assert self._wait(None) == 0
+        assert self._wait(self._row(generated_at=None, error=None)) == 0
+
+    def test_foto_de_otra_caja_toca_ya(self) -> None:
+        # El deploy que cambia la caja (o el paso, o el modelo) no espera 3 h.
+        assert self._wait(self._row(nx=19, ny=15)) == 0
+        assert self._wait(self._row(step=0.15)) == 0
+        assert self._wait(self._row(west=-72.3)) == 0
+        assert self._wait(self._row(model="otro")) == 0
+        assert self._wait(self._row(hours=12)) == 0
+
+    def test_tras_un_fallo_respeta_el_reintento(self) -> None:
+        # Un deploy en medio de un 429 no vuelve a pedir enseguida.
+        row = self._row(error="HTTP 429", attempted_at=NOW - timedelta(minutes=5))
+        assert self._wait(row) == pytest.approx(settings.RAIN_GRID_RETRY_SECONDS - 300)
+        viejo = self._row(error="HTTP 429", attempted_at=NOW - timedelta(hours=1))
+        assert self._wait(viejo) == 0
 
 
 class TestEstado:

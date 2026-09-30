@@ -260,7 +260,7 @@ async def _rain_grid_loop(intervalo: int) -> None:
     que ocupa un cupo de `COLLECTOR_MAX_CONCURRENCY` mientras corre. Un fallo de
     Open-Meteo queda anotado en la fila y no sube: la foto anterior sigue sirviendo.
     """
-    from app.services.rain_grid_service import refresh_rain_grid
+    from app.services.rain_grid_service import rain_grid_wait, refresh_rain_grid
 
     delay = random.uniform(5, 60)
     logger.info(
@@ -270,6 +270,23 @@ async def _rain_grid_loop(intervalo: int) -> None:
     if not await sleep_unless_stopped(delay):
         return
     while not is_shutting_down():
+        # ¿Sirve todavía la foto guardada? Un arranque (un deploy, un reinicio de
+        # Render) no es motivo para releer 650 puntos de la cuota diaria.
+        try:
+            async with AsyncSessionLocal() as session:
+                espera_foto = await rain_grid_wait(session)
+        except Exception:
+            logger.exception("no se pudo leer la foto de la grilla de lluvia")
+            espera_foto = 0.0
+        if espera_foto > 0:
+            logger.info(
+                "grilla de lluvia vigente; se espera",
+                extra={"proxima_lectura_en_s": round(espera_foto)},
+            )
+            if not await sleep_unless_stopped(espera_foto + random.uniform(5, 60)):
+                break
+            continue
+
         ok = False
         try:
             async with _cupos(), AsyncSessionLocal() as session:
