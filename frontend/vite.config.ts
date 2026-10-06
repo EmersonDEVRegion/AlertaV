@@ -171,7 +171,7 @@ export default defineConfig(({ mode }) => {
               },
             },
             {
-              // Radar de vehículos: misma lógica que los incidentes. Servir una
+              // Radar de vehículos y noticias: misma lógica que los incidentes. Servir una
               // lista vieja sin red es seguro porque el cliente vuelve a filtrar
               // por la ventana de 48 h con su propio reloj, y todo lo que dice
               // «hace X» se calcula desde fechas absolutas de la respuesta.

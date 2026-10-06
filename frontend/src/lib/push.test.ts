@@ -103,6 +103,7 @@ describe('shouldResync', () => {
     lon: -71.551,
     notifyIncidents: true,
     notifySeismic: true,
+    radios: {},
     placesKey: '',
   }
 
@@ -140,6 +141,7 @@ describe('memoria local', () => {
       lon: -71.5,
       notifyIncidents: false,
       notifySeismic: true,
+      radios: { power: 0, fire: 8000 },
       placesKey: placesKey([{ name: 'Casa', lat: -33.0456, lon: -71.4012 }]),
     }
     savePushMemo(memo)

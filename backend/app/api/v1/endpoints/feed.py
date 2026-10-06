@@ -1,8 +1,8 @@
 """Feeds de consumo rápido, paralelos al mapa.
 
-Hoy uno solo: vehículos robados, recuperados y abandonados publicados por GBV.
-No son incidentes ni señales del mapa —no tienen coordenadas ni confianza— y no
-pasan por el motor de correlación.
+Dos: vehículos robados, recuperados y abandonados publicados por GBV, y desde
+el 2026-10-06 la prensa local. Ninguno es un incidente ni una señal del mapa y
+ninguno pasa por el motor de correlación.
 """
 
 from __future__ import annotations
@@ -11,10 +11,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.api.deps import VehicleFeedServiceDep
+from app.api.deps import NewsFeedServiceDep, VehicleFeedServiceDep
 from app.collectors.lugares import comuna_por_nombre
 from app.models.enums import VehicleStatus
+from app.schemas.news_feed import NewsFeedResponse
 from app.schemas.vehicle_feed import VehicleFeedResponse
+from app.services.news_feed_service import FEED_HORAS
+from app.services.news_feed_service import FEED_MAX_HORAS as NOTICIAS_MAX_HORAS
 from app.services.vehicle_feed_service import FEED_MAX_HORAS
 
 router = APIRouter(prefix="/feed", tags=["feed"])
@@ -70,3 +73,29 @@ async def vehicle_feed(
         incluir_sin_ubicar=incluir_sin_ubicar,
         limit=limit,
     )
+
+
+@router.get(
+    "/noticias",
+    response_model=NewsFeedResponse,
+    summary="Prensa local de la V Región, últimas 24 h (fuera del mapa)",
+    description=(
+        "Notas de los medios locales que el pre-filtro reconoció como "
+        "emergencias, de la más nueva a la más vieja. Desde el 2026-10-06 la "
+        "prensa NO entra al motor de correlación: no abre incidentes ni se pega "
+        "a uno, porque llega con horas de atraso. Se informa acá, con la hora "
+        "de publicación a la vista (`hora_aproximada` si el medio no la dio).\n\n"
+        "`fuente.estado` distinto de `ok` significa que un feed vacío NO quiere "
+        "decir que no haya noticias."
+    ),
+)
+async def news_feed(
+    service: NewsFeedServiceDep,
+    horas: Annotated[
+        int,
+        Query(ge=1, le=NOTICIAS_MAX_HORAS, description="Ventana hacia atrás, en horas."),
+    ] = FEED_HORAS,
+    limit: Annotated[int, Query(ge=1, le=200)] = 60,
+) -> NewsFeedResponse:
+    return await service.feed(horas=horas, limit=limit)
+

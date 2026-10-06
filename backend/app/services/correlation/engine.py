@@ -186,6 +186,11 @@ class CorrelationPass:
     communes_by_polygon: int = 0
     #: Tramos extra que salieron de cortar racimos por su brecha temporal.
     clusters_split: int = 0
+    #: Incidentes abiertos de los que se desvinculó la prensa en esta pasada
+    #: (`CORRELATION_PRENSA=false`). En régimen, cero.
+    prensa_desvinculada: int = 0
+    #: De ésos, los que sólo tenían prensa y se descartaron.
+    solo_prensa_descartados: int = 0
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -216,6 +221,8 @@ class CorrelationPass:
             "incidents_without_commune": self.incidents_without_commune,
             "communes_by_polygon": self.communes_by_polygon,
             "clusters_split": self.clusters_split,
+            "prensa_desvinculada": self.prensa_desvinculada,
+            "solo_prensa_descartados": self.solo_prensa_descartados,
             "warnings": list(self.warnings),
         }
 
@@ -264,6 +271,7 @@ class CorrelationEngine:
         max_events: int | None = None,
         perfiles: bool | None = None,
         solo_region: bool | None = None,
+        prensa: bool | None = None,
     ) -> None:
         self.session = session
         self.repo = IncidentRepository(session)
@@ -294,6 +302,8 @@ class CorrelationEngine:
         self.solo_region = (
             settings.CORRELATION_SOLO_REGION if solo_region is None else solo_region
         )
+        #: ¿La prensa entra al motor? Ver `CORRELATION_PRENSA`.
+        self.prensa = settings.CORRELATION_PRENSA if prensa is None else prensa
         #: ¿Existe `comunas_region`? Se pregunta una vez por pasada.
         self._hay_comunas: bool | None = None
         self._comunas_por_poligono = 0
@@ -330,6 +340,7 @@ class CorrelationEngine:
 
         try:
             self._freno_ciudadano = await self._freno_global(result, now=now)
+            await self._retirar_prensa(result, now=now)
             await self._step_a_spatial(result, now=now)
             await self._step_a_sector(result, now=now)
             await self._merge_converged(result, now=now)
@@ -345,6 +356,50 @@ class CorrelationEngine:
         result.finished_at = datetime.now(UTC)
         logger.info("pasada de correlación", extra=result.as_dict())
         return result
+
+    # -- Fuentes fuera del motor ---------------------------------------------
+
+    def fuentes_excluidas(self) -> tuple[EventSource, ...]:
+        """Fuentes cuyas señales no se agrupan ni se pegan a un incidente.
+
+        Hoy sólo la prensa, y sólo con `CORRELATION_PRENSA=false` (el valor por
+        defecto desde el 2026-10-06). Una nota llega con horas de atraso: abría
+        pines que ya no describían el presente y tiraba del punto de un
+        despacho exacto. Se lee en `/feed/noticias`.
+        """
+        return () if getattr(self, "prensa", True) else (EventSource.MEDIA,)
+
+    async def _retirar_prensa(self, result: CorrelationPass, *, now: datetime) -> None:
+        """Saca la prensa de los incidentes abiertos que ya la tenían.
+
+        Cubre lo que quedó de antes del cambio: sin esto, un incidente abierto
+        por una nota seguiría en el mapa hasta caducar, y uno mixto seguiría
+        con la confianza y el punto que la nota le movió. Un incidente que
+        sólo tenía prensa se descarta (`dismissed`: nunca hubo evidencia fuera
+        de la prensa); el resto se recalcula con lo que le queda.
+
+        En régimen no hay nada que retirar y cuesta una consulta.
+        """
+        if self.prensa:
+            return
+        ids = await self.repo.retirar_fuente_de_abiertos(EventSource.MEDIA)
+        result.prensa_desvinculada = len(ids)
+        for incident_id in ids:
+            if not await self.repo.signals_of(incident_id):
+                await self.repo.update_incident(incident_id, status=IncidentStatus.DISMISSED)
+                result.solo_prensa_descartados += 1
+                continue
+            incident = await self.repo.get_by_id(incident_id)
+            if incident is not None:
+                await self._refresh(incident, now=now)
+        if ids:
+            logger.info(
+                "prensa retirada de incidentes abiertos",
+                extra={
+                    "incidentes": len(ids),
+                    "descartados": result.solo_prensa_descartados,
+                },
+            )
 
     # -- Paso A ---------------------------------------------------------------
 
@@ -364,6 +419,7 @@ class CorrelationEngine:
                 radios={familia: p.radio_m for familia, p in PERFILES.items()},
                 edades_desde={familia: now - p.edad_max for familia, p in PERFILES.items()},
                 solo_region=solo_region,
+                excluir_fuentes=self.fuentes_excluidas(),
             )
         else:
             clustered = await self.repo.cluster_unassigned_events(
@@ -371,6 +427,7 @@ class CorrelationEngine:
                 radius_m=self.radius_m,
                 limit=self.max_events,
                 solo_region=solo_region,
+                excluir_fuentes=self.fuentes_excluidas(),
             )
         result.events_considered = len(clustered)
         if not clustered:
@@ -599,7 +656,9 @@ class CorrelationEngine:
         que una espacial, porque pertenece a un solo incidente.
         """
         since = now - timedelta(hours=self.window_hours)
-        signals = await self.repo.unlocated_sector_signals(since=since, limit=self.max_events)
+        signals = await self.repo.unlocated_sector_signals(
+            since=since, limit=self.max_events, excluir_fuentes=self.fuentes_excluidas()
+        )
         result.unlocated_sector_signals = len(signals)
         if not signals:
             return
@@ -873,9 +932,10 @@ class CorrelationEngine:
             "correlated_at": now,
         }
 
-        geometry = await self.repo.recompute_geometry(incident.id)
-        if geometry is not None:
-            values["lat"], values["lon"] = geometry
+        ubicacion = await self.repo.recompute_geometry(incident.id)
+        if ubicacion is not None:
+            values["lat"], values["lon"] = ubicacion.lat, ubicacion.lon
+            values["ubicacion_precision"] = ubicacion.precision
 
         if commune is None:
             # Último recurso: el polígono que contiene al incidente. Ninguna

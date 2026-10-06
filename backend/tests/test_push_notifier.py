@@ -62,6 +62,10 @@ class FakeRepo:
     reserved: list[tuple[str, str, int]] = field(default_factory=list)
     outcomes: list[DeliveryOutcome] = field(default_factory=list)
     quake_queries: list[dict[str, Any]] = field(default_factory=list)
+    incident_queries: list[dict[str, Any]] = field(default_factory=list)
+    water_cuts: list[Any] = field(default_factory=list)
+    water_recipients: dict[str, list[Recipient]] = field(default_factory=dict)
+    water_queries: list[dict[str, Any]] = field(default_factory=list)
 
     async def recent_active_incidents(self, *, since: datetime) -> list[SimpleNamespace]:
         return [i for i in self.incidents if i.first_seen_at >= since]
@@ -69,8 +73,16 @@ class FakeRepo:
     async def recent_quakes(self, *, since: datetime) -> list[QuakeView]:
         return [q for q in self.quakes if q.timestamp >= since]
 
-    async def recipients_for_incident(self, *, code: str, **_: Any) -> list[Recipient]:
+    async def recipients_for_incident(self, *, code: str, **kwargs: Any) -> list[Recipient]:
+        self.incident_queries.append({"code": code, **kwargs})
         return self.incident_recipients.get(code, [])
+
+    async def recent_water_cuts(self, **kwargs: Any) -> list[Any]:
+        self.water_queries.append(kwargs)
+        return self.water_cuts
+
+    async def recipients_for_water_cut(self, *, subject_key: str, **_: Any) -> list[Recipient]:
+        return self.water_recipients.get(subject_key, [])
 
     async def recipients_for_quake(self, **kwargs: Any) -> list[Recipient]:
         self.quake_queries.append(kwargs)

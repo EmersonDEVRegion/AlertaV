@@ -226,6 +226,7 @@ class IncidentService:
                     "alert_level": incident.alert_level,
                     "alert_confidence": incident.alert_confidence,
                     "commune": incident.commune,
+                    "ubicacion_precision": incident.ubicacion_precision,
                     "event_count": incident.event_count,
                     "source_count": incident.source_count,
                     "sources": list(incident.sources or []),

@@ -307,11 +307,25 @@ hora). Tiene que ser un servicio externo: el tráfico que cuenta para el
 scale-to-zero es el que entra por el edge, así que un ping que el contenedor se
 hace a sí mismo no sirve de nada.
 
-Además, el repositorio trae `.github/workflows/keepalive.yml`, que hace el mismo
+Pasos en cron-job.org (gratis, unos 3 minutos):
+
+1. Crear cuenta en <https://cron-job.org> y confirmar el correo.
+2. **Create cronjob.** Title: `AlertaV health`. URL: la de arriba.
+3. **Execution schedule:** «Every 10 minutes».
+4. **Advanced → Timeout:** 30 s (lo máximo del plan gratuito). El arranque en
+   frío de Render tarda cerca de un minuto: el primer ping después de dormir
+   puede marcar «failed», pero igual despierta la instancia y el siguiente da
+   200.
+5. **Notifications:** «Execution of the cronjob fails» y, si quieres, «after 3
+   failures» para no recibir un correo por cada arranque en frío.
+6. Guardar y mirar **History** a los 20 minutos: tienen que verse `200 OK`.
+
+Además, el repositorio trae `.github/workflows/keepalive.yml`, que pide el mismo
 ping cada 10 minutos desde GitHub Actions. En un repo público no consume
-minutos, pero no reemplaza al monitor: GitHub puede atrasar o saltarse las
-corridas programadas en horas de carga, y las desactiva si el repositorio pasa
-60 días sin actividad. Los dos juntos se cubren entre sí.
+minutos, pero **no reemplaza al monitor**: del 5 al 6 de octubre de 2026 GitHub
+lo corrió cada 6–7 horas, no cada 10 minutos, y lo desactiva si el repositorio
+pasa 60 días sin actividad. A veces tampoco consigue máquina y cancela el job
+(correo «Run cancelled»): es un fallo de GitHub, no de la API.
 
 Un efecto secundario útil del monitor externo: te avisa por correo cuando la API
 deja de responder. El workflow no avisa a propósito, para no mandar un correo

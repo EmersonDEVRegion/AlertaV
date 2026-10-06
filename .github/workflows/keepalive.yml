@@ -9,10 +9,19 @@ name: keepalive
 # entra por su edge. GitHub Actions lo es, y en un repositorio publico no
 # consume minutos.
 #
-# No es puntual. GitHub puede atrasar o saltarse corridas programadas en horas
-# de carga, y apaga los cron de un repositorio que pasa 60 dias sin actividad.
-# Por eso DEPLOY.md recomienda ademas un monitor como cron-job.org o UptimeRobot:
-# los dos juntos se cubren entre si.
+# No es puntual, y en la practica casi no corre: pide cada 10 minutos, pero del
+# 5 al 6 de octubre de 2026 GitHub lo lanzo cada 6-7 horas (runs #65 a #69). Con
+# eso Render se dormiria igual. Ademas apaga los cron de un repositorio que pasa
+# 60 dias sin actividad. Lo que de verdad mantiene despierta la API tiene que
+# ser un monitor externo (cron-job.org o UptimeRobot, gratis): ver
+# backend/DEPLOY.md, paso 5. Este workflow queda como respaldo.
+#
+# El 05-10 (run #67) el job quedo 15 minutos sin maquina y GitHub lo cancelo:
+# "The job was not acquired by Runner of type hosted even after multiple
+# attempts". Es un fallo de GitHub, no de la API, y no se puede evitar desde
+# aca: llega como correo de "Run cancelled". Para dejar de recibirlos, en
+# GitHub: Settings > Notifications > Actions > "Only notify for failed
+# workflows" (o desmarcar el correo).
 #
 # El paso nunca falla: un servicio caido no debe convertirse en 144 correos de
 # GitHub al dia. Deja una advertencia en el resumen de la corrida.
@@ -29,8 +38,12 @@ permissions: {}
 
 jobs:
   ping:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Fijo y no `ubuntu-latest`, que pasa a Ubuntu 26 desde el 19-10-2026 y
+    # deja un aviso en cada corrida. Para un curl da lo mismo.
+    runs-on: ubuntu-24.04
+    # Tiene que caberle el peor caso del curl: 3 intentos x 120 s + 2 x 10 s =
+    # 380 s. Con 5 minutos, un arranque en frio lento terminaba en "cancelled".
+    timeout-minutes: 10
     steps:
       - name: Despertar la API
         env:
@@ -38,11 +51,11 @@ jobs:
         run: |
           # El arranque en frio de Render tarda alrededor de un minuto.
           if codigo=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-                --max-time 180 --retry 2 --retry-delay 10 "$URL"); then
+                --max-time 120 --retry 2 --retry-delay 10 "$URL"); then
             echo "HTTP $codigo desde $URL"
             if [ "$codigo" != "200" ]; then
               echo "::warning::la API respondio HTTP $codigo"
             fi
           else
-            echo "::warning::la API no respondio en 180 s ($URL)"
+            echo "::warning::la API no respondio en 3 intentos de 120 s ($URL)"
           fi

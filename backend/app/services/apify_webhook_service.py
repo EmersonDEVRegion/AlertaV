@@ -93,6 +93,12 @@ from app.collectors.traffic.bomberos_10_4_worker import (
     unidades_del_aviso,
 )
 from app.collectors.traffic.gemini import dispatch_summary_heuristic, es_seguimiento
+from app.collectors.traffic.transito_x import (
+    aviso_de_tuit,
+    es_cuenta_transito,
+    procesar_avisos_transito,
+)
+from app.collectors.traffic.transporteinforma_worker import TrafficNotice
 from app.collectors.vocabulary import (
     CBV,
     SISTEMAS_CLAVES,
@@ -932,6 +938,10 @@ async def _process(
 
     Con `run_id` retoma la fila que dejó `encolar_dataset`; sin él abre una.
     """
+    # Tuits de @TTIValparaiso (o la cuenta de tránsito que se configure):
+    # viajan en el mismo Task pero NO son despachos. Se separan en el recorrido
+    # y se procesan al final, en su propia corrida (`transito_x`).
+    avisos_transito: list[TrafficNotice] = []
     async with AsyncSessionLocal() as session:
         service = IngestService(session)
         # Un juego de claves por Cuerpo: la misma `Clave 10` se ingiere en Viña
@@ -996,6 +1006,21 @@ async def _process(
 
                 if es_retuit(item):
                     retuits += 1
+                    continue
+
+                # Antes de buscar tabla de claves: una cuenta de tránsito no
+                # tiene, y leerla con la de una central sería inventarle un
+                # significado de peso 1.00.
+                if es_cuenta_transito(declarada):
+                    aviso = aviso_de_tuit(
+                        texto=strip_html(str(_first(item, _TEXT_KEYS) or "")),
+                        identificador=_first(item, _ID_KEYS),
+                        publicado=fecha_de_tuit(_first(item, _DATE_KEYS)),
+                        cuenta=declarada,
+                        url=tweet_url(item),
+                    )
+                    if aviso is not None:
+                        avisos_transito.append(aviso)
                     continue
 
                 # Cada tuit se lee con el diccionario de la central que lo
@@ -1158,6 +1183,11 @@ async def _process(
                 )
             if retuits:
                 notas.append(f"{retuits} retuits; no son despachos propios")
+            if avisos_transito:
+                notas.append(
+                    f"{len(avisos_transito)} tuits de tránsito derivados a "
+                    "transporte_informa_x"
+                )
 
             # Una clave sin configurar es una degradación real —se están
             # tirando despachos de la fuente de peso 1.00— y merece `partial`.
@@ -1224,6 +1254,7 @@ async def _process(
                     "descartados_por_edad": descartados_por_edad,
                     "cuentas_sin_tabla": dict(cuentas_sin_tabla),
                     "retuits": retuits,
+                    "tuits_transito": len(avisos_transito),
                     "por_cuenta": dict(Counter(d.cuenta or respaldo for d in dispatches)),
                     "sin_fecha": undated,
                     "por_reglas": por_reglas,
@@ -1254,6 +1285,10 @@ async def _process(
                     extra={"traza": traza},
                 )
 
+    # Fuera de la sesión de Bomberos y con su corrida ya cerrada: la tubería de
+    # tránsito abre su propia sesión y su propia fila, y no lanza.
+    if avisos_transito:
+        await procesar_avisos_transito(avisos_transito, traza=traza)
 
 __all__ = [
     "CANARIO_NAME",

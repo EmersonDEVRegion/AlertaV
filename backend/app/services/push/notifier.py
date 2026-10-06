@@ -58,13 +58,16 @@ from app.repositories.push_repository import (
     DeliveryOutcome,
     PushRepository,
     Recipient,
+    WaterCutView,
 )
 from app.services.push.messages import (
     OutageFacts,
     PushMessage,
     incident_message,
     seismic_message,
+    water_cut_message,
 )
+from app.services.push.radios import categoria_de
 from app.services.push.rules import (
     QuakeView,
     group_quakes,
@@ -132,6 +135,7 @@ class NotifierPass:
     incidents_notifiable: int = 0
     quakes_considered: int = 0
     quakes_notifiable: int = 0
+    water_cuts_considered: int = 0
     sent: int = 0
     failed: int = 0
     gone: int = 0
@@ -148,6 +152,7 @@ class NotifierPass:
             "incidents_notifiable": self.incidents_notifiable,
             "quakes_considered": self.quakes_considered,
             "quakes_notifiable": self.quakes_notifiable,
+            "water_cuts_considered": self.water_cuts_considered,
             "sent": self.sent,
             "failed": self.failed,
             "gone": self.gone,
@@ -215,6 +220,7 @@ class PushNotifier:
         try:
             await self._incidents(result, now=now)
             await self._quakes(result, now=now)
+            await self._water_cuts(result, now=now)
             result.deliveries_pruned = await self.repo.prune_deliveries(before=now - self.retention)
             await self.session.commit()
         except Exception:
@@ -257,7 +263,11 @@ class PushNotifier:
 
         for snap in notifiable:
             recipients = await self.repo.recipients_for_incident(
-                incident_id=snap.id, code=snap.code, lat=snap.lat, lon=snap.lon
+                incident_id=snap.id,
+                code=snap.code,
+                lat=snap.lat,
+                lon=snap.lon,
+                categoria=categoria_de(snap.type),
             )
             if not recipients:
                 continue
@@ -350,6 +360,54 @@ class PushNotifier:
             await self._deliver(
                 kind="seismic",
                 subject_key=quake.key,
+                recipients=recipients,
+                compose=compose,
+                now=now,
+                result=result,
+            )
+
+    # -- Cortes de agua -----------------------------------------------------------
+
+    async def _water_cuts(self, result: NotifierPass, *, now: datetime) -> None:
+        """Cortes de Esval nuevos, con el radio de `water` de cada suscripción.
+
+        Vigente = Esval lo listó en la última hora (el collector lee cada 10
+        min). Nuevo = AlertaV lo vio por primera vez hace menos de
+        `PUSH_WATER_CUT_MAX_AGE_HOURS`.
+        """
+        cortes = await self.repo.recent_water_cuts(
+            seen_since=now - timedelta(hours=1),
+            first_seen_since=now - timedelta(hours=settings.PUSH_WATER_CUT_MAX_AGE_HOURS),
+        )
+        result.water_cuts_considered = len(cortes)
+        for corte in cortes:
+            recipients = await self.repo.recipients_for_water_cut(
+                subject_key=corte.key, lat=corte.lat, lon=corte.lon
+            )
+            if not recipients:
+                continue
+
+            def compose(recipient: Recipient, corte: WaterCutView = corte) -> PushMessage:
+                return water_cut_message(
+                    key=corte.key,
+                    public_id=corte.public_id,
+                    lat=corte.lat,
+                    lon=corte.lon,
+                    distance_m=recipient.distance_m,
+                    comuna=corte.comuna,
+                    calles=corte.calles,
+                    sector=corte.sector,
+                    inicio=corte.inicio,
+                    fin=corte.fin,
+                    programado=corte.programado,
+                    motivo=corte.motivo,
+                    place=recipient.place,
+                    now=now,
+                )
+
+            await self._deliver(
+                kind="water_cut",
+                subject_key=corte.key,
                 recipients=recipients,
                 compose=compose,
                 now=now,

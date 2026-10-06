@@ -45,6 +45,8 @@ type PushPhase =
 interface PushPreferences {
   notifyIncidents: boolean
   notifySeismic: boolean
+  /** Radios elegidos por categoría (sólo los tocados). Ver `lib/radios.ts`. */
+  radios: Record<string, number>
 }
 
 export interface PushNotificationsState {
@@ -69,7 +71,11 @@ export interface PushNotificationsState {
   sendProbe: () => Promise<void>
 }
 
-const DEFAULT_PREFERENCES: PushPreferences = { notifyIncidents: true, notifySeismic: true }
+const DEFAULT_PREFERENCES: PushPreferences = {
+  notifyIncidents: true,
+  notifySeismic: true,
+  radios: {},
+}
 
 const SW_READY_TIMEOUT_MS = 10_000
 
@@ -230,6 +236,8 @@ export function usePushNotifications(): PushNotificationsState {
         notify_seismic: preferences.notifySeismic,
         located_at: new Date(position.at).toISOString(),
         places,
+        // Sin radios elegidos no se mandan: el servidor conserva los suyos.
+        ...(Object.keys(preferences.radios).length > 0 ? { radios: preferences.radios } : {}),
       })
       const next: PushMemo = {
         syncedAt: Date.now(),
@@ -238,6 +246,7 @@ export function usePushNotifications(): PushNotificationsState {
         lon: saved.lon,
         notifyIncidents: saved.notify_incidents,
         notifySeismic: saved.notify_seismic,
+        radios: preferences.radios,
         placesKey: placesKey(places),
       }
       savePushMemo(next)
@@ -509,7 +518,11 @@ export function usePushNotifications(): PushNotificationsState {
     message,
     server,
     preferences: memo
-      ? { notifyIncidents: memo.notifyIncidents, notifySeismic: memo.notifySeismic }
+      ? {
+          notifyIncidents: memo.notifyIncidents,
+          notifySeismic: memo.notifySeismic,
+          radios: memo.radios,
+        }
       : DEFAULT_PREFERENCES,
     locatedAt: memo?.locatedAt ?? null,
     probeResult,

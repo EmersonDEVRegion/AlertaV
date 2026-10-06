@@ -773,11 +773,36 @@ class Settings(BaseSettings):
     #: - Falta alguna → `partial`, con la cuenta nombrada en el detalle.
     #:
     #: Vacía = no se exige nada (así corren los tests).
+    #:
+    #: Desde el 2026-10-06 incluye a @TTIValparaiso (ver
+    #: `APIFY_X_TRANSITO_HANDLES`): el canario la trae como a las centrales y su
+    #: ausencia es la misma ceguera.
     APIFY_X_CUENTAS_ESPERADAS: CsvList = Field(
         default_factory=lambda: [
             "CGI_CBV", "CBVM132", "despachoscbla", "CBQuilpue", "cbquillota",
+            "TTIValparaiso",
         ]
     )
+    #: Cuentas de X de **tránsito** que viajan en el mismo Task que las
+    #: centrales de Bomberos (desde el 2026-10-06).
+    #:
+    #: Hoy una: @TTIValparaiso, TransporteInforma Región de Valparaíso, el canal
+    #: del MTT en X. Es la misma fuente que `transporte_informa` lee en la web,
+    #: pero fresca: la web arrastra avisos de semanas. Sus tuits NO se leen con
+    #: una tabla de claves —no tienen— sino con la tubería del MTT
+    #: (`clasificar_transito` → Gemini → Nominatim) y entran como
+    #: `transporte_informa`, confianza 0,80, en la corrida
+    #: `transporte_informa_x`. Vacía = sus tuits se descartan como cualquier
+    #: cuenta sin tabla.
+    APIFY_X_TRANSITO_HANDLES: CsvList = Field(default_factory=lambda: ["TTIValparaiso"])
+    #: Antigüedad máxima de un tuit de tránsito. Más larga que la de un
+    #: despacho (`APIFY_WEBHOOK_MAX_AGE_MINUTES`): un corte de ruta o un desvío
+    #: siguen vigentes horas. Seis horas es la `edad_max` de la familia
+    #: `traffic` en el motor: lo más viejo ya no se agruparía igual.
+    APIFY_X_TRANSITO_MAX_AGE_MINUTES: int = Field(default=360, ge=5, le=1440)
+    #: Llamadas al modelo y a Nominatim por entrega para los tuits de tránsito.
+    #: Una entrega trae a lo sumo 6 por cuenta (`maxItemsPerTarget`).
+    APIFY_X_TRANSITO_MAX_GEOCODES: int = Field(default=6, ge=0, le=50)
     #: Tasks (o Actors) cuya entrega es el **canario** diario, no la corrida
     #: con ventana de tiempo.
     #:
@@ -1179,6 +1204,25 @@ class Settings(BaseSettings):
     #: en Buenos Aires, que es exactamente lo que hace Nominatim sin esto.
     NOMINATIM_COUNTRY_CODES: str = "cl"
 
+    # -- Overpass (cruces de calles) -------------------------------------------
+    #: Cuando una fuente nombra dos calles («LAS MONJAS / ANDRES BELLO»), el
+    #: cruce se calcula con Overpass sobre los datos de OSM. Ver
+    #: `app.collectors.overpass`. Apagado = el punto queda sobre una calle.
+    OVERPASS_ENABLED: bool = True
+    #: Servidores públicos, en orden. Si uno responde 429 o 5xx, el siguiente.
+    OVERPASS_URLS: list[str] = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+    ]
+    OVERPASS_TIMEOUT_SECONDS: float = Field(default=20.0, ge=5.0, le=120.0)
+    #: Radio de búsqueda alrededor del punto de Nominatim cuando la comuna no
+    #: tiene caja propia (`nominatim.COMUNA_VIEWBOX`). Una avenida larga puede
+    #: tener el punto de Nominatim lejos del cruce.
+    OVERPASS_AROUND_M: float = Field(default=4000.0, ge=500.0, le=20_000.0)
+    #: Dos calles que no comparten nodo cuentan como cruce si pasan a menos de
+    #: esto (una calle que muere a metros de la otra, un dibujo impreciso).
+    OVERPASS_MAX_GAP_M: float = Field(default=60.0, ge=0.0, le=300.0)
+
     # -- Motor de correlación -------------------------------------------------
     # Todos estos valores son hipótesis de partida, no constantes físicas. Se
     # calibran contra la ventana de recolección con `/events/{id}/neighbours`.
@@ -1197,6 +1241,15 @@ class Settings(BaseSettings):
     #: Santiago aparecían en el mapa como incidentes «sin comuna». Sin la tabla
     #: no filtra nada. En `false`, vuelve a agrupar todo lo de la caja.
     CORRELATION_SOLO_REGION: bool = True
+    #: ¿La prensa (`EventSource.MEDIA`) entra al motor? Desde el 2026-10-06,
+    #: **no**: una noticia llega con horas de atraso y abría pines que ya no
+    #: describían el presente (con `CORRELATION_MIN_SIGNALS_FOR_INCIDENT=1`,
+    #: una sola nota bastaba). Ahora la prensa sólo se lee en
+    #: `GET /feed/noticias`: no abre incidentes, no se pega a uno, no mueve
+    #: confianza ni punto, y no genera avisos push. Con el interruptor apagado
+    #: el motor además desvincula la prensa de los incidentes abiertos y
+    #: descarta los que sólo tenían prensa. En `true`, vuelve lo de antes.
+    CORRELATION_PRENSA: bool = False
     #: Ventana hacia atrás de señales que el motor considera en cada pasada.
     CORRELATION_WINDOW_HOURS: int = Field(default=4, ge=1, le=168)
     #: Antigüedad máxima de un incidente para que una señal nueva se le adhiera.
@@ -1324,6 +1377,20 @@ class Settings(BaseSettings):
     PUSH_POLL_INTERVAL_SECONDS: int = Field(default=60, ge=15, le=3600)
     #: Radio de aviso de emergencias para una suscripción nueva, en metros.
     PUSH_INCIDENT_RADIUS_M: float = Field(default=5000.0, ge=500.0, le=20_000.0)
+    #: Radio de aviso por categoría para quien no eligió el suyo, en metros
+    #: (§K, 2026-10-05). Cada persona lo cambia en la PWA; 0 = no avisar esa
+    #: categoría. Las categorías son las familias del motor
+    #: (`models.enums.INCIDENT_FAMILY`) más los cortes de agua, que no son
+    #: incidentes. `PUSH_INCIDENT_RADIUS_M` queda para lo que no cae en ninguna.
+    PUSH_RADIO_FIRE_M: float = Field(default=5000.0, ge=0.0, le=20_000.0)
+    PUSH_RADIO_TRAFFIC_M: float = Field(default=2000.0, ge=0.0, le=20_000.0)
+    PUSH_RADIO_POWER_M: float = Field(default=1000.0, ge=0.0, le=20_000.0)
+    PUSH_RADIO_HYDRO_M: float = Field(default=3000.0, ge=0.0, le=20_000.0)
+    PUSH_RADIO_OTHER_M: float = Field(default=2000.0, ge=0.0, le=20_000.0)
+    PUSH_RADIO_WATER_M: float = Field(default=1000.0, ge=0.0, le=20_000.0)
+    #: Avisos de cortes de agua de Esval. Sólo cortes que empezaron hace menos
+    #: de esto: uno que lleva días no es novedad.
+    PUSH_WATER_CUT_MAX_AGE_HOURS: int = Field(default=12, ge=1, le=72)
     #: Confianza mínima para avisar de un incidente. 0.30 es el borde del tramo
     #: `possible`: una señal aislada (tramo `unsafe`) no despierta a nadie. Los
     #: incidentes confirmados por CONAF o Bomberos y los cortes de luz se avisan
@@ -1391,7 +1458,9 @@ class Settings(BaseSettings):
         "APIFY_BOMBEROS_ACTOR_IDS",
         "APIFY_X_CUENTAS_ESPERADAS",
         "APIFY_X_CANARIO_IDS",
+        "APIFY_X_TRANSITO_HANDLES",
         "PUSH_ALLOWED_ENDPOINT_HOSTS",
+        "OVERPASS_URLS",
         mode="before",
     )
     @classmethod

@@ -124,7 +124,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -915,6 +915,191 @@ def _html_parser() -> str:
     return "lxml"
 
 
+@dataclass(slots=True)
+class ResumenResolucion:
+    """Lo que `resolver_avisos` dejó: los avisos resueltos y lo que gastó."""
+
+    resueltos: list[ResolvedNotice]
+    llamadas_llm: int = 0
+    geocodificados: int = 0
+    reutilizados: int = 0
+
+
+async def resolver_avisos(
+    clasificados: Sequence[tuple[TrafficNotice, EventType]],
+    *,
+    claves: Sequence[str],
+    conocidos: Mapping[str, Any],
+    max_llm_calls: int,
+    max_geocodes: int,
+    avisar: Callable[[str], None],
+) -> ResumenResolucion:
+    """Avisos ya clasificados → `(aviso, tipo, extracción, punto)`.
+
+    Era el cuerpo de `TransporteInformaCollector.fetch()`. Salió a una función
+    el 2026-10-06 para que los tuits de @TTIValparaiso, que llegan por el
+    webhook de Apify y no por el portal, pasen exactamente por el mismo camino:
+    delta contra lo guardado, Gemini con su tope, Nominatim con el suyo y las
+    mismas marcas de pendiente. Dos copias de esta lógica divergirían en el
+    primer arreglo.
+
+    `claves` va en el mismo orden que `clasificados` (es su `external_id`).
+    `avisar` recibe las degradaciones (`BaseCollector.warn` o equivalente).
+    """
+    resolved: list[ResolvedNotice] = []
+    geocoded = 0
+    llm_calls = 0
+    reutilizados = 0
+
+    # Un solo cliente para todas las llamadas a Nominatim: reutiliza la
+    # conexión TLS y, sobre todo, mantiene un único User-Agent identificable,
+    # que es parte del contrato de uso del servicio.
+    async with build_client() as geo_client:
+        for (notice, tipo), clave in zip(clasificados, claves, strict=True):
+            previo = conocidos.get(clave)
+            if previo is not None and reutilizable(previo, notice.text):
+                resolved.append(
+                    (
+                        notice,
+                        tipo,
+                        calles_guardadas(previo.raw_data),
+                        GeocodeResult.desde_dict(previo.raw_data.get("_geocoding")),
+                    )
+                )
+                reutilizados += 1
+                continue
+
+            if llm_calls >= max_llm_calls:
+                avisar(
+                    f"se alcanzó el tope de {max_llm_calls} llamadas al "
+                    f"modelo por corrida; el resto queda sin ubicación"
+                )
+                # Marcado para que la corrida siguiente lo intente: sin la
+                # marca, el delta lo daría por resuelto para siempre.
+                resolved.append((notice, tipo, {PENDIENTE_EXTRACCION: True}, None))
+                continue
+
+            streets = await extract_streets_via_llm(notice.text)
+            llm_calls += 1
+
+            if streets is None:
+                # Ni el modelo ni la heurística reconocieron una vía. El
+                # aviso entra igual, sin coordenadas: es un hecho que el MTT
+                # informó y descartarlo por no saber dónde sería perder el
+                # hecho por no tener el punto.
+                resolved.append((notice, tipo, {}, None))
+                continue
+
+            point: GeocodeResult | None = None
+            if geocoded < max_geocodes and streets.get("street_1"):
+                try:
+                    point = await geocode(geo_client, streets)
+                    geocoded += 1
+                except Exception as exc:
+                    # Una geocodificación fallida NO pierde el aviso: la señal
+                    # entra sin coordenadas. Perder un accidente confirmado por
+                    # el MTT porque OpenStreetMap no conoce una esquina sería
+                    # el peor intercambio posible — y perder los otros
+                    # diecinueve avisos del lote por esa misma esquina sería
+                    # todavía peor, que es lo que ocurriría si esta captura
+                    # sólo contemplara `CollectorError`.
+                    avisar(
+                        f"Nominatim falló para un aviso "
+                        f"({type(exc).__name__}): {exc}"
+                    )
+                    # El contador igual avanza: un servicio que falla consumió
+                    # su segundo de rate limit lo mismo que uno que responde.
+                    geocoded += 1
+            elif geocoded >= max_geocodes:
+                avisar(
+                    f"se alcanzó el tope de {max_geocodes} geocodificaciones "
+                    f"por corrida; el resto queda sin coordenadas"
+                )
+                streets = {**streets, PENDIENTE_GEOCODIFICACION: True}
+
+            resolved.append((notice, tipo, streets, point))
+
+
+    return ResumenResolucion(
+        resueltos=resolved,
+        llamadas_llm=llm_calls,
+        geocodificados=geocoded,
+        reutilizados=reutilizados,
+    )
+
+
+def eventos_de_avisos(
+    records: Sequence[ResolvedNotice],
+    *,
+    collector: str,
+    avisar: Callable[[str], None],
+    ahora: datetime | None = None,
+) -> list[EventCreate]:
+    """Avisos resueltos → `EventCreate`. Pura: sin red y sin base.
+
+    Era `TransporteInformaCollector.normalize()`; la comparten el portal y los
+    tuits de @TTIValparaiso (`collector` distingue de dónde vino cada señal).
+    """
+    now = ahora or datetime.now(UTC)
+    events: list[EventCreate] = []
+    sin_punto = 0
+
+    for notice, tipo, streets, point in records:
+        timestamp = notice.published_at or now
+        if timestamp > now:
+            timestamp = now
+        # Sólo se cuentan los accidentes sin punto. Un corte de vía sin
+        # coordenadas no pierde nada: no entra al motor de ninguna manera,
+        # porque `road_closure` está fuera de `CORRELATABLE_EVENT_TYPES`.
+        # Contarlo inflaría un aviso que describe un problema que no tiene.
+        if point is None and tipo is EventType.ACCIDENT:
+            sin_punto += 1
+
+        events.append(
+            EventCreate(
+                timestamp=timestamp,
+                source=EventSource.TRANSPORTE_INFORMA,
+                type=tipo,
+                lat=point.lat if point else None,
+                lon=point.lon if point else None,
+                text=notice.text[:10_000],
+                external_id=external_id_de(notice, tipo),
+                confidence=(
+                    TRANSPORTE_INFORMA_CONFIDENCE
+                    if tipo is EventType.ACCIDENT
+                    else ROAD_CLOSURE_CONFIDENCE
+                ),
+                raw_data={
+                    **dict(notice.raw),
+                    "comuna": streets.get("city"),
+                    "_collector": collector,
+                    # Los dos pasos quedan separados y auditables: qué leyó el
+                    # extractor y qué resolvió el geocodificador. Si mañana un
+                    # punto está mal, esto dice cuál de los dos falló.
+                    "_extraction": {
+                        **streets,
+                        # Una extracción reutilizada conserva el modo con
+                        # que se hizo; una nueva lleva el de ahora.
+                        "mode": streets.get("mode")
+                        or (
+                            gemini.MODE_GEMINI
+                            if gemini.is_configured()
+                            else gemini.MODE_HEURISTIC
+                        ),
+                    },
+                    "_geocoding": point.as_dict() if point else None,
+                },
+            )
+        )
+
+    if sin_punto:
+        avisar(
+            f"{sin_punto} accidentes quedaron sin coordenadas; no entran al "
+            f"Paso A del motor pero sí quedan registrados"
+        )
+    return events
+
+
 class TransporteInformaCollector(BaseCollector):
     """Avisos del MTT: extracción del lugar con LLM y geocodificación con Nominatim.
 
@@ -1022,10 +1207,6 @@ class TransporteInformaCollector(BaseCollector):
             # convocarla antes de que pasen semanas.
             self.warn(f"la estructura del portal cambió: {reason}")
 
-        resolved: list[ResolvedNotice] = []
-        geocoded = 0
-        llm_calls = 0
-
         # -- Clasificación y orden de prioridad -------------------------------
         #
         # El filtro va ANTES del modelo, no después. Dos razones: el portal
@@ -1066,75 +1247,19 @@ class TransporteInformaCollector(BaseCollector):
         claves = [external_id_de(notice, tipo) for notice, tipo in clasificados]
         conocidos = await self.service.repo.puntos_conocidos(self.source, claves)
         await self.liberar_conexion()
-        reutilizados = 0
 
-        # Un solo cliente para todas las llamadas a Nominatim: reutiliza la
-        # conexión TLS y, sobre todo, mantiene un único User-Agent identificable,
-        # que es parte del contrato de uso del servicio.
-        async with build_client() as geo_client:
-            for (notice, tipo), clave in zip(clasificados, claves, strict=True):
-                previo = conocidos.get(clave)
-                if previo is not None and reutilizable(previo, notice.text):
-                    resolved.append(
-                        (
-                            notice,
-                            tipo,
-                            calles_guardadas(previo.raw_data),
-                            GeocodeResult.desde_dict(previo.raw_data.get("_geocoding")),
-                        )
-                    )
-                    reutilizados += 1
-                    continue
-
-                if llm_calls >= self.max_llm_calls:
-                    self.warn(
-                        f"se alcanzó el tope de {self.max_llm_calls} llamadas al "
-                        f"modelo por corrida; el resto queda sin ubicación"
-                    )
-                    # Marcado para que la corrida siguiente lo intente: sin la
-                    # marca, el delta lo daría por resuelto para siempre.
-                    resolved.append((notice, tipo, {PENDIENTE_EXTRACCION: True}, None))
-                    continue
-
-                streets = await extract_streets_via_llm(notice.text)
-                llm_calls += 1
-
-                if streets is None:
-                    # Ni el modelo ni la heurística reconocieron una vía. El
-                    # aviso entra igual, sin coordenadas: es un hecho que el MTT
-                    # informó y descartarlo por no saber dónde sería perder el
-                    # hecho por no tener el punto.
-                    resolved.append((notice, tipo, {}, None))
-                    continue
-
-                point: GeocodeResult | None = None
-                if geocoded < self.max_geocodes and streets.get("street_1"):
-                    try:
-                        point = await geocode(geo_client, streets)
-                        geocoded += 1
-                    except Exception as exc:
-                        # Una geocodificación fallida NO pierde el aviso: la señal
-                        # entra sin coordenadas. Perder un accidente confirmado por
-                        # el MTT porque OpenStreetMap no conoce una esquina sería
-                        # el peor intercambio posible — y perder los otros
-                        # diecinueve avisos del lote por esa misma esquina sería
-                        # todavía peor, que es lo que ocurriría si esta captura
-                        # sólo contemplara `CollectorError`.
-                        self.warn(
-                            f"Nominatim falló para un aviso "
-                            f"({type(exc).__name__}): {exc}"
-                        )
-                        # El contador igual avanza: un servicio que falla consumió
-                        # su segundo de rate limit lo mismo que uno que responde.
-                        geocoded += 1
-                elif geocoded >= self.max_geocodes:
-                    self.warn(
-                        f"se alcanzó el tope de {self.max_geocodes} geocodificaciones "
-                        f"por corrida; el resto queda sin coordenadas"
-                    )
-                    streets = {**streets, PENDIENTE_GEOCODIFICACION: True}
-
-                resolved.append((notice, tipo, streets, point))
+        resumen = await resolver_avisos(
+            clasificados,
+            claves=claves,
+            conocidos=conocidos,
+            max_llm_calls=self.max_llm_calls,
+            max_geocodes=self.max_geocodes,
+            avisar=self.warn,
+        )
+        resolved = resumen.resueltos
+        llm_calls = resumen.llamadas_llm
+        geocoded = resumen.geocodificados
+        reutilizados = resumen.reutilizados
 
         accidentes = sum(1 for _, tipo, _, _ in resolved if tipo is EventType.ACCIDENT)
 
@@ -1181,64 +1306,7 @@ class TransporteInformaCollector(BaseCollector):
         return resolved
 
     def normalize(self, records: Sequence[ResolvedNotice]) -> list[EventCreate]:
-        now = datetime.now(UTC)
-        events: list[EventCreate] = []
-        sin_punto = 0
-
-        for notice, tipo, streets, point in records:
-            timestamp = notice.published_at or now
-            if timestamp > now:
-                timestamp = now
-            # Sólo se cuentan los accidentes sin punto. Un corte de vía sin
-            # coordenadas no pierde nada: no entra al motor de ninguna manera,
-            # porque `road_closure` está fuera de `CORRELATABLE_EVENT_TYPES`.
-            # Contarlo inflaría un aviso que describe un problema que no tiene.
-            if point is None and tipo is EventType.ACCIDENT:
-                sin_punto += 1
-
-            events.append(
-                EventCreate(
-                    timestamp=timestamp,
-                    source=EventSource.TRANSPORTE_INFORMA,
-                    type=tipo,
-                    lat=point.lat if point else None,
-                    lon=point.lon if point else None,
-                    text=notice.text[:10_000],
-                    external_id=external_id_de(notice, tipo),
-                    confidence=(
-                        TRANSPORTE_INFORMA_CONFIDENCE
-                        if tipo is EventType.ACCIDENT
-                        else ROAD_CLOSURE_CONFIDENCE
-                    ),
-                    raw_data={
-                        **dict(notice.raw),
-                        "comuna": streets.get("city"),
-                        "_collector": self.name,
-                        # Los dos pasos quedan separados y auditables: qué leyó el
-                        # extractor y qué resolvió el geocodificador. Si mañana un
-                        # punto está mal, esto dice cuál de los dos falló.
-                        "_extraction": {
-                            **streets,
-                            # Una extracción reutilizada conserva el modo con
-                            # que se hizo; una nueva lleva el de ahora.
-                            "mode": streets.get("mode")
-                            or (
-                                gemini.MODE_GEMINI
-                                if gemini.is_configured()
-                                else gemini.MODE_HEURISTIC
-                            ),
-                        },
-                        "_geocoding": point.as_dict() if point else None,
-                    },
-                )
-            )
-
-        if sin_punto:
-            self.warn(
-                f"{sin_punto} accidentes quedaron sin coordenadas; no entran al "
-                f"Paso A del motor pero sí quedan registrados"
-            )
-        return events
+        return eventos_de_avisos(records, collector=self.name, avisar=self.warn)
 
 
 __all__ = [
@@ -1248,9 +1316,11 @@ __all__ = [
     "TRAFFIC_KEYWORDS",
     "TRANSPORTE_INFORMA_CONFIDENCE",
     "ResolvedNotice",
+    "ResumenResolucion",
     "TrafficNotice",
     "TransporteInformaCollector",
     "calles_guardadas",
+    "eventos_de_avisos",
     "external_id_de",
     "extract_streets_heuristic",
     "extract_streets_via_llm",
@@ -1259,6 +1329,7 @@ __all__ = [
     "page_looks_broken",
     "parse_notice",
     "parse_notices",
+    "resolver_avisos",
     "reutilizable",
     "texto_md5",
 ]

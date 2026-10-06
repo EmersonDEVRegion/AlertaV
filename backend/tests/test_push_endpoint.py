@@ -71,6 +71,7 @@ class FakeService:
             radius_m=request.radius_m or 5000.0,
             notify_incidents=request.notify_incidents,
             notify_seismic=request.notify_seismic,
+            radios=dict(request.radios or {}),
             location_updated_at=datetime(2026, 9, 23, tzinfo=UTC),
         ), places
 

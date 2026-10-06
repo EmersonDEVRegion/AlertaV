@@ -1,17 +1,57 @@
 # Configuración de Apify
 
 **Dos Tasks, un Actor, dos Schedules.** Desde el 2026-09-22 Apify se usa para
-una sola cosa: raspar las cuentas de X de las centrales de Bomberos.
+una sola cosa: raspar cuentas de X. Las de las centrales de Bomberos y, desde el
+2026-10-06, la de tránsito del MTT.
 
 | Task | Schedule | Qué pide | Entrega en |
 |---|---|---|---|
-| `alertav-bomberos` | `alertav`, cada 30 min | lo publicado en los **últimos 45 min** (`within_time`), hasta 6 por cuenta y 15 en total | `POST /api/v1/apify/webhook` |
-| `alertav-canario` | `alertav-canario`, 12:10 cada día | los 2 últimos tuits de cada cuenta, **sin ventana** | el mismo webhook |
+| `alertav-bomberos` | `alertav`, cada 30 min | lo publicado en los **últimos 45 min** (`within_time`), hasta 6 por cuenta y 17 en total | `POST /api/v1/apify/webhook` |
+| `alertav-canario` | `alertav-canario`, 12:10 cada día | los 2 últimos tuits de cada cuenta (12 en total), **sin ventana** | el mismo webhook |
 
-Las cinco cuentas, en los dos: `@CGI_CBV` (Valparaíso), `@CBVM132` (Viña del
-Mar y Concón), `@despachoscbla` (Los Andes y Calle Larga), `@CBQuilpue` y
-`@cbquillota`. Actor `xquik/x-tweet-scraper`; todo entra como `bomberos`,
-confianza **1.00**.
+Las seis cuentas, en los dos:
+
+- Las cinco centrales: `@CGI_CBV` (Valparaíso), `@CBVM132` (Viña del Mar y
+  Concón), `@despachoscbla` (Los Andes y Calle Larga), `@CBQuilpue` y
+  `@cbquillota`. Entran como `bomberos`, confianza **1.00**.
+- `@TTIValparaiso` (TransporteInforma Región de Valparaíso, del MTT). Entra como
+  `transporte_informa`, confianza **0.80**, en la corrida `transporte_informa_x`
+  (ver abajo).
+
+Actor `xquik/x-tweet-scraper`.
+
+## 6 de octubre de 2026: @TTIValparaiso
+
+La web del MTT (`transporte_informa`) arrastra avisos de semanas; la cuenta de X
+es su canal fresco. Agregarla al Task sin más habría sido pagar por tuits que el
+webhook bota: una cuenta sin tabla de claves no se ingiere. Ahora:
+
+- **Mismo Task, más cupo.** `maxItems` de 15 a **17** (6 por cuenta) y el
+  canario de 10 a **12**. Así un aviso de tránsito no le quita lugar a un
+  despacho salvo en una contingencia muy grande.
+- **El backend la separa por cuenta** (`APIFY_X_TRANSITO_HANDLES`, por defecto
+  `TTIValparaiso`) antes de buscar tabla. Sus tuits pasan por la tubería de la
+  web del MTT: `clasificar_transito` (accidente → mapa; desvío, corte o faena →
+  capa de cortes; saludos y recomendaciones → fuera), Gemini y Nominatim.
+- **Corrida propia** en `collector_runs`: `transporte_informa_x`, sólo cuando la
+  entrega trae tuits de la cuenta. Un fallo ahí no toca la corrida de Bomberos.
+- **Ceguera:** `ttivalparaiso` está en `APIFY_X_CUENTAS_ESPERADAS`; el canario la
+  exige como a las centrales.
+
+Peor caso del mes, con la plataforma incluida:
+
+| Task | Corridas al mes | Tuits por corrida (máx.) | Peor caso |
+|---|---|---|---|
+| `alertav-bomberos` | 1.488 | 17 | US$ 4,09 |
+| `alertav-canario` | 31 | 12 | US$ 0,06 |
+| **Total** | | | **US$ 4,15** |
+
+El tope del script subió de US$ 4 a **US$ 4,50**: sigue bajo los US$ 5 del plan
+Free, con margen para storage y pruebas.
+
+**Orden de puesta en marcha:** primero el deploy del backend (que ya sepa leer a
+@TTIValparaiso), después `configurar.ps1`. Al revés, las entregas de esa media
+hora anotan «cuentas sin tabla» y nada más.
 
 `configurar.ps1` crea o actualiza los dos Tasks, los **prueba** con una corrida
 por la API, y recién entonces ajusta los Schedules y los webhooks.

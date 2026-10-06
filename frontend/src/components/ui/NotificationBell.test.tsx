@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { PushNotificationsState } from '@/hooks/usePushNotifications'
@@ -19,7 +19,7 @@ function state(overrides: Partial<PushNotificationsState> = {}): PushNotificatio
       incident_min_sources: 2,
       seismic_min_magnitude: 3.5,
     },
-    preferences: { notifyIncidents: true, notifySeismic: true },
+    preferences: { notifyIncidents: true, notifySeismic: true, radios: {} },
     locatedAt: null,
     probeResult: null,
     enable: vi.fn(async () => undefined),
@@ -36,7 +36,8 @@ describe('NotificationPanel', () => {
     const push = state()
     render(<NotificationPanel push={push} />)
 
-    expect(screen.getByText(/Emergencias a menos de 5 km/)).toBeInTheDocument()
+    expect(screen.getByText(/Emergencias cerca de ti/)).toBeInTheDocument()
+    expect(screen.getByText(/incendios a menos de 5 km/)).toBeInTheDocument()
     expect(screen.getByText(/al menos 2 fuentes distintas/)).toBeInTheDocument()
     expect(screen.getByText(/magnitud 3,5 o más/)).toBeInTheDocument()
     expect(screen.getByText(/última ubicación que la app conoce/)).toBeInTheDocument()
@@ -63,6 +64,7 @@ describe('NotificationPanel', () => {
     expect(push.setPreferences).toHaveBeenCalledWith({
       notifyIncidents: true,
       notifySeismic: false,
+      radios: {},
     })
 
     await userEvent.click(screen.getByRole('button', { name: PUSH_TEXT.probe }))
@@ -72,12 +74,44 @@ describe('NotificationPanel', () => {
     expect(push.disable).toHaveBeenCalledOnce()
   })
 
+  it('un deslizador por categoría, con el radio del servidor, y guarda solo', async () => {
+    vi.useFakeTimers()
+    try {
+      const push = state({ phase: 'on', locatedAt: Date.now() })
+      render(<NotificationPanel push={push} />)
+
+      const luz = screen.getByRole('slider', { name: 'Cortes de luz' })
+      expect(luz).toHaveAttribute('aria-valuetext', '1 km')
+      expect(screen.getByRole('slider', { name: 'Incendios' })).toHaveAttribute(
+        'aria-valuetext',
+        '5 km',
+      )
+      expect(screen.getAllByRole('slider')).toHaveLength(6)
+
+      // Todo a la izquierda: no avisar.
+      fireEvent.change(luz, { target: { value: '0' } })
+      expect(luz).toHaveAttribute('aria-valuetext', 'No avisar')
+      expect(push.setPreferences).not.toHaveBeenCalled()
+
+      await act(async () => {
+        vi.advanceTimersByTime(800)
+      })
+      expect(push.setPreferences).toHaveBeenCalledWith({
+        notifyIncidents: true,
+        notifySeismic: true,
+        radios: { power: 0 },
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('no deja apagar la última preferencia: para eso está desactivar', () => {
     render(
       <NotificationPanel
         push={state({
           phase: 'on',
-          preferences: { notifyIncidents: true, notifySeismic: false },
+          preferences: { notifyIncidents: true, notifySeismic: false, radios: {} },
         })}
       />,
     )

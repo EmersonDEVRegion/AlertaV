@@ -1,6 +1,7 @@
 /** Nombres legibles en es-CL para los valores de enum del backend. */
 
 import type {
+  UbicacionPrecision,
   EventSource,
   IncidentStatus,
   IncidentType,
@@ -46,6 +47,17 @@ export const TYPE_LABEL: Record<IncidentType, string> = {
   power_outage: 'Corte de suministro',
   rescue: 'Rescate',
   other: 'Otro',
+}
+
+/**
+ * Qué tan fino es el punto del incidente, dicho en la ficha (§K). `exacta` no
+ * se dice: un punto con coordenadas propias no necesita aclaración.
+ */
+export const UBICACION_PRECISION_LABEL: Record<UbicacionPrecision, string | null> = {
+  intersection: 'Ubicación: en el cruce que informó la fuente.',
+  exacta: null,
+  street: 'Ubicación aproximada: sobre la calle informada, no necesariamente en la esquina.',
+  sector: 'Ubicación aproximada: el sector informado, no una dirección.',
 }
 
 export const STATUS_LABEL: Record<IncidentStatus, string> = {

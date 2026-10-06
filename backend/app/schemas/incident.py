@@ -155,6 +155,15 @@ class IncidentRead(BaseModel):
     )
 
     title: str | None = None
+    ubicacion_precision: str | None = Field(
+        default=None,
+        description=(
+            "Qué tan fino es el punto: `intersection` (el cruce que nombró la "
+            "fuente), `exacta` (coordenadas propias: CONAF, Waze, GPS), `street` "
+            "(sobre una calle, sin la esquina) o `sector` (un barrio). `null` en "
+            "incidentes anteriores al 2026-10-05."
+        ),
+    )
     commune: str | None = None
     province: str | None = None
 

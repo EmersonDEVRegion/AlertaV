@@ -62,6 +62,7 @@ class FakeIncident:
         self.alert_level = None
         self.title = "Título"
         self.commune = "Valparaíso"
+        self.ubicacion_precision = "intersection"
         self.province = "Valparaíso"
         self.event_count = 3
         self.source_count = 2

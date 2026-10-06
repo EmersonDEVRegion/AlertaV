@@ -25,8 +25,14 @@ export function useNotificationDeepLink(): {
 
   useEffect(() => {
     const url = new URL(window.location.href)
-    if (url.searchParams.has('incidente') || url.searchParams.has('sismo')) {
-      for (const key of ['incidente', 'sismo', 'lat', 'lon']) url.searchParams.delete(key)
+    if (
+      url.searchParams.has('incidente') ||
+      url.searchParams.has('sismo') ||
+      url.searchParams.has('corte_agua')
+    ) {
+      for (const key of ['incidente', 'sismo', 'corte_agua', 'lat', 'lon']) {
+        url.searchParams.delete(key)
+      }
       window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash)
     }
   }, [])

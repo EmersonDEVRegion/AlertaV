@@ -165,6 +165,8 @@ export interface OutageDetail {
   vigente?: boolean | null
 }
 
+export type UbicacionPrecision = 'intersection' | 'exacta' | 'street' | 'sector'
+
 /** `IncidentRead` — lo que devuelve `GET /api/v1/incidents/active`. */
 export interface Incident {
   code: string
@@ -190,6 +192,12 @@ export interface Incident {
   title: string | null
   commune: string | null
   province: string | null
+  /**
+   * Qué tan fino es el punto (§K): el cruce que nombró la fuente, coordenadas
+   * propias, una calle sin la esquina o un sector. Ausente en un backend
+   * anterior y `null` en incidentes anteriores al 2026-10-05.
+   */
+  ubicacion_precision?: UbicacionPrecision | null
 
   event_count: number
   source_count: number

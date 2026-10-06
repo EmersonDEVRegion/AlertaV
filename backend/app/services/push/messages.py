@@ -21,7 +21,7 @@ panel de avisos, y el título no promete una precisión que no tiene.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -323,20 +323,113 @@ def seismic_message(
     )
 
 
-def probe_message(*, radius_m: float) -> PushMessage:
-    """Lo que llega al tocar «Enviar prueba» en la PWA."""
+WATER_CUT_TTL_SECONDS = 6 * 3600
+
+
+def _momento(valor: str | None, now: datetime | None) -> str | None:
+    """«14:30» si es hoy en Chile; «06/10 08:00» si es otro día. None si no se lee."""
+    if not valor:
+        return None
+    try:
+        momento = datetime.fromisoformat(valor.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if momento.tzinfo is None:
+        momento = momento.replace(tzinfo=CHILE_TZ)
+    local = momento.astimezone(CHILE_TZ)
+    hoy = (now or datetime.now(CHILE_TZ)).astimezone(CHILE_TZ).date()
+    if local.date() == hoy:
+        return local.strftime("%H:%M")
+    return local.strftime("%d/%m %H:%M")
+
+
+def water_cut_message(
+    *,
+    key: str,
+    public_id: str,
+    lat: float,
+    lon: float,
+    distance_m: float,
+    comuna: str | None,
+    calles: str | None,
+    sector: str | None,
+    inicio: str | None,
+    fin: str | None,
+    programado: bool | None,
+    motivo: str | None,
+    place: str | None = None,
+    now: datetime | None = None,
+) -> PushMessage:
+    """Aviso de un corte de agua de Esval cerca de la ubicación o de un lugar guardado."""
+    nombre = "Corte de agua programado" if programado else "Corte de agua"
+    title = f"{nombre} a {format_distance(distance_m)}"
+    if place:
+        title += f" de {place}"
+
+    lines: list[str] = []
+    donde = [parte for parte in (calles or sector, comuna) if parte]
+    if donde:
+        # Las calles de Esval pueden ser un párrafo: el aviso lleva el comienzo.
+        primera = donde[0] if len(donde[0]) <= 90 else donde[0][:87].rstrip() + "…"
+        lines.append(" · ".join([primera, *donde[1:]]))
+    desde, hasta = _momento(inicio, now), _momento(fin, now)
+    if desde and hasta:
+        lines.append(f"Desde {desde} hasta {hasta} (estimado)")
+    elif desde:
+        lines.append(f"Desde {desde}")
+    elif hasta:
+        lines.append(f"Reposición estimada: {hasta}")
+    if motivo:
+        lines.append(motivo)
+    lines.append("Fuente: Esval")
+
+    return PushMessage(
+        title=title,
+        body="\n".join(lines),
+        tag=f"agua-{key}",
+        url="/?" + urlencode({"corte_agua": public_id, "lat": f"{lat:.4f}", "lon": f"{lon:.4f}"}),
+        kind="water_cut",
+        ttl_seconds=WATER_CUT_TTL_SECONDS,
+    )
+
+
+_PROBE_NOMBRES = (
+    ("fire", "incendios"),
+    ("traffic", "accidentes"),
+    ("power", "cortes de luz"),
+    ("water", "cortes de agua"),
+)
+
+
+def probe_message(
+    *, radius_m: float = 5000.0, radios: Mapping[str, float] | None = None
+) -> PushMessage:
+    """Lo que llega al tocar «Enviar prueba» en la PWA.
+
+    Con `radios` (§K) cuenta las distancias que la persona eligió para las
+    categorías principales; sin ellos, el radio único de antes.
+    """
+    if radios is None:
+        cuando = f"una emergencia a menos de {format_distance(radius_m)}"
+    else:
+        partes = [
+            f"{nombre} a menos de {format_distance(radios[clave])}"
+            for clave, nombre in _PROBE_NOMBRES
+            if radios.get(clave, 0) > 0
+        ]
+        cuando = (
+            "una emergencia cerca (" + ", ".join(partes) + ")"
+            if partes
+            else "una emergencia cerca"
+        )
     return PushMessage(
         title="AlertaV: avisos activados",
-        body=(
-            f"Así llegará un aviso cuando haya una emergencia a menos de "
-            f"{format_distance(radius_m)} o un sismo que se sienta donde estás."
-        ),
+        body=f"Así llegará un aviso cuando haya {cuando} o un sismo que se sienta donde estás.",
         tag="alertav-prueba",
         url="/",
         kind="test",
         ttl_seconds=TEST_TTL_SECONDS,
     )
-
 
 __all__ = [
     "INCIDENT_TTL_SECONDS",
@@ -350,4 +443,5 @@ __all__ = [
     "probe_message",
     "safe_topic",
     "seismic_message",
+    "water_cut_message",
 ]
