@@ -1,7 +1,7 @@
 {
-  "twitterHandles": ["CGI_CBV", "CBVM132", "despachoscbla", "CBQuilpue", "cbquillota"],
+  "twitterHandles": ["CGI_CBV", "CBVM132", "despachoscbla", "CBQuilpue", "cbquillota", "TTIValparaiso"],
   "maxItemsPerTarget": 6,
-  "maxItems": 15,
+  "maxItems": 17,
   "queryType": "Latest",
   "within_time": "45m"
 }

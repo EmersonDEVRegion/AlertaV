@@ -374,6 +374,26 @@ class EventRepository:
         )
         return (await self.session.execute(stmt)).scalars().all()
 
+    def news_feed_stmt(self, *, since: datetime, limit: int = 60) -> Select:
+        """Noticias de la prensa local publicadas desde `since`, la más nueva arriba.
+
+        La ventana es por `timestamp` (cuándo se publicó, o la cota superior
+        conocida si el portal no dio la hora) y no por `ingested_at`: el feed
+        cuenta lo que pasó en las últimas horas, no lo que AlertaV leyó.
+        Usa `ix_raw_events_source_timestamp`.
+        """
+        return (
+            select(RawEvent)
+            .where(RawEvent.source == EventSource.MEDIA)
+            .where(RawEvent.timestamp >= since)
+            .order_by(RawEvent.timestamp.desc(), RawEvent.id.desc())
+            .limit(limit)
+        )
+
+    async def list_news_feed(self, *, since: datetime, limit: int = 60) -> Sequence[RawEvent]:
+        stmt = self.news_feed_stmt(since=since, limit=limit)
+        return (await self.session.execute(stmt)).scalars().all()
+
     def water_cuts_stmt(
         self,
         *,

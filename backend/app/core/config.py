@@ -773,11 +773,36 @@ class Settings(BaseSettings):
     #: - Falta alguna → `partial`, con la cuenta nombrada en el detalle.
     #:
     #: Vacía = no se exige nada (así corren los tests).
+    #:
+    #: Desde el 2026-10-06 incluye a @TTIValparaiso (ver
+    #: `APIFY_X_TRANSITO_HANDLES`): el canario la trae como a las centrales y su
+    #: ausencia es la misma ceguera.
     APIFY_X_CUENTAS_ESPERADAS: CsvList = Field(
         default_factory=lambda: [
             "CGI_CBV", "CBVM132", "despachoscbla", "CBQuilpue", "cbquillota",
+            "TTIValparaiso",
         ]
     )
+    #: Cuentas de X de **tránsito** que viajan en el mismo Task que las
+    #: centrales de Bomberos (desde el 2026-10-06).
+    #:
+    #: Hoy una: @TTIValparaiso, TransporteInforma Región de Valparaíso, el canal
+    #: del MTT en X. Es la misma fuente que `transporte_informa` lee en la web,
+    #: pero fresca: la web arrastra avisos de semanas. Sus tuits NO se leen con
+    #: una tabla de claves —no tienen— sino con la tubería del MTT
+    #: (`clasificar_transito` → Gemini → Nominatim) y entran como
+    #: `transporte_informa`, confianza 0,80, en la corrida
+    #: `transporte_informa_x`. Vacía = sus tuits se descartan como cualquier
+    #: cuenta sin tabla.
+    APIFY_X_TRANSITO_HANDLES: CsvList = Field(default_factory=lambda: ["TTIValparaiso"])
+    #: Antigüedad máxima de un tuit de tránsito. Más larga que la de un
+    #: despacho (`APIFY_WEBHOOK_MAX_AGE_MINUTES`): un corte de ruta o un desvío
+    #: siguen vigentes horas. Seis horas es la `edad_max` de la familia
+    #: `traffic` en el motor: lo más viejo ya no se agruparía igual.
+    APIFY_X_TRANSITO_MAX_AGE_MINUTES: int = Field(default=360, ge=5, le=1440)
+    #: Llamadas al modelo y a Nominatim por entrega para los tuits de tránsito.
+    #: Una entrega trae a lo sumo 6 por cuenta (`maxItemsPerTarget`).
+    APIFY_X_TRANSITO_MAX_GEOCODES: int = Field(default=6, ge=0, le=50)
     #: Tasks (o Actors) cuya entrega es el **canario** diario, no la corrida
     #: con ventana de tiempo.
     #:
@@ -1216,6 +1241,15 @@ class Settings(BaseSettings):
     #: Santiago aparecían en el mapa como incidentes «sin comuna». Sin la tabla
     #: no filtra nada. En `false`, vuelve a agrupar todo lo de la caja.
     CORRELATION_SOLO_REGION: bool = True
+    #: ¿La prensa (`EventSource.MEDIA`) entra al motor? Desde el 2026-10-06,
+    #: **no**: una noticia llega con horas de atraso y abría pines que ya no
+    #: describían el presente (con `CORRELATION_MIN_SIGNALS_FOR_INCIDENT=1`,
+    #: una sola nota bastaba). Ahora la prensa sólo se lee en
+    #: `GET /feed/noticias`: no abre incidentes, no se pega a uno, no mueve
+    #: confianza ni punto, y no genera avisos push. Con el interruptor apagado
+    #: el motor además desvincula la prensa de los incidentes abiertos y
+    #: descarta los que sólo tenían prensa. En `true`, vuelve lo de antes.
+    CORRELATION_PRENSA: bool = False
     #: Ventana hacia atrás de señales que el motor considera en cada pasada.
     CORRELATION_WINDOW_HOURS: int = Field(default=4, ge=1, le=168)
     #: Antigüedad máxima de un incidente para que una señal nueva se le adhiera.
@@ -1424,6 +1458,7 @@ class Settings(BaseSettings):
         "APIFY_BOMBEROS_ACTOR_IDS",
         "APIFY_X_CUENTAS_ESPERADAS",
         "APIFY_X_CANARIO_IDS",
+        "APIFY_X_TRANSITO_HANDLES",
         "PUSH_ALLOWED_ENDPOINT_HOSTS",
         "OVERPASS_URLS",
         mode="before",

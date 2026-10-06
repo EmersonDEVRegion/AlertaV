@@ -78,7 +78,7 @@ param(
     # El canario: una vez al dia (hora de Chile). Ver arriba.
     [string]$CronCanario = "10 12 * * *",
     # Tope de gasto de UNA corrida (opcion maxTotalChargeUsd del Task). Con
-    # maxItems = 12 y US$ 0,00015 por tuit, una corrida normal cuesta US$ 0,002.
+    # maxItems = 17 y US$ 0,00015 por tuit, una corrida llena cuesta US$ 0,0028.
     [double]$MaxCostoPorCorrida = 0.01
 )
 
@@ -241,8 +241,10 @@ $PrecioPorTuit = 0.00015
 # de los tuits. Medido el 2026-09-30: entre US$ 0,00012 y 0,00018. Se redondea
 # para arriba. Con 1.488 corridas al mes son unos US$ 0,30: ya no es despreciable.
 $PlataformaPorCorrida = 0.0002
-# US$ 4 y no 5: el margen cubre lo ya gastado en el periodo y las pruebas.
-$TopePlanFree = 4.0
+# US$ 4,50 y no 5: el margen cubre storage, transferencia y las pruebas. Era
+# US$ 4 hasta el 2026-10-06; subio para sumar @TTIValparaiso (maxItems 15 -> 17,
+# peor caso US$ 4,15 con el canario) sin pasar de los US$ 5 del plan Free.
+$TopePlanFree = 4.5
 
 # Corridas al mes de un cron simple: "M * * * *", "*/N * * * *", "0 */N * * *",
 # listas con comas. Devuelve $null si el cron es de otra forma (dia, mes o dia de
@@ -299,9 +301,10 @@ function Resumir-Tuits($items) {
     return "$($items.Count) items, $relleno de relleno: $cuentas"
 }
 
-# Las centrales que el CANARIO tiene que traer. Mismo valor por defecto que
-# APIFY_X_CUENTAS_ESPERADAS en el backend.
-$CuentasEsperadas = @("cgi_cbv", "cbvm132", "despachoscbla", "cbquilpue", "cbquillota")
+# Las cuentas que el CANARIO tiene que traer. Mismo valor por defecto que
+# APIFY_X_CUENTAS_ESPERADAS en el backend: las cinco centrales y, desde el
+# 2026-10-06, @TTIValparaiso (transito del MTT).
+$CuentasEsperadas = @("cgi_cbv", "cbvm132", "despachoscbla", "cbquilpue", "cbquillota", "ttivalparaiso")
 
 Show-Consumo
 
@@ -380,9 +383,10 @@ if ($Auditar) {
 
 # --- Definicion del Task ----------------------------------------------------
 #
-# Uno solo: las dos centrales (@CGI_CBV y @CBVM132) en la misma corrida. El
-# backend separa cada tuit por su autor y lo lee con el diccionario de claves
-# de su Cuerpo.
+# Uno solo: las centrales y @TTIValparaiso en la misma corrida. El backend
+# separa cada tuit por su autor: los de una central los lee con el diccionario
+# de claves de su Cuerpo; los de @TTIValparaiso (APIFY_X_TRANSITO_HANDLES), con
+# la tuberia del MTT, como transporte_informa.
 #
 # Los Tasks retirados, por si hubiera que volver a encenderlos (junto con
 # APIFY_PRENSA_ENABLED / APIFY_INSTAGRAM_ENABLED en Render):

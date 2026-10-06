@@ -204,6 +204,11 @@ export const env = {
    */
   vehiclePollIntervalMs: num(import.meta.env.VITE_VEHICLE_POLL_INTERVAL_MS, 300_000),
   /**
+   * Cadencia del feed de prensa. El collector corre cada 15 min y las notas
+   * llegan con horas de atraso: cinco minutos sobra.
+   */
+  newsPollIntervalMs: num(import.meta.env.VITE_NEWS_POLL_INTERVAL_MS, 300_000),
+  /**
    * Cortes de agua de Esval. Encendido en todas partes: la fila del panel
    * aparece sola cuando el backend tiene datos (`fuente.ultima_lectura`), así
    * que no hace falta apagarla mientras tanto. `off` queda como interruptor de

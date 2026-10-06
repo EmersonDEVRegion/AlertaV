@@ -71,6 +71,10 @@ COLLECTOR_ROLES: dict[str, dict[str, str]] = {
     "chilquinta_cortes": {"power": "principal"},
     "cge_cortes": {"power": "principal"},
     "transporte_informa": {"traffic": "apoyo"},
+    #: Los tuits de @TTIValparaiso, que llegan en las entregas del webhook de
+    #: X (desde el 2026-10-06). Apoyo por lo mismo que el portal. Su corrida
+    #: sólo existe cuando la entrega trae tuits de la cuenta.
+    "transporte_informa_x": {"traffic": "apoyo"},
     "prensa_local": {"fire": "apoyo", "traffic": "principal", "otros": "apoyo"},
     #: Fuera de `COLLECTORS` —entra por webhook— pero escribe en `collector_runs`
     #: con este nombre y es el pilar de tres familias. Omitirlo dejaría
@@ -93,6 +97,8 @@ COLLECTOR_ROLES: dict[str, dict[str, str]] = {
 #: Nombre del canario. Literal y no importado de `apify_webhook_service` por lo
 #: mismo que `inbox_atascado`: no traer medio árbol de collectors hasta acá.
 _CANARIO = "bomberos_apify_canario"
+#: Literal por lo mismo: es `transito_x.COLLECTOR_NAME`.
+_TRANSITO_X = "transporte_informa_x"
 
 
 def active_roles() -> dict[str, dict[str, str]]:
@@ -149,6 +155,11 @@ def _intervalo(nombre: str) -> int:
     tres familias que el webhook sostiene.
     """
     if nombre == _CANARIO:
+        return settings.APIFY_X_CANARIO_HORAS * 3600
+    if nombre == _TRANSITO_X and [i for i in settings.APIFY_X_CANARIO_IDS if i.strip()]:
+        # Con ventana de tiempo, la corrida de tránsito sólo aparece cuando la
+        # cuenta publicó en esos 45 min: de noche pasan horas sin una. La que
+        # llega seguro es la del canario, una vez al día.
         return settings.APIFY_X_CANARIO_HORAS * 3600
     if nombre not in COLLECTORS:
         return settings.APIFY_X_SCHEDULE_MINUTES * 60

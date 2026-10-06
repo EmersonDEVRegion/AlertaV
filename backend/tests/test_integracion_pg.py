@@ -294,14 +294,14 @@ def _evento(
     )
 
 
-async def _pasada(*, perfiles: bool, window_hours: int = 4):
+async def _pasada(*, perfiles: bool, window_hours: int = 4, prensa: bool | None = None):
     from app.core.database import AsyncSessionLocal
     from app.models.incident import Incident
     from app.services.correlation.engine import CorrelationEngine
 
     async with AsyncSessionLocal() as session:
         resultado = await CorrelationEngine(
-            session, perfiles=perfiles, window_hours=window_hours
+            session, perfiles=perfiles, window_hours=window_hours, prensa=prensa
         ).run()
     async with AsyncSessionLocal() as session:
         incidentes = (await session.execute(select(Incident).order_by(Incident.id))).scalars().all()
@@ -334,7 +334,9 @@ def test_una_senal_horas_despues_no_se_pega_al_choque_de_la_manana(perfiles, inc
         await _vaciar_motor()
         await _ingerir(_evento("choque", LIBERTAD_5_NORTE, hace=td(hours=5, minutes=30)))
         await _pasada(perfiles=perfiles, window_hours=8)
-        await _ingerir(_evento("nota", (-33.01650, -71.55250), hace=td(minutes=30), fuente="media"))
+        # Era una nota de prensa; desde el 2026-10-06 la prensa no entra al
+        # motor (`CORRELATION_PRENSA`), así que la señal tardía es otro aviso.
+        await _ingerir(_evento("tardio", (-33.01650, -71.55250), hace=td(minutes=30)))
         return await _pasada(perfiles=perfiles, window_hours=8)
 
     _, incidentes = correr(caso)
@@ -923,7 +925,10 @@ def test_el_incidente_queda_en_el_cruce_y_no_en_el_promedio():
                 )
             )
             await session.commit()
-            await CorrelationEngine(session).run()
+            # Con la prensa dentro (`CORRELATION_PRENSA=true`): lo que se prueba
+            # es que una señal de calle no tire del punto exacto. Desde el
+            # 2026-10-06 la prensa queda fuera por defecto (ver el bloque final).
+            await CorrelationEngine(session, prensa=True).run()
             fila = await session.get(RawEvent, despacho.id)
             incidente = await session.get(Incident, fila.incident_id) if fila else None
             resultado = (
@@ -940,3 +945,105 @@ def test_el_incidente_queda_en_el_cruce_y_no_en_el_promedio():
     assert eventos == 2, "la nota y el despacho son el mismo incendio"
     assert (round(lat, 4), round(lon, 4)) == (-33.05, -71.615)
     assert precision == "intersection"
+
+
+# --- La prensa fuera del motor (2026-10-06) -----------------------------------
+
+#: Dos puntos de prueba a ~7 km: Reñaca y la Quinta Vergara.
+RENACA = (-32.97000, -71.54000)
+QUINTA_VERGARA = (-33.03050, -71.54750)
+
+
+def test_una_noticia_sola_ya_no_abre_un_incidente():
+    from datetime import timedelta as td
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(
+            _evento(
+                "nota-sola", RENACA, hace=td(minutes=40), fuente="media", tipo="structural_fire"
+            )
+        )
+        return await _pasada(perfiles=True)
+
+    resultado, incidentes = correr(caso)
+    assert incidentes == []
+    assert resultado.events_considered == 0, "la nota ni siquiera se agrupa"
+
+
+def test_la_prensa_se_retira_de_los_incidentes_que_ya_estaban_abiertos():
+    """Lo que quedó de antes del cambio: un pin sólo de prensa y uno mixto."""
+    from datetime import timedelta as td
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.event import RawEvent
+    from app.models.incident import Incident
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(
+            _evento("nota-a", RENACA, hace=td(minutes=40), fuente="media", tipo="structural_fire"),
+            _evento(
+                "despacho-b",
+                QUINTA_VERGARA,
+                hace=td(minutes=35),
+                fuente="bomberos",
+                tipo="structural_fire",
+            ),
+            _evento(
+                "nota-b",
+                QUINTA_VERGARA,
+                hace=td(minutes=30),
+                fuente="media",
+                tipo="structural_fire",
+            ),
+        )
+        # Así quedaban antes: la prensa dentro del motor.
+        _, antes = await _pasada(perfiles=True, prensa=True)
+        resultado, despues = await _pasada(perfiles=True, prensa=False)
+        async with AsyncSessionLocal() as session:
+            notas = (
+                (await session.execute(select(RawEvent).where(RawEvent.source == "media")))
+                .scalars()
+                .all()
+            )
+            por_id = {i.id: i for i in (await session.execute(select(Incident))).scalars().all()}
+        return antes, resultado, despues, notas, por_id
+
+    antes, resultado, despues, notas, por_id = correr(caso)
+    assert len(antes) == 2
+    assert resultado.prensa_desvinculada == 2
+    assert resultado.solo_prensa_descartados == 1
+    estados = sorted(str(getattr(i.status, "value", i.status)) for i in por_id.values())
+    assert estados == ["active", "dismissed"]
+    (mixto,) = [i for i in por_id.values() if str(getattr(i.status, "value", i.status)) == "active"]
+    assert "media" not in [str(getattr(f, "value", f)) for f in (mixto.sources or [])]
+    assert all(n.incident_id is None for n in notas), "la nota sigue en raw_events, sin incidente"
+
+
+def test_el_feed_de_noticias_lee_la_prensa_de_la_base():
+    from datetime import timedelta as td
+
+    from app.core.database import AsyncSessionLocal
+    from app.services.news_feed_service import NewsFeedService
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(
+            _evento(
+                "nota-feed",
+                None,
+                hace=td(hours=3),
+                fuente="media",
+                tipo="structural_fire",
+                raw={"titular": "Incendio en Reñaca", "_prensa": {"medio": "Pura Noticia"}},
+            ),
+            _evento("vieja", None, hace=td(hours=30), fuente="media", tipo="structural_fire"),
+            _evento("choque-feed", RENACA, hace=td(minutes=10)),
+        )
+        async with AsyncSessionLocal() as session:
+            return await NewsFeedService(session).feed(horas=24)
+
+    respuesta = correr(caso)
+    assert [i.titular for i in respuesta.items] == ["Incendio en Reñaca"]
+    assert respuesta.items[0].hora_aproximada is True

@@ -2,6 +2,7 @@ import { memo } from 'react'
 import type { HTMLAttributes, ReactNode } from 'react'
 import { LegendBody } from '@/components/map/MapLegend'
 import { HistoryFeed, type HistoryFeedProps } from '@/components/feed/HistoryFeed'
+import { NewsFeed } from '@/components/feed/NewsFeed'
 import { DetailEmbed } from '@/components/incident/DetailSurface'
 import { SelectionDetails } from '@/components/incident/SelectionDetails'
 import { IncidentFilters, type SidePanelProps } from '@/components/ui/SidePanel'
@@ -24,7 +25,8 @@ import { setExploreTab, useExploreTab, type ExploreArea, type ExploreTab } from 
  * cuando hay algo seleccionado, la ficha las reemplaza en el mismo lugar:
  *
  *   - **Historial** (por defecto): «Mis lugares», las capas de referencia
- *     plegadas y el feed de las últimas 24 h debajo.
+ *     plegadas, el feed de las últimas 24 h debajo y, al final, las noticias
+ *     de la prensa local (fuera del mapa desde el 2026-10-06).
  *   - **Capas**: las familias de emergencia con sus contadores, su salud, las
  *     empresas de luz y el filtro de sismos. Es el panel derecho de antes.
  *   - **Leyenda**: la leyenda compacta.
@@ -185,6 +187,9 @@ export const ExplorePanel = memo(function ExplorePanel({
                     encienden de vez en cuando y no pueden empujar la lista. */}
                 <ReferenceDock {...reference} inline defaultOpen={false} />
                 <HistoryFeed {...history} />
+                {/* La prensa, debajo y aparte: desde el 2026-10-06 no va al
+                    mapa, sólo se informa. */}
+                <NewsFeed />
               </div>
             )}
             {tab === 'layers' && <IncidentFilters {...incidents} />}
