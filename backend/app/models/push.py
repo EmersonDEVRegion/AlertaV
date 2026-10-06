@@ -38,7 +38,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy import text as sa_text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.config import settings
@@ -50,7 +50,7 @@ _GEOM_EXPR = "ST_SetSRID(ST_MakePoint(lon, lat), 4326)"
 
 #: Tipos de envío. `incident` y `seismic` los decide el notificador; la prueba
 #: que pide el usuario desde la PWA no se registra (ver `PushDelivery`).
-DELIVERY_KINDS = ("incident", "seismic")
+DELIVERY_KINDS = ("incident", "seismic", "water_cut")
 
 #: Estados de un envío. `pending` existe entre que se reserva el envío y que el
 #: servicio de push responde: si el proceso muere en ese hueco, el aviso queda
@@ -104,6 +104,12 @@ class PushSubscription(Base):
     notify_seismic: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=sa_text("true")
     )
+    #: Radio por categoría en metros (§K, migración 0019): `{"fire": 5000,
+    #: "power": 1000, …}`. `0` = no avisar esa categoría; una clave ausente usa
+    #: `PUSH_RADIO_*_M`. Ver `app.services.push.radios`.
+    radios: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=sa_text("'{}'::jsonb")
+    )
 
     # -- Salud del canal -----------------------------------------------------
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -123,6 +129,7 @@ class PushSubscription(Base):
         CheckConstraint("lon >= -180.0 AND lon <= 180.0", name="lon"),
         CheckConstraint("radius_m >= 500 AND radius_m <= 20000", name="radius_m"),
         CheckConstraint("consecutive_failures >= 0", name="failures"),
+        CheckConstraint("jsonb_typeof(radios) = 'object'", name="radios"),
         Index("uq_push_subscriptions_endpoint", "endpoint", unique=True),
         Index("uq_push_subscriptions_public_id", "public_id", unique=True),
         # El filtro del notificador es `ST_DWithin` sobre `geography` —metros

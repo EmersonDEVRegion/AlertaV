@@ -440,6 +440,14 @@ export default function App() {
   useEffect(() => {
     if (!pendingLink) return
 
+    if (pendingLink.kind === 'water') {
+      setVisibility((current) => (current.water ? current : { ...current, water: true }))
+      selectWaterCut(pendingLink.id)
+      flyTo(pendingLink.lon, pendingLink.lat, FOCUS_ZOOM)
+      clearLink()
+      return
+    }
+
     if (pendingLink.kind === 'seismic') {
       setVisibility((current) => (current.seismic ? current : { ...current, seismic: true }))
       const usgsId = usgsIdOf(pendingLink.key)

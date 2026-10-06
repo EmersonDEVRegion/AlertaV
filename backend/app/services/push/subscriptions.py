@@ -20,6 +20,7 @@ from app.repositories.push_repository import PushRepository
 from app.schemas.push import PushProbeResult, PushSubscribeRequest
 from app.services.push.config import get_push_config
 from app.services.push.messages import probe_message
+from app.services.push.radios import efectivos, normalizar
 from app.services.push.webpush import (
     PushSubscriptionKeys,
     SubscriptionKeyError,
@@ -77,6 +78,11 @@ class PushSubscriptionService:
         except SubscriptionKeyError as exc:
             raise ValidationError(f"Suscripción inválida: {exc}") from exc
 
+        try:
+            radios = normalizar(request.radios) if request.radios is not None else None
+        except ValueError as exc:
+            raise ValidationError(f"Radios inválidos: {exc}") from exc
+
         lat, lon = round_location(request.lat, request.lon)
         subscription = await self.repo.upsert_subscription(
             endpoint=endpoint,
@@ -89,6 +95,7 @@ class PushSubscriptionService:
             notify_incidents=request.notify_incidents,
             notify_seismic=request.notify_seismic,
             located_at=request.located_at,
+            radios=radios,
         )
         if request.places is not None:
             if len(request.places) > MAX_PLACES_PER_SUBSCRIPTION:
@@ -127,7 +134,7 @@ class PushSubscriptionService:
                 detail=get_push_config().reason or "Los avisos no están disponibles.",
             )
 
-        message = probe_message(radius_m=subscription.radius_m)
+        message = probe_message(radios=efectivos(subscription.radios))
         now = datetime.now(UTC)
         result = await sender.send(
             PushSubscriptionKeys(

@@ -19,7 +19,7 @@ Dos primitivas geométricas, cada una para lo suyo:
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -157,6 +157,47 @@ def sector_clave_sql() -> ColumnElement[Any]:
     la tiene, y es justamente la que más la necesita.
     """
     return RawEvent.raw_data["_extraction"]["sector_clave"].astext
+
+
+#: Precisión del punto de un incidente, de mejor a peor. `exacta` es una señal
+#: con coordenadas propias (CONAF, Waze, FIRMS, un GPS ciudadano, una
+#: distribuidora), sin `_geocoding`.
+RANGO_DE_PRECISION: dict[str | None, int] = {
+    "intersection": 0,
+    None: 1,
+    "street": 2,
+    "sector": 3,
+}
+NOMBRE_DE_PRECISION: dict[int, str] = {0: "intersection", 1: "exacta", 2: "street", 3: "sector"}
+
+
+def rango_de_precision(precision: str | None) -> int:
+    """0 = cruce, 1 = coordenada propia, 2 = calle, 3 = sector. Lo desconocido, calle."""
+    return RANGO_DE_PRECISION.get(precision, 2)
+
+
+@dataclass(frozen=True, slots=True)
+class UbicacionIncidente:
+    lat: float
+    lon: float
+    #: `intersection`, `exacta`, `street` o `sector`: la del mejor punto.
+    precision: str
+
+
+def ubicacion_de(
+    senales: Iterable[tuple[float, float, float, str | None]],
+) -> UbicacionIncidente | None:
+    """`(lat, lon, confianza, precision)` → el punto del incidente. Sin E/S: testeable."""
+    lista = list(senales)
+    if not lista:
+        return None
+    mejor = min(rango_de_precision(p) for *_, p in lista)
+    elegidas = [s for s in lista if rango_de_precision(s[3]) == mejor]
+    pesos = [max(confianza, _MIN_WEIGHT) for _, _, confianza, _ in elegidas]
+    total = sum(pesos)
+    lat = sum(s[0] * w for s, w in zip(elegidas, pesos, strict=True)) / total
+    lon = sum(s[1] * w for s, w in zip(elegidas, pesos, strict=True)) / total
+    return UbicacionIncidente(lat=lat, lon=lon, precision=NOMBRE_DE_PRECISION[mejor])
 
 
 @dataclass(frozen=True, slots=True)
@@ -649,19 +690,27 @@ class IncidentRepository:
             update(Incident).where(Incident.id == incident_id).values(**values)
         )
 
-    async def recompute_geometry(self, incident_id: int) -> tuple[float, float] | None:
-        """Centroide ponderado por confianza de las señales espaciales.
+    async def recompute_geometry(self, incident_id: int) -> UbicacionIncidente | None:
+        """El punto del incidente: el de sus señales MÁS PRECISAS, ponderado por confianza.
 
-        Ponderar no es un adorno: cuando un incidente tiene un punto de CONAF y
-        seis píxeles de VIIRS repartidos por la ladera, el centro sin ponderar
-        se va cerro arriba y el mapa deja de coincidir con el lugar que el
-        organismo reportó.
+        Hasta el 2026-10-05 era el centroide ponderado de **todas** las señales
+        espaciales. Con un despacho de Bomberos en la esquina exacta y una nota
+        de prensa ubicada a mitad de la avenida, el pin quedaba entre los dos:
+        cerca, nunca exacto. Ahora se elige primero la mejor precisión que tenga
+        el incidente (ver `rango_de_precision`) y se promedia sólo entre las
+        señales de ese rango.
+
+        Ponderar dentro del rango sigue importando: cuando un incidente tiene un
+        punto de CONAF y seis píxeles de VIIRS repartidos por la ladera, el
+        centro sin ponderar se va cerro arriba y el mapa deja de coincidir con
+        el lugar que el organismo reportó.
         """
-        weight = func.greatest(RawEvent.confidence, _MIN_WEIGHT)
         stmt = (
             select(
-                (func.sum(RawEvent.lat * weight) / func.sum(weight)).label("lat"),
-                (func.sum(RawEvent.lon * weight) / func.sum(weight)).label("lon"),
+                RawEvent.lat,
+                RawEvent.lon,
+                RawEvent.confidence,
+                geocoding_precision_sql().label("precision"),
             )
             .select_from(IncidentEvent)
             .join(RawEvent, RawEvent.id == IncidentEvent.raw_event_id)
@@ -669,10 +718,12 @@ class IncidentRepository:
             .where(IncidentEvent.link_method == LinkMethod.SPATIAL)
             .where(RawEvent.geom.isnot(None))
         )
-        row = (await self.session.execute(stmt)).one_or_none()
-        if row is None or row.lat is None or row.lon is None:
-            return None
-        return (float(row.lat), float(row.lon))
+        filas = (await self.session.execute(stmt)).all()
+        return ubicacion_de(
+            (float(f.lat), float(f.lon), float(f.confidence or 0.0), f.precision)
+            for f in filas
+            if f.lat is not None and f.lon is not None
+        )
 
     # -- Lectura de señales de un incidente ----------------------------------
 

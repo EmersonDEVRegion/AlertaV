@@ -8,6 +8,8 @@ import {
 import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { formatRelative } from '@/lib/format'
 import { dismissInvite, inviteDismissed } from '@/lib/push'
+import { radiosEfectivos } from '@/lib/radios'
+import { RadiosPorCategoria } from './RadiosPorCategoria'
 import { isHandheld, thisDevice } from '@/lib/device'
 import { usePlaces } from '@/lib/placesStore'
 import { cn } from '@/lib/cn'
@@ -107,17 +109,18 @@ function Bullet({ children }: { children: ReactNode }) {
 
 /** Qué se avisa, con los umbrales que declara el servidor. */
 function WhatWeSend({ push }: { push: PushNotificationsState }) {
-  const radius = push.server?.incident_radius_m ?? 5000
+  const radios = radiosEfectivos(push.server?.radios_por_defecto, push.preferences.radios)
   const sources = push.server?.incident_min_sources ?? 2
   const minMagnitude = push.server?.seismic_min_magnitude ?? 3.5
   return (
     <ul className="mt-2 space-y-1.5 text-[11px] leading-snug text-ink-muted">
       <Bullet>
         <span className="font-semibold text-ink">
-          Emergencias a menos de {km(radius)} de ti o de tus lugares guardados
+          Emergencias cerca de ti o de tus lugares guardados
         </span>
-        :
-        incendios, accidentes, cortes de luz y otras, con su distancia. Cuando lo confirma
+        : incendios a menos de {km(radios.fire ?? 5000)}, accidentes a{' '}
+        {km(radios.traffic ?? 2000)}, cortes de luz y de agua a {km(radios.power ?? 1000)}, y
+        otras. Cada distancia se puede cambiar después. Cuando lo confirma
         CONAF o Bomberos, cuando la distribuidora informa el corte, o cuando al menos{' '}
         {sources} fuentes distintas coinciden.
       </Bullet>
@@ -254,7 +257,7 @@ export function NotificationPanel({ push }: { push: PushNotificationsState }) {
           <div className="mt-2.5 space-y-2 border-t border-line pt-2.5">
             <PreferenceRow
               label={PUSH_TEXT.incidents}
-              hint={`A menos de ${km(push.server?.incident_radius_m ?? 5000)}`}
+              hint="Cada tipo a la distancia que elijas"
               checked={push.preferences.notifyIncidents}
               // No se puede apagar el último: para eso está «Desactivar», que
               // además borra la ubicación del servidor.
@@ -266,6 +269,7 @@ export function NotificationPanel({ push }: { push: PushNotificationsState }) {
                 })
               }
             />
+            {push.preferences.notifyIncidents && <RadiosPorCategoria push={push} />}
             <PreferenceRow
               label={PUSH_TEXT.seismic}
               hint="Los que se sintieron donde estás"
@@ -465,6 +469,9 @@ export function NotificationBell() {
           aria-label={PUSH_TEXT.title}
           className={cn(
             'animate-rise absolute right-0 top-[calc(100%+0.5rem)] z-30',
+            // Con los deslizadores por categoría el panel puede ser más alto que
+            // la pantalla de un teléfono: se desplaza adentro.
+            'max-h-[calc(100dvh-5.5rem)] overflow-y-auto overscroll-contain',
             // Opaco, como el detalle meteorológico: cuelga de la barra oscura.
             'rounded-surface bg-raised shadow-[var(--shadow-raised)] ring-1 ring-line',
           )}

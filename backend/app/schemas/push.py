@@ -71,6 +71,15 @@ class PushSubscribeRequest(BaseModel):
         le=20_000.0,
         description="Radio de aviso de emergencias. Por defecto, PUSH_INCIDENT_RADIUS_M.",
     )
+    radios: dict[str, float] | None = Field(
+        default=None,
+        description=(
+            "Radio de aviso por categoría, en metros: `fire`, `traffic`, `power`, "
+            "`hydro`, `other` y `water` (cortes de agua). `0` apaga la categoría; "
+            "si no, de 300 a 20 000 m. `null` deja los que estaban; las "
+            "categorías que no vienen usan el valor del servidor."
+        ),
+    )
     located_at: datetime | None = Field(
         default=None,
         description=(
@@ -97,6 +106,10 @@ class PushSubscriptionRead(BaseModel):
     radius_m: float
     notify_incidents: bool
     notify_seismic: bool
+    radios: dict[str, float] = Field(
+        default_factory=dict,
+        description="Radios efectivos por categoría: los elegidos sobre los del servidor.",
+    )
     location_updated_at: datetime
     places: list[PushPlaceRead] = Field(default_factory=list)
 
@@ -121,6 +134,14 @@ class PushStatus(BaseModel):
     )
     reason: str | None = None
     incident_radius_m: float
+    radios_por_defecto: dict[str, float] = Field(
+        default_factory=dict,
+        description="Radio por categoría para quien no eligió el suyo, en metros.",
+    )
+    categorias: list[dict[str, str]] = Field(
+        default_factory=list,
+        description="`[{clave, etiqueta}]` en el orden en que se muestran.",
+    )
     incident_min_confidence: float
     incident_min_sources: int
     seismic_min_magnitude: float

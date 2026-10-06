@@ -179,6 +179,15 @@ class Incident(Base):
         ),
     )
 
+    ubicacion_precision: Mapped[str | None] = mapped_column(
+        String(16),
+        nullable=True,
+        doc=(
+            "Qué tan fino es el punto: `intersection`, `exacta`, `street` o "
+            "`sector` (migración 0019). Ver `incident_repository.ubicacion_de`."
+        ),
+    )
+
     # -- Descripción ---------------------------------------------------------
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     commune: Mapped[str | None] = mapped_column(String(120), nullable=True)

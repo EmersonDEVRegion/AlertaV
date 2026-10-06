@@ -114,6 +114,11 @@ export interface PushMemo {
   lon: number
   notifyIncidents: boolean
   notifySeismic: boolean
+  /**
+   * Radios por categoría que la persona eligió (sólo los que tocó). Los demás
+   * los decide el servidor. Ver `lib/radios.ts`.
+   */
+  radios: Record<string, number>
   /** Los lugares que tiene el servidor (`placesKey`), para saber si reenviarlos. */
   placesKey: string
 }
@@ -159,12 +164,24 @@ export function loadPushMemo(): PushMemo | null {
       lon: parsed.lon,
       notifyIncidents: parsed.notifyIncidents !== false,
       notifySeismic: parsed.notifySeismic !== false,
+      radios: radiosGuardados(parsed.radios),
       // Sin huella: el servidor no tiene lugares (o es anterior a ellos).
       placesKey: typeof parsed.placesKey === 'string' ? parsed.placesKey : '',
     }
   } catch {
     return null
   }
+}
+
+/** Sólo números finitos y no negativos: un memo viejo o roto no puede mandar basura. */
+function radiosGuardados(valor: unknown): Record<string, number> {
+  if (!valor || typeof valor !== 'object') return {}
+  return Object.fromEntries(
+    Object.entries(valor as Record<string, unknown>).filter(
+      (par): par is [string, number] =>
+        typeof par[1] === 'number' && Number.isFinite(par[1]) && par[1] >= 0,
+    ),
+  )
 }
 
 export function savePushMemo(memo: PushMemo): void {
@@ -234,6 +251,7 @@ export function shouldResync(
 export type PushDeepLink =
   | { kind: 'incident'; code: string }
   | { kind: 'seismic'; key: string; lat: number; lon: number }
+  | { kind: 'water'; id: string; lat: number; lon: number }
 
 /**
  * Lee el destino de una notificación: `/?incidente=INC-2026-00142` o
@@ -252,18 +270,22 @@ export function parseDeepLink(href: string, base = 'https://alertav.invalid'): P
     return { kind: 'incident', code }
   }
   const key = url.searchParams.get('sismo')
+  const agua = url.searchParams.get('corte_agua')
   const lat = Number(url.searchParams.get('lat'))
   const lon = Number(url.searchParams.get('lon'))
-  if (
-    key &&
+  const conPunto =
     Number.isFinite(lat) &&
     Number.isFinite(lon) &&
     Math.abs(lat) <= 90 &&
     Math.abs(lon) <= 180 &&
     url.searchParams.get('lat') !== null &&
     url.searchParams.get('lon') !== null
-  ) {
+  if (key && conPunto) {
     return { kind: 'seismic', key, lat, lon }
+  }
+  // Un corte de agua de Esval, por su `public_id` (un UUID).
+  if (agua && /^[0-9a-f-]{36}$/i.test(agua) && conPunto) {
+    return { kind: 'water', id: agua, lat, lon }
   }
   return null
 }

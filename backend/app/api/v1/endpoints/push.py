@@ -25,6 +25,7 @@ from app.schemas.push import (
     PushSubscribeRequest,
     PushSubscriptionRead,
 )
+from app.services.push import radios
 from app.services.push.config import get_push_config
 from app.services.push.webpush import WebPushSender
 
@@ -71,6 +72,10 @@ async def push_status() -> PushStatus:
         public_key=config.public_key,
         reason=config.reason,
         incident_radius_m=settings.PUSH_INCIDENT_RADIUS_M,
+        radios_por_defecto=radios.por_defecto(),
+        categorias=[
+            {"clave": clave, "etiqueta": radios.ETIQUETAS[clave]} for clave in radios.CATEGORIAS
+        ],
         incident_min_confidence=settings.PUSH_INCIDENT_MIN_CONFIDENCE,
         incident_min_sources=settings.PUSH_INCIDENT_MIN_SOURCES,
         seismic_min_magnitude=settings.PUSH_SEISMIC_MIN_MAGNITUDE,
@@ -99,6 +104,7 @@ async def subscribe(payload: PushSubscribeRequest, service: PushServiceDep) -> P
         )
     entity, places = await service.subscribe(payload)
     read = PushSubscriptionRead.model_validate(entity)
+    read.radios = radios.efectivos(entity.radios)
     read.places = [PushPlaceRead.model_validate(place) for place in places]
     return read
 

@@ -15,6 +15,10 @@ export interface PushServerStatus {
   public_key: string | null
   reason: string | null
   incident_radius_m: number
+  /** Radio por categoría para quien no eligió el suyo (§K). Ausente en un servidor anterior. */
+  radios_por_defecto?: Record<string, number>
+  /** Categorías de aviso en el orden en que se muestran. */
+  categorias?: { clave: string; etiqueta: string }[]
   incident_min_confidence: number
   incident_min_sources: number
   seismic_min_magnitude: number
@@ -34,6 +38,8 @@ export interface PushSubscriptionRead {
   radius_m: number
   notify_incidents: boolean
   notify_seismic: boolean
+  /** Radios efectivos por categoría. Ausente en un servidor anterior. */
+  radios?: Record<string, number>
   location_updated_at: string
   /** Ausente en un servidor anterior a los lugares guardados. */
   places?: PushPlace[]
@@ -51,6 +57,12 @@ export interface PushSubscribePayload {
   located_at?: string
   /** Los lugares guardados. Reemplazan a los que había; ausente, no se tocan. */
   places?: PushPlace[]
+  /**
+   * Radios elegidos por categoría, en metros (0 = no avisar). Ausente, el
+   * servidor conserva los que tenía; las categorías que no vienen usan su valor
+   * por defecto.
+   */
+  radios?: Record<string, number>
 }
 
 export interface PushProbeResult {

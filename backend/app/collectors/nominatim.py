@@ -33,7 +33,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import httpx
@@ -92,9 +92,9 @@ def get_limiter() -> RateLimiter:
 #: de una avenida y el de un cruce **no son el mismo dato**, y el mapa no los
 #: distingue solo: los dos son un pin.
 #:
-#: `INTERSECTION` existe declarada y sin usar a propósito: es la precisión que
-#: este sistema querría y que Nominatim no sabe dar (ver `build_queries`). El día
-#: que haya un proveedor que resuelva cruces, el consumidor ya sabe leer el valor.
+#: `INTERSECTION` es la precisión que Nominatim no sabe dar (ver
+#: `build_queries`). Desde el 2026-10-05 la calcula `collectors.overpass` cuando
+#: la fuente nombra dos calles: el punto pasa de la calle a la esquina.
 #:
 #: `SECTOR` es un barrio, población o cerro: lo que devuelve Nominatim cuando se
 #: le pide "Miraflores Alto, Viña del Mar", o cuando la "calle" que leyó el
@@ -236,6 +236,14 @@ class GeocodeResult:
     #: Zonas que Nominatim declara para el punto (`address.suburb` y afines).
     #: Es lo que permite auditar después por qué la guarda lo aceptó.
     zonas: tuple[str, ...] = ()
+    #: Quién dio el punto: `nominatim`, `overpass` (un cruce calculado) o
+    #: `sig_bomberos` (un cuartel).
+    provider: str = "nominatim"
+    #: Con `provider="overpass"`: cómo se calculó el cruce (`metodo`,
+    #: `separacion_m`, `via_1`, `via_2`, `candidatos`) y dónde había dejado el
+    #: punto Nominatim (`nominatim_lat`, `nominatim_lon`), para poder medir
+    #: cuánto se movió.
+    cruce: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -252,7 +260,8 @@ class GeocodeResult:
             "omitted": list(self.omitted),
             "comuna": self.comuna,
             "viewbox": list(self.viewbox) if self.viewbox else None,
-            "provider": "nominatim",
+            "provider": self.provider,
+            "cruce": dict(self.cruce) if self.cruce else None,
         }
 
     @classmethod
@@ -283,6 +292,8 @@ class GeocodeResult:
             viewbox=tuple(viewbox) if isinstance(viewbox, list) and len(viewbox) == 4 else None,  # type: ignore[arg-type]
             sector=datos.get("sector"),
             zonas=tuple(datos.get("zonas") or ()),
+            provider=str(datos.get("provider") or "nominatim"),
+            cruce=dict(datos["cruce"]) if isinstance(datos.get("cruce"), Mapping) else None,
         )
 
 
@@ -666,7 +677,7 @@ async def geocode(
                 continue
 
             acertada = matched_key(query, streets)
-            return GeocodeResult(
+            sobre_calle = GeocodeResult(
                 lat=lat,
                 lon=lon,
                 display_name=candidato.get("display_name"),
@@ -680,6 +691,27 @@ async def geocode(
                 viewbox=caja,
                 sector=sector,
                 zonas=tuple(result_sectores(candidato)),
+            )
+            return await _afinar_con_cruce(client, streets, sobre_calle, caja=caja)
+
+    # Ninguna calle sola resolvió, pero con una caja de comuna todavía se puede
+    # buscar el cruce directamente: a veces Nominatim no reconoce el nombre que
+    # OSM sí tiene en sus vías.
+    if caja is not None:
+        en_cruce = await _cruce_overpass(client, streets, caja=caja, cerca_de=None)
+        if en_cruce is not None:
+            return GeocodeResult(
+                lat=en_cruce.lat,
+                lon=en_cruce.lon,
+                query=f"{streets.get('street_1')} / {streets.get('street_2')}",
+                precision=PRECISION_INTERSECTION,
+                matched="street_1",
+                omitted=_sin_calles(omitted_keys(streets, matched="street_1")),
+                comuna=str(esperada) if esperada else None,
+                viewbox=caja,
+                sector=sector,
+                provider="overpass",
+                cruce=_detalle_cruce(en_cruce, None),
             )
 
     consulta_sector = build_sector_query(streets)
@@ -721,6 +753,70 @@ async def geocode(
         )
 
     return None
+
+
+def _sin_calles(omitidas: tuple[str, ...]) -> tuple[str, ...]:
+    """En un cruce, ninguna de las dos calles quedó fuera del punto."""
+    return tuple(clave for clave in omitidas if clave not in ("street_1", "street_2"))
+
+
+def _detalle_cruce(en_cruce: Any, previo: GeocodeResult | None) -> dict[str, Any]:
+    return {
+        "metodo": en_cruce.metodo,
+        "separacion_m": en_cruce.separacion_m,
+        "via_1": en_cruce.via_1,
+        "via_2": en_cruce.via_2,
+        "candidatos": en_cruce.candidatos,
+        "nominatim_lat": previo.lat if previo else None,
+        "nominatim_lon": previo.lon if previo else None,
+    }
+
+
+async def _cruce_overpass(
+    client: httpx.AsyncClient,
+    streets: Mapping[str, Any],
+    *,
+    caja: tuple[float, float, float, float] | None,
+    cerca_de: tuple[float, float] | None,
+) -> Any:
+    calle_1 = str(streets.get("street_1") or "").strip()
+    calle_2 = str(streets.get("street_2") or "").strip()
+    if not calle_1 or not calle_2:
+        return None
+    # Import tardío: `overpass` usa el `RateLimiter` de este módulo.
+    from app.collectors import overpass
+
+    return await overpass.cruce(client, calle_1, calle_2, caja=caja, cerca_de=cerca_de)
+
+
+async def _afinar_con_cruce(
+    client: httpx.AsyncClient,
+    streets: Mapping[str, Any],
+    sobre_calle: GeocodeResult,
+    *,
+    caja: tuple[float, float, float, float] | None,
+) -> GeocodeResult:
+    """Si la fuente nombró dos calles, el punto pasa de la calle a la esquina.
+
+    Nominatim ya dejó un punto sobre una de las dos calles, dentro de la comuna
+    y el sector correctos. Overpass busca alrededor de ese punto (o en la caja
+    de la comuna) las dos vías y su cruce. Sin cruce, queda el punto de la calle
+    tal como estaba: esto sólo puede mejorar el resultado.
+    """
+    en_cruce = await _cruce_overpass(
+        client, streets, caja=caja, cerca_de=(sobre_calle.lat, sobre_calle.lon)
+    )
+    if en_cruce is None:
+        return sobre_calle
+    return replace(
+        sobre_calle,
+        lat=en_cruce.lat,
+        lon=en_cruce.lon,
+        precision=PRECISION_INTERSECTION,
+        omitted=_sin_calles(sobre_calle.omitted),
+        provider="overpass",
+        cruce=_detalle_cruce(en_cruce, sobre_calle),
+    )
 
 
 def build_client(timeout: float | None = None) -> httpx.AsyncClient:

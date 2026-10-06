@@ -168,6 +168,14 @@ def test_prueba() -> None:
     assert "a menos de 5 km" in message.body
 
 
+def test_la_prueba_cuenta_los_radios_elegidos() -> None:
+    message = probe_message(radios={"fire": 5000, "traffic": 2000, "power": 0, "water": 1000})
+    assert "incendios a menos de 5 km" in message.body
+    assert "accidentes a menos de 2 km" in message.body
+    assert "cortes de luz" not in message.body
+    assert "cortes de agua a menos de 1 km" in message.body
+
+
 def test_el_payload_cabe_con_holgura() -> None:
     message = _incident(alert_level="temprana_preventiva", commune="X" * 120)
     raw = json.dumps(message.payload(now=T0), ensure_ascii=False).encode()

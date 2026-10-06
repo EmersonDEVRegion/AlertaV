@@ -50,7 +50,9 @@ async def _limpiar() -> None:
     from app.services import apify_webhook_service as svc
 
     async with AsyncSessionLocal() as session:
-        await session.execute(delete(CollectorRun).where(CollectorRun.collector == svc.COLLECTOR_NAME))
+        await session.execute(
+            delete(CollectorRun).where(CollectorRun.collector == svc.COLLECTOR_NAME)
+        )
         await session.execute(
             delete(RawEvent).where(
                 RawEvent.source == EventSource.TRANSPORTE_INFORMA,
@@ -112,7 +114,7 @@ def test_dos_reclamos_simultaneos_no_toman_la_misma_entrega():
     a, b = correr(caso)
     tomados = [r for r in (a, b) if r is not None]
     assert len(tomados) == 1, "SKIP LOCKED: uno la toma, el otro sigue de largo"
-    run_id, dataset, _traza, intento = tomados[0]
+    run_id, dataset, _traza, intento, _canario = tomados[0]
     assert dataset == DATASET
     assert intento == 1
 
@@ -302,9 +304,7 @@ async def _pasada(*, perfiles: bool, window_hours: int = 4):
             session, perfiles=perfiles, window_hours=window_hours
         ).run()
     async with AsyncSessionLocal() as session:
-        incidentes = (
-            await session.execute(select(Incident).order_by(Incident.id))
-        ).scalars().all()
+        incidentes = (await session.execute(select(Incident).order_by(Incident.id))).scalars().all()
     return resultado, incidentes
 
 
@@ -334,9 +334,7 @@ def test_una_senal_horas_despues_no_se_pega_al_choque_de_la_manana(perfiles, inc
         await _vaciar_motor()
         await _ingerir(_evento("choque", LIBERTAD_5_NORTE, hace=td(hours=5, minutes=30)))
         await _pasada(perfiles=perfiles, window_hours=8)
-        await _ingerir(
-            _evento("nota", (-33.01650, -71.55250), hace=td(minutes=30), fuente="media")
-        )
+        await _ingerir(_evento("nota", (-33.01650, -71.55250), hace=td(minutes=30), fuente="media"))
         return await _pasada(perfiles=perfiles, window_hours=8)
 
     _, incidentes = correr(caso)
@@ -415,9 +413,13 @@ def test_el_indice_geography_sirve_a_la_consulta_del_motor():
     consulta = (
         select(Incident.id)
         .where(Incident.status.in_(["active", "controlled"]))
-        .where(func.ST_DWithin(func.cast(Incident.geom, _GEOGRAPHY), func.cast(punto, _GEOGRAPHY), 700))
+        .where(
+            func.ST_DWithin(func.cast(Incident.geom, _GEOGRAPHY), func.cast(punto, _GEOGRAPHY), 700)
+        )
     )
-    sql = str(consulta.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+    sql = str(
+        consulta.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+    )
 
     async def caso():
         async with AsyncSessionLocal() as session:
@@ -457,7 +459,9 @@ def test_solo_se_agrupan_senales_de_la_v_region(punto, solo_region, incidentes):
 
     async def caso():
         await _vaciar_motor()
-        await _ingerir(_evento("cge", punto, hace=td(minutes=10), fuente="cge", tipo="power_outage"))
+        await _ingerir(
+            _evento("cge", punto, hace=td(minutes=10), fuente="cge", tipo="power_outage")
+        )
         async with AsyncSessionLocal() as session:
             await CorrelationEngine(session, solo_region=solo_region).run()
         async with AsyncSessionLocal() as session:
@@ -476,7 +480,9 @@ async def _limpiar_esval() -> None:
     from app.models.event import CollectorRun, RawEvent
 
     async with AsyncSessionLocal() as session:
-        await session.execute(delete(CollectorRun).where(CollectorRun.collector == EsvalCollector.name))
+        await session.execute(
+            delete(CollectorRun).where(CollectorRun.collector == EsvalCollector.name)
+        )
         await session.execute(delete(RawEvent).where(RawEvent.source == EventSource.ESVAL))
         await session.commit()
 
@@ -611,19 +617,27 @@ async def _limpiar_ciudadanos() -> None:
 
     async with AsyncSessionLocal() as session:
         ids = (
-            await session.execute(
-                select(RawEvent.id).where(
-                    RawEvent.source == EventSource.CITIZEN,
-                    RawEvent.text.like(f"{MARCA_CIUDADANA}%"),
+            (
+                await session.execute(
+                    select(RawEvent.id).where(
+                        RawEvent.source == EventSource.CITIZEN,
+                        RawEvent.text.like(f"{MARCA_CIUDADANA}%"),
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         if ids:
             incidentes = (
-                await session.execute(
-                    select(IncidentEvent.incident_id).where(IncidentEvent.raw_event_id.in_(ids))
+                (
+                    await session.execute(
+                        select(IncidentEvent.incident_id).where(IncidentEvent.raw_event_id.in_(ids))
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             await session.execute(delete(RawEvent).where(RawEvent.id.in_(ids)))
             if incidentes:
                 await session.execute(delete(Incident).where(Incident.id.in_(incidentes)))
@@ -678,9 +692,7 @@ def test_tres_vecinos_publican_y_dos_de_la_misma_persona_no():
 
     async def caso():
         await _limpiar_ciudadanos()
-        vecinos = [
-            await _reportar(*punto_a, dispositivo=f"d{i}", red=f"r{i}") for i in range(3)
-        ]
+        vecinos = [await _reportar(*punto_a, dispositivo=f"d{i}", red=f"r{i}") for i in range(3)]
         misma = [
             await _reportar(*punto_b, dispositivo="yo", red="4g"),
             await _reportar(*punto_b, dispositivo="yo", red="wifi"),
@@ -745,3 +757,186 @@ def test_el_cupo_y_la_moderacion_leen_la_base():
     assert nuevo is None
     assert pendientes == [f"{MARCA_CIUDADANA} humo"]
     assert rechazados == [f"{MARCA_CIUDADANA} 9 8765 4321"]
+
+
+# --- §K: radios por categoría, cortes de agua y punto del incidente ------------
+
+ENDPOINT_RADIOS = "https://fcm.googleapis.com/fcm/send/integracion-radios"
+MARCA_K = "integracion-k"
+
+
+async def _limpiar_k() -> None:
+    from app.core.database import AsyncSessionLocal
+    from app.models.event import RawEvent
+    from app.models.incident import Incident, IncidentEvent
+    from app.models.push import PushSubscription
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            delete(PushSubscription).where(PushSubscription.endpoint == ENDPOINT_RADIOS)
+        )
+        ids = (
+            (
+                await session.execute(
+                    select(RawEvent.id).where(RawEvent.external_id.like(f"{MARCA_K}%"))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if ids:
+            incidentes = (
+                (
+                    await session.execute(
+                        select(IncidentEvent.incident_id).where(IncidentEvent.raw_event_id.in_(ids))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            await session.execute(delete(RawEvent).where(RawEvent.id.in_(ids)))
+            if incidentes:
+                await session.execute(delete(Incident).where(Incident.id.in_(incidentes)))
+        await session.commit()
+
+
+def test_cada_categoria_usa_su_radio_y_los_cortes_de_agua_se_avisan():
+    from app.core.database import AsyncSessionLocal
+    from app.models.enums import EventSource, EventType
+    from app.repositories.event_repository import EventRepository
+    from app.repositories.push_repository import PushRepository
+    from app.schemas.event import EventCreate
+
+    async def caso():
+        await _limpiar_k()
+        async with AsyncSessionLocal() as session:
+            repo = PushRepository(session)
+            await repo.upsert_subscription(
+                endpoint=ENDPOINT_RADIOS,
+                p256dh="B" * 87,
+                auth="A" * 22,
+                lat=-33.045,
+                lon=-71.620,
+                accuracy_m=None,
+                radius_m=5000.0,
+                notify_incidents=True,
+                notify_seismic=False,
+                radios={"fire": 8000.0, "power": 0.0},
+            )
+            # Una resincronización sin radios (una PWA vieja) no los borra.
+            await repo.upsert_subscription(
+                endpoint=ENDPOINT_RADIOS,
+                p256dh="B" * 87,
+                auth="A" * 22,
+                lat=-33.045,
+                lon=-71.620,
+                accuracy_m=None,
+                radius_m=5000.0,
+                notify_incidents=True,
+                notify_seismic=False,
+            )
+            await session.commit()
+
+            a_3_km = (-33.072, -71.620)
+            mios = {}
+            for categoria in ("fire", "power", "traffic"):
+                encontrados = await repo.recipients_for_incident(
+                    incident_id=-1,
+                    code=f"INC-K-{categoria}",
+                    lat=a_3_km[0],
+                    lon=a_3_km[1],
+                    categoria=categoria,
+                )
+                mios[categoria] = [r for r in encontrados if r.endpoint == ENDPOINT_RADIOS]
+
+            ahora = datetime.now(UTC)
+            await EventRepository(session).add(
+                EventCreate(
+                    timestamp=ahora,
+                    source=EventSource.ESVAL,
+                    type=EventType.WATER_CUT,
+                    lat=-33.049,
+                    lon=-71.620,
+                    text="corte",
+                    external_id=f"{MARCA_K}:agua",
+                    confidence=1.0,
+                    raw_data={"_esval": {"visto_en": ahora.isoformat(), "comuna": "Valparaíso"}},
+                )
+            )
+            await session.commit()
+            cortes = await repo.recent_water_cuts(
+                seen_since=ahora - timedelta(hours=1), first_seen_since=ahora - timedelta(hours=12)
+            )
+            nuestro = [c for c in cortes if c.key == f"{MARCA_K}:agua"]
+            avisados = await repo.recipients_for_water_cut(
+                subject_key=f"{MARCA_K}:agua", lat=-33.049, lon=-71.620
+            )
+        await _limpiar_k()
+        return mios, nuestro, [r for r in avisados if r.endpoint == ENDPOINT_RADIOS]
+
+    mios, nuestro, avisados_agua = correr(caso)
+    assert len(mios["fire"]) == 1, "8 km de radio elegido para incendios"
+    assert mios["power"] == [], "cortes de luz apagados"
+    assert mios["traffic"] == [], "accidentes: 2 km por defecto, el incidente está a 3 km"
+    assert len(nuestro) == 1 and nuestro[0].comuna == "Valparaíso"
+    assert len(avisados_agua) == 1 and avisados_agua[0].distance_m < 1000
+
+
+def test_el_incidente_queda_en_el_cruce_y_no_en_el_promedio():
+    from app.core.database import AsyncSessionLocal
+    from app.models.enums import EventSource, EventType
+    from app.models.event import RawEvent
+    from app.models.incident import Incident
+    from app.repositories.event_repository import EventRepository
+    from app.schemas.event import EventCreate
+    from app.services.correlation.engine import CorrelationEngine
+
+    async def caso():
+        await _limpiar_k()
+        ahora = datetime.now(UTC)
+        async with AsyncSessionLocal() as session:
+            repo = EventRepository(session)
+            despacho = await repo.add(
+                EventCreate(
+                    timestamp=ahora,
+                    source=EventSource.BOMBEROS,
+                    type=EventType.STRUCTURAL_FIRE,
+                    lat=-33.0500,
+                    lon=-71.6150,
+                    text="LAS MONJAS / ANDRES BELLO",
+                    external_id=f"{MARCA_K}:despacho",
+                    confidence=1.0,
+                    raw_data={"_geocoding": {"precision": "intersection", "provider": "overpass"}},
+                )
+            )
+            await repo.add(
+                EventCreate(
+                    timestamp=ahora,
+                    source=EventSource.MEDIA,
+                    type=EventType.STRUCTURAL_FIRE,
+                    lat=-33.0480,
+                    lon=-71.6160,
+                    text="Incendio en Las Monjas",
+                    external_id=f"{MARCA_K}:nota",
+                    confidence=0.7,
+                    raw_data={"_geocoding": {"precision": "street"}},
+                )
+            )
+            await session.commit()
+            await CorrelationEngine(session).run()
+            fila = await session.get(RawEvent, despacho.id)
+            incidente = await session.get(Incident, fila.incident_id) if fila else None
+            resultado = (
+                (incidente.lat, incidente.lon, incidente.ubicacion_precision, incidente.event_count)
+                if incidente
+                else None
+            )
+        await _limpiar_k()
+        return resultado
+
+    resultado = correr(caso)
+    assert resultado is not None
+    lat, lon, precision, eventos = resultado
+    assert eventos == 2, "la nota y el despacho son el mismo incendio"
+    assert (round(lat, 4), round(lon, 4)) == (-33.05, -71.615)
+    assert precision == "intersection"

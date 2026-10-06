@@ -3,7 +3,13 @@ import type { CurrentWind } from '@/api/weather'
 import type { Incident } from '@/api/types'
 import type { WindCone } from '@/domain/windCone'
 import { PROJECTION_HOURS, compassLabel } from '@/domain/windCone'
-import { LINK_METHOD_LABEL, STATUS_LABEL, TYPE_LABEL, sourceLabel } from '@/domain/labels'
+import {
+  LINK_METHOD_LABEL,
+  STATUS_LABEL,
+  TYPE_LABEL,
+  UBICACION_PRECISION_LABEL,
+  sourceLabel,
+} from '@/domain/labels'
 import {
   EMERGENCY_CONTACT,
   UNCONFIRMED_NOUN,
@@ -136,6 +142,13 @@ export const IncidentSheet = memo(function IncidentSheet({
             </span>
           )}
         </div>
+
+        {incident.ubicacion_precision &&
+          UBICACION_PRECISION_LABEL[incident.ubicacion_precision] && (
+            <p className="mt-2 text-xs leading-snug text-ink-muted">
+              {UBICACION_PRECISION_LABEL[incident.ubicacion_precision]}
+            </p>
+          )}
 
         {unverified && (
           <p className="mt-3 callout callout-warn">

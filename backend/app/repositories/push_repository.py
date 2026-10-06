@@ -15,12 +15,15 @@ from typing import Any
 
 from geoalchemy2 import Geography
 from sqlalchemy import (
+    DateTime,
+    Float,
     String,
     and_,
     cast,
     delete,
     exists,
     func,
+    literal,
     null,
     or_,
     select,
@@ -31,11 +34,14 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.collectors.water.esval_parser import motivo_legible
+from app.core.config import settings
 from app.models.enums import EventSource, EventType, IncidentStatus
 from app.models.event import RawEvent
 from app.models.incident import Incident
 from app.models.push import PushDelivery, PushPlace, PushSubscription
 from app.models.seismic import SeismicDetail
+from app.services.push.radios import por_defecto
 from app.services.push.rules import QuakeView
 
 _GEOGRAPHY = Geography(geometry_type="POINT", srid=4326)
@@ -73,6 +79,59 @@ class DeliveryOutcome:
     http_status: int | None
 
 
+@dataclass(frozen=True, slots=True)
+class WaterCutView:
+    """Lo que el aviso de un corte de agua necesita, fuera del ORM."""
+
+    key: str
+    public_id: str
+    lat: float
+    lon: float
+    comuna: str | None
+    calles: str | None
+    sector: str | None
+    inicio: str | None
+    fin: str | None
+    programado: bool | None
+    motivo: str | None
+
+    @classmethod
+    def de(cls, fila: RawEvent) -> WaterCutView | None:
+        raw = fila.raw_data if isinstance(fila.raw_data, dict) else {}
+        esval = raw.get("_esval")
+        if not isinstance(esval, dict) or fila.lat is None or fila.lon is None:
+            return None
+
+        def texto(valor: Any) -> str | None:
+            return str(valor).strip() or None if valor is not None else None
+
+        bloque_visor = esval.get("visor")
+        visor: dict[str, Any] = bloque_visor if isinstance(bloque_visor, dict) else {}
+        programado = esval.get("programado")
+        return cls(
+            key=fila.external_id or str(fila.public_id),
+            public_id=str(fila.public_id),
+            lat=float(fila.lat),
+            lon=float(fila.lon),
+            comuna=texto(esval.get("comuna")) or fila.commune,
+            calles=texto(esval.get("calles")) or texto(visor.get("donde")),
+            sector=texto(esval.get("sector")),
+            inicio=texto(esval.get("inicio")),
+            fin=texto(esval.get("fin")),
+            programado=programado if isinstance(programado, bool) else None,
+            motivo=motivo_legible(texto(esval.get("motivo"))),
+        )
+
+
+def radio_de_categoria_sql(radios: Any, categoria: str) -> Any:
+    """`COALESCE((radios ->> categoria)::float, <por defecto>)` para una suscripción."""
+    defecto = por_defecto().get(categoria, settings.PUSH_INCIDENT_RADIUS_M)
+    return func.coalesce(
+        cast(radios[categoria].astext, Float),
+        literal(defecto, Float),
+    )
+
+
 class PushRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -92,6 +151,7 @@ class PushRepository:
         notify_incidents: bool,
         notify_seismic: bool,
         located_at: datetime | None = None,
+        radios: dict[str, float] | None = None,
     ) -> PushSubscription:
         """Crea la suscripción o la actualiza si el navegador ya la tenía.
 
@@ -119,6 +179,10 @@ class PushRepository:
             "notify_incidents": notify_incidents,
             "notify_seismic": notify_seismic,
         }
+        # `None` = la PWA no los mandó (una versión anterior, o una
+        # resincronización de ubicación): se conservan los que había.
+        if radios is not None:
+            values["radios"] = radios
         located = func.now() if located_at is None else func.least(located_at, func.now())
         insert = pg_insert(PushSubscription).values(**values, location_updated_at=located)
         stmt = insert.on_conflict_do_update(
@@ -193,6 +257,30 @@ class PushRepository:
         )
         return (await self.session.execute(stmt)).scalars().all()
 
+    async def recent_water_cuts(
+        self, *, seen_since: datetime, first_seen_since: datetime, limit: int = 200
+    ) -> list[WaterCutView]:
+        """Cortes de agua vigentes con punto que AlertaV vio por primera vez hace poco.
+
+        Vigente = la última lectura de Esval lo seguía listando (`_esval.visto_en`).
+        «Por primera vez hace poco» se mide con `ingested_at`, no con el inicio
+        del corte: uno programado para mañana se avisa cuando aparece, y uno que
+        lleva tres días no se avisa después de un deploy.
+        """
+        visto_en = cast(RawEvent.raw_data["_esval"]["visto_en"].astext, DateTime(timezone=True))
+        stmt = (
+            select(RawEvent)
+            .where(RawEvent.source == EventSource.ESVAL)
+            .where(RawEvent.type == EventType.WATER_CUT)
+            .where(RawEvent.lat.isnot(None), RawEvent.lon.isnot(None))
+            .where(visto_en >= seen_since)
+            .where(RawEvent.ingested_at >= first_seen_since)
+            .order_by(RawEvent.ingested_at.asc())
+            .limit(limit)
+        )
+        filas = (await self.session.execute(stmt)).scalars().all()
+        return [vista for vista in (WaterCutView.de(fila) for fila in filas) if vista is not None]
+
     async def recent_quakes(self, *, since: datetime) -> list[QuakeView]:
         """Sismos de las dos redes desde `since`, con o sin magnitud.
 
@@ -245,9 +333,20 @@ class PushRepository:
     # -- A quién avisar -------------------------------------------------------
 
     async def recipients_for_incident(
-        self, *, incident_id: int, code: str, lat: float, lon: float, limit: int = 5000
+        self,
+        *,
+        incident_id: int,
+        code: str,
+        lat: float,
+        lon: float,
+        categoria: str = "other",
+        limit: int = 5000,
     ) -> list[Recipient]:
         """Suscripciones dentro de su propio radio que todavía no recibieron el aviso.
+
+        «Su propio radio» es el de la categoría del incidente (§K): el que la
+        persona eligió en `radios`, o el del servidor si nunca lo tocó. Con 0,
+        esa categoría no se le avisa.
 
         «Dentro de su radio» se mide desde la última ubicación del teléfono Y
         desde cada uno de sus lugares guardados; manda el más cercano, y ése es
@@ -260,6 +359,38 @@ class PushRepository:
         folio.
         """
         merged = aliased(Incident)
+        known_codes = (
+            select(merged.code).where(merged.merged_into_id == incident_id).scalar_subquery()
+        )
+        already = exists().where(
+            PushDelivery.subscription_id == PushSubscription.id,
+            PushDelivery.kind == "incident",
+            or_(
+                PushDelivery.subject_key == code,
+                PushDelivery.subject_key.in_(known_codes),
+            ),
+        )
+        return await self._cercanos(
+            lat=lat, lon=lon, categoria=categoria, ya_avisados=already, limit=limit
+        )
+
+    async def recipients_for_water_cut(
+        self, *, subject_key: str, lat: float, lon: float, limit: int = 5000
+    ) -> list[Recipient]:
+        """Como `recipients_for_incident`, con el radio de cortes de agua."""
+        already = exists().where(
+            PushDelivery.subscription_id == PushSubscription.id,
+            PushDelivery.kind == "water_cut",
+            PushDelivery.subject_key == subject_key,
+        )
+        return await self._cercanos(
+            lat=lat, lon=lon, categoria="water", ya_avisados=already, limit=limit
+        )
+
+    async def _cercanos(
+        self, *, lat: float, lon: float, categoria: str, ya_avisados: Any, limit: int
+    ) -> list[Recipient]:
+        """Suscripciones con avisos de emergencias dentro del radio de `categoria`."""
         point_geog = func.cast(func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326), _GEOGRAPHY)
 
         # Candidatos: la ubicación de cada suscripción y cada lugar guardado.
@@ -281,13 +412,16 @@ class PushRepository:
         ).where(func.ST_DWithin(place_geog, point_geog, MAX_SUBSCRIPTION_RADIUS_M))
         candidates = union_all(own, saved).subquery("candidates")
 
-        # El más cercano de cada suscripción, dentro de SU radio. A igual
-        # distancia gana el lugar guardado: «de Casa» dice más que nada.
+        # El más cercano de cada suscripción, dentro de SU radio para esta
+        # categoría. A igual distancia gana el lugar guardado: «de Casa» dice
+        # más que nada.
         within = aliased(PushSubscription)
+        radio = radio_de_categoria_sql(within.radios, categoria)
         nearest = (
             select(candidates.c.subscription_id, candidates.c.place, candidates.c.distance_m)
             .join(within, within.id == candidates.c.subscription_id)
-            .where(candidates.c.distance_m <= within.radius_m)
+            .where(radio > 0)
+            .where(candidates.c.distance_m <= radio)
             .distinct(candidates.c.subscription_id)
             .order_by(
                 candidates.c.subscription_id,
@@ -295,18 +429,6 @@ class PushRepository:
                 candidates.c.place.is_(None),
             )
             .subquery("nearest")
-        )
-
-        known_codes = (
-            select(merged.code).where(merged.merged_into_id == incident_id).scalar_subquery()
-        )
-        already = exists().where(
-            PushDelivery.subscription_id == PushSubscription.id,
-            PushDelivery.kind == "incident",
-            or_(
-                PushDelivery.subject_key == code,
-                PushDelivery.subject_key.in_(known_codes),
-            ),
         )
 
         stmt = (
@@ -321,7 +443,7 @@ class PushRepository:
             )
             .join(nearest, nearest.c.subscription_id == PushSubscription.id)
             .where(PushSubscription.notify_incidents.is_(True))
-            .where(~already)
+            .where(~ya_avisados)
             .order_by(nearest.c.distance_m.asc())
             .limit(limit)
         )

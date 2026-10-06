@@ -873,9 +873,10 @@ class CorrelationEngine:
             "correlated_at": now,
         }
 
-        geometry = await self.repo.recompute_geometry(incident.id)
-        if geometry is not None:
-            values["lat"], values["lon"] = geometry
+        ubicacion = await self.repo.recompute_geometry(incident.id)
+        if ubicacion is not None:
+            values["lat"], values["lon"] = ubicacion.lat, ubicacion.lon
+            values["ubicacion_precision"] = ubicacion.precision
 
         if commune is None:
             # Último recurso: el polígono que contiene al incidente. Ninguna
