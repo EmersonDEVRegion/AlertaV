@@ -274,6 +274,8 @@ const fold = (text: string) =>
     .trim()
     .toLowerCase()
 
+const NO_COMMUNE = new Set(['unknown', 'desconocido', 'desconocida', 'sin informacion', 'sin comuna', 'n/a', 'null'])
+
 /** Comunas por su nombre plegado, de la más larga a la más corta (La Calera antes que Calera). */
 const COMUNAS_BY_FOLD: readonly (readonly [string, string])[] = COMUNAS.map(
   (c) => [fold(c.nombre), c.nombre] as const,
@@ -287,6 +289,8 @@ const COMUNAS_BY_FOLD: readonly (readonly [string, string])[] = COMUNAS.map(
 export function communeLabel(commune: string | null): string | null {
   if (!commune) return null
   const folded = fold(commune)
+  // Lo que la distribuidora pone cuando no sabe (Chilquinta: «Unknown»).
+  if (NO_COMMUNE.has(folded)) return null
   for (const [key, nombre] of COMUNAS_BY_FOLD) {
     if (folded === key || folded.startsWith(`${key} `)) return nombre
   }

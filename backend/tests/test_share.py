@@ -77,6 +77,10 @@ class TestShareCard:
         card = share_card(_incident(commune=None), "x")
         assert card["title"].endswith("Región de Valparaíso")
 
+    def test_comuna_unknown_dice_la_region(self) -> None:
+        card = share_card(_incident(commune="Unknown"), "x")
+        assert card["title"].endswith("Región de Valparaíso")
+
     def test_folio_desconocido_va_al_mapa(self) -> None:
         card = share_card(None, "INC-2026-99999")
         assert card["target"].endswith("/")
