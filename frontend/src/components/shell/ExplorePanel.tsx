@@ -27,13 +27,11 @@ import { PropagationNotice } from '@/components/shell/PropagationNotice'
  * de contenido y el mapa libre al lado. Acá la columna tiene tres pestañas y,
  * cuando hay algo seleccionado, la ficha las reemplaza en el mismo lugar:
  *
- *   - **Historial** (por defecto): las noticias de la prensa local plegadas
- *     (arriba desde §I; fuera del mapa desde el 2026-10-06), «Mis lugares»,
- *     las capas de referencia plegadas y el feed de hoy y ayer, con «En vivo»,
- *     «Hoy» y «Ayer» plegables.
- *   - **Capas**: las familias de emergencia con sus contadores, su salud, las
- *     empresas de luz y el filtro de sismos. Es el panel derecho de antes.
- *   - **Leyenda**: la leyenda compacta.
+ *   - **Ahora** (por defecto, §R): «En vivo», «Servicios interrumpidos»
+ *     (cortes de luz, plegados) y «Mis lugares».
+ *   - **Historial**: «Hoy», «Ayer» y «Antes», y la prensa local plegada.
+ *   - **Capas**: las familias con sus contadores y su salud, las empresas de
+ *     luz, el filtro de sismos, las capas de referencia y la única leyenda.
  *
  * El mismo componente vive en las dos pantallas; sólo cambia el contenedor.
  * Antes había dos paneles flotantes en escritorio y una barra de fichas en el
@@ -77,9 +75,9 @@ interface ExploreChrome {
 }
 
 const TABS: readonly { key: ExploreTab; label: string }[] = [
+  { key: 'now', label: 'Ahora' },
   { key: 'history', label: 'Historial' },
   { key: 'layers', label: 'Capas' },
-  { key: 'legend', label: 'Leyenda' },
 ]
 
 /**
@@ -121,7 +119,15 @@ export const ExplorePanel = memo(function ExplorePanel({
   // En un store y no en estado local: el menú «⋯» de la barra abre la leyenda
   // y el buscador vuelve al historial, sin pasar por `App`.
   const tab = useExploreTab()
-  const historyCount = history.history.length
+  // Lo que está en el mapa cuenta en «Ahora»; lo que ya salió, en «Historial».
+  const nowCount = useMemo(
+    () => history.history.filter((incident) => history.onMapCodes.has(incident.code)).length,
+    [history.history, history.onMapCodes],
+  )
+  const tabCount: Partial<Record<ExploreTab, number>> = {
+    now: nowCount,
+    history: history.history.length - nowCount,
+  }
 
   const choose = (next: ExploreTab) => {
     setExploreTab(next)
@@ -181,9 +187,9 @@ export const ExplorePanel = memo(function ExplorePanel({
                 )}
               >
                 {t.label}
-                {t.key === 'history' && history.ready && historyCount > 0 && (
+                {history.ready && (tabCount[t.key] ?? 0) > 0 && (
                   <span aria-hidden className="count text-[10px] text-ink-faint">
-                    {historyCount}
+                    {tabCount[t.key]}
                   </span>
                 )}
               </button>
@@ -197,29 +203,39 @@ export const ExplorePanel = memo(function ExplorePanel({
             aria-labelledby={`explore-tab-${tab}`}
             className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2.5 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
           >
-            {tab === 'history' && (
+            {tab === 'now' && (
               <div className="space-y-2">
-                {/* La prensa, arriba de todo y plegada (§I): con el titular
-                    más reciente a la vista se sabe si hay algo sin abrirla, y
-                    plegada no empuja el historial fuera de la hoja. Desde el
-                    2026-10-06 no va al mapa, sólo se informa. */}
-                <NewsFeed defaultOpen={false} />
+                <HistoryFeed {...history} scope="now" />
+                {/* «Mis lugares» acá: es la pregunta de «Ahora», ¿hay algo
+                    cerca de mi casa? Sin lugares guardados es una invitación. */}
                 <SavedPlaces
                   history={history.history}
                   onMapCodes={history.onMapCodes}
                   onFocusArea={onFocusArea}
                   onFocusCuartel={onFocusCuartel}
                 />
-                {/* Las capas de referencia arriba del historial, plegadas: se
-                    encienden de vez en cuando y no pueden empujar la lista. */}
-                <ReferenceDock {...reference} inline defaultOpen={false} />
-                <HistoryFeed {...history} />
               </div>
             )}
-            {tab === 'layers' && <IncidentFilters {...incidents} />}
-            {tab === 'legend' && (
-              <div className="px-1.5 py-1">
-                <LegendBody />
+            {tab === 'history' && (
+              <div className="space-y-2">
+                <HistoryFeed {...history} scope="past" />
+                {/* La prensa al final y plegada: es contexto, no entra al mapa
+                    (desde el 2026-10-06) y abierta empujaba la lista. */}
+                <NewsFeed defaultOpen={false} />
+              </div>
+            )}
+            {tab === 'layers' && (
+              <div className="space-y-2">
+                <IncidentFilters {...incidents} />
+                <ReferenceDock {...reference} inline defaultOpen />
+                {/* Una sola leyenda (§R): antes había una pestaña propia, la
+                    del riel de referencia y la de cada familia. */}
+                <section aria-labelledby="leyenda-titulo" className="rounded-control bg-sunken px-2.5 py-2">
+                  <h3 id="leyenda-titulo" className="mb-2 text-[11px] font-bold uppercase tracking-wide text-ink-faint">
+                    Leyenda
+                  </h3>
+                  <LegendBody />
+                </section>
               </div>
             )}
           </div>

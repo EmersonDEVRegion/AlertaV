@@ -8,6 +8,8 @@ import { OUTAGE_CLUSTER } from '@/domain/powerSymbology'
 import {
   HISTORY_STATE_LABEL,
   communeLabel,
+  NOW_SECTIONS,
+  PAST_SECTIONS,
   historySections,
   historyState,
   type HistoryOutageGroup,
@@ -43,6 +45,18 @@ export interface HistoryFeedProps {
   health?: CollectorsHealth | undefined
   /** Ya cargó al menos una vez. Antes de eso no se afirma «nada». */
   ready: boolean
+}
+
+/**
+ * Qué parte del historial se muestra (§R): `now` en la pestaña «Ahora» (en vivo
+ * y servicios interrumpidos), `past` en «Historial» (hoy, ayer y antes).
+ */
+export type HistoryScope = 'all' | 'now' | 'past'
+
+const EMPTY_TEXT: Record<HistoryScope, string> = {
+  all: 'Sin emergencias hoy ni ayer en las capas encendidas.',
+  now: 'Nada en curso en las capas encendidas.',
+  past: 'Nada terminado hoy ni ayer en las capas encendidas.',
 }
 
 const STATE_TONE: Record<HistoryState, string> = {
@@ -231,6 +245,7 @@ const OutageGroupItem = memo(function OutageGroupItem({
  */
 const SECTION_DEFAULT_OPEN: Record<HistorySection['key'], boolean> = {
   now: true,
+  services: false,
   today: true,
   yesterday: false,
   earlier: false,
@@ -337,7 +352,8 @@ export const HistoryFeed = memo(function HistoryFeed({
   onFocus,
   health,
   ready,
-}: HistoryFeedProps) {
+  scope = 'all',
+}: HistoryFeedProps & { scope?: HistoryScope }) {
   const now = useNow(RELATIVE_TIME_TICK_MS)
   const selectedCode = useSelectedIncidentCode()
   // El área del buscador o de «Mis lugares». Se lee acá y no en `App`: acotar
@@ -347,10 +363,12 @@ export const HistoryFeed = memo(function HistoryFeed({
     () => (area ? history.filter((incident) => inArea(incident, area)) : history),
     [history, area],
   )
-  const sections = useMemo(
-    () => historySections(shown, onMapCodes, now),
-    [shown, onMapCodes, now],
-  )
+  const sections = useMemo(() => {
+    const all = historySections(shown, onMapCodes, now)
+    if (scope === 'all') return all
+    const keys = scope === 'now' ? NOW_SECTIONS : PAST_SECTIONS
+    return all.filter((section) => keys.includes(section.key))
+  }, [shown, onMapCodes, now, scope])
 
   if (!ready) {
     return (
@@ -367,9 +385,13 @@ export const HistoryFeed = memo(function HistoryFeed({
       <div className="space-y-1">
         <AreaChip area={area} />
         <p className="px-2 py-3 text-center text-[10.5px] text-ink-muted">
-          {area.kind === 'commune'
-            ? 'Sin emergencias hoy ni ayer en esta comuna.'
-            : `Sin emergencias hoy ni ayer cerca de ${area.name}.`}
+          {scope === 'now'
+            ? area.kind === 'commune'
+              ? 'Nada en curso en esta comuna.'
+              : `Nada en curso cerca de ${area.name}.`
+            : area.kind === 'commune'
+              ? 'Sin emergencias hoy ni ayer en esta comuna.'
+              : `Sin emergencias hoy ni ayer cerca de ${area.name}.`}
         </p>
       </div>
     )
@@ -385,9 +407,7 @@ export const HistoryFeed = memo(function HistoryFeed({
         ser calma.
       </p>
     ) : (
-      <p className="px-2 py-3 text-center text-[10.5px] text-ink-muted">
-        Sin emergencias hoy ni ayer en las capas encendidas.
-      </p>
+      <p className="px-2 py-3 text-center text-[10.5px] text-ink-muted">{EMPTY_TEXT[scope]}</p>
     )
   }
 

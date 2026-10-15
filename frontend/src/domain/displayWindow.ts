@@ -196,7 +196,7 @@ export interface HistoryOutageGroup {
 type HistoryEntry = HistorySingle | HistoryOutageGroup
 
 export interface HistorySection {
-  key: 'now' | 'today' | 'yesterday' | 'earlier'
+  key: 'now' | 'services' | 'today' | 'yesterday' | 'earlier'
   label: string
   entries: HistoryEntry[]
   /** Incidentes en la sección (un grupo cuenta cada corte). */
@@ -206,6 +206,9 @@ export interface HistorySection {
 const SECTION_LABEL: Record<HistorySection['key'], string> = {
   // «En vivo» y no «En el mapa» (§I): lo que importa es que está pasando.
   now: 'En vivo',
+  // §R: los cortes de luz en curso, aparte y plegados. Son servicios, no
+  // emergencias, y ocupaban casi toda la sección «En vivo».
+  services: 'Servicios interrumpidos',
   today: 'Hoy',
   yesterday: 'Ayer',
   earlier: 'Antes',
@@ -317,6 +320,15 @@ function groupOutages(incidents: Incident[], onMap: boolean): HistoryEntry[] {
   return entries.sort((a, b) => latestOf(b) - latestOf(a))
 }
 
+/** Un servicio interrumpido (hoy, cortes de luz), no una emergencia. */
+export function isService(incident: Pick<Incident, 'type'>): boolean {
+  return incident.type === 'power_outage'
+}
+
+/** Las secciones de cada pestaña de la columna (§R). */
+export const NOW_SECTIONS: readonly HistorySection['key'][] = ['now', 'services']
+export const PAST_SECTIONS: readonly HistorySection['key'][] = ['today', 'yesterday', 'earlier']
+
 /**
  * El historial en secciones: lo que está en el mapa arriba, y el resto por día.
  * Los cortes de luz de una misma comuna se juntan en una fila.
@@ -331,6 +343,7 @@ export function historySections(
   const yesterday = addDays(today, -1)
   const buckets: Record<HistorySection['key'], Incident[]> = {
     now: [],
+    services: [],
     today: [],
     yesterday: [],
     earlier: [],
@@ -338,7 +351,7 @@ export function historySections(
 
   for (const incident of history) {
     if (onMapCodes.has(incident.code)) {
-      buckets.now.push(incident)
+      ;(isService(incident) ? buckets.services : buckets.now).push(incident)
       continue
     }
     const day = chileDay(time(incident.last_seen_at))
@@ -352,7 +365,7 @@ export function historySections(
     .map((key) => ({
       key,
       label: SECTION_LABEL[key],
-      entries: groupOutages(buckets[key], key === 'now'),
+      entries: groupOutages(buckets[key], key === 'now' || key === 'services'),
       count: buckets[key].length,
     }))
 }

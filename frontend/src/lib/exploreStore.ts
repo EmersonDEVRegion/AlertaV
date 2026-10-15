@@ -7,7 +7,12 @@ import { useSyncExternalStore } from 'react'
  * Fuera de React, como la selección: la barra —el menú «⋯» y el buscador— no
  * es pariente de la columna, y pasar esto por `App` repintaría el mapa.
  */
-export type ExploreTab = 'history' | 'layers' | 'legend'
+/**
+ * §R (15-10): «Ahora» (lo que está pasando y tus lugares), «Historial» (lo que
+ * ya salió y la prensa) y «Capas» (filtros, capas de referencia y la leyenda,
+ * una sola). Antes «Historial» mezclaba cinco cosas y la leyenda estaba en tres.
+ */
+export type ExploreTab = 'now' | 'history' | 'layers'
 
 /**
  * Un área para acotar el historial.
@@ -24,7 +29,7 @@ interface ExploreState {
   area: ExploreArea | null
 }
 
-let state: ExploreState = { tab: 'history', area: null }
+let state: ExploreState = { tab: 'now', area: null }
 const listeners = new Set<() => void>()
 
 function emit(next: ExploreState): void {
@@ -38,8 +43,8 @@ export function setExploreTab(tab: ExploreTab): void {
 }
 
 export function setExploreArea(area: ExploreArea | null): void {
-  // Acotar por un área es mirar el historial: se muestra esa pestaña.
-  emit({ tab: area ? 'history' : state.tab, area })
+  // Acotar por un área es mirar la lista: desde «Capas» se vuelve a «Ahora».
+  emit({ tab: area && state.tab === 'layers' ? 'now' : state.tab, area })
 }
 
 /** Si el área activa es ese lugar guardado, se quita (se borró el lugar). */
@@ -62,5 +67,5 @@ export function useExploreArea(): ExploreArea | null {
 
 /** Sólo para los tests. */
 export function resetExplore(): void {
-  state = { tab: 'history', area: null }
+  state = { tab: 'now', area: null }
 }

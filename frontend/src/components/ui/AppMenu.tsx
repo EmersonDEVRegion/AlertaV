@@ -104,8 +104,7 @@ export function AppMenu({ theme, onToggleTheme }: AppMenuProps) {
             />
           </div>
           <div className="my-1 h-px bg-line" />
-          <Item onClick={() => show('legend')}>Qué significan los colores</Item>
-          <Item onClick={() => show('layers')}>Capas y filtros</Item>
+          <Item onClick={() => show('layers')}>Capas, filtros y leyenda</Item>
           <div className="my-1 h-px bg-line" />
           <Item onClick={() => showAbout('about')}>Acerca de AlertaV</Item>
           <Item onClick={() => showAbout('sources')}>Fuentes de datos</Item>
