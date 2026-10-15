@@ -102,7 +102,10 @@ def share_card(incident: Any | None, code: str) -> dict[str, str]:
         }
 
     kind = TYPE_LABEL.get(incident.type, "Emergencia")
-    lugar = incident.commune or "Región de Valparaíso"
+    comuna = incident.commune
+    if comuna and comuna.strip().lower() == "unknown":
+        comuna = None  # Chilquinta, cuando no sabe la comuna.
+    lugar = comuna or "Región de Valparaíso"
     titulo = f"{kind} — {lugar}"
     partes = [STATUS_LABEL.get(incident.status, "")]
     partes.append(f"desde {_hora(incident.first_seen_at)}")

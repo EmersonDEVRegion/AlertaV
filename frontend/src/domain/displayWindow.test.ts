@@ -214,6 +214,7 @@ describe('nombre de comuna', () => {
     expect(communeLabel('Quilpue')).toBe('Quilpué')
     expect(communeLabel('HIJUELAS')).toBe('Hijuelas')
     expect(communeLabel('SECTOR_NORTE')).toBe('Sector Norte')
+    expect(communeLabel('Unknown')).toBeNull()
   })
 
   it('pasa las mayúsculas del feed a nombre propio', () => {

@@ -74,6 +74,14 @@ def comuna_por_nombre(texto: str | None) -> str | None:
     return None
 
 
+#: Lo que las distribuidoras ponen cuando no saben la comuna. Chilquinta manda
+#: «Unknown» desde el 15-10-2026; mostrarlo como si fuera un lugar no sirve.
+SIN_COMUNA: frozenset[str] = frozenset(
+    {"unknown", "desconocido", "desconocida", "sin informacion", "sin comuna", "n/a", "na",
+     "null", "none", "-"}
+)
+
+
 def comuna_de_zona(texto: str | None) -> str | None:
     """La comuna de una etiqueta de zona de una distribuidora.
 
@@ -87,7 +95,7 @@ def comuna_de_zona(texto: str | None) -> str | None:
     if not texto:
         return None
     limpio = " ".join(texto.replace("_", " ").replace("-", " ").split())
-    if not limpio:
+    if not limpio or normalise_text(limpio) in SIN_COMUNA:
         return None
     exacta = comuna_por_nombre(limpio)
     if exacta:

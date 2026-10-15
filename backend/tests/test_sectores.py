@@ -482,6 +482,8 @@ def test_la_nota_y_el_tuit_caen_en_el_mismo_punto() -> None:
         ("VIÑA DEL MAR", "Viña del Mar"),
         ("CALLE LARGA", "Calle Larga"),
         ("SECTOR_NORTE", "Sector Norte"),
+        ("Unknown", None),
+        ("SIN INFORMACIÓN", None),
         ("", None),
         (None, None),
     ],
