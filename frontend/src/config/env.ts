@@ -191,10 +191,11 @@ export const env = {
     900_000,
   ),
   /**
-   * Radar de vehículos (GBV). Apagado en producción hasta que se avise a GBV
-   * que AlertaV republica sus avisos (plan.md, §10.5 y P6). Ver `flag`.
+   * Radar de vehículos (GBV). Encendido desde el 15-10-2026 (§R): se avisó a
+   * GBV el 29-09 y no respondió. Ante cualquier reclamo o carta de cese, se
+   * apaga con `VITE_VEHICLE_RADAR=off` en Vercel y un redeploy. Ver `flag`.
    */
-  vehicleRadarEnabled: flag(import.meta.env.VITE_VEHICLE_RADAR, import.meta.env.DEV),
+  vehicleRadarEnabled: flag(import.meta.env.VITE_VEHICLE_RADAR, true),
   /**
    * Cadencia del radar. El collector de GBV corre cada 30 min y GBV publica unas
    * pocas denuncias al día: cinco minutos basta para que un aviso nuevo aparezca

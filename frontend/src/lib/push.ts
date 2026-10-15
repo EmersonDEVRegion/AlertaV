@@ -269,6 +269,12 @@ export function parseDeepLink(href: string, base = 'https://alertav.invalid'): P
   if (code && /^[A-Z]{2,5}-\d{4}-\d{1,8}$/.test(code)) {
     return { kind: 'incident', code }
   }
+  // Enlace compartido (`/i/INC-…`, ver `lib/share.ts`). Con la PWA instalada el
+  // service worker sirve la app directo en esa ruta, sin pasar por el backend.
+  const ruta = /^\/i\/([A-Za-z]{2,5}-\d{4}-\d{1,8})\/?$/.exec(url.pathname)
+  if (ruta) {
+    return { kind: 'incident', code: (ruta[1] ?? '').toUpperCase() }
+  }
   const key = url.searchParams.get('sismo')
   const agua = url.searchParams.get('corte_agua')
   const lat = Number(url.searchParams.get('lat'))

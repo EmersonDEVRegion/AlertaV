@@ -397,7 +397,19 @@ class TacticalWeatherRead(BaseModel):
     en_aviso: int = 0
     en_critico: int = 0
     comunas_en_alerta: list[str] = Field(
-        default_factory=list, description="De la más grave a la menos."
+        default_factory=list, description="De la más grave a la menos. Sin el UV."
+    )
+    uv_severidad: str = Field(
+        default="ninguna",
+        description="Severidad del índice UV. Va aparte: no dispara la barra.",
+    )
+    propagacion_severidad: str = Field(
+        default="ninguna",
+        description="Peor condición de propagación de incendios (30-30-30 o tramo costero).",
+    )
+    comunas_propagacion: list[str] = Field(
+        default_factory=list,
+        description="Comunas con condición de propagación, de la más grave a la menos.",
     )
 
     modelo: str = "desconocido"
@@ -446,6 +458,9 @@ class TacticalWeatherRead(BaseModel):
                 en_aviso=payload.get("en_aviso", 0),
                 en_critico=payload.get("en_critico", 0),
                 comunas_en_alerta=list(payload.get("comunas_en_alerta") or []),
+                uv_severidad=payload.get("uv_severidad", "ninguna"),
+                propagacion_severidad=payload.get("propagacion_severidad", "ninguna"),
+                comunas_propagacion=list(payload.get("comunas_propagacion") or []),
                 modelo=payload.get("modelo", "desconocido"),
             )
         except (KeyError, TypeError, ValueError) as exc:

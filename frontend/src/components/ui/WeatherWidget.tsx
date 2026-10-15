@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import type { TacticalWeather, WeatherTrigger } from '@/api/tacticalWeatherTypes'
+import type { TacticalWeather, WeatherSeverity, WeatherTrigger } from '@/api/tacticalWeatherTypes'
 import {
   HAZARD_LABEL,
   HAZARD_SHORT,
@@ -162,13 +162,28 @@ function AlertBody({ trigger }: { trigger: WeatherTrigger }) {
 /* Detalle                                                                    */
 /* ------------------------------------------------------------------------- */
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
     <div className="flex items-baseline justify-between gap-3 py-0.5">
       <span className="text-[11px] text-ink-muted">{label}</span>
-      <span className="count text-[11.5px] font-semibold tabular-nums text-ink">{value}</span>
+      <span className={`count text-[11.5px] font-semibold tabular-nums ${tone ?? 'text-ink'}`}>{value}</span>
     </div>
   )
+}
+
+/**
+ * El UV vive acá y no en la barra (§R): en verano se cruza casi a diario y
+ * tapaba la condición de propagación. Con su severidad, dice qué hacer.
+ */
+const UV_TAG: Record<WeatherSeverity, string> = {
+  ninguna: '',
+  aviso: ' · alto',
+  critica: ' · muy alto',
+}
+const UV_TONE: Record<WeatherSeverity, string> = {
+  ninguna: 'text-ink',
+  aviso: 'text-warn-ink',
+  critica: 'text-danger-ink',
 }
 
 function Detail({ snapshot }: { snapshot: WeatherSnapshot }) {
@@ -228,12 +243,29 @@ function Detail({ snapshot }: { snapshot: WeatherSnapshot }) {
               <Row label="Ráfaga máxima" value={`${data.rafaga_max_kmh.toFixed(0)} km/h`} />
             )}
             {data.uv_max !== null && (
-              <Row label="Índice UV máximo" value={formatMetric(data.uv_max, 'uv_max')} />
+              <Row
+                label="Índice UV máximo"
+                value={`${formatMetric(data.uv_max, 'uv_max')}${UV_TAG[data.uv_severidad]}`}
+                tone={UV_TONE[data.uv_severidad]}
+              />
+            )}
+            {data.comunas_propagacion.length > 0 && (
+              <Row
+                label="Propagación de incendios"
+                value={`${data.comunas_propagacion.length} comuna${data.comunas_propagacion.length === 1 ? '' : 's'}`}
+                tone={UV_TONE[data.propagacion_severidad]}
+              />
             )}
             {data.con_lluvia > 0 && (
               <Row label="Comunas con lluvia" value={String(data.con_lluvia)} />
             )}
           </div>
+
+          {data.uv_severidad !== 'ninguna' && (
+            <p className="mt-1 text-[10.5px] leading-snug text-ink-muted">
+              Sol fuerte: usa bloqueador, sombrero y evita el sol del mediodía.
+            </p>
+          )}
 
           {data.comunas_en_alerta.length > 0 && (
             <p className="mt-1.5 text-[10.5px] leading-snug text-ink-muted">

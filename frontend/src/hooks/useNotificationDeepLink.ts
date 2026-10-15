@@ -25,6 +25,11 @@ export function useNotificationDeepLink(): {
 
   useEffect(() => {
     const url = new URL(window.location.href)
+    // `/i/INC-…`: la ruta del enlace compartido vuelve a la raíz.
+    if (url.pathname.startsWith('/i/')) {
+      window.history.replaceState(window.history.state, '', '/' + url.search + url.hash)
+      return
+    }
     if (
       url.searchParams.has('incidente') ||
       url.searchParams.has('sismo') ||

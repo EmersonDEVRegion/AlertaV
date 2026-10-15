@@ -117,6 +117,15 @@ export interface TacticalWeather {
   en_aviso: number
   en_critico: number
   comunas_en_alerta: string[]
+  /**
+   * Severidad del índice UV. **Va aparte** (§R): no dispara la barra ni cuenta
+   * en `comunas_en_alerta`; el panel del clima la muestra en su fila.
+   */
+  uv_severidad: WeatherSeverity
+  /** Peor condición de propagación de incendios (30-30-30 o tramo costero). */
+  propagacion_severidad: WeatherSeverity
+  /** Comunas con condición de propagación, de la más grave a la menos. */
+  comunas_propagacion: string[]
 
   modelo: string
   es_pronostico: boolean

@@ -28,6 +28,7 @@ import { CongestionNotice } from './CongestionNotice'
 import { OutageDetails } from './OutageDetails'
 import { SourceChips } from './SourceChips'
 import { DetailSurface, useDetailEmbedded } from './DetailSurface'
+import { ShareButton } from './ShareButton'
 
 interface IncidentSheetProps {
   incident: Incident
@@ -113,6 +114,10 @@ export const IncidentSheet = memo(function IncidentSheet({
             <span>{STATUS_LABEL[incident.status]}</span>
           </p>
         </div>
+        <ShareButton
+          code={incident.code}
+          title={`${incident.title ?? TYPE_LABEL[incident.type]} · AlertaV`}
+        />
         <button
           type="button"
           onClick={onClose}

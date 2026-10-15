@@ -135,6 +135,9 @@ class Settings(BaseSettings):
     #: correo de `NOMINATIM_USER_AGENT` (ver `contacto_email`).
     CONTACT_EMAIL: str = ""
     CONTACT_URL: str = "https://github.com/EmersonDEVRegion/AlertaV"
+    #: Dirección pública de la PWA. La usan los enlaces compartibles
+    #: (`/share/i/{code}`) para la imagen de la vista previa y la redirección.
+    PUBLIC_APP_URL: str = "https://alertav.vercel.app"
 
     # -- Base de datos -------------------------------------------------------
     #: DSN completo. Si viene definido, **manda sobre los `POSTGRES_*`**: es lo

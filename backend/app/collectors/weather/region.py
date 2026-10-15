@@ -59,6 +59,8 @@ from typing import Any
 from app.collectors.weather.umbrales import (
     AMBITO_KEY,
     AMBITO_REGION,
+    AMENAZA_INCENDIO,
+    AMENAZA_UV,
     ORDEN_SEVERIDAD,
     SEVERIDAD_AVISO,
     SEVERIDAD_CRITICA,
@@ -129,6 +131,15 @@ class EstadoRegional:
 
     modelo: str
 
+    #: El UV va aparte (§R, 15-10): en verano se cruza casi todos los días y,
+    #: como peor caso, tapaba la condición de propagación en la barra. Se sigue
+    #: evaluando y el panel del clima lo muestra con su severidad.
+    uv_severidad: str = SEVERIDAD_NINGUNA
+    #: Comunas con condición de propagación de incendios (30-30-30 o su tramo
+    #: costero), de la más grave a la menos. La hoja la muestra aparte.
+    propagacion_severidad: str = SEVERIDAD_NINGUNA
+    comunas_propagacion: tuple[str, ...] = ()
+
     def to_dict(self) -> dict[str, Any]:
         """JSON plano para `raw_data['_weather']`. Ver la nota de `Pronostico.to_dict`."""
         return {
@@ -154,6 +165,9 @@ class EstadoRegional:
             "en_aviso": self.en_aviso,
             "en_critico": self.en_critico,
             "comunas_en_alerta": list(self.comunas_en_alerta),
+            "uv_severidad": self.uv_severidad,
+            "propagacion_severidad": self.propagacion_severidad,
+            "comunas_propagacion": list(self.comunas_propagacion),
             "modelo": self.modelo,
             "fuente": "open-meteo",
         }
@@ -183,6 +197,30 @@ def _minimo(valores: Sequence[float | None]) -> float | None:
     return round(min(presentes), 1) if presentes else None
 
 
+def _severidad_de(disparos: Sequence[Disparo]) -> str:
+    principal = mas_grave(disparos)
+    return principal.severidad if principal else SEVERIDAD_NINGUNA
+
+
+def _sin_uv(disparos: Sequence[Disparo]) -> list[Disparo]:
+    return [disparo for disparo in disparos if disparo.amenaza != AMENAZA_UV]
+
+
+def _de(disparos: Sequence[Disparo], amenaza: str) -> list[Disparo]:
+    return [disparo for disparo in disparos if disparo.amenaza == amenaza]
+
+
+def _por_gravedad(pares: Sequence[tuple[str, str]]) -> tuple[str, ...]:
+    """Comunas de la más grave a la menos; las que están en calma, fuera."""
+    return tuple(
+        comuna
+        for comuna, severidad in sorted(
+            pares, key=lambda par: (-ORDEN_SEVERIDAD.get(par[1], 0), par[0])
+        )
+        if severidad != SEVERIDAD_NINGUNA
+    )
+
+
 def consolidar(
     pronosticos: Sequence[Pronostico],
     *,
@@ -206,8 +244,9 @@ def consolidar(
     if not pronosticos:
         return None
 
+    # El UV no compite por la barra (ver `EstadoRegional.uv_severidad`).
     disparos = [disparo for item in pronosticos for disparo in item.disparos]
-    principal = mas_grave(disparos)
+    principal = mas_grave(_sin_uv(disparos))
 
     origen: str | None = None
     if principal is not None:
@@ -216,13 +255,12 @@ def consolidar(
             None,
         )
 
-    en_alerta = sorted(
-        (item for item in pronosticos if item.severidad != SEVERIDAD_NINGUNA),
-        key=lambda item: (
-            -ORDEN_SEVERIDAD.get(item.severidad, 0),
-            item.comuna,
-        ),
-    )
+    # Severidad de cada comuna sin el UV: una comuna sólo con UV alto no está
+    # «en alerta» para la barra ni para la lista de comunas del panel.
+    severidades = [(item.comuna, _severidad_de(_sin_uv(item.disparos))) for item in pronosticos]
+    propagacion = [
+        (item.comuna, _severidad_de(_de(item.disparos, AMENAZA_INCENDIO))) for item in pronosticos
+    ]
 
     return EstadoRegional(
         inicio=inicio,
@@ -242,10 +280,13 @@ def consolidar(
         uv_max=_maximo([item.uv_max for item in pronosticos]),
         comunas=len(pronosticos),
         con_lluvia=sum(1 for item in pronosticos if item.hay_lluvia),
-        en_aviso=sum(1 for item in pronosticos if item.severidad == SEVERIDAD_AVISO),
-        en_critico=sum(1 for item in pronosticos if item.severidad == SEVERIDAD_CRITICA),
-        comunas_en_alerta=tuple(item.comuna for item in en_alerta),
+        en_aviso=sum(1 for _, severidad in severidades if severidad == SEVERIDAD_AVISO),
+        en_critico=sum(1 for _, severidad in severidades if severidad == SEVERIDAD_CRITICA),
+        comunas_en_alerta=_por_gravedad(severidades),
         modelo=modelo,
+        uv_severidad=_severidad_de(_de(disparos, AMENAZA_UV)),
+        propagacion_severidad=_severidad_de(_de(disparos, AMENAZA_INCENDIO)),
+        comunas_propagacion=_por_gravedad(propagacion),
     )
 
 

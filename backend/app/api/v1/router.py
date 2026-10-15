@@ -13,6 +13,7 @@ from app.api.v1.endpoints import (
     incidents,
     moderacion,
     push,
+    share,
 )
 
 api_router = APIRouter()
@@ -31,3 +32,5 @@ api_router.include_router(push.router)
 api_router.include_router(feed.router)
 # Moderación de los comentarios ciudadanos, sólo para el operador (`/moderacion`).
 api_router.include_router(moderacion.router)
+# Vista previa de los enlaces compartidos (`/share/i/{code}`), HTML con Open Graph.
+api_router.include_router(share.router)
