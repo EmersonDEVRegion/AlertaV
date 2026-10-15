@@ -7,6 +7,7 @@ import {
   historySections,
   historyState,
   isOnMap,
+  isService,
   mapUntil,
   splitForDisplay,
   startOfChileDay,
@@ -185,6 +186,20 @@ describe('secciones', () => {
     expect(group).toMatchObject({ kind: 'outages', clients: 200, latest: a.last_seen_at })
     // El más reciente arriba.
     expect(today!.entries[0]).toBe(group)
+  })
+
+  it('los cortes de luz en el mapa van a «Servicios interrumpidos», no a «En vivo»', () => {
+    const live = inc({ type: 'wildfire', last_seen_at: ago(1) })
+    const cut = outage(2, true)
+    const sections = historySections([live, cut], new Set([live.code, cut.code]), NOW)
+
+    expect(sections.map((s) => [s.key, s.count])).toEqual([
+      ['now', 1],
+      ['services', 1],
+    ])
+    expect(sections[1]!.label).toBe('Servicios interrumpidos')
+    expect(isService(cut)).toBe(true)
+    expect(isService(live)).toBe(false)
   })
 
   it('un corte solo no se agrupa', () => {

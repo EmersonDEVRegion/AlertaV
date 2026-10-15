@@ -87,12 +87,12 @@ afterEach(() => {
 })
 
 describe('columna de escritorio', () => {
-  it('resume sin abrir nada y arranca en el historial', () => {
+  it('resume sin abrir nada y arranca en «Ahora»', () => {
     render(withQuery(<DesktopColumn {...props()} />))
 
     expect(screen.getByRole('heading', { name: /1 en curso/i })).toBeInTheDocument()
     expect(screen.getByText(/en 24 h/)).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: /historial/i })).toHaveAttribute(
+    expect(screen.getByRole('tab', { name: /ahora/i })).toHaveAttribute(
       'aria-selected',
       'true',
     )
@@ -113,20 +113,36 @@ describe('columna de escritorio', () => {
     expect(screen.queryByText(/despacho/i)).not.toBeInTheDocument()
   })
 
-  it('las capas de referencia van arriba del historial, plegadas', () => {
+  it('hay tres pestañas: Ahora, Historial y Capas (sin pestaña de leyenda)', () => {
     render(withQuery(<DesktopColumn {...props()} />))
-    const dock = screen.getByRole('button', { name: /capas de referencia/i })
-    expect(dock).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getAllByRole('tab').map((t) => t.textContent?.replace(/\d+$/, ''))).toEqual([
+      'Ahora',
+      'Historial',
+      'Capas',
+    ])
   })
 
   it('cada pestaña abre lo suyo', async () => {
     const user = userEvent.setup()
     render(withQuery(<DesktopColumn {...props()} />))
 
+    // Ahora: lo que está en el mapa, sin las capas de referencia.
+    expect(screen.getByText('Incendio estructural — Concón')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /capas de referencia/i })).not.toBeInTheDocument()
+
+    // Historial: lo que ya salió del mapa (acá, nada).
+    await user.click(screen.getByRole('tab', { name: /historial/i }))
+    expect(screen.queryByText('Incendio estructural — Concón')).not.toBeInTheDocument()
+    expect(screen.getByText(/nada terminado hoy ni ayer/i)).toBeInTheDocument()
+
+    // Capas: filtros, capas de referencia abiertas y la única leyenda.
     await user.click(screen.getByRole('tab', { name: /capas/i }))
     expect(screen.getByRole('checkbox', { name: /incendios/i })).toBeInTheDocument()
-
-    await user.click(screen.getByRole('tab', { name: /leyenda/i }))
+    expect(screen.getByRole('button', { name: /capas de referencia/i })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+    expect(screen.getByRole('heading', { name: 'Leyenda' })).toBeInTheDocument()
     expect(screen.getByText(/el color mide evidencia/i)).toBeInTheDocument()
   })
 

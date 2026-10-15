@@ -33,8 +33,8 @@ const LEGEND_ICONS = ICON_IDS.filter((id) => id !== OUTAGE_ICON && id !== WATER_
  * Lo demás es consulta y va plegado en `<details>`, que es accesible sin una
  * línea de JavaScript y recuerda su estado mientras la leyenda esté abierta.
  *
- * Sin superficie propia: lo monta la pestaña «Leyenda» de la columna y de la
- * hoja del teléfono (`components/shell/ExplorePanel.tsx`).
+ * Sin superficie propia: lo monta la pestaña «Capas» de la columna y de la
+ * hoja del teléfono (`components/shell/ExplorePanel.tsx`), al final.
  */
 export function LegendBody() {
   return (

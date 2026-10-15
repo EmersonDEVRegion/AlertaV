@@ -58,7 +58,7 @@ import { useNotificationDeepLink } from '@/hooks/useNotificationDeepLink'
 import { useVehicleFeed } from '@/hooks/useVehicleFeed'
 import { useWaterCuts } from '@/hooks/useWaterCuts'
 import { useDisplaySplit } from '@/hooks/useDisplaySplit'
-import { INCIDENT_QUERY_HOURS, INCIDENT_QUERY_STATUSES } from '@/domain/displayWindow'
+import { INCIDENT_QUERY_HOURS, INCIDENT_QUERY_STATUSES, isService } from '@/domain/displayWindow'
 import type { HistoryFeedProps } from '@/components/feed/HistoryFeed'
 import { env } from '@/config/env'
 import {
@@ -265,6 +265,12 @@ export default function App() {
   // es por familia y ocurre acá. Separarlo en tres consultas multiplicaría el
   // tráfico sin ganar nada: el backend ya devuelve todo junto.
   const list = useMemo(() => current.filter(isVisible), [current, isVisible])
+  // «N en curso» cuenta emergencias: los cortes de luz van en «Servicios
+  // interrumpidos» (§R) y no inflan el resumen.
+  const emergencyCount = useMemo(
+    () => list.reduce((n, incident) => (isService(incident) ? n : n + 1), 0),
+    [list],
+  )
 
   // El historial obedece a las mismas capas que el mapa.
   const visibleHistory = useMemo(() => history.filter(isVisible), [history, isVisible])
@@ -573,7 +579,7 @@ export default function App() {
         seismic: seismicList,
         waterCuts: visibleWaterCuts,
       },
-      incidentCount: list.length,
+      incidentCount: emergencyCount,
       lastDispatchAt,
       onFocusArea: focusArea,
       onFocusCuartel: focusCuartel,
@@ -587,7 +593,7 @@ export default function App() {
       visibleHistory,
       seismicList,
       visibleWaterCuts,
-      list.length,
+      emergencyCount,
       lastDispatchAt,
     ],
   )
