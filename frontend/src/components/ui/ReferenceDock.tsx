@@ -421,7 +421,7 @@ function ReferenceLayers({
               que el degradado suave sea una medición continua del terreno
               y no la interpolación de una grilla de 5 km. */}
           <p className="mt-1.5 text-[9.5px] leading-tight text-ink-faint">
-            {HAZARD_LEGEND.scale} · {HAZARD_LEGEND.reticule}
+            {HAZARD_LEGEND.scale}
           </p>
           {/* No es negociable: esta capa describe el terreno, no un
               evento en curso. */}

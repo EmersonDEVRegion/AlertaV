@@ -3,6 +3,7 @@ import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { NewsFeedItem } from '@/api/newsFeedTypes'
 import { resetExplore, setExploreArea } from '@/lib/exploreStore'
+import { resetSections } from '@/lib/sectionStore'
 import { NEWS_PREVIEW, NewsFeedView } from './NewsFeed'
 
 function nota(id: string, overrides: Partial<NewsFeedItem> = {}): NewsFeedItem {
@@ -21,7 +22,10 @@ function nota(id: string, overrides: Partial<NewsFeedItem> = {}): NewsFeedItem {
   }
 }
 
-afterEach(() => resetExplore())
+afterEach(() => {
+  resetExplore()
+  resetSections()
+})
 
 describe('NewsFeedView', () => {
   it('lista las notas como enlaces externos y dice que no van al mapa', () => {
@@ -75,5 +79,15 @@ describe('NewsFeedView', () => {
     render(<NewsFeedView status="ready" items={[nota('a')]} />)
     await userEvent.click(screen.getByRole('button', { name: /Noticias/ }))
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
+  })
+
+  it('plegada de partida (arriba de la pestaña) muestra el titular más reciente', async () => {
+    render(<NewsFeedView status="ready" items={[nota('a'), nota('b')]} defaultOpen={false} />)
+    const toggle = screen.getByRole('button', { name: /Noticias/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle).toHaveTextContent('Nota a')
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+    await userEvent.click(toggle)
+    expect(screen.getAllByRole('link')).toHaveLength(2)
   })
 })

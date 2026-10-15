@@ -36,7 +36,9 @@ import {
   closureCutRingLayer,
   closureHitLayer,
   closureMttDotLayer,
+  roadClosureSpecs,
 } from './roadClosureLayers'
+import { CLOSURE_ICON_LAYER_ID } from './emergencyIconLayers'
 import { coneFillLayer } from './overlayLayers'
 import { alertHaloLayer, coreLayer } from './incidentLayers'
 import { RAIN_BEFORE_ID } from './rainLayers'
@@ -88,11 +90,17 @@ describe('jerarquía de dibujo', () => {
       CLOSURE_CUT_RING_LAYER_ID,
       CLOSURE_BODY_LAYER_ID,
       CLOSURE_MTT_DOT_LAYER_ID,
+      CLOSURE_ICON_LAYER_ID,
       CLOSURE_HIT_LAYER_ID,
     ]
     // Una capa fuera de esta lista no se re-ancla tras un cambio de tema y se
     // queda flotando por encima de los incidentes. No hay error: sólo queda mal.
     expect([...ROAD_CLOSURE_LAYER_IDS].sort()).toEqual(montadas.sort())
+  })
+
+  it('el re-anclaje sigue el mismo orden que el montaje', () => {
+    const ids = Object.values(roadClosureSpecs('dark', true)).map((spec) => spec.id)
+    expect(ids).toEqual([...ROAD_CLOSURE_LAYER_IDS])
   })
 })
 
@@ -211,6 +219,17 @@ describe('encendido y apagado', () => {
       expect(factory('dark', true).layout?.visibility).toBe('visible')
     }
     expect(closureHitLayer(false).layout?.visibility).toBe('none')
+  })
+
+  it('apagada, no queda NINGUNA subcapa visible (§I: el icono quedaba en el mapa)', () => {
+    for (const theme of THEMES) {
+      const off = Object.values(roadClosureSpecs(theme, false))
+      expect(off).toHaveLength(ROAD_CLOSURE_LAYER_IDS.length)
+      for (const spec of off) expect(spec.layout?.visibility, spec.id).toBe('none')
+      for (const spec of Object.values(roadClosureSpecs(theme, true))) {
+        expect(spec.layout?.visibility, spec.id).toBe('visible')
+      }
+    }
   })
 })
 

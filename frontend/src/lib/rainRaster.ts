@@ -1,5 +1,6 @@
 import type { RainGrid } from '@/api/rainGrid'
 import { rainColorAt } from '@/domain/rainSymbology'
+import { edgeFade } from './edgeFeather'
 
 /**
  * La grilla de lluvia como imagen: interpolación bilineal y la escala de
@@ -75,22 +76,6 @@ const EDGE_FEATHER_CELLS = 2
  */
 const EDGE_WOBBLE_CELLS = 1.4
 
-/**
- * Ondulación determinista en [0, 1]: dos senos de frecuencias que no se
- * sincronizan. Ni `Math.random` ni ruido con semilla: la misma grilla tiene que
- * dar siempre la misma imagen, o el borde "respiraría" en cada refresco.
- * Longitudes de onda de 5 a 8 celdas: ondas amplias, no un borde dentado.
- */
-export function edgeWobble(gx: number, gy: number): number {
-  const w = 0.6 * Math.sin(gx * 0.9 + gy * 0.35) + 0.4 * Math.sin(gy * 1.25 - gx * 0.55 + 1.7)
-  return (w + 1) / 2
-}
-
-const smooth = (t: number) => {
-  const x = Math.max(0, Math.min(1, t))
-  return x * x * (3 - 2 * x)
-}
-
 /** Los píxeles RGBA de la imagen, fila a fila de norte a sur. */
 export function rainPixels(
   grid: RainGrid,
@@ -108,9 +93,8 @@ export function rainPixels(
       // Distancia al borde más cercano, en celdas.
       const edge = Math.min(gx, gy, grid.nx - 1 - gx, grid.ny - 1 - gy)
       // El comienzo del difuminado se corre hacia adentro entre 0 y `wobble`
-      // celdas. En el borde mismo (`edge = 0`) sigue siendo transparente.
-      const inset = wobble > 0 ? wobble * edgeWobble(gx, gy) : 0
-      const fade = feather > 0 ? smooth((edge - inset) / feather) : 1
+      // celdas (`lib/edgeFeather.ts`). En el borde mismo sigue transparente.
+      const fade = edgeFade(edge, gx, gy, feather, wobble)
       const i = (py * width + px) * 4
       out[i] = r
       out[i + 1] = g

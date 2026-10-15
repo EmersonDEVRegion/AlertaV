@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react'
+import { memo, useId, useMemo, useState } from 'react'
 import type { Incident } from '@/api/types'
 import type { CollectorsHealth } from '@/api/health'
 import { TYPE_LABEL } from '@/domain/labels'
@@ -11,6 +11,7 @@ import {
   historySections,
   historyState,
   type HistoryOutageGroup,
+  type HistorySection,
   type HistoryState,
 } from '@/domain/displayWindow'
 import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
@@ -20,9 +21,11 @@ import { useSelectedIncidentCode } from '@/lib/selectionStore'
 import { setExploreArea, useExploreArea, type ExploreArea } from '@/lib/exploreStore'
 import { areaLabel, inArea } from '@/domain/area'
 import { GlyphIcon } from '@/components/ui/GlyphIcon'
+import { SectionToggle } from '@/components/ui/SectionToggle'
+import { useSectionOpen } from '@/lib/sectionStore'
 
 /**
- * Historial de las últimas 24 h: lo que está en el mapa y lo que ya salió.
+ * Historial de hoy y ayer: lo que está en el mapa y lo que ya salió.
  *
  * Es el feed que la gente lee de arriba hacia abajo en los sitios de este tipo
  * (Watch Duty, VicEmergency): qué pasó, dónde, hace cuánto y en qué quedó.
@@ -31,7 +34,7 @@ import { GlyphIcon } from '@/components/ui/GlyphIcon'
  * el corte, no que repuso.
  */
 export interface HistoryFeedProps {
-  /** Las incidencias de las últimas 24 h, ya filtradas por las capas encendidas. */
+  /** Las incidencias de hoy y ayer, ya filtradas por las capas encendidas. */
   history: readonly Incident[]
   /** Códigos de las que siguen en el mapa. */
   onMapCodes: ReadonlySet<string>
@@ -131,7 +134,7 @@ const HistoryItem = memo(function HistoryItem({
                   : formatRelativeShort(incident.last_seen_at, now)
                 : formatRelativeShort(incident.last_seen_at, now)}
             </span>
-            {/* «En curso» ya lo dice la sección «En el mapa»: repetirlo en cada
+            {/* «En curso» ya lo dice la sección «En vivo»: repetirlo en cada
                 fila es ruido. Se muestra lo que la distingue. */}
             {state !== 'live' && <StateChip state={state} />}
           </span>
@@ -221,6 +224,91 @@ const OutageGroupItem = memo(function OutageGroupItem({
   )
 })
 
+/**
+ * Qué secciones arrancan abiertas (§I). Lo que está pasando y lo de hoy, sí;
+ * ayer, plegado: es contexto, y abierto empujaba hacia abajo todo lo demás.
+ * Lo que la persona pliegue o abra se recuerda en el teléfono.
+ */
+const SECTION_DEFAULT_OPEN: Record<HistorySection['key'], boolean> = {
+  now: true,
+  today: true,
+  yesterday: false,
+  earlier: false,
+}
+
+function HistorySectionBlock({
+  section,
+  selectedCode,
+  now,
+  onFocus,
+}: {
+  section: HistorySection
+  selectedCode: string | null
+  now: number
+  onFocus: (incident: Incident) => void
+}) {
+  const bodyId = useId()
+  const [open, toggle] = useSectionOpen(
+    `historial:${section.key}`,
+    SECTION_DEFAULT_OPEN[section.key],
+  )
+  // Si lo seleccionado (desde el mapa o una notificación) está acá, la sección
+  // se abre sola, como un grupo de cortes: la fila marcada tiene que verse.
+  const containsSelected =
+    selectedCode !== null &&
+    section.entries.some((entry) =>
+      entry.kind === 'single'
+        ? entry.incident.code === selectedCode
+        : entry.incidents.some((incident) => incident.code === selectedCode),
+    )
+  const expanded = open || containsSelected
+
+  return (
+    // `group` y no `section`: con nombre, una sección es un `region`, y la
+    // ficha del teléfono ya es la región de este contenido.
+    <div role="group" aria-label={section.label}>
+      <h3>
+        <SectionToggle
+          label={section.label}
+          count={section.count}
+          open={expanded}
+          onToggle={toggle}
+          controls={bodyId}
+          leading={
+            section.key === 'now' ? (
+              <span aria-hidden className="size-1.5 shrink-0 animate-pulse-soft rounded-full bg-accent" />
+            ) : undefined
+          }
+        />
+      </h3>
+      {expanded && (
+        <ul id={bodyId}>
+          {section.entries.map((entry) =>
+            entry.kind === 'single' ? (
+              <HistoryItem
+                key={entry.key}
+                incident={entry.incident}
+                onMap={entry.onMap}
+                selected={entry.incident.code === selectedCode}
+                now={now}
+                onFocus={onFocus}
+              />
+            ) : (
+              <OutageGroupItem
+                key={entry.key}
+                group={entry}
+                selectedCode={selectedCode}
+                now={now}
+                onFocus={onFocus}
+              />
+            ),
+          )}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 /** El área activa, con la forma de quitarla. */
 function AreaChip({ area }: { area: ExploreArea }) {
   const label = areaLabel(area)
@@ -280,8 +368,8 @@ export const HistoryFeed = memo(function HistoryFeed({
         <AreaChip area={area} />
         <p className="px-2 py-3 text-center text-[10.5px] text-ink-muted">
           {area.kind === 'commune'
-            ? 'Sin emergencias en las últimas 24 h en esta comuna.'
-            : `Sin emergencias en las últimas 24 h cerca de ${area.name}.`}
+            ? 'Sin emergencias hoy ni ayer en esta comuna.'
+            : `Sin emergencias hoy ni ayer cerca de ${area.name}.`}
         </p>
       </div>
     )
@@ -293,53 +381,27 @@ export const HistoryFeed = memo(function HistoryFeed({
     )
     return blind ? (
       <p className="callout callout-warn m-1 text-[10.5px]">
-        Sin emergencias en 24 h, pero algunas fuentes no responden: el vacío puede no ser
-        calma.
+        Sin emergencias desde ayer, pero algunas fuentes no responden: el vacío puede no
+        ser calma.
       </p>
     ) : (
       <p className="px-2 py-3 text-center text-[10.5px] text-ink-muted">
-        Sin emergencias en las últimas 24 h en las capas encendidas.
+        Sin emergencias hoy ni ayer en las capas encendidas.
       </p>
     )
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-1">
       {area && <AreaChip area={area} />}
       {sections.map((section) => (
-        // `group` y no `section`: con nombre, una sección es un `region`, y la
-        // ficha del teléfono ya es la región de este contenido.
-        <div key={section.key} role="group" aria-label={section.label}>
-          <h3 className="flex items-center gap-1.5 px-1.5 pb-0.5 pt-1 text-[9.5px] font-semibold uppercase tracking-[0.08em] text-ink-faint">
-            {section.key === 'now' && (
-              <span aria-hidden className="size-1.5 animate-pulse-soft rounded-full bg-accent" />
-            )}
-            <span className="flex-1">{section.label}</span>
-            <span className="count">{section.count}</span>
-          </h3>
-          <ul>
-            {section.entries.map((entry) =>
-              entry.kind === 'single' ? (
-                <HistoryItem
-                  key={entry.key}
-                  incident={entry.incident}
-                  onMap={entry.onMap}
-                  selected={entry.incident.code === selectedCode}
-                  now={now}
-                  onFocus={onFocus}
-                />
-              ) : (
-                <OutageGroupItem
-                  key={entry.key}
-                  group={entry}
-                  selectedCode={selectedCode}
-                  now={now}
-                  onFocus={onFocus}
-                />
-              ),
-            )}
-          </ul>
-        </div>
+        <HistorySectionBlock
+          key={section.key}
+          section={section}
+          selectedCode={selectedCode}
+          now={now}
+          onFocus={onFocus}
+        />
       ))}
     </div>
   )

@@ -37,16 +37,18 @@ export const DISPLAY_WINDOW_MS: Record<IncidentLayerKey, number> = {
   power: 4 * HOUR,
 }
 
-/** Cuánto hacia atrás muestra el historial. */
-const HISTORY_WINDOW_MS = 24 * HOUR
-
 /**
  * Lo que se le pide a `/incidents/active` para alimentar mapa e historial con
- * una sola consulta. La ventana es el doble del historial: un corte de luz de
- * 30 h que la empresa sigue listando tiene su última señal fuera de las 24 h y
- * aun así va en el mapa.
+ * una sola consulta.
+ *
+ * El historial va desde las 00:00 de AYER (§I), o sea entre 24 y 48 h hacia
+ * atrás según la hora. 50 y no 48: el día en que Chile atrasa la hora dura 25 h,
+ * y con 48 justas a las 23:59 se perdería la primera hora de ayer.
  */
-export const INCIDENT_QUERY_HOURS = 48
+export const INCIDENT_QUERY_HOURS = 50
+
+/** Las últimas 24 h, para el resumen «N en 24 h» de la columna. */
+export const LAST_24H_MS = 24 * HOUR
 export const INCIDENT_QUERY_STATUSES: IncidentStatus[] = [
   'active',
   'controlled',
@@ -82,15 +84,25 @@ export function isOnMap(incident: Incident, now: number): boolean {
   return mapUntil(incident) > now
 }
 
-/** Hasta cuándo va en el historial: 24 h desde su última señal. */
+/**
+ * Hasta cuándo va en el historial: hasta que termine el día siguiente al de su
+ * última señal (hora de Chile). Lo de ayer se ve completo, y no sólo la parte
+ * que cae dentro de las últimas 24 h.
+ *
+ * # Por qué (§I, 15-10-2026)
+ *
+ * Con una ventana móvil de 24 h, la sección «Ayer» mostraba un pedazo de ayer
+ * que cambiaba con la hora: a las 11:26, de 11:26 a 23:59; a las 23:00, una
+ * sola hora. Se llamaba «Ayer» y no lo era.
+ */
 function historyUntil(incident: Incident): number {
-  return time(incident.last_seen_at) + HISTORY_WINDOW_MS
+  return startOfChileDay(addDays(chileDay(time(incident.last_seen_at)), 2))
 }
 
 export interface DisplaySplit {
   /** Lo que se dibuja y se cuenta como «activo». */
   onMap: Incident[]
-  /** Todo lo de las últimas 24 h, esté o no en el mapa. */
+  /** Todo lo de hoy y ayer (hora de Chile), esté o no en el mapa. */
   history: Incident[]
   /** El próximo instante en que alguno de los dos conjuntos cambia. */
   nextChange: number
@@ -116,8 +128,8 @@ export function splitForDisplay(incidents: readonly Incident[], now: number): Di
       if (until < nextChange) nextChange = until
     }
     const historyEnd = historyUntil(incident)
-    // Un corte vigente de más de 24 h sigue en el historial mientras esté en
-    // el mapa: sería raro verlo en uno y no en el otro.
+    // Un corte vigente de antes de ayer sigue en el historial mientras esté
+    // en el mapa: sería raro verlo en uno y no en el otro.
     if (historyEnd > now || until > now) {
       history.push(incident)
       if (historyEnd > now && historyEnd < nextChange) nextChange = historyEnd
@@ -183,7 +195,7 @@ export interface HistoryOutageGroup {
 
 type HistoryEntry = HistorySingle | HistoryOutageGroup
 
-interface HistorySection {
+export interface HistorySection {
   key: 'now' | 'today' | 'yesterday' | 'earlier'
   label: string
   entries: HistoryEntry[]
@@ -192,7 +204,8 @@ interface HistorySection {
 }
 
 const SECTION_LABEL: Record<HistorySection['key'], string> = {
-  now: 'En el mapa',
+  // «En vivo» y no «En el mapa» (§I): lo que importa es que está pasando.
+  now: 'En vivo',
   today: 'Hoy',
   yesterday: 'Ayer',
   earlier: 'Antes',
@@ -206,6 +219,29 @@ const DAY = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
 })
 const chileDay = (t: number): string => DAY.format(new Date(t))
+
+/** `AAAA-MM-DD` más `n` días, en calendario puro (sin husos). */
+function addDays(day: string, n: number): string {
+  const [y, m, d] = day.split('-').map(Number) as [number, number, number]
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10)
+}
+
+/**
+ * El primer instante del día `AAAA-MM-DD` en Chile.
+ *
+ * Chile continental alterna UTC−3 y UTC−4, y los cambios de hora ocurren a
+ * medianoche: el día en que se adelanta, las 00:00 no existen y el día empieza
+ * a la 01:00. Por eso no se arma la hora a mano: se prueban los dos husos y se
+ * queda el instante más temprano que ya cae en ese día.
+ */
+export function startOfChileDay(day: string): number {
+  const [y, m, d] = day.split('-').map(Number) as [number, number, number]
+  const candidates = [3, 4]
+    .map((offset) => Date.UTC(y, m - 1, d, offset))
+    .filter((t) => chileDay(t) === day)
+  // Sin candidato sólo si cambiara el huso del país: medianoche en UTC−3.
+  return candidates.length > 0 ? Math.min(...candidates) : Date.UTC(y, m - 1, d, 3)
+}
 
 function communeKey(commune: string | null): string {
   return (commune ?? '')
@@ -291,7 +327,8 @@ export function historySections(
   now: number,
 ): HistorySection[] {
   const today = chileDay(now)
-  const yesterday = chileDay(now - 24 * HOUR)
+  // Por calendario y no restando 24 h: el día del cambio de hora dura 23 o 25.
+  const yesterday = addDays(today, -1)
   const buckets: Record<HistorySection['key'], Incident[]> = {
     now: [],
     today: [],

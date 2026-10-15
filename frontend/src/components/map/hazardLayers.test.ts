@@ -19,12 +19,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   HAZARD_BEFORE_ID,
-  HAZARD_CELL_SOURCE_ID,
-  HAZARD_FILL_LAYER_ID,
+  HAZARD_FIELD_LAYER_ID,
   HAZARD_LAYER_IDS,
-  HAZARD_LINE_LAYER_ID,
-  hazardFillLayer,
-  hazardLineLayer,
+  HAZARD_SOURCE_ID,
+  hazardFieldLayer,
 } from './hazardLayers'
 import { coneFillLayer, reachFillLayer } from './overlayLayers'
 import { alertHaloLayer } from './incidentLayers'
@@ -33,8 +31,6 @@ import {
   HAZARD_MAX_G,
   HAZARD_MIN_G,
   HAZARD_RAMP,
-  HAZARD_RETICULE,
-  HAZARD_VARIABLE,
 } from '@/domain/hazardSymbology'
 
 /**
@@ -106,10 +102,10 @@ describe('jerarquía de dibujo', () => {
     expect(HAZARD_LAYER_IDS).not.toContain(HAZARD_BEFORE_ID)
   })
 
-  it('declara sus dos capas en orden de dibujo', () => {
-    // La superficie debajo, la retícula encima: al revés la retícula quedaría
-    // tapada por el relleno y no se vería nunca.
-    expect([...HAZARD_LAYER_IDS]).toEqual([HAZARD_FILL_LAYER_ID, HAZARD_LINE_LAYER_ID])
+  it('declara su única capa para el re-anclaje', () => {
+    // §I: la retícula se fue con los polígonos. Una capa fuera de esta lista no
+    // se re-ancla tras un cambio de tema.
+    expect([...HAZARD_LAYER_IDS]).toEqual([HAZARD_FIELD_LAYER_ID])
   })
 
   it('la capa MÁS BAJA de la lluvia es el ancla candidata', () => {
@@ -121,35 +117,25 @@ describe('jerarquía de dibujo', () => {
 })
 
 describe('una sola representación', () => {
-  it('no queda ninguna capa de tipo heatmap', () => {
+  it('es una imagen, no un heatmap ni polígonos', () => {
     /*
-     * La regresión que este bloque vigila. Un `heatmap` sobre una grilla
-     * REGULAR no mide el valor del modelo: mide densidad, que por construcción
-     * es constante, así que lo único que puede hacer el kernel es sumar el
-     * valor de los vecinos. Un nodo moderado rodeado de nodos altos salía más
-     * caliente que su propio PGA.
+     * Un `heatmap` sobre una grilla REGULAR no mide el valor del modelo: mide
+     * densidad, constante por construcción. Y los polígonos (hasta §I)
+     * dibujaban la caja de la grilla con bordes rectos. La imagen interpola
+     * entre nodos y desvanece el borde (`lib/hazardRaster.ts`).
      */
-    for (const factory of [hazardFillLayer, hazardLineLayer]) {
-      expect(factory('dark', true).type).not.toBe('heatmap')
-    }
+    expect(hazardFieldLayer('dark', true).type).toBe('raster')
+    expect(HAZARD_SOURCE_ID).toBe('seismic-hazard')
   })
 
-  it('las dos capas viven en la MISMA fuente de polígonos', () => {
-    // Había una segunda fuente de puntos derivada de los centros de celda, sólo
-    // para alimentar el heatmap. Se fue con él: una descarga, un parseo, una
-    // geometría subida al worker.
-    expect(HAZARD_CELL_SOURCE_ID).toBe('seismic-hazard')
+  it('se suaviza al acercarse: un píxel no se ve como un bloque', () => {
+    expect(hazardFieldLayer('dark', true).paint?.['raster-resampling']).toBe('linear')
   })
 
   it('la superficie está pintada en TODO el rango de zoom', () => {
-    /*
-     * Antes el relleno entraba desvaneciéndose desde 0 a z10,5 porque hasta ahí
-     * mandaba el mapa de calor. Sin esa segunda capa, cualquier tramo con
-     * opacidad 0 sería un rango de zoom en el que la capa encendida no se ve —y
-     * eso se lee como «se apagó sola», que es un reporte de bug garantizado.
-     */
+    // Un tramo con opacidad 0 se leería como «se apagó sola».
     for (const theme of ['light', 'dark'] as const) {
-      const opacity = hazardFillLayer(theme, true).paint?.['fill-opacity']
+      const opacity = hazardFieldLayer(theme, true).paint?.['raster-opacity']
       for (const zoom of [7, 9, 10.5, 12, 14, 17]) {
         expect(atZoom(opacity, zoom)).toBeGreaterThan(0.2)
       }
@@ -158,12 +144,18 @@ describe('una sola representación', () => {
 
   it('la superficie se aligera al acercarse, no al revés', () => {
     // De lejos la capa es el sujeto; de cerca la pregunta vuelve a ser dónde
-    // está uno, y un velo del 40 % sobre los nombres de calle convierte una
-    // capa de contexto en un estorbo.
+    // está uno, y un velo del 40 % sobre los nombres de calle estorba.
     for (const theme of ['light', 'dark'] as const) {
-      const opacity = hazardFillLayer(theme, true).paint?.['fill-opacity']
+      const opacity = hazardFieldLayer(theme, true).paint?.['raster-opacity']
       expect(atZoom(opacity, 15)).toBeLessThan(atZoom(opacity, 8))
     }
+  })
+
+  it('el zoom es la raíz de la opacidad, nunca anidado', () => {
+    const expr = hazardFieldLayer('dark', true).paint?.['raster-opacity'] as unknown[]
+    expect(expr[0]).toBe('interpolate')
+    expect(expr[2]).toEqual(['zoom'])
+    expect(countZoom(expr)).toBe(1)
   })
 })
 
@@ -209,87 +201,20 @@ describe('encuadre de la rampa', () => {
     }
   })
 
-  it('interpola en un espacio perceptual y no en sRGB', () => {
-    // Entre dos violetas, la mezcla en sRGB hunde el punto medio y sobre una
-    // teselación de celdas eso se ve como una banda que no está en el dato.
-    const expr = hazardFillLayer('dark', true).paint?.['fill-color'] as unknown[]
-    expect(expr[0]).toBe('interpolate-lab')
-  })
 
-  it('colorea por la variable documentada del artefacto', () => {
-    const expr = JSON.stringify(hazardFillLayer('dark', true).paint?.['fill-color'])
-    expect(expr).toContain(HAZARD_VARIABLE)
-  })
-
-  it('el color NO depende del zoom', () => {
-    // El valor de una celda es el mismo mire uno de cerca o de lejos. Atarlo al
-    // zoom haría que la misma celda afirmara dos amenazas distintas.
-    expect(countZoom(hazardFillLayer('dark', true).paint?.['fill-color'])).toBe(0)
-  })
-})
-
-describe('la retícula', () => {
-  const [hidden, shown] = HAZARD_RETICULE
-
-  it('está apagada a escala regional', () => {
-    /*
-     * Es la mitad visible del problema que motivó la reescritura: dibujar un
-     * trazo alrededor de cada rectángulo de 20 px es exactamente cómo una
-     * superficie continua se convierte en una cuadrícula.
-     */
-    const opacity = hazardLineLayer('dark', true).paint?.['line-opacity']
-    for (const zoom of [7, 9, 11, 12]) {
-      expect(atZoom(opacity, zoom)).toBe(0)
-    }
-  })
-
-  it('aparece sólo cuando una celda ya ocupa buena parte de la pantalla', () => {
-    // Una celda mide ~5 km: por encima de z13 llena el ancho del teléfono, y
-    // ahí el borde deja de ser ruido y pasa a decir la resolución del modelo.
-    expect(hidden).toBeGreaterThan(12)
-    expect(shown).toBeGreaterThan(hidden)
-
-    const opacity = hazardLineLayer('dark', true).paint?.['line-opacity']
-    expect(atZoom(opacity, shown)).toBeGreaterThan(0)
-  })
-
-  it('nunca compite con la superficie', () => {
-    for (const theme of ['light', 'dark'] as const) {
-      const opacity = hazardLineLayer(theme, true).paint?.['line-opacity']
-      const fill = hazardFillLayer(theme, true).paint?.['fill-opacity']
-      expect(atZoom(opacity, 17)).toBeLessThan(atZoom(fill, 17))
-    }
-  })
-
-  it('el zoom es la raíz de cada opacidad, nunca anidado', () => {
-    // `["zoom"]` sólo puede ser la entrada de un `interpolate` de nivel
-    // superior. Anidarlo tira el estilo completo — el error que este
-    // repositorio ya pagó dos veces.
-    for (const paint of [
-      hazardFillLayer('dark', true).paint?.['fill-opacity'],
-      hazardLineLayer('dark', true).paint?.['line-opacity'],
-    ]) {
-      const expr = paint as unknown[]
-      expect(expr[0]).toBe('interpolate')
-      expect(expr[2]).toEqual(['zoom'])
-      expect(countZoom(expr)).toBe(1)
-    }
-  })
 })
 
 describe('visibilidad', () => {
   it('se apaga por `visibility`, nunca desmontando', () => {
-    for (const factory of [hazardFillLayer, hazardLineLayer]) {
-      expect(factory('dark', false).layout?.visibility).toBe('none')
-      expect(factory('dark', true).layout?.visibility).toBe('visible')
-    }
+    expect(hazardFieldLayer('dark', false).layout?.visibility).toBe('none')
+    expect(hazardFieldLayer('dark', true).layout?.visibility).toBe('visible')
   })
 })
 
 describe('estilo sobre mapa oscuro', () => {
-  it('mantiene el relleno translúcido en ambos temas', () => {
+  it('mantiene la superficie translúcida en ambos temas', () => {
     for (const theme of ['light', 'dark'] as const) {
-      const peak = atZoom(hazardFillLayer(theme, true).paint?.['fill-opacity'], 7)
+      const peak = atZoom(hazardFieldLayer(theme, true).paint?.['raster-opacity'], 7)
       expect(peak).toBeGreaterThan(0)
       // Por sobre ~0,5 la capa deja de ser contexto y empieza a tapar el mapa.
       expect(peak).toBeLessThanOrEqual(0.5)
@@ -348,9 +273,5 @@ describe('estilo sobre mapa oscuro', () => {
         expect(r).toBeLessThanOrEqual(b)
       }
     }
-  })
-
-  it('desactiva el antialias del relleno para no dibujar costuras', () => {
-    expect(hazardFillLayer('dark', true).paint?.['fill-antialias']).toBe(false)
   })
 })

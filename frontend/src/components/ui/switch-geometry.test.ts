@@ -112,7 +112,9 @@ describe('altura del panel', () => {
     expect(PANEL).toContain('bottom-3 left-3 top-3')
     // La hoja se ancla abajo y mide lo visible (ver `BottomSheet`): su lista
     // no puede quedar bajo el borde de la pantalla.
-    expect(PANEL).toContain('inset-x-0 bottom-0 z-20')
+    expect(PANEL).toContain('inset-x-0 bottom-0 flex flex-col')
+    // Bajo la barra superior (§I): ver `lib/stacking.ts`.
+    expect(PANEL).toContain('STACK.sheet')
     expect(PANEL).toContain("half: '54%'")
   })
 

@@ -27,17 +27,13 @@
 import { describe, expect, it } from 'vitest'
 import { validateStyleMin } from '@maplibre/maplibre-gl-style-spec'
 import type { LayerSpecification, StyleSpecification } from 'maplibre-gl'
-import { hazardFillLayer, hazardLineLayer } from './hazardLayers'
+import { hazardFieldLayer } from './hazardLayers'
 import {
   rainFieldLayer,
   rainRiskLabelLayer,
   rainTextLayer,
 } from './rainLayers'
-import {
-  closureBodyLayer,
-  closureCutRingLayer,
-  closureMttDotLayer,
-} from './roadClosureLayers'
+import { closureBodyLayer, roadClosureSpecs } from './roadClosureLayers'
 import { coneFillLayer, coneLineLayer, reachFillLayer, reachLineLayer } from './overlayLayers'
 
 const THEMES = ['light', 'dark'] as const
@@ -52,15 +48,13 @@ function buildStyle(): StyleSpecification {
   const layers: LayerSpecification[] = []
 
   for (const theme of THEMES) {
-    for (const factory of [hazardFillLayer, hazardLineLayer]) {
-      layers.push({
-        ...factory(theme, true),
-        // Un `id` por tema: el validador rechaza duplicados y acá se monta la
-        // misma capa dos veces a propósito.
-        id: `${factory.name}-${theme}`,
-        source: 'hazard',
-      } as LayerSpecification)
-    }
+    layers.push({
+      ...hazardFieldLayer(theme, true),
+      // Un `id` por tema: el validador rechaza duplicados y acá se monta la
+      // misma capa dos veces a propósito.
+      id: `hazardFieldLayer-${theme}`,
+      source: 'hazardField',
+    } as LayerSpecification)
 
     for (const factory of [rainRiskLabelLayer, rainTextLayer]) {
       layers.push({
@@ -82,10 +76,11 @@ function buildStyle(): StyleSpecification {
      * por tema, una rampa mal formada en oscuro no se vería nunca desde el
      * tema claro.
      */
-    for (const factory of [closureCutRingLayer, closureBodyLayer, closureMttDotLayer]) {
+    // Las cinco subcapas, icono incluido (§I), tal como las monta el componente.
+    for (const spec of Object.values(roadClosureSpecs(theme, true))) {
       layers.push({
-        ...factory(theme, true),
-        id: `${factory.name}-${theme}`,
+        ...spec,
+        id: `${spec.id}-${theme}`,
         source: 'closures',
       } as LayerSpecification)
     }
@@ -99,7 +94,16 @@ function buildStyle(): StyleSpecification {
     version: 8,
     name: 'alertav-check',
     sources: {
-      hazard: emptySource,
+      hazardField: {
+        type: 'image' as const,
+        url: 'data:image/png;base64,',
+        coordinates: [
+          [-72, -32],
+          [-69.8, -32],
+          [-69.8, -33.8],
+          [-72, -33.8],
+        ],
+      },
       rain: emptySource,
       rainField: {
         type: 'image' as const,
@@ -143,7 +147,7 @@ describe('las capas compilan contra la spec de MapLibre', () => {
     // `visibility: 'none'` no exime de validar el resto de la capa, y es el
     // estado en el que ambas arrancan.
     const layers: LayerSpecification[] = [
-      { ...hazardFillLayer('dark', false), source: 'hazard' } as LayerSpecification,
+      { ...hazardFieldLayer('dark', false), source: 'hazard' } as LayerSpecification,
       { ...rainTextLayer('dark', false), source: 'rain' } as LayerSpecification,
       { ...closureBodyLayer('dark', false), source: 'closures' } as LayerSpecification,
     ]
@@ -151,7 +155,20 @@ describe('las capas compilan contra la spec de MapLibre', () => {
     const errors = validateStyleMin({
       version: 8,
       name: 'off',
-      sources: { hazard: emptySource, rain: emptySource, closures: emptySource },
+      sources: {
+        hazard: {
+          type: 'image' as const,
+          url: 'data:image/png;base64,',
+          coordinates: [
+            [-72, -32],
+            [-69.8, -32],
+            [-69.8, -33.8],
+            [-72, -33.8],
+          ],
+        },
+        rain: emptySource,
+        closures: emptySource,
+      },
       layers,
     })
 

@@ -91,8 +91,6 @@ export const HAZARD_MAX_G = 0.95
 export interface HazardRamp {
   /** Paradas [valor en g, color]. De menor a mayor amenaza. */
   stops: readonly (readonly [number, string])[]
-  /** Color del borde de celda. Muy sutil: la grilla no es el dato. */
-  line: string
 }
 
 /**
@@ -133,7 +131,6 @@ export const HAZARD_RAMP: Record<'light' | 'dark', HazardRamp> = {
       [0.82, '#5b21b6'],
       [HAZARD_MAX_G, '#3b0764'],
     ],
-    line: '#6d28d9',
   },
   dark: {
     stops: [
@@ -144,7 +141,6 @@ export const HAZARD_RAMP: Record<'light' | 'dark', HazardRamp> = {
       [0.82, '#c4b5fd'],
       [HAZARD_MAX_G, '#f5f3ff'],
     ],
-    line: '#a78bfa',
   },
 }
 
@@ -182,18 +178,21 @@ export const HAZARD_FILL_OPACITY: Record<
 }
 
 /**
- * Ventana de aparición de la retícula: `[oculta, visible]`, en niveles de zoom.
+ * Borde de la imagen (§I), en celdas del modelo (~5 km).
  *
- * La retícula **no es el dato** y a escala regional era justamente lo que hacía
- * ver la capa como una cuadrícula. Sólo entra cuando una celda ya ocupa buena
- * parte de la pantalla, que es cuando pasa a ser información útil: recuerda que
- * el modelo se resuelve cada ~5 km y que el degradado suave de más lejos era
- * una interpolación, no una medición continua del terreno.
+ * La grilla del CSN termina en una caja recta y el terreno no: sin difuminado
+ * el mapa dibujaba un rectángulo violeta con los bordes a cuchillo. El alfa cae
+ * en las últimas `FEATHER` celdas, y el comienzo de esa caída ondula hasta
+ * `WOBBLE` celdas hacia adentro (la misma receta que la lluvia, §L).
+ *
+ * Juntos son ~22 km como máximo. Con 2 celdas (~10 km), a escala regional el
+ * difuminado medía unos 13 px en el teléfono y todavía se leía como una línea.
+ * Más ancho empezaría a borrar dato real: la costa de Valparaíso está a 7
+ * celdas del borde oeste, y el extremo norte de Petorca y el sur de Santo
+ * Domingo ya rozan la caja.
  */
-export const HAZARD_RETICULE: readonly [number, number] = [12.8, 14.2]
-
-/** Opacidad de la retícula en su rango visible. Un hilo, no una reja. */
-export const HAZARD_LINE_OPACITY = 0.16
+export const HAZARD_EDGE_FEATHER_CELLS = 3
+export const HAZARD_EDGE_WOBBLE_CELLS = 1.5
 
 /** Etiquetas de la leyenda: los extremos, en el lenguaje de la variable. */
 export const HAZARD_LEGEND = {
@@ -201,9 +200,11 @@ export const HAZARD_LEGEND = {
   subtitle: '10 % de excedencia en 50 años',
   low: `${HAZARD_MIN_G} g`,
   high: `${HAZARD_MAX_G} g`,
-  /** Qué se está mirando. Ya no hay relevo de representación: hay una sola. */
-  scale: 'Celdas del modelo, ~5 km',
-  reticule: 'La retícula aparece al acercarse',
+  /**
+   * Qué se está mirando: el degradado es una interpolación entre nodos cada
+   * ~5 km, no una medición continua del terreno. Desde §I no hay retícula.
+   */
+  scale: 'Modelo cada ~5 km, interpolado',
   caveat:
     'Modelo probabilístico del CSN. Describe la amenaza esperada del terreno, no un evento en curso.',
 } as const

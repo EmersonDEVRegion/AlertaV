@@ -6,13 +6,8 @@ import {
   ROAD_CLOSURE_BEFORE_ID,
   ROAD_CLOSURE_LAYER_IDS,
   ROAD_CLOSURE_SOURCE_ID,
-  closureBodyLayer,
-  closureCutRingLayer,
-  closureHitLayer,
-  closureColor,
-  closureMttDotLayer,
+  roadClosureSpecs,
 } from './roadClosureLayers'
-import { closureIconLayer } from './emergencyIconLayers'
 import { useEmergencyIcons } from '@/hooks/useEmergencyIcons'
 import { useLayerReanchor } from './useLayerReanchor'
 
@@ -87,14 +82,13 @@ export function RoadClosureLayer({ data, visible, theme }: RoadClosureLayerProps
   // Las especificaciones sólo cambian con el tema o con el encendido.
   // react-map-gl compara propiedad por propiedad, así que un objeto nuevo con
   // los mismos valores no produce escrituras — pero memorizarlas evita incluso
-  // esa comparación en cada repintado del árbol.
-  const cutRing = useMemo(() => closureCutRingLayer(theme, visible), [theme, visible])
-  const body = useMemo(() => closureBodyLayer(theme, visible), [theme, visible])
-  const mttDot = useMemo(() => closureMttDotLayer(theme, visible), [theme, visible])
-  // El icono va encima del rombo, no en su lugar: el tamaño codifica severidad.
-  const icon = useMemo(() => closureIconLayer(theme, closureColor(theme)), [theme])
+  // esa comparación en cada repintado del árbol. Todas salen de
+  // `roadClosureSpecs`, que es donde vive el encendido (ver §I).
+  const { cutRing, body, mttDot, icon, hit } = useMemo(
+    () => roadClosureSpecs(theme, visible),
+    [theme, visible],
+  )
   const iconsReady = useEmergencyIcons(instance)
-  const hit = useMemo(() => closureHitLayer(visible), [visible])
 
   return (
     <Source id={ROAD_CLOSURE_SOURCE_ID} type="geojson" data={data}>

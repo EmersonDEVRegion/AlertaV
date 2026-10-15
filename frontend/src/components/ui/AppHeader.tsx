@@ -5,6 +5,7 @@ import { LiveStatus } from '@/components/ui/LiveStatus'
 import { PlaceSearch } from '@/components/ui/PlaceSearch'
 import type { ExploreArea } from '@/lib/exploreStore'
 import { cn } from '@/lib/cn'
+import { STACK } from '@/lib/stacking'
 
 /**
  * Barra superior.
@@ -111,7 +112,9 @@ export const AppHeader = memo(function AppHeader({
   return (
     <header
       className={cn(
-        'relative z-20 flex items-center gap-2 bg-chrome px-3 py-2 sm:gap-3',
+        // Sobre la hoja inferior: ver `lib/stacking.ts`.
+        'relative flex items-center gap-2 bg-chrome px-3 py-2 sm:gap-3',
+        STACK.header,
         'pt-[max(0.5rem,env(safe-area-inset-top))] text-ink-on-chrome',
         // El hilo inferior en vez de una sombra: separa la barra del mapa sin
         // ensuciar los primeros píxeles de cartografía con un degradado gris.
