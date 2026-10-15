@@ -827,6 +827,37 @@ def test_una_region_en_calma_no_es_una_region_sin_datos():
     assert consolidar([], inicio=AHORA, fin=AHORA) is None
 
 
+def test_el_uv_no_dispara_la_barra_pero_se_informa_aparte():
+    """§R: en verano el UV alto taparía la propagación en la barra."""
+    solo_uv = evaluar(VALPO, serie(VALPO, [0.0] * 4, uv=12.0).puntos, ahora=AHORA)
+    assert solo_uv.severidad == SEVERIDAD_CRITICA  # la comuna sí lo evalúa
+
+    estado = consolidar([solo_uv], inicio=solo_uv.inicio, fin=solo_uv.fin)
+
+    assert estado.severidad == SEVERIDAD_NINGUNA
+    assert estado.disparo is None
+    assert estado.comunas_en_alerta == ()
+    assert estado.en_critico == 0
+    assert estado.uv_severidad == SEVERIDAD_CRITICA
+    assert estado.uv_max == 12.0
+
+
+def test_la_propagacion_se_lista_por_comuna():
+    """La hoja dice en cuántas comunas hay condición de propagación."""
+    seca = evaluar(
+        QUILPUE,
+        serie(QUILPUE, [0.0] * 4, temp=34.0, humedad=18.0, rafaga=45.0).puntos,
+        ahora=AHORA,
+    )
+    calma = evaluar(VALPO, serie(VALPO, [0.0] * 4).puntos, ahora=AHORA)
+
+    estado = consolidar([calma, seca], inicio=seca.inicio, fin=seca.fin)
+
+    assert estado.comunas_propagacion == ("Quilpué",)
+    assert estado.propagacion_severidad == SEVERIDAD_CRITICA
+    assert estado.to_dict()["comunas_propagacion"] == ["Quilpué"]
+
+
 # --- 5. Emparejamiento por posición y forma de la respuesta ------------------
 
 

@@ -16,6 +16,7 @@ import { LastDispatch } from './LastDispatch'
 import { LAST_24H_MS } from '@/domain/displayWindow'
 import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { setExploreTab, useExploreTab, type ExploreArea, type ExploreTab } from '@/lib/exploreStore'
+import { PropagationNotice } from '@/components/shell/PropagationNotice'
 
 /**
  * El contenido de la columna (escritorio) y de la hoja inferior (teléfono).
@@ -149,6 +150,7 @@ export const ExplorePanel = memo(function ExplorePanel({
           </div>
           {/* Calma o falla: sin esto, un mapa quieto se lee igual en los dos casos. */}
           {history.ready && lastDispatchAt !== undefined && <LastDispatch at={lastDispatchAt} />}
+          <PropagationNotice />
         </div>
 
         <SelectionDetails

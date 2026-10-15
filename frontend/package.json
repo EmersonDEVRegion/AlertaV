@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "description": "PWA de monitoreo de emergencias de la Region de Valparaiso.",
+  "license": "AGPL-3.0-or-later",
   "scripts": {
     "build": "tsc --noEmit && vite build",
     "dev": "vite",
@@ -15,7 +16,8 @@
     "knip": "knip",
     "icons": "node scripts/icons.mjs",
     "check": "npm run typecheck && npm run lint && npm run knip && npm test",
-    "analyze": "vite build --sourcemap && npx --yes source-map-explorer@2 \"dist/assets/*.js\" --no-border-checks --html dist/stats.html"
+    "analyze": "vite build --sourcemap && npx --yes source-map-explorer@2 \"dist/assets/*.js\" --no-border-checks --html dist/stats.html",
+    "og": "node scripts/og-images.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",

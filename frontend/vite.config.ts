@@ -133,6 +133,10 @@ export default defineConfig(({ mode }) => {
           // emitirse con esa extension y sin precachearlo la app no abre el
           // mapa sin señal, que es justamente el caso de uso en terreno.
           globPatterns: ['**/*.{js,mjs,css,html,svg,png,ico,woff2}'],
+          // Las imágenes de la vista previa al compartir (`public/og/`) sólo las
+          // piden WhatsApp y compañía: no tienen por qué viajar al teléfono.
+          // Se repiten los valores por defecto de workbox: este campo los reemplaza.
+          globIgnores: ['**/node_modules/**', 'sw.js', 'workbox-*.js', 'og/**'],
           maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
           cleanupOutdatedCaches: true,
           clientsClaim: true,

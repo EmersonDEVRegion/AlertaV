@@ -1,5 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "source": "/i/:code",
+      "destination": "https://alertav-api.onrender.com/api/v1/share/i/:code"
+    }
+  ],
   "headers": [
     {
       "source": "/assets/(.*)",

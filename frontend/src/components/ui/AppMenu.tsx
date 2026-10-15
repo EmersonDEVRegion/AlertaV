@@ -1,10 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Theme } from '@/hooks/useTheme'
 import { Switch } from '@/components/ui/primitives'
 import { setExploreTab, type ExploreTab } from '@/lib/exploreStore'
 import { setSheetSnap } from '@/lib/sheetStore'
 import { cn } from '@/lib/cn'
+import type { AboutTab } from '@/components/ui/AboutSheet'
+
+const AboutSheet = lazy(() =>
+  import('@/components/ui/AboutSheet').then((m) => ({ default: m.AboutSheet })),
+)
 
 /**
  * Menú «⋯» de la barra: lo que se usa una vez y no merece un botón propio.
@@ -32,6 +37,7 @@ function Item({ children, onClick }: { children: ReactNode; onClick: () => void 
 
 export function AppMenu({ theme, onToggleTheme }: AppMenuProps) {
   const [open, setOpen] = useState(false)
+  const [about, setAbout] = useState<AboutTab | null>(null)
   const root = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -53,6 +59,11 @@ export function AppMenu({ theme, onToggleTheme }: AppMenuProps) {
   const show = (tab: ExploreTab) => {
     setExploreTab(tab)
     setSheetSnap('half')
+    setOpen(false)
+  }
+
+  const showAbout = (tab: AboutTab) => {
+    setAbout(tab)
     setOpen(false)
   }
 
@@ -96,11 +107,20 @@ export function AppMenu({ theme, onToggleTheme }: AppMenuProps) {
           <Item onClick={() => show('legend')}>Qué significan los colores</Item>
           <Item onClick={() => show('layers')}>Capas y filtros</Item>
           <div className="my-1 h-px bg-line" />
+          <Item onClick={() => showAbout('about')}>Acerca de AlertaV</Item>
+          <Item onClick={() => showAbout('sources')}>Fuentes de datos</Item>
+          <Item onClick={() => showAbout('privacy')}>Privacidad</Item>
+          <div className="my-1 h-px bg-line" />
           <p className="px-2 pb-1.5 pt-1 text-[10px] leading-snug text-ink-faint">
-            Fuentes oficiales (CONAF, Bomberos, SENAPRED, CSN, distribuidoras y Esval),
-            satélites, prensa y reportes ciudadanos, cruzados por el motor de AlertaV.
+            No reemplaza al 132, 131, 133 ni a SENAPRED. Código abierto, sin fines de lucro.
           </p>
         </div>
+      )}
+
+      {about && (
+        <Suspense fallback={null}>
+          <AboutSheet initialTab={about} onClose={() => setAbout(null)} />
+        </Suspense>
       )}
     </div>
   )

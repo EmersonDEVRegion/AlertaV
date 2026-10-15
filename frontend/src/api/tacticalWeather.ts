@@ -71,6 +71,9 @@ export const UNKNOWN_WEATHER: TacticalWeather = Object.freeze({
   en_aviso: 0,
   en_critico: 0,
   comunas_en_alerta: Object.freeze([]) as unknown as string[],
+  uv_severidad: 'ninguna',
+  propagacion_severidad: 'ninguna',
+  comunas_propagacion: Object.freeze([]) as unknown as string[],
   modelo: 'desconocido',
   es_pronostico: true,
 })
@@ -195,6 +198,9 @@ function parseTacticalWeather(payload: unknown): TacticalWeather {
     en_aviso: toCount(source['en_aviso']),
     en_critico: toCount(source['en_critico']),
     comunas_en_alerta: toNames(source['comunas_en_alerta']),
+    uv_severidad: toSeverity(source['uv_severidad']),
+    propagacion_severidad: toSeverity(source['propagacion_severidad']),
+    comunas_propagacion: toNames(source['comunas_propagacion']),
     modelo: toText(source['modelo'], 'desconocido'),
     es_pronostico: source['es_pronostico'] !== false,
   }
