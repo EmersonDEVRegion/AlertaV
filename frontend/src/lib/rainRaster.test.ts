@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { RainGrid } from '@/api/rainGrid'
-import { edgeWobble, gridCorners, rainPixels, sampleGrid } from './rainRaster'
+import { gridCorners, rainPixels, sampleGrid } from './rainRaster'
+import { edgeWobble } from './edgeFeather'
 
 const GRID: RainGrid = {
   generatedAt: 0,

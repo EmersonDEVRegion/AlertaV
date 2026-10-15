@@ -145,8 +145,7 @@ describe('amenaza sísmica', () => {
      * terreno, cuando en realidad es la interpolación de una grilla de 5 km:
      * dentro de una celda, el modelo no distingue un cerro de una quebrada.
      */
-    expect(screen.getByText(/celdas del modelo, ~5 km/i)).toBeInTheDocument()
-    expect(screen.getByText(/retícula aparece al acercarse/i)).toBeInTheDocument()
+    expect(screen.getByText(/cada ~5 km, interpolado/i)).toBeInTheDocument()
   })
 })
 

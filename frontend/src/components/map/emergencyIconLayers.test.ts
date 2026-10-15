@@ -47,7 +47,7 @@ describe('validez contra el spec de MapLibre', () => {
       const layers = [
         incidentIconLayer(theme),
         seismicIconLayer(theme, MAGNITUDE_COLOR_EXPRESSION as unknown as ExpressionSpecification),
-        closureIconLayer(theme, closureColor(theme)),
+        closureIconLayer(theme, closureColor(theme), true),
       ] as unknown as LayerSpecification[]
 
       const errors = validateStyleMin(buildStyle(layers)).map((e) => e.message)
@@ -171,7 +171,7 @@ describe('colocación', () => {
     for (const layer of [
       incidentIconLayer('dark'),
       seismicIconLayer('dark', MAGNITUDE_COLOR_EXPRESSION as unknown as ExpressionSpecification),
-      closureIconLayer('dark', closureColor('dark')),
+      closureIconLayer('dark', closureColor('dark'), true),
     ]) {
       // Ocultar un incidente porque hay otro cerca sería esconder información
       // justo donde más está pasando.

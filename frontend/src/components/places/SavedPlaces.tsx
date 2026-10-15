@@ -29,7 +29,7 @@ import { setSheetSnap } from '@/lib/sheetStore'
  * Tocar un lugar vuela hasta él y acota el historial a su alrededor.
  */
 interface SavedPlacesProps {
-  /** El historial de 24 h con las capas encendidas. */
+  /** El historial (hoy y ayer) con las capas encendidas. */
   history: readonly Incident[]
   onMapCodes: ReadonlySet<string>
   onFocusArea: (area: ExploreArea) => void

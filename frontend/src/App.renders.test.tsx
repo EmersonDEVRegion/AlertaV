@@ -220,13 +220,15 @@ describe('App quieta', () => {
     client.clear()
   })
 
-  it('pide a la API las 48 h con los estados cerrados, para el historial', async () => {
+  it('pide a la API las 50 h con los estados cerrados, para el historial', async () => {
     const { client } = await mountApp()
     const url = vi
       .mocked(fetch)
       .mock.calls.map(([input]) => String(input))
       .find((u) => u.includes('/incidents/active'))
-    expect(url).toContain('hours=48')
+    // 50 y no 48 (§I): ayer completo, también el día de 25 h.
+    expect(url).toContain('hours=50')
+    expect(url).toContain('limit=1000')
     expect(url).toContain('status=stale')
     expect(url).toContain('status=extinguished')
     client.clear()

@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { cn } from '@/lib/cn'
+import { STACK } from '@/lib/stacking'
 import { useSelection } from '@/lib/selectionStore'
 import { getSheetSnap, setSheetSnap, useSheetSnap, type SheetSnap } from '@/lib/sheetStore'
 import { ExplorePanel, type ExplorePanelProps } from './ExplorePanel'
@@ -279,7 +280,9 @@ export const BottomSheet = memo(function BottomSheet({
       aria-label="Emergencias e historial"
       className={cn(
         // Anclada abajo y con alto propio: nada de `top`, o el alto no manda.
-        'pointer-events-auto absolute inset-x-0 bottom-0 z-20 flex flex-col',
+        'pointer-events-auto absolute inset-x-0 bottom-0 flex flex-col',
+        // Bajo la barra superior y sus paneles: ver `lib/stacking.ts`.
+        STACK.sheet,
         'rounded-t-[var(--radius-surface)] bg-raised shadow-[var(--shadow-raised)]',
         'transition-[height] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
         'motion-reduce:transition-none',

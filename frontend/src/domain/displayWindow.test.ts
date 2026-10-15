@@ -9,6 +9,7 @@ import {
   isOnMap,
   mapUntil,
   splitForDisplay,
+  startOfChileDay,
 } from './displayWindow'
 
 /** 29-sep-2026, 19:00 en Chile (UTC-3). */
@@ -67,19 +68,36 @@ describe('ventana de exhibición', () => {
 })
 
 describe('reparto entre mapa e historial', () => {
-  it('lo que sale del mapa queda en el historial hasta cumplir 24 h', () => {
+  it('lo que sale del mapa queda en el historial hasta el fin del día siguiente', () => {
+    // NOW es el 29-09 a las 19:00. Ayer es el 28-09 entero, desde las 00:00.
     const fresh = inc({ type: 'structural_fire', last_seen_at: ago(1) })
     const old = inc({ type: 'structural_fire', last_seen_at: ago(8) })
-    const gone = inc({ type: 'structural_fire', last_seen_at: ago(25) })
+    // 28-09 a las 18:00: con la ventana móvil de 24 h ya se habría ido (§I).
+    const yesterday = inc({ type: 'structural_fire', last_seen_at: ago(25) })
+    // 28-09 a las 00:30: el primer rato de ayer también.
+    const earlyYesterday = inc({ type: 'structural_fire', last_seen_at: ago(42.5) })
+    // 27-09 a las 23:30: antes de ayer, fuera.
+    const gone = inc({ type: 'structural_fire', last_seen_at: ago(43.5) })
 
-    const { onMap, history } = splitForDisplay([fresh, old, gone], NOW)
+    const { onMap, history } = splitForDisplay(
+      [fresh, old, yesterday, earlyYesterday, gone],
+      NOW,
+    )
 
     expect(onMap).toEqual([fresh])
-    expect(history).toEqual([fresh, old])
+    expect(history).toEqual([fresh, old, yesterday, earlyYesterday])
   })
 
-  it('un corte vigente de más de 24 h sigue también en el historial', () => {
-    const long = outage(30, true)
+  it('lo de ayer sale del historial a la medianoche, no a las 24 h', () => {
+    const yesterday = inc({ type: 'structural_fire', last_seen_at: ago(25) })
+    const midnight = Date.parse('2026-09-30T03:00:00Z') // 30-09 00:00 en Chile
+    expect(splitForDisplay([yesterday], midnight - 1).history).toEqual([yesterday])
+    expect(splitForDisplay([yesterday], midnight).history).toEqual([])
+    expect(splitForDisplay([yesterday], NOW).nextChange).toBe(midnight)
+  })
+
+  it('un corte vigente de antes de ayer sigue también en el historial', () => {
+    const long = outage(50, true)
     const { onMap, history } = splitForDisplay([long], NOW)
     expect(onMap).toEqual([long])
     expect(history).toEqual([long])
@@ -94,6 +112,21 @@ describe('reparto entre mapa e historial', () => {
 
   it('sin nada que vaya a cambiar, no agenda nada', () => {
     expect(splitForDisplay([], NOW).nextChange).toBe(Infinity)
+  })
+})
+
+describe('inicio del día en Chile', () => {
+  it('en horario de verano (UTC−3) es a las 03:00 UTC', () => {
+    expect(startOfChileDay('2026-10-15')).toBe(Date.parse('2026-10-15T03:00:00Z'))
+  })
+
+  it('en horario de invierno (UTC−4) es a las 04:00 UTC', () => {
+    expect(startOfChileDay('2026-07-01')).toBe(Date.parse('2026-07-01T04:00:00Z'))
+  })
+
+  it('el día en que se adelanta la hora empieza a la 01:00, que es lo primero que existe', () => {
+    // 6-sep-2026: a las 00:00 (UTC−4) los relojes saltan a la 01:00 (UTC−3).
+    expect(startOfChileDay('2026-09-06')).toBe(Date.parse('2026-09-06T04:00:00Z'))
   })
 })
 
@@ -127,6 +160,15 @@ describe('secciones', () => {
       ['today', 1],
       ['yesterday', 1],
     ])
+    // §I: «En vivo», no «En el mapa».
+    expect(sections.map((s) => s.label)).toEqual(['En vivo', 'Hoy', 'Ayer'])
+  })
+
+  it('ayer es el día calendario entero, también su primera hora', () => {
+    // 19:00 − 42,5 h = 00:30 de ayer en Chile.
+    const early = inc({ type: 'accident', last_seen_at: ago(42.5) })
+    const [section] = historySections([early], new Set(), NOW)
+    expect(section!.key).toBe('yesterday')
   })
 
   it('junta los cortes de luz de una misma comuna y suma sus clientes', () => {

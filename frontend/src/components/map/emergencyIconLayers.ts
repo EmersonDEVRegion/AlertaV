@@ -136,15 +136,25 @@ export function seismicIconLayer(
   }
 }
 
-/** Cortes de ruta. El color sigue la severidad del MOP. */
+/**
+ * Cortes de ruta. El color sigue la severidad del MOP.
+ *
+ * Al revés que incidentes y sismos —que se montan y desmontan con su casilla—,
+ * la capa de cortes **nunca desmonta**: se apaga por `visibility`. Por eso este
+ * icono recibe `visible` como las otras cuatro subcapas. Hasta §I no lo recibía:
+ * al apagar «Cortes de ruta» se escondían los rombos y quedaba el icono, que es
+ * justo lo que se ve.
+ */
 export function closureIconLayer(
   theme: 'light' | 'dark',
   severityColor: ExpressionSpecification,
+  visible: boolean,
 ): SymbolLayer {
   return {
     id: CLOSURE_ICON_LAYER_ID,
     type: 'symbol',
     layout: {
+      visibility: visible ? 'visible' : 'none',
       'icon-image': CLOSURE_ICON,
       'icon-size': ['interpolate', ['linear'], ['zoom'], 7, 0.24, 14, 0.4],
       'icon-allow-overlap': true,

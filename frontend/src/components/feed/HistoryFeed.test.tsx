@@ -6,6 +6,7 @@ import { makeIncident } from '@/test/fixtures'
 import { resetSelection, selectIncident } from '@/lib/selectionStore'
 import { act } from '@testing-library/react'
 import { resetExplore, setExploreArea } from '@/lib/exploreStore'
+import { resetSections } from '@/lib/sectionStore'
 import { HistoryFeed } from './HistoryFeed'
 
 /** 29-sep-2026, 19:00 en Chile. */
@@ -54,6 +55,7 @@ describe('historial', () => {
     vi.useRealTimers()
     resetSelection()
     resetExplore()
+    resetSections()
   })
 
   function renderFeed(history: Incident[], onMap: string[] = [], over = {}) {
@@ -73,7 +75,7 @@ describe('historial', () => {
   it('separa lo que está en el mapa de lo que ya salió, con su estado', () => {
     renderFeed([OLD, LIVE], [LIVE.code])
 
-    const now = screen.getByRole('group', { name: 'En el mapa' })
+    const now = screen.getByRole('group', { name: 'En vivo' })
     const today = screen.getByRole('group', { name: 'Hoy' })
     expect(within(now).getByText('Incendio estructural — Concón')).toBeInTheDocument()
     // «En curso» no se repite en cada fila: ya lo dice la sección.
@@ -92,7 +94,6 @@ describe('historial', () => {
   })
 
   it('junta los cortes de una comuna y los despliega al tocar', async () => {
-    vi.useRealTimers()
     const user = userEvent.setup()
     renderFeed([
       outage('INC-1', 2, 'QUILPUE', 300),
@@ -121,7 +122,7 @@ describe('historial', () => {
     renderFeed([], [], {
       health: { generated_at: '', by_family: { fire: 'ok' }, collectors: [] },
     })
-    expect(screen.getByText(/sin emergencias en las últimas 24 h/i)).toBeInTheDocument()
+    expect(screen.getByText(/sin emergencias hoy ni ayer/i)).toBeInTheDocument()
   })
 
   it('vacío con una fuente caída: no lo vende como calma', () => {
@@ -136,7 +137,6 @@ describe('historial', () => {
     expect(screen.queryByText(/sin emergencias/i)).not.toBeInTheDocument()
   })
   it('acotado a una comuna muestra el chip y sólo lo de ahí; el chip lo quita', async () => {
-    vi.useRealTimers()
     const concon = makeIncident({
       code: 'INC-2026-00690',
       commune: 'Concón',
@@ -156,6 +156,56 @@ describe('historial', () => {
   it('un área sin nada lo dice sin culpar a las capas', () => {
     act(() => setExploreArea({ kind: 'place', id: 'a', name: 'Casa', lat: -32.5, lon: -71.4 }))
     renderFeed([OLD, LIVE], [LIVE.code])
-    expect(screen.getByText('Sin emergencias en las últimas 24 h cerca de Casa.')).toBeInTheDocument()
+    expect(screen.getByText('Sin emergencias hoy ni ayer cerca de Casa.')).toBeInTheDocument()
+  })
+
+  describe('secciones plegables (§I)', () => {
+    // 19:00 − 20 h = 23:00 de ayer en Chile.
+    const YESTERDAY = makeIncident({
+      code: 'INC-2026-00500',
+      type: 'accident',
+      status: 'stale',
+      title: 'Accidente — Quilpué',
+      last_seen_at: ago(20),
+    })
+
+    it('En vivo y Hoy abiertas; Ayer plegada, con su conteo a la vista', () => {
+      renderFeed([OLD, LIVE, YESTERDAY], [LIVE.code])
+      expect(screen.getByRole('button', { name: /En vivo/ })).toHaveAttribute('aria-expanded', 'true')
+      expect(screen.getByRole('button', { name: /Hoy/ })).toHaveAttribute('aria-expanded', 'true')
+      const ayer = screen.getByRole('button', { name: /Ayer/ })
+      expect(ayer).toHaveAttribute('aria-expanded', 'false')
+      expect(ayer).toHaveTextContent('1')
+      expect(screen.queryByText('Accidente — Quilpué')).not.toBeInTheDocument()
+    })
+
+    it('tocar el encabezado pliega y despliega, y se recuerda', async () => {
+        const user = userEvent.setup()
+      const { unmount } = render(
+        <HistoryFeed
+          history={[OLD, LIVE, YESTERDAY]}
+          onMapCodes={new Set([LIVE.code])}
+          onFocus={vi.fn()}
+          ready
+        />,
+      )
+      await user.click(screen.getByRole('button', { name: /Ayer/ }))
+      expect(screen.getByText('Accidente — Quilpué')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: /En vivo/ }))
+      expect(screen.queryByText('Incendio estructural — Concón')).not.toBeInTheDocument()
+
+      // Al volver a abrir la pestaña quedan como se dejaron.
+      unmount()
+      renderFeed([OLD, LIVE, YESTERDAY], [LIVE.code])
+      expect(screen.getByText('Accidente — Quilpué')).toBeInTheDocument()
+      expect(screen.queryByText('Incendio estructural — Concón')).not.toBeInTheDocument()
+    })
+
+    it('una sección plegada se abre sola si lo seleccionado está ahí', () => {
+      selectIncident(YESTERDAY.code)
+      renderFeed([OLD, LIVE, YESTERDAY], [LIVE.code])
+      expect(screen.getByRole('button', { name: /Ayer/ })).toHaveAttribute('aria-expanded', 'true')
+      expect(screen.getByText('Accidente — Quilpué')).toBeInTheDocument()
+    })
   })
 })

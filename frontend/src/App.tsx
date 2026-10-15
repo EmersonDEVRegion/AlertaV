@@ -198,7 +198,9 @@ export default function App() {
   const params = useMemo<ActiveIncidentsQuery>(
     () => ({
       confirmed_only: confirmedOnly,
-      limit: 500,
+      // 1000 y no 500 (§I): con ayer completo, en un temporal grande los cortes
+      // de luz de dos días podían rozar el tope. El backend admite hasta 1000.
+      limit: 1000,
       hours: INCIDENT_QUERY_HOURS,
       status: INCIDENT_QUERY_STATUSES,
     }),
@@ -233,8 +235,8 @@ export default function App() {
 
   /*
    * Mapa e historial. `current` es lo que está en su ventana de exhibición: lo
-   * único que se dibuja y se cuenta como «activo». `history` son las últimas
-   * 24 h, estén o no en el mapa. Se recalcula sólo cuando algo vence, sin un
+   * único que se dibuja y se cuenta como «activo». `history` es lo de hoy y
+   * ayer (hora de Chile), esté o no en el mapa. Se recalcula sólo cuando algo vence, sin un
    * reloj que repinte `App`.
    */
   const { onMap: current, history } = useDisplaySplit(all)
@@ -683,7 +685,7 @@ export default function App() {
                 : current.length > 0
                   ? 'Hay incidentes vigentes, pero ninguno de las capas encendidas. Revisa el control de capas.'
                   : visibleHistory.length > 0
-                    ? 'Nada en curso ahora. Lo de las últimas 24 h está en el historial.'
+                    ? 'Nada en curso ahora. Lo de hoy y ayer está en el historial.'
                     : 'El motor de correlación no tiene incidentes vigentes en la Región de Valparaíso.'
             }
           />

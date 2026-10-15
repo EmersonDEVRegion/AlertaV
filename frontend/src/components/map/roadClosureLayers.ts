@@ -52,6 +52,7 @@ import {
   SEVERITY_MIN,
   type Theme,
 } from '@/domain/roadClosureSymbology'
+import { CLOSURE_ICON_LAYER_ID, closureIconLayer, type SymbolLayer } from './emergencyIconLayers'
 
 export type RoadClosureLayerSpec = Omit<CircleLayerSpecification, 'source'>
 
@@ -61,11 +62,17 @@ export const CLOSURE_BODY_LAYER_ID = 'closure-body'
 export const CLOSURE_MTT_DOT_LAYER_ID = 'closure-mtt-dot'
 export const CLOSURE_HIT_LAYER_ID = 'closure-hit'
 
-/** En orden de dibujo. Lo usa el re-anclaje tras un cambio de estilo. */
+/**
+ * En orden de dibujo. Lo usa el re-anclaje tras un cambio de estilo.
+ *
+ * Incluye el icono (`closure-icon`, de `emergencyIconLayers.ts`): antes de §I
+ * faltaba, y tras cambiar de tema podía quedar sobre los pines de emergencia.
+ */
 export const ROAD_CLOSURE_LAYER_IDS = [
   CLOSURE_CUT_RING_LAYER_ID,
   CLOSURE_BODY_LAYER_ID,
   CLOSURE_MTT_DOT_LAYER_ID,
+  CLOSURE_ICON_LAYER_ID,
   CLOSURE_HIT_LAYER_ID,
 ] as const
 
@@ -300,5 +307,33 @@ export function closureHitLayer(visible: boolean): RoadClosureLayerSpec {
       'circle-color': 'transparent',
       'circle-opacity': 0,
     },
+  }
+}
+
+/**
+ * Las cinco subcapas, en orden de dibujo, con el mismo encendido.
+ *
+ * Existe para que el encendido viva en UN lugar. Hasta §I el componente armaba
+ * cada subcapa por separado y al icono —la quinta, agregada después— nadie le
+ * pasó `visible`: al apagar la capa, el icono seguía en el mapa. El test de
+ * «encendido y apagado» recorre esta lista entera, así que una sexta subcapa
+ * que olvide el encendido cae en el test y no en el teléfono.
+ */
+export interface RoadClosureSpecs {
+  cutRing: RoadClosureLayerSpec
+  body: RoadClosureLayerSpec
+  mttDot: RoadClosureLayerSpec
+  icon: SymbolLayer
+  hit: RoadClosureLayerSpec
+}
+
+export function roadClosureSpecs(theme: Theme, visible: boolean): RoadClosureSpecs {
+  return {
+    cutRing: closureCutRingLayer(theme, visible),
+    body: closureBodyLayer(theme, visible),
+    mttDot: closureMttDotLayer(theme, visible),
+    // El icono va encima del rombo, no en su lugar: el tamaño codifica severidad.
+    icon: closureIconLayer(theme, closureColor(theme), visible),
+    hit: closureHitLayer(visible),
   }
 }

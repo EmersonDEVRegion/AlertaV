@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useMemo } from 'react'
 import type { HTMLAttributes, ReactNode } from 'react'
 import { LegendBody } from '@/components/map/MapLegend'
 import { HistoryFeed, type HistoryFeedProps } from '@/components/feed/HistoryFeed'
@@ -13,6 +13,8 @@ import type { WaterCut } from '@/api/waterCutTypes'
 import { SavedPlaces } from '@/components/places/SavedPlaces'
 import { cn } from '@/lib/cn'
 import { LastDispatch } from './LastDispatch'
+import { LAST_24H_MS } from '@/domain/displayWindow'
+import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { setExploreTab, useExploreTab, type ExploreArea, type ExploreTab } from '@/lib/exploreStore'
 
 /**
@@ -24,9 +26,10 @@ import { setExploreTab, useExploreTab, type ExploreArea, type ExploreTab } from 
  * de contenido y el mapa libre al lado. Acá la columna tiene tres pestañas y,
  * cuando hay algo seleccionado, la ficha las reemplaza en el mismo lugar:
  *
- *   - **Historial** (por defecto): «Mis lugares», las capas de referencia
- *     plegadas, el feed de las últimas 24 h debajo y, al final, las noticias
- *     de la prensa local (fuera del mapa desde el 2026-10-06).
+ *   - **Historial** (por defecto): las noticias de la prensa local plegadas
+ *     (arriba desde §I; fuera del mapa desde el 2026-10-06), «Mis lugares»,
+ *     las capas de referencia plegadas y el feed de hoy y ayer, con «En vivo»,
+ *     «Hoy» y «Ayer» plegables.
  *   - **Capas**: las familias de emergencia con sus contadores, su salud, las
  *     empresas de luz y el filtro de sismos. Es el panel derecho de antes.
  *   - **Leyenda**: la leyenda compacta.
@@ -78,6 +81,27 @@ const TABS: readonly { key: ExploreTab; label: string }[] = [
   { key: 'legend', label: 'Leyenda' },
 ]
 
+/**
+ * «· N en 24 h» del resumen.
+ *
+ * Desde §I el historial trae hoy y ayer completos (entre 24 y 48 h), así que
+ * su largo ya no es «en 24 h». El resumen sigue contando las últimas 24 h, que
+ * es lo que dice; la pestaña Historial cuenta lo que lista. Va en su propio
+ * componente para que el reloj no repinte el panel entero.
+ */
+function Last24h({ history }: { history: HistoryFeedProps['history'] }) {
+  const now = useNow(RELATIVE_TIME_TICK_MS)
+  const count = useMemo(() => {
+    const since = now - LAST_24H_MS
+    return history.filter((incident) => Date.parse(incident.last_seen_at) >= since).length
+  }, [history, now])
+  return (
+    <span className="min-w-0 flex-1 truncate text-xs text-ink-muted">
+      · <span className="count">{count}</span> en 24 h
+    </span>
+  )
+}
+
 export const ExplorePanel = memo(function ExplorePanel({
   incidents,
   reference,
@@ -120,11 +144,7 @@ export const ExplorePanel = memo(function ExplorePanel({
             <h2 className="text-sm font-bold text-ink">
               <span className="count">{incidentCount}</span> en curso
             </h2>
-            {history.ready && (
-              <span className="min-w-0 flex-1 truncate text-xs text-ink-muted">
-                · <span className="count">{historyCount}</span> en 24 h
-              </span>
-            )}
+            {history.ready && <Last24h history={history.history} />}
             {headerAction && <span className="ml-auto self-center">{headerAction}</span>}
           </div>
           {/* Calma o falla: sin esto, un mapa quieto se lee igual en los dos casos. */}
@@ -177,6 +197,11 @@ export const ExplorePanel = memo(function ExplorePanel({
           >
             {tab === 'history' && (
               <div className="space-y-2">
+                {/* La prensa, arriba de todo y plegada (§I): con el titular
+                    más reciente a la vista se sabe si hay algo sin abrirla, y
+                    plegada no empuja el historial fuera de la hoja. Desde el
+                    2026-10-06 no va al mapa, sólo se informa. */}
+                <NewsFeed defaultOpen={false} />
                 <SavedPlaces
                   history={history.history}
                   onMapCodes={history.onMapCodes}
@@ -187,9 +212,6 @@ export const ExplorePanel = memo(function ExplorePanel({
                     encienden de vez en cuando y no pueden empujar la lista. */}
                 <ReferenceDock {...reference} inline defaultOpen={false} />
                 <HistoryFeed {...history} />
-                {/* La prensa, debajo y aparte: desde el 2026-10-06 no va al
-                    mapa, sólo se informa. */}
-                <NewsFeed />
               </div>
             )}
             {tab === 'layers' && <IncidentFilters {...incidents} />}

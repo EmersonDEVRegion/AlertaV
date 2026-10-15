@@ -1,6 +1,8 @@
-import { memo, useMemo, useState } from 'react'
+import { memo, useId, useMemo, useState } from 'react'
 import type { NewsFeedItem } from '@/api/newsFeedTypes'
 import { GlyphIcon } from '@/components/ui/GlyphIcon'
+import { SectionToggle } from '@/components/ui/SectionToggle'
+import { useSectionOpen } from '@/lib/sectionStore'
 import { communeLabel, sameCommune } from '@/domain/displayWindow'
 import { iconFor } from '@/domain/emergencyIcons'
 import { useNewsFeed, type NewsFeedState } from '@/hooks/useNewsFeed'
@@ -75,10 +77,22 @@ const NewsItem = memo(function NewsItem({ item, now }: { item: NewsFeedItem; now
   )
 })
 
-export function NewsFeedView({ status, items }: NewsFeedState) {
+export function NewsFeedView({
+  status,
+  items,
+  defaultOpen = true,
+}: NewsFeedState & {
+  /**
+   * Abierta o plegada la primera vez. En la pestaña Historial va plegada
+   * (§I): está arriba de todo, y abierta empujaría el historial fuera de la
+   * hoja a media altura. Después manda lo que la persona elija.
+   */
+  defaultOpen?: boolean
+}) {
   const now = useNow(RELATIVE_TIME_TICK_MS)
   const area = useExploreArea()
-  const [open, setOpen] = useState(true)
+  const bodyId = useId()
+  const [open, toggle] = useSectionOpen('noticias', defaultOpen)
   const [all, setAll] = useState(false)
 
   const shown = useMemo(
@@ -97,40 +111,18 @@ export function NewsFeedView({ status, items }: NewsFeedState) {
 
   return (
     <section aria-label="Noticias" className="rounded-control bg-sunken p-1.5">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-controls="news-feed-body"
-        className="flex w-full items-center gap-2 rounded-control px-1.5 py-1 text-left transition-colors hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2.5}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden
-          className={cn(
-            'size-3.5 shrink-0 text-ink-faint transition-transform duration-300',
-            !open && '-rotate-90',
-          )}
-        >
-          <path d="m6 9 6 6 6-6" />
-        </svg>
-        <span className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-[0.08em] text-ink-faint">
-          Noticias · 24 h
-        </span>
-        {status === 'ready' && (
-          <span aria-hidden className="count text-[10px] text-ink-faint">
-            {shown.length}
-          </span>
-        )}
-      </button>
+      <SectionToggle
+        label="Noticias · 24 h"
+        {...(status === 'ready' ? { count: shown.length } : {})}
+        open={open}
+        onToggle={toggle}
+        controls={bodyId}
+        // Plegada, el titular más reciente: se sabe si hay algo nuevo sin abrir.
+        preview={shown[0]?.titular}
+      />
 
       {open && (
-        <div id="news-feed-body" className="mt-0.5">
+        <div id={bodyId} className="mt-0.5">
           <p className="px-1.5 pb-1 text-[10px] leading-snug text-ink-faint">
             De medios locales. Llegan con atraso, así que no se marcan en el mapa.
           </p>
@@ -175,7 +167,7 @@ export function NewsFeedView({ status, items }: NewsFeedState) {
 }
 
 /** El feed con su consulta. Lo monta la pestaña Historial. */
-export const NewsFeed = memo(function NewsFeed() {
+export const NewsFeed = memo(function NewsFeed({ defaultOpen = true }: { defaultOpen?: boolean }) {
   const state = useNewsFeed()
-  return <NewsFeedView {...state} />
+  return <NewsFeedView {...state} defaultOpen={defaultOpen} />
 })
