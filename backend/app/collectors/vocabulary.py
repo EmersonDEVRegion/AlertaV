@@ -946,6 +946,14 @@ def resolve_clave(
 #   Es la clave más frecuente del feed: carros moviéndose entre cuarteles.
 # * `Clave 11` aparece seguido. Las dos versiones de la tabla dicen «rebrote»;
 #   se trata igual que el rebrote del CBV: con nombre y sin ingesta.
+# * `Clave 4-3` = **emergencia de materiales peligrosos**. No estaba en ninguna
+#   de las dos copias de la tabla; la cuenta la escribe con el nombre pegado
+#   («Clave 4-3 EMERGENCIA DE MATERIALES PELIGROSOS JUAN HAMILTON / ARROYO DEL
+#   SALTO U-53, U-72, U-12», 09-10-2026; otra el 14-10 en Gregorio Marañón).
+#   Entre el 05-10 y el 14-10 el webhook la avisó seis veces como «clave no
+#   configurada». El 15-10 Wurtlitzer estaba suspendido, así que la fuente es
+#   la cuenta. Ojo: la tabla dice que la `4-2` también es materiales
+#   peligrosos; queda como está hasta ver una 4-2 real.
 #
 # ## La 14 queda a propósito sin decidir
 #
@@ -967,6 +975,7 @@ CBVM_CODE_TYPES: dict[tuple[int, ...], EventType] = {
     (3,): EventType.STRUCTURAL_FIRE,  # incendio vehicular
     (4, 1): EventType.OTHER,  # emanación de gases
     (4, 2): EventType.OTHER,  # materiales peligrosos
+    (4, 3): EventType.OTHER,  # emergencia de materiales peligrosos (vista en la cuenta)
     (5, 1): EventType.ACCIDENT,  # rescate vehicular simple / liviano
     (5, 2): EventType.ACCIDENT,  # rescate vehicular pesado
     (6, 1): EventType.RESCUE,  # persona en altura
@@ -993,6 +1002,9 @@ CBVM_CLAVE_MEANINGS: dict[tuple[int, ...], str] = {
     (3,): "Incendio vehicular",
     (4, 1): "Emergencia con emanación de gases",
     (4, 2): "Emergencia con materiales peligrosos",
+    # Tal como la escribe @CBVM132: así `_sin_significado` lo quita del aviso
+    # y la calle queda limpia.
+    (4, 3): "Emergencia de materiales peligrosos",
     (5, 1): "Rescate vehicular simple",
     (5, 2): "Rescate vehicular pesado",
     (6, 1): "Rescate de persona en altura",

@@ -485,7 +485,7 @@ class Settings(BaseSettings):
             "1-1", "1-2", "1-3",           # incendio estructural
             "2-1", "2-2", "2-3",           # incendio forestal
             "3",                           # incendio vehicular
-            "4-1", "4-2",                  # gases / materiales peligrosos
+            "4-1", "4-2", "4-3",           # gases / materiales peligrosos
             "5-1", "5-2",                  # rescate vehicular = siniestro vial
             "6-1", "6-2", "6-3",           # rescate de personas
             "9",                           # emergencia estructural industrial

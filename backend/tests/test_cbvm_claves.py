@@ -73,6 +73,8 @@ AHORA = datetime.now(UTC)
         ("Clave 9 AVENIDA LIMACHE", "Clave 9", "Emergencia estructural industrial",
          EventType.STRUCTURAL_FIRE),
         ("Clave 10 ALVAREZ", "Clave 10", "Otros servicios", EventType.OTHER),
+        ("Clave 4-3 EMERGENCIA DE MATERIALES PELIGROSOS JUAN HAMILTON", "4-3",
+         "Emergencia de materiales peligrosos", EventType.OTHER),
     ],
 )
 def test_el_diccionario_del_cbvm_decodifica_sus_claves(texto, clave, significado, tipo):
@@ -174,6 +176,10 @@ def test_la_jurisdiccion_del_cbvm_incluye_concon():
          "info -> https://t.co/LKenhGz9mW",
          "1-1", "1 norte", "5 oriente", "Viña del Mar"),
         ("Clave 16 PEDRO MONTT / FREIRE U-12", "Clave 16", "PEDRO MONTT", "FREIRE", None),
+        # La 4-3 también llega con el significado pegado (09-10-2026).
+        ("Clave 4-3 EMERGENCIA DE MATERIALES PELIGROSOS JUAN HAMILTON / ARROYO DEL SALTO "
+         "U-53, U-72, U-12 https://t.co/CUeTMfmdLC",
+         "4-3", "JUAN HAMILTON", "ARROYO DEL SALTO", None),
     ],
 )
 def test_la_heuristica_lee_los_tuits_reales_de_la_central(tuit, clave, calle_1, calle_2, comuna):
@@ -425,6 +431,23 @@ def test_los_servicios_internos_no_ensucian_la_corrida(servicio):
     assert hecho.eventos == []
     assert hecho.status is CollectorStatus.SUCCESS
     assert not hecho.error
+
+
+@respx.mock
+def test_la_4_3_de_vina_se_ingiere_y_ya_no_se_avisa(servicio):
+    """Del 05-10 al 14-10 cada 4-3 dejó la corrida en `partial` con «CBVM
+    4-3 no configurada» y el despacho no llegó al mapa."""
+    hecho = _correr(
+        [
+            tuit("Clave 4-3 EMERGENCIA DE MATERIALES PELIGROSOS GREGORIO MARAÑON / "
+                 "SENDERO DEL SUR U-12, U-82 https://t.co/QwgH3eWTvy", "CBVM132", id_="1"),
+        ]
+    )
+
+    assert len(hecho.eventos) == 1
+    assert hecho.eventos[0].type is EventType.OTHER
+    assert hecho.status is CollectorStatus.SUCCESS
+    assert "4-3" not in (hecho.error or "")
 
 
 @respx.mock
