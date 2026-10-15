@@ -27,6 +27,7 @@ import type { SeismicEvent } from '@/api/seismicTypes'
 import type { Incident } from '@/api/types'
 import type { WaterCut } from '@/api/waterCutTypes'
 import {
+  MAP_LOCALE,
   INITIAL_VIEW_STATE,
   MAP_ATTRIBUTION,
   MAP_MAX_BOUNDS,
@@ -508,7 +509,16 @@ export const IncidentMap = memo(function IncidentMap({
     console.error('[AlertaV/mapa] error', event.error ?? event)
   }, [])
 
-  const handleLoad = useCallback((event: MapEvent) => setInstance(event.target), [])
+  const handleLoad = useCallback((event: MapEvent) => {
+    // La atribución compacta arranca desplegada (MapLibre la pliega recién al
+    // primer arrastre) y en el teléfono ocupaba dos líneas sobre la hoja. Los
+    // créditos siguen a un toque en la «i».
+    event.target
+      .getContainer()
+      .querySelector('.maplibregl-ctrl-attrib.maplibregl-compact-show')
+      ?.classList.remove('maplibregl-compact-show')
+    setInstance(event.target)
+  }, [])
 
   /*
    * El cursor se escribe directo en el lienzo, no en estado de React.
@@ -591,6 +601,7 @@ export const IncidentMap = memo(function IncidentMap({
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
       attributionControl={false}
+      locale={MAP_LOCALE}
       // Un mapa de emergencias se consulta en la calle y con una mano: los
       // gestos que rotan o inclinan solo estorban.
       dragRotate={false}

@@ -74,6 +74,7 @@ import httpx
 
 from app.collectors.base import BaseCollector
 from app.collectors.geoservices import request_json
+from app.collectors.lugares import comuna_de_zona
 from app.collectors.power.outage_parser import (
     PowerOutage,
     build_external_id,
@@ -398,7 +399,7 @@ class BasePowerOutageCollector(BaseCollector):
                             "_collector": self.name,
                             # La comuna va bajo la clave que `extract_commune` ya
                             # conoce; es el camino que usan CONAF y SENAPRED.
-                            "comuna": outage.commune,
+                            "comuna": comuna_de_zona(outage.commune),
                             # Planos para el cliente del mapa, además de dentro
                             # de `_outage`. Ver el docstring del módulo.
                             "affected_clients": outage.affected_clients,
@@ -447,7 +448,9 @@ def build_text(company: str, outage: PowerOutage) -> str:
         plural = "clientes afectados" if outage.affected_clients != 1 else "cliente afectado"
         partes.append(f"{outage.affected_clients:,} {plural}".replace(",", "."))
 
-    ubicacion = " ".join(parte for parte in (outage.sector, outage.commune) if parte)
+    ubicacion = " ".join(
+        parte for parte in (outage.sector, comuna_de_zona(outage.commune)) if parte
+    )
     if ubicacion:
         partes.append(ubicacion)
 

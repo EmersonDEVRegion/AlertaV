@@ -82,7 +82,7 @@ describe('historial', () => {
     expect(within(now).queryByText('En curso')).not.toBeInTheDocument()
     expect(within(today).getByText('Accidente — Viña del Mar')).toBeInTheDocument()
     // «Sin novedades», nunca «terminado»: nadie declaró el fin.
-    expect(within(today).getByText('Sin novedades')).toBeInTheDocument()
+    expect(within(today).getByText(/^Sin novedades desde \d{2}:\d{2}$/)).toBeInTheDocument()
   })
 
   it('tocar una fila la enfoca', async () => {
@@ -100,9 +100,9 @@ describe('historial', () => {
       outage('INC-2', 3, 'Quilpué', 120),
     ])
 
-    const group = screen.getByRole('button', { name: /2 cortes de luz — quilpue/i })
+    const group = screen.getByRole('button', { name: /2 cortes de luz — quilpué/i })
     expect(group).toHaveTextContent('420 clientes')
-    expect(group).toHaveTextContent('Ya no figura')
+    expect(group).toHaveTextContent('Probablemente repuesto')
     expect(screen.queryByText('300 clientes')).not.toBeInTheDocument()
 
     await user.click(group)
@@ -149,7 +149,7 @@ describe('historial', () => {
     expect(screen.getByText('Incendio forestal — Concón')).toBeInTheDocument()
     expect(screen.queryByText('Accidente — Viña del Mar')).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: /Quitar el filtro: Concon/i }))
+    await userEvent.click(screen.getByRole('button', { name: /Quitar el filtro: Concón/i }))
     expect(screen.getByText('Accidente — Viña del Mar')).toBeInTheDocument()
   })
 

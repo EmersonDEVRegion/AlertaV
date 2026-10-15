@@ -3,3 +3,9 @@
 # del plan (la versión viva está en el proyecto).
 /Claude outputs/
 /plan.md
+
+# Restos de Python y pytest (§R-A)
+__pycache__/
+*.pyc
+pytest-cache-files-*/
+.pytest_cache/

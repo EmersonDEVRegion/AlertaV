@@ -74,6 +74,37 @@ def comuna_por_nombre(texto: str | None) -> str | None:
     return None
 
 
+def comuna_de_zona(texto: str | None) -> str | None:
+    """La comuna de una etiqueta de zona de una distribuidora.
+
+    Chilquinta y CGE publican zonas como `VALPARAISO_ORIENTE` o `HIJUELAS`. En
+    pantalla se veían tal cual («Corte de suministro — VALPARAISO_ORIENTE»).
+    Se prueba la etiqueta entera y, si no es una comuna, la comuna con la que
+    empieza (`VALPARAISO_ORIENTE` → Valparaíso). Si no calza con ninguna, se
+    devuelve la etiqueta limpia y en nombre propio: mejor «Sector Norte» que
+    perder el dato.
+    """
+    if not texto:
+        return None
+    limpio = " ".join(texto.replace("_", " ").replace("-", " ").split())
+    if not limpio:
+        return None
+    exacta = comuna_por_nombre(limpio)
+    if exacta:
+        return exacta
+    normalizado = normalise_text(limpio)
+    for normalizada, nombre in COMUNAS_NORMALIZADAS:
+        if normalizado.startswith(normalizada + " "):
+            return nombre
+    if limpio.isupper():
+        menores = {"de", "del", "la", "las", "los", "el", "y"}
+        return " ".join(
+            palabra if palabra in menores else palabra.capitalize()
+            for palabra in limpio.lower().split()
+        )
+    return limpio
+
+
 def comuna_en_texto(texto: str) -> str | None:
     """Comuna nombrada en el texto. Respaldo del respaldo.
 
