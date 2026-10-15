@@ -78,3 +78,31 @@ export function mapStyleFor(theme: 'light' | 'dark'): string {
 /** Atribucion obligatoria del mapa base. */
 export const MAP_ATTRIBUTION =
   '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> | <a href="https://carto.com/attributions" target="_blank" rel="noreferrer">CARTO</a>'
+
+/**
+ * Textos de los controles de MapLibre en español (§R-A). Sin esto, un lector de
+ * pantalla anunciaba «Zoom in», «Location not available» y «Toggle attribution».
+ */
+export const MAP_LOCALE: Record<string, string> = {
+  'AttributionControl.ToggleAttribution': 'Mostrar u ocultar los créditos del mapa',
+  'AttributionControl.MapFeedback': 'Sugerir una corrección del mapa',
+  'FullscreenControl.Enter': 'Pantalla completa',
+  'FullscreenControl.Exit': 'Salir de pantalla completa',
+  'GeolocateControl.FindMyLocation': 'Mostrar mi ubicación',
+  'GeolocateControl.LocationNotAvailable': 'Ubicación no disponible',
+  'LogoControl.Title': 'Logo de MapLibre',
+  'Map.Title': 'Mapa',
+  'Marker.Title': 'Marcador',
+  'NavigationControl.ResetBearing': 'Orientar al norte',
+  'NavigationControl.ZoomIn': 'Acercar',
+  'NavigationControl.ZoomOut': 'Alejar',
+  'Popup.Close': 'Cerrar',
+  'ScaleControl.Feet': 'pies',
+  'ScaleControl.Meters': 'm',
+  'ScaleControl.Kilometers': 'km',
+  'ScaleControl.Miles': 'mi',
+  'ScaleControl.NauticalMiles': 'mn',
+  'CooperativeGesturesHandler.WindowsHelpText': 'Usa Ctrl + rueda para hacer zoom',
+  'CooperativeGesturesHandler.MacHelpText': 'Usa ⌘ + rueda para hacer zoom',
+  'CooperativeGesturesHandler.MobileHelpText': 'Usa dos dedos para mover el mapa',
+}

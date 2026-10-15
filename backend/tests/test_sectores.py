@@ -31,6 +31,7 @@ from app.collectors import nominatim
 from app.collectors.lugares import (
     anotar_sector,
     clave_sector,
+    comuna_de_zona,
     comuna_en_texto,
     sector_en_texto,
     sectores_compatibles,
@@ -467,3 +468,23 @@ def test_la_nota_y_el_tuit_caen_en_el_mismo_punto() -> None:
     # Lo que el tuit sí decía de más queda escrito, aunque el punto no lo use.
     assert calles_tuit["street_1"] == "calle once"
     assert punto_tuit.omitted == ("street_1", "reference")
+
+
+# --- Zonas de las distribuidoras (§R-A) ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("zona", "esperado"),
+    [
+        ("VALPARAISO_ORIENTE", "Valparaíso"),
+        ("HIJUELAS", "Hijuelas"),
+        ("Quilpue", "Quilpué"),
+        ("VIÑA DEL MAR", "Viña del Mar"),
+        ("CALLE LARGA", "Calle Larga"),
+        ("SECTOR_NORTE", "Sector Norte"),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_comuna_de_zona(zona, esperado):
+    assert comuna_de_zona(zona) == esperado

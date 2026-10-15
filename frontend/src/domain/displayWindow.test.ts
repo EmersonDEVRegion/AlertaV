@@ -209,6 +209,13 @@ describe('secciones', () => {
 })
 
 describe('nombre de comuna', () => {
+  it('reconoce zonas, tildes y mayúsculas de las distribuidoras (§R-A)', () => {
+    expect(communeLabel('VALPARAISO_ORIENTE')).toBe('Valparaíso')
+    expect(communeLabel('Quilpue')).toBe('Quilpué')
+    expect(communeLabel('HIJUELAS')).toBe('Hijuelas')
+    expect(communeLabel('SECTOR_NORTE')).toBe('Sector Norte')
+  })
+
   it('pasa las mayúsculas del feed a nombre propio', () => {
     expect(communeLabel('VIÑA DEL MAR')).toBe('Viña del Mar')
     expect(communeLabel('SAN ANTONIO')).toBe('San Antonio')

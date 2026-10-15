@@ -22,6 +22,7 @@
  * sabe (`vigente: null`, sin ninguna lectura con qué comparar).
  */
 
+import { COMUNAS } from '@/domain/comunas'
 import type { Incident, IncidentStatus } from '@/api/types'
 import { layerOf, type IncidentLayerKey } from './families'
 
@@ -155,9 +156,11 @@ export const HISTORY_STATE_LABEL: Record<HistoryState, string> = {
   live: 'En curso',
   controlled: 'Controlado',
   extinguished: 'Extinguido',
-  // La empresa dejó de listarlo. Casi siempre es que repuso, pero no lo dice.
-  unlisted: 'Ya no figura',
-  // `stale`, o una ventana vencida: dejaron de llegar señales.
+  // La empresa dejó de listarlo. Casi siempre es que repuso, pero no lo dice:
+  // por eso «probablemente» (§R-A; antes «Ya no figura», que no se entendía).
+  unlisted: 'Probablemente repuesto',
+  // `stale`, o una ventana vencida: dejaron de llegar señales. Nunca
+  // «terminado»: nadie declaró el fin. `HistoryFeed` le agrega la hora.
   quiet: 'Sin novedades',
 }
 
@@ -262,11 +265,34 @@ export function sameCommune(a: string | null, b: string | null): boolean {
   return a !== null && b !== null && communeKey(a) === communeKey(b)
 }
 
-/** Normaliza «VIÑA DEL MAR» y «Viña del Mar» a lo segundo. */
+const fold = (text: string) =>
+  text
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+
+/** Comunas por su nombre plegado, de la más larga a la más corta (La Calera antes que Calera). */
+const COMUNAS_BY_FOLD: readonly (readonly [string, string])[] = COMUNAS.map(
+  (c) => [fold(c.nombre), c.nombre] as const,
+).sort((a, b) => b[0].length - a[0].length)
+
+/**
+ * El nombre de la comuna como se escribe: «VIÑA DEL MAR», «Quilpue» y
+ * «VALPARAISO_ORIENTE» (zona de Chilquinta) pasan a «Viña del Mar», «Quilpué»
+ * y «Valparaíso» (§R-A). Lo que no es una comuna queda en nombre propio.
+ */
 export function communeLabel(commune: string | null): string | null {
   if (!commune) return null
-  if (commune !== commune.toUpperCase()) return commune
-  return commune
+  const folded = fold(commune)
+  for (const [key, nombre] of COMUNAS_BY_FOLD) {
+    if (folded === key || folded.startsWith(`${key} `)) return nombre
+  }
+  const clean = commune.replace(/_+/g, ' ')
+  if (clean !== clean.toUpperCase()) return clean
+  return clean
     .toLowerCase()
     .replace(/(^|[\s-])(\p{L})/gu, (_, sep: string, ch: string) => sep + ch.toUpperCase())
     .replace(/\b(De|Del|La|Las|Los|El)\b/g, (w, _m, offset: number) =>

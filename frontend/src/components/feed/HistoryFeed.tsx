@@ -67,7 +67,7 @@ const STATE_TONE: Record<HistoryState, string> = {
   quiet: 'bg-sunken text-ink-faint',
 }
 
-function StateChip({ state }: { state: HistoryState }) {
+function StateChip({ state, since }: { state: HistoryState; since?: string }) {
   return (
     <span
       className={cn(
@@ -83,6 +83,9 @@ function StateChip({ state }: { state: HistoryState }) {
       }
     >
       {HISTORY_STATE_LABEL[state]}
+      {/* «Sin novedades desde 14:21»: dice desde cuándo, que es lo que se
+          necesita para saber si preocuparse. */}
+      {state === 'quiet' && since ? ` desde ${formatClock(since)}` : null}
     </span>
   )
 }
@@ -131,7 +134,13 @@ const HistoryItem = memo(function HistoryItem({
                 onMap ? 'text-ink' : 'text-ink-muted',
               )}
             >
-              {nested ? where : (incident.title ?? `${TYPE_LABEL[incident.type]} — ${where}`)}
+              {nested
+                ? where
+                : // Los cortes de luz se rotulan con la comuna limpia: su título
+                  // trae la zona de la distribuidora tal cual (§R-A).
+                  incident.type === 'power_outage' || !incident.title
+                  ? `${TYPE_LABEL[incident.type]} — ${where}`
+                  : incident.title}
             </span>
             <time
               dateTime={incident.last_seen_at}
@@ -150,7 +159,7 @@ const HistoryItem = memo(function HistoryItem({
             </span>
             {/* «En curso» ya lo dice la sección «En vivo»: repetirlo en cada
                 fila es ruido. Se muestra lo que la distingue. */}
-            {state !== 'live' && <StateChip state={state} />}
+            {state !== 'live' && <StateChip state={state} since={incident.last_seen_at} />}
           </span>
         </span>
       </button>
