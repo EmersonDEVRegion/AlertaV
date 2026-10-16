@@ -1,28 +1,27 @@
 """Radio y tiempo de correlación por familia de fenómeno.
 
-Hasta el 2026-09-23 el motor usaba un solo radio (1500 m) y una sola ventana para
-todo. Tres defectos salieron de ahí, los tres de la auditoría:
+Un solo radio (1500 m) y una sola ventana para todo tienen tres defectos:
 
 * **Un radio no sirve para todo.** 1500 m es razonable para un incendio forestal
-  y absurdo para un choque: en Viña, dos accidentes a un kilómetro terminaban en
+  y absurdo para un choque: en Viña, dos accidentes a un kilómetro terminarían en
   el mismo incidente. Un corte de luz, al revés, cubre un sector y sus señales
   (CGE, Chilquinta, prensa) caen más lejos entre sí.
-* **DBSCAN con `minpoints=1` encadena.** A–B–C a 1,4 km cada uno formaban un solo
-  racimo aunque A y C estuvieran a 4 km y a tres horas. `brecha` corta el racimo
+* **DBSCAN con `minpoints=1` encadena.** A–B–C a 1,4 km cada uno forman un solo
+  racimo aunque A y C estén a 4 km y a tres horas. `brecha` corta el racimo
   donde se abre el tiempo (`partir_por_brecha`).
-* **Una señal se pegaba a cualquier incidente «vivo»**, sin mirar cuándo había
-  ocurrido. Una nota de prensa de las 15:00 se adhería a un choque de las 09:00
-  a 900 m. `brecha` también es la tolerancia temporal de esa adhesión.
+* **Una señal se pegaría a cualquier incidente «vivo»**, sin mirar cuándo
+  ocurrió. Una nota de prensa de las 15:00 se adheriría a un choque de las
+  09:00 a 900 m. `brecha` también es la tolerancia temporal de esa adhesión.
 
 Además, `edad_max`: cuánto puede llegar tarde una señal y todavía agruparse.
 FIRMS publica unas tres horas después de la pasada del satélite, y Render dormido
-atrasa cualquier collector; antes, lo que llegaba fuera de la ventana por
-`timestamp` quedaba sin incidente para siempre.
+atrasa cualquier collector; sin esto, lo que llega fuera de la ventana por
+`timestamp` quedaría sin incidente para siempre.
 
-**Son hipótesis de partida, como los `CORRELATION_*` de siempre.** Se calibran
-con `scripts/replay_correlacion.py` y con `/events/{id}/neighbours`. El
-interruptor es `CORRELATION_PERFILES`: en `false` el motor vuelve exactamente al
-comportamiento anterior.
+**Son hipótesis de partida, como los demás `CORRELATION_*`.** Se calibran con
+`scripts/replay_correlacion.py` y con `/events/{id}/neighbours`. El
+interruptor es `CORRELATION_PERFILES`: en `false` el motor usa un solo radio y
+una sola ventana para todas las familias.
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Protocol, TypeVar
+from typing import Protocol
 
 from app.models.enums import DEFAULT_FAMILY
 
@@ -89,10 +88,7 @@ class _ConHora(Protocol):
     def timestamp(self) -> datetime: ...
 
 
-T = TypeVar("T", bound=_ConHora)
-
-
-def partir_por_brecha(miembros: Sequence[T], brecha: timedelta) -> list[list[T]]:
+def partir_por_brecha[T: _ConHora](miembros: Sequence[T], brecha: timedelta) -> list[list[T]]:
     """Corta un racimo donde dos señales consecutivas se separan más que `brecha`.
 
     DBSCAN con `minpoints=1` es un enlace simple: basta una cadena de vecinos

@@ -16,11 +16,10 @@ import { useCallback, useSyncExternalStore } from 'react'
  *
  * # Por qué el reloj se pide donde se usa
  *
- * Antes estos «hace X» se refrescaban de rebote: `useFreshness` vivía en `App`
- * y lo volvía a renderizar entero cada segundo —el mapa, los dos paneles y la
- * barra— sólo para mover el cartel de antigüedad. Esas etiquetas dependían sin
- * saberlo de ese tic. Ahora cada componente que muestra una edad pide su propio
- * reloj, y lo que no muestra edades no se entera de que el tiempo pasa.
+ * Un reloj en `App` la volvería a renderizar entera cada segundo —el mapa, los
+ * dos paneles y la barra— sólo para mover el cartel de antigüedad. Cada
+ * componente que muestra una edad pide su propio reloj, y lo que no muestra
+ * edades no se entera de que el tiempo pasa.
  */
 
 interface Clock {

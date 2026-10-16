@@ -1,6 +1,6 @@
 """Reglas del reporte ciudadano que no dependen de la base ni de la red.
 
-Acá viven, juntas y sin E/S, las decisiones de §C (2026-09-30):
+Acá viven, juntas y sin E/S, las decisiones sobre reportes ciudadanos:
 
 * **Quién reporta.** Cada reporte guarda en `raw_data._ciudadano` una huella de
   su dispositivo y otra de su red, nunca los valores: un HMAC con sal. Alcanzan
@@ -24,7 +24,7 @@ import ipaddress
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 
 from app.core.config import settings
 from app.models.enums import EventSource
@@ -102,13 +102,10 @@ def _huellas_guardadas(senal: Any) -> tuple[str, str]:
     return (str(dispositivo or propio), str(red or propio))
 
 
-#: Una señal: `RawEvent` o un doble de prueba con `id`, `source`, `timestamp` y
-#: `raw_data`. Sin cota a propósito: con un `Protocol`, mypy ve los atributos de
-#: `RawEvent` como `Mapped[...]` y no los reconoce.
-S = TypeVar("S")
-
-
-def seleccionar_independientes(senales: Sequence[S]) -> list[S]:
+# `S` es una señal: `RawEvent` o un doble de prueba con `id`, `source`, `timestamp`
+# y `raw_data`. Sin cota a propósito: con un `Protocol`, mypy ve los atributos de
+# `RawEvent` como `Mapped[...]` y no los reconoce.
+def seleccionar_independientes[S](senales: Sequence[S]) -> list[S]:
     """Los reportes ciudadanos que cuentan como vecinos distintos.
 
     Recorre por orden de llegada y acepta un reporte sólo si ni su dispositivo

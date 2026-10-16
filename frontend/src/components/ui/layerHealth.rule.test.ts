@@ -5,10 +5,8 @@
  * funcionalidad, es aritmética pura y no necesita jsdom. El archivo `.tsx`
  * hermano cubre lo que se dibuja.
  *
- * La funcionalidad existe por el 2026-09-02: el Actor de Instagram estuvo
- * detenido dos horas, se publicó un choque en Avenida España, `collector_runs`
- * tenía el diagnóstico redactado, y el mapa mostró «Accidentes viales · 0»
- * indistinguible de una tarde tranquila.
+ * Con una fuente ciega, «Accidentes viales · 0» no puede verse igual que en una
+ * tarde tranquila.
  */
 
 import { describe, expect, it } from 'vitest'

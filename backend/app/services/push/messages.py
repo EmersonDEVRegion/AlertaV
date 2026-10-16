@@ -2,8 +2,7 @@
 
 Una notificación se lee de reojo, en la pantalla bloqueada, a veces a las tres
 de la mañana. Android muestra plegadas una o dos líneas, e iOS unas cuatro, y
-además agrega su propia línea «from AlertaV». Cuatro reglas ordenan lo de acá
-(§N, 2026-10-16):
+además agrega su propia línea «from AlertaV». Cuatro reglas ordenan lo de acá:
 
 1. **El título dice qué, a qué distancia y desde dónde.** Un emoji por tipo
    para leerlo sin leer: «🔥 Incendio forestal a 1,2 km de Casa». El origen va

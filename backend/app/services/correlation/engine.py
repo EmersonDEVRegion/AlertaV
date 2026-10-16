@@ -21,8 +21,8 @@ sector. Y dentro del Paso A, un racimo que no encuentra incidente a menos de
    sólo por reportes ciudadanos que no juntaron el quórum se descartan tras
    minutos. Ver `_expire`.
 
-Publicación (desde el 2026-09-30, §C)
--------------------------------------
+Publicación
+-----------
 `_refresh` escribe además `ciudadanos_independientes` y `publico`. Lo que tenga
 una fuente no ciudadana se publica como siempre. Lo sólo ciudadano, cuando lo
 reportan `CITIZEN_QUORUM` vecinos independientes (dispositivos Y redes
@@ -63,8 +63,8 @@ Lo que NO separa: los grados de certeza sobre un mismo fenómeno. `smoke`,
 `thermal_anomaly` y `wildfire` caen todos en la familia `fire` y se corroboran
 entre sí. Eso es el sistema funcionando, no una fuga.
 
-Perfiles por familia (desde el 2026-09-23)
-------------------------------------------
+Perfiles por familia
+--------------------
 Con `CORRELATION_PERFILES` (encendido por defecto) cada familia tiene su radio,
 su brecha temporal y su edad máxima (`perfiles.py`): el DBSCAN agrupa con el
 radio de la familia, el racimo se corta donde se abre el tiempo, una señal sólo
@@ -363,9 +363,8 @@ class CorrelationEngine:
         """Fuentes cuyas señales no se agrupan ni se pegan a un incidente.
 
         Hoy sólo la prensa, y sólo con `CORRELATION_PRENSA=false` (el valor por
-        defecto desde el 2026-10-06). Una nota llega con horas de atraso: abría
-        pines que ya no describían el presente y tiraba del punto de un
-        despacho exacto. Se lee en `/feed/noticias`.
+        defecto). Una nota llega con horas de atraso: abriría pines que ya no
+        describen el presente y tiraría del punto de un despacho exacto. Se lee en `/feed/noticias`.
         """
         return () if getattr(self, "prensa", True) else (EventSource.MEDIA,)
 

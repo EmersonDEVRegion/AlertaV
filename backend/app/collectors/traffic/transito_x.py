@@ -4,8 +4,8 @@ Por qué existe
 --------------
 TransporteInforma Región de Valparaíso, el canal del MTT, publica en dos
 lugares: el portal que lee `transporte_informa` y su cuenta de X. El portal
-arrastra avisos de semanas (el 06-10 traía faenas de agosto); la cuenta es el
-canal fresco. Desde el 2026-10-06 la cuenta viaja en el mismo Task de Apify que
+arrastra avisos de semanas; la cuenta es el canal fresco. La cuenta viaja en el
+mismo Task de Apify que
 las centrales de Bomberos, así que sus tuits llegan mezclados en la misma
 entrega del webhook.
 

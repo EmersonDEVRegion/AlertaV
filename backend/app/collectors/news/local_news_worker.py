@@ -1,48 +1,27 @@
-"""Prensa local de la V Región — Sitio del Suceso y Pura Noticia, a costo cero.
+"""Prensa local de la V Región, raspada a costo cero.
 
 Por qué NO hay un Apify en el medio
 -----------------------------------
-El collector de Instagram paga un intermediario porque el WAF de Meta bloquea
-cualquier scraper propio a los dos o tres intentos, y sortearlo es un compromiso
-permanente de rotación de proxies. Estos dos portales son lo contrario: publican
-para ser leídos, uno de ellos ofrece RSS estándar y ninguno exige credencial. La
-única cortesía que piden es un `User-Agent` reconocible y no golpearlos cada
-minuto; ambas cosas cuestan una línea de configuración, no una suscripción.
+Los portales publican para ser leídos: la mayoría ofrece RSS estándar y ninguno
+exige credencial. La única cortesía que piden es un `User-Agent` reconocible y
+no golpearlos cada minuto; ambas cosas cuestan una línea de configuración, no
+una suscripción. Los portales vigentes están en `LOCAL_NEWS_SOURCES`.
 
 Qué clase de fuente es esto
 ---------------------------
 `EventSource.MEDIA`, y la distinción con `SOCIAL_MEDIA` importa. Una cuenta de
-Instagram que se llama "noticias" republica lo que le llega por mensaje directo:
+redes que se llama "noticias" republica lo que le llega por mensaje directo:
 no hay redacción, no hay segunda fuente y no hay corrección. Estos dos tienen
 firma, tienen editor y publican rectificaciones. Eso no los vuelve
 `confirming` —no van al lugar a constatar, salvo cuando van— pero sí los pone
 una banda entera por encima: 0.60 contra 0.35.
 
-Ojo con la misma trampa que documenta el worker de Instagram, que acá aparece en
-la otra dirección: `SOURCE_BASE_CONFIDENCE[MEDIA]` vale **0.70** y
+Ojo con una trampa entre dos tablas: `SOURCE_BASE_CONFIDENCE[MEDIA]` vale **0.70** y
 `RULES[MEDIA].max_weight` en `confidence.py` vale **0.60**. El motor recorta a
 0.60 igual. Se emite 0.60 para que lo archivado en `raw_events` sea exactamente
 lo que el motor va a usar, en vez de guardar un número que nadie respeta. La
 discrepancia entre esas dos tablas es anterior a este collector y no se toca
 desde acá.
-
-Qué se verificó de cada portal (31 de agosto de 2026)
-------------------------------------------------------
-* **Sitio del Suceso** — WordPress 7.1. `https://www.sitiodelsuceso.cl/feed/`
-  devuelve RSS 2.0 (`application/rss+xml`) con `<guid isPermaLink="false">`
-  estable, `<pubDate>` con hora y zona, `<description>` con la bajada y
-  `<content:encoded>` con el cuerpo completo. Y un regalo que no estaba en el
-  encargo: **`<category>` trae la comuna** (Valparaíso, Quilpué, Viña del Mar,
-  Nogales, Cabildo…). Ver `comuna_en_categorias`.
-* **Pura Noticia** — `www.puranoticia.cl` redirige a `puranoticia.pnt.cl`, que
-  **no es WordPress y no publica RSS**: no hay `<link rel="alternate">` en el
-  documento y `/rss`, `/rss.xml` y `/feed` devuelven cuerpo vacío. Se lee la
-  sección regional por HTML. Por eso su fila de `LOCAL_NEWS_SOURCES` deja el
-  campo del feed en blanco: apuntar a un feed inexistente costaría una petición
-  fallida y una advertencia por corrida, cada corrida, para siempre.
-
-Es decir: los dos caminos que pedía el encargo no son "el bueno y el parche".
-Son un portal cada uno, y por eso los dos tienen que funcionar.
 
 El camino de una noticia
 ------------------------
@@ -78,7 +57,7 @@ Lo que este collector NO resuelve
   hora. Ver `parse_fecha_es` y el tratamiento de `resolucion_dia` en
   `normalize`: una noticia con resolución de día NUNCA se estampa como si
   acabara de ocurrir.
-* **Las noticias recopilatorias.** Igual que en Instagram: "Balance del temporal:
+* **Las noticias recopilatorias.** "Balance del temporal:
   tres derrumbes y un corte" produce UNA señal con UNA ubicación.
 * **La retrospectiva judicial.** Estos portales cubren tribunales, y una crónica
   de un juicio por el megaincendio de 2024 contiene la palabra "incendio". Ver
@@ -156,15 +135,15 @@ class NewsPortal:
     #: informa. Meterlos en el mismo número obligaba a elegir entre inflar al
     #: agregador o castigar al medio.
     #:
-    #: El caso que lo motivó: `alertanoticias.cl` es el mismo publicador que la
-    #: cuenta de Instagram a la que el sistema le da 0.35 por no verificar nada.
+    #: El caso que lo motivó: `alertanoticias.cl` es el mismo publicador que una
+    #: cuenta de Instagram que republica lo que le llega por mensaje directo.
     #: Entrar por RSS no le agrega una redacción, así que entrar a 0.60 le
     #: subiría el peso sin que hubiera cambiado nada del mundo.
     confianza: float | None = None
     #: Categoría que una nota del FEED tiene que traer para entrar. `None` = sin
     #: filtro.
     #:
-    #: Existe por Quinta Visión Ahora (§L, 30-09-2026): publica la región y el
+    #: Existe por Quinta Visión Ahora: publica la región y el
     #: país en el mismo feed, y lo único que separa lo de la V Región es la
     #: etiqueta «Región Valparaíso». Sin esto, una nota nacional con un
     #: «incendio» en el titular pasaría el prefiltro y el geocodificador la
@@ -327,10 +306,9 @@ def external_id_for(item: NewsItem) -> str:
     """`prensa:<portal>:<hash>`.
 
     Se hashea la **identidad** de la noticia —su `<guid>`, o su URL cuando el
-    portal no da guid—, jamás su texto. La distinción es la misma que documenta
-    el worker de Instagram y acá pesa más todavía: un medio corrige y actualiza
-    sus notas varias veces el mismo día, y un id derivado del texto convertiría
-    cada corrección en una emergencia nueva sobre el mapa.
+    portal no da guid—, jamás su texto: un medio corrige y actualiza sus notas
+    varias veces el mismo día, y un id derivado del texto convertiría cada
+    corrección en una emergencia nueva sobre el mapa.
 
     El prefijo lleva el portal porque dos medios cubriendo el mismo choque son
     **dos señales independientes**, y el motor debe poder corroborarlas una con
@@ -456,11 +434,10 @@ def es_reciente(item: NewsItem, *, ahora: datetime, max_age_minutes: int) -> boo
 
     Tres reglas, una por cada calidad de fecha, y una cuarta sobre el texto:
 
-    * **Sin fecha** → pasa. Es la decisión menos mala, la misma que toma el
-      worker de Instagram: procesar de más una nota vieja cuesta una llamada al
-      modelo y el filtro por `external_id` la atrapa en la corrida siguiente,
-      mientras que descartarla pierde un siniestro por un campo que el portal no
-      llenó.
+    * **Sin fecha** → pasa. Es la decisión menos mala: procesar de más una nota
+      vieja cuesta una llamada al modelo y el filtro por `external_id` la atrapa
+      en la corrida siguiente, mientras que descartarla pierde un siniestro por
+      un campo que el portal no llenó.
     * **Con hora** → la ventana normal, en minutos.
     * **Sólo con día** → se acepta hoy y ayer **en UTC**. La holgura de un día no
       es generosidad: Chile va cuatro horas por detrás de UTC, así que una nota
@@ -739,7 +716,7 @@ def parse_portada(
     pagando tres extracciones y tres geocodificaciones antes de que la base las
     colapse.
     """
-    soup = BeautifulSoup(html, _html_parser())
+    soup = BeautifulSoup(html, "lxml")
     vistos: set[str] = set()
     noticias: list[NewsItem] = []
 
@@ -793,7 +770,7 @@ def portada_parece_rota(html: str) -> tuple[bool, str | None]:
     scraper ciego. Se mira si **existen** los contenedores; que no contengan
     titulares es información legítima, que no existan es una alarma.
     """
-    soup = BeautifulSoup(html, _html_parser())
+    soup = BeautifulSoup(html, "lxml")
     if not soup.find("body"):
         return (True, "la respuesta no parece HTML")
     if sum(1 for _ in _bloques_candidatos(soup)) == 0:
@@ -802,20 +779,6 @@ def portada_parece_rota(html: str) -> tuple[bool, str | None]:
             "no se encontró ningún bloque <article> ni contenedor de tarjeta",
         )
     return (False, None)
-
-
-def _html_parser() -> str:
-    """`lxml` si está disponible; si no, el parser de la stdlib.
-
-    Mismo criterio que en el worker del MTT: lxml es mucho más indulgente con el
-    HTML roto que produce un CMS con plugins, pero degradar a `html.parser` es
-    preferible a que el collector no arranque.
-    """
-    try:
-        import lxml  # noqa: F401
-    except ImportError:  # pragma: no cover — lxml está en requirements-prod
-        return "html.parser"
-    return "lxml"
 
 
 # =============================================================================
@@ -828,8 +791,8 @@ async def geocode_noticia(
 ) -> tuple[dict[str, Any], GeocodeResult | None]:
     """Texto libre → `({street_1, street_2, city}, punto|None)`.
 
-    Es el mismo pipeline de dos pasos que usan el worker del MTT y el de
-    Instagram —`extract_streets_via_llm` y después `nominatim.geocode`— con una
+    Es el mismo pipeline de dos pasos que usa el worker del MTT
+    —`extract_streets_via_llm` y después `nominatim.geocode`— con una
     diferencia que justifica no reutilizar `geocode_text` tal cual: **la comuna
     entra entre los dos pasos**.
 
@@ -907,18 +870,15 @@ class _LecturaPortal:
 class LocalNewsCollector(BaseCollector):
     """Prensa local de la V Región, raspada sin intermediarios.
 
-    Comparte con `TransporteInformaCollector` y con el de Instagram la ruptura de
-    convención que allá está explicada: la geocodificación ocurre en `fetch()` y
-    no en `normalize()`, para que `normalize()` siga siendo pura y testeable sin
-    red.
+    Comparte con `TransporteInformaCollector` la ruptura de convención que allá
+    está explicada: la geocodificación ocurre en `fetch()` y no en `normalize()`,
+    para que `normalize()` siga siendo pura y testeable sin red.
 
-    Y comparte con ellos una restricción operativa que ya son **tres** en
-    compartirla, y conviene decirlo antes de que llegue la factura: el LLM y
-    Nominatim son presupuestos comunes. `GEMINI_MAX_CALLS_PER_RUN` acota una
-    corrida, no el día, y el limitador de Nominatim es global al proceso. Con el
-    MTT cada 10 minutos, Instagram cada 5 y este cada 15, el gasto diario es la
-    suma de las tres cadencias por sus topes respectivos. Es el número a mirar,
-    y por eso `LOCAL_NEWS_MAX_GEOCODES` es el más bajo de los tres: una noticia
+    Y comparte con él y con el webhook de Bomberos una restricción operativa: el
+    LLM y Nominatim son presupuestos comunes. `GEMINI_MAX_CALLS_PER_RUN` acota
+    una corrida, no el día, y el limitador de Nominatim es global al proceso. El
+    gasto diario es la suma de las cadencias por sus topes respectivos, y por
+    eso `LOCAL_NEWS_MAX_GEOCODES` es el más bajo: una noticia
     llega minutos u horas después que el aviso del MTT o el post de la cuenta
     hiperlocal, así que si hay que recortar algo en una corrida saturada, que sea
     esto.

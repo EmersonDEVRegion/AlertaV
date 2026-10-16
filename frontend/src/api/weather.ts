@@ -12,6 +12,8 @@
  * MapLibre dibujaría en cualquier parte.
  */
 
+import { isFiniteNumber } from './parse'
+
 /** Lo único que se consume de `current_weather`. */
 export interface CurrentWind {
   /** Velocidad en km/h (unidad por defecto de Open-Meteo). */
@@ -23,10 +25,6 @@ export interface CurrentWind {
 }
 
 const ENDPOINT = 'https://api.open-meteo.com/v1/forecast'
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value)
-}
 
 /**
  * Extrae el viento de una respuesta cruda.

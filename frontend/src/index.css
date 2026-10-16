@@ -690,7 +690,7 @@ html.dark body {
  * =========================================================================== */
 
 .maplibregl-ctrl-group {
-  /* Cristal (§T): ver «Cristal sobre el mapa» al final del archivo. */
+  /* Cristal: ver «Cristal sobre el mapa» al final del archivo. */
   background: var(--glass-background) !important;
   border-radius: var(--glass-radius) !important;
   box-shadow: var(--glass-shadow) !important;
@@ -850,7 +850,7 @@ html.dark .maplibregl-map .maplibregl-ctrl-attrib-button {
 }
 
 /* ===========================================================================
- * La franja bajo la barra de estado, en el iPhone instalado (§T, 16-10-2026)
+ * La franja bajo la barra de estado, en el iPhone instalado
  * ===========================================================================
  *
  * Con AlertaV instalada en la pantalla de inicio, iOS (visto en 27.0.1) dibuja
@@ -885,7 +885,7 @@ html.dark .maplibregl-map .maplibregl-ctrl-attrib-button {
 }
 
 /* ---------------------------------------------------------------------------
- * Paneles que cuelgan de la barra (§T)
+ * Paneles que cuelgan de la barra
  * ---------------------------------------------------------------------------
  *
  * Avisos, clima y el menú «⋯». Al abrir uno, la hoja del teléfono baja a
@@ -912,7 +912,7 @@ html.dark .maplibregl-map .maplibregl-ctrl-attrib-button {
 }
 
 /* ===========================================================================
- * Cristal sobre el mapa (§T, 16-10-2026)
+ * Cristal sobre el mapa
  * ===========================================================================
  *
  * Inspirado en el Liquid Glass de iOS 26, **sólo** en lo que flota sobre el

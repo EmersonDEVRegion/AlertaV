@@ -104,7 +104,7 @@ class PushSubscription(Base):
     notify_seismic: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=sa_text("true")
     )
-    #: Radio por categoría en metros (§K, migración 0019): `{"fire": 5000,
+    #: Radio por categoría en metros (migración 0019): `{"fire": 5000,
     #: "power": 1000, …}`. `0` = no avisar esa categoría; una clave ausente usa
     #: `PUSH_RADIO_*_M`. Ver `app.services.push.radios`.
     radios: Mapped[dict[str, Any]] = mapped_column(

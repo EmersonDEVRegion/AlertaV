@@ -1,8 +1,8 @@
 [project]
 name = "alertav-backend"
 version = "0.1.0"
-description = "AlertaV — Fire Data Collector: recolección y correlación de señales de emergencia de la Región de Valparaíso"
-requires-python = ">=3.11"
+description = "AlertaV: API y workers de recolección y correlación de emergencias de la Región de Valparaíso"
+requires-python = ">=3.12"
 readme = "README.md"
 
 # Las dependencias de runtime se declaran UNA vez, en requirements-prod.txt (lo
@@ -38,7 +38,7 @@ include = ["app*"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
@@ -47,6 +47,10 @@ ignore = [
     "RUF001",  # caracteres unicode ambiguos en textos en español
     "RUF002",
     "RUF003",
+    # `class X(str, Enum)` y no `StrEnum`: con `StrEnum`, `str(miembro)` y los
+    # f-strings pasan a dar el valor y no `Clase.MIEMBRO`. Cambiarlo es un cambio
+    # de comportamiento, no de estilo.
+    "UP042",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -63,7 +67,7 @@ asyncio_mode = "auto"
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 plugins = ["pydantic.mypy"]
 warn_unused_ignores = false
 ignore_missing_imports = true

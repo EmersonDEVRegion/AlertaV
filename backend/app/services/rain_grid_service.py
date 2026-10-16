@@ -282,7 +282,7 @@ def seconds_until_due(
     Para qué: el bucle de la grilla arrancaba con una lectura completa en cada
     arranque del proceso, y un arranque es cada deploy (seis el 30-09) y cada
     reinicio de Render. Con 650 puntos, cada uno costaba ~650 llamadas de la
-    cuota diaria de Open-Meteo (10 000), y ese día se agotó (§L). La foto de la
+    cuota diaria de Open-Meteo (10 000), y ese día se agotó. La foto de la
     base sirve igual aunque el proceso sea nuevo.
 
     * **Sin foto, o foto de otra forma** (caja, paso, modelo u horas distintos

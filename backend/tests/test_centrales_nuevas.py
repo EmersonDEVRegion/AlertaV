@@ -73,6 +73,7 @@ def test_la_radio_y_los_servicios_de_los_andes_son_internos():
 
 def test_matches_key_excluye_el_subtipo_interno_pero_no_la_clave_configurada():
     claves = settings.BOMBEROS_CBLA_KEYS
+
     def pasa(texto: str) -> str | None:
         return v.matches_key(texto, claves, colapsar_cero=False, excluir=v.CBLA.es_interna)
 

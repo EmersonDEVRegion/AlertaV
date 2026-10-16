@@ -2,7 +2,7 @@ import { useCallback, useSyncExternalStore } from 'react'
 
 /**
  * Qué secciones plegables dejó abiertas la persona: «En vivo», «Hoy», «Ayer» y
- * «Noticias» (§I).
+ * «Noticias».
  *
  * Se recuerda en este teléfono (`localStorage`), como «Mis lugares». Es una
  * comodidad, no un dato: si el almacenamiento no está (navegación privada,

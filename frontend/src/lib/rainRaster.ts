@@ -16,7 +16,7 @@ import { edgeFade } from './edgeFeather'
  *
  * # Resolución
  *
- * Doce píxeles por celda (~290 × 300 para la grilla de §L, 25 × 26). Más no agrega
+ * Doce píxeles por celda (~290 × 300 para la grilla de 25 × 26). Más no agrega
  * nada: la celda de la grilla mide ~20 km, y el suavizado lo hace el propio
  * `raster-resampling: linear` al acercarse.
  */
@@ -61,7 +61,7 @@ export function sampleGrid(grid: RainGrid, gx: number, gy: number): number | nul
  * caja y el modelo no: sin esto, un frente que cruza el borde se vería cortado
  * a cuchillo en una línea recta que no existe.
  *
- * Desde §L la caja es la misma que `MAP_MAX_BOUNDS`, así que el borde sólo se
+ * La caja es la misma que `MAP_MAX_BOUNDS`, así que el borde sólo se
  * ve en el límite del mapa. Con celdas de 0,2°, dos celdas son ~40 km.
  */
 const EDGE_FEATHER_CELLS = 2
@@ -70,9 +70,8 @@ const EDGE_FEATHER_CELLS = 2
  * Cuánto se ondula el final del difuminado, en celdas.
  *
  * Un degradado recto sigue leyéndose como una recta cuando llueve fuerte justo
- * en el borde: el ojo ve la línea donde el color empieza a caer (§L, la
- * cordillera del 30-09). Correr ese comienzo con una onda suave lo vuelve un
- * final de nubosidad, no un corte.
+ * en el borde: el ojo ve la línea donde el color empieza a caer. Correr ese
+ * comienzo con una onda suave lo vuelve un final de nubosidad, no un corte.
  */
 const EDGE_WOBBLE_CELLS = 1.4
 

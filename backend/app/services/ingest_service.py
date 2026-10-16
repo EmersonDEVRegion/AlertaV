@@ -235,5 +235,4 @@ class IngestService:
 
     @staticmethod
     def region_bbox() -> tuple[float, float, float, float]:
-        bbox = settings.region_bbox
-        return (bbox.west, bbox.south, bbox.east, bbox.north)
+        return settings.region_bbox.as_tuple()

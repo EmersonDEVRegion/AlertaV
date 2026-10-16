@@ -1,15 +1,9 @@
 """Cómo se presenta AlertaV ante cada servicio que consulta.
 
-Hasta el 2026-09-23 había siete `User-Agent` distintos repartidos por el código:
-el de Nominatim reutilizado para la CGE, Chilquinta, el sismológico y Apify; un
-`AlertaV/1.0 (+https://github.com/alertav)` fijo en el USGS y Open-Meteo —una
-organización de GitHub que no existe—; FIRMS, CONAF, SENAPRED y el MOP con el
-de httpx (`python-httpx/0.28.1`), o sea anónimos; y los scrapers con su propia
-copia del navegador. Quien operaba cualquiera de esos servidores no tenía a
-quién escribirle antes de bloquear la IP de Render, que es la única que tiene
-este backend para todo.
-
-Ahora hay una sola identidad, armada con:
+Quien opera cualquiera de los servidores que consulta AlertaV tiene que poder
+escribirle a alguien antes de bloquear la IP de Render, que es la única que
+tiene este backend para todo. Por eso hay una sola identidad, y ningún cliente HTTP sale con el
+`User-Agent` por defecto de httpx. Se arma con:
 
 * `CONTACT_URL` — el repositorio real;
 * un correo de contacto — `CONTACT_EMAIL`, o si está vacío el `mailto:` de

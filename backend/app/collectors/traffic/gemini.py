@@ -427,10 +427,8 @@ async def extract_streets(text: str) -> dict[str, Any] | None:
 #: pueda divergir de la tabla que valida su salida. Ver el comentario de esa
 #: tabla en `app/collectors/vocabulary.py`.
 #:
-#: Esa decisión se pagó sola el 2026-09-02: cuando se descubrió que las tablas
-#: describían otro sistema de claves y se reemplazaron por la del CBV, el
-#: prompt se actualizó sin que nadie lo tocara. Un glosario escrito a mano
-#: habría seguido enseñándole al modelo que `10-4` es rescate vehicular.
+#: Así, cambiar la tabla de claves actualiza el prompt sin tocarlo; un glosario
+#: escrito a mano podría seguir enseñándole al modelo un significado viejo.
 #:
 #: Va **ordenado por familia** y con las no-emergencias marcadas. Lo primero
 #: porque el orden de inserción del diccionario deja "Clave 15" antes que
@@ -482,15 +480,10 @@ UBICACION_DESCONOCIDA = "ubicación no informada"
 #:   la imagen y no en el tuit; deducirla del nombre de la calle es exactamente
 #:   la alucinación cara: "Guacolda" existe en cuatro comunas de la región.
 #: Notas de formato por Cuerpo. Cada central escribe distinto y el modelo
-#: necesita saber qué es ruido en ESE formato.
-#:
-#: Las notas anteriores hablaban de una «familia 10» y de que «las claves de la
-#: familia 3 piden un recurso». Eran del sistema de claves que las tablas
-#: describían antes del 2026-09-02; en el CBV la familia 3 es **incendio
-#: vehicular**, así que la nota le enseñaba al modelo a descartar justo la
-#: clave del hecho. Se reescribieron junto con el ejemplo, que tenía el mismo
-#: problema («Clave 12 → llamado a servicio especial», cuando el glosario del
-#: mismo prompt dice «Academia de Cuerpo»).
+#: necesita saber qué es ruido en ESE formato. Las notas tienen que calzar con
+#: el glosario del mismo prompt: en el CBV la familia 3 es **incendio
+#: vehicular**, y una nota que la tratara como «pedir un recurso» le enseñaría
+#: al modelo a descartar justo la clave del hecho.
 _NOTAS_FORMATO: dict[str, str] = {
     "campos": """\
 - El despacho viene en campos separados por "*": unidad(es), vías y clave.

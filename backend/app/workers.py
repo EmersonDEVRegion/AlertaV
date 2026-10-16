@@ -17,7 +17,7 @@ Por qué existe
 --------------
 La recolección y la correlación son trabajos distintos y en una infraestructura
 normal irían en contenedores distintos. Acá comparten proceso por una razón
-puramente económica: el Free Instance de Koyeb da 512 MB.
+puramente económica: el plan gratuito de Render da 512 MB.
 
 El costo medido de importar SQLAlchemy + GeoAlchemy2 + asyncpg + httpx, con el
 proceso ocioso y antes de procesar un solo evento:

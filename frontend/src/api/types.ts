@@ -193,9 +193,9 @@ export interface Incident {
   commune: string | null
   province: string | null
   /**
-   * Qué tan fino es el punto (§K): el cruce que nombró la fuente, coordenadas
-   * propias, una calle sin la esquina o un sector. Ausente en un backend
-   * anterior y `null` en incidentes anteriores al 2026-10-05.
+   * Qué tan fino es el punto: el cruce que nombró la fuente, coordenadas
+   * propias, una calle sin la esquina o un sector. `null` si el incidente es
+   * anterior a este campo.
    */
   ubicacion_precision?: UbicacionPrecision | null
 
@@ -325,7 +325,7 @@ export interface IncidentDetail extends Incident {
  *
  * La hora la fija el servidor (`reported_at` se ignora) y `media_url` no se
  * publica: no se mandan. El reporte no aparece en el mapa hasta que otra fuente
- * lo respalde o lo reporten 3 vecinos independientes (§C, 2026-09-30).
+ * lo respalde o lo reporten 3 vecinos independientes.
  */
 export interface CitizenReportPayload {
   lat: number

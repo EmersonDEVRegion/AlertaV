@@ -23,8 +23,8 @@
 #
 #  Tres propiedades que este script sí garantiza:
 #
-#    - Todo sale por stdout/stderr sin buffer. Es la única forma en que Render o
-#      Koyeb pueden mostrar logs: no hay disco donde ir a buscarlos.
+#    - Todo sale por stdout/stderr sin buffer. Es la única forma en que Render
+#      puede mostrar logs: no hay disco donde ir a buscarlos.
 #    - Cada worker se reinicia solo, con backoff exponencial. Los runners ya
 #      atrapan sus propias excepciones; esto cubre la muerte dura del proceso
 #      (OOM killer, por ejemplo, que en 512 MB es un escenario real).
@@ -149,7 +149,7 @@ fi
 # -----------------------------------------------------------------------------
 log INFO "AlertaV: iniciando contenedor (puerto ${PORT})"
 
-# --proxy-headers + --forwarded-allow-ips: detrás del edge de Koyeb/Render el
+# --proxy-headers + --forwarded-allow-ips: detrás del edge de Render el
 # TLS termina en el proxy y la app ve HTTP plano. Sin esto, las URLs que
 # construye FastAPI salen con esquema http:// y el navegador bloquea la petición
 # por contenido mixto.

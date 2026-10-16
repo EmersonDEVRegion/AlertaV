@@ -150,9 +150,8 @@ export function useRainLayer(): RainLayerState {
     return image?.wet ? image : null
   }, [grid])
 
-  // Se conserva en la interfaz —lo consumen el mapa y los tests— pero delega en
-  // el store, que es quien posee la intención del usuario desde que el control
-  // se mudó al widget.
+  // Lo consumen el mapa y los tests; delega en el store, que es quien posee la
+  // intención del usuario (el control vive en el widget del clima).
   const toggle = useCallback(() => toggleRainLayer(), [])
 
   const refetch = query.refetch

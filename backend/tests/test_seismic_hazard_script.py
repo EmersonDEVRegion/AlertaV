@@ -92,7 +92,7 @@ def test_sin_la_variable_principal_falla_fuerte():
 
     Es decir: indistinguible de «acá la amenaza es baja». Mejor no generarlo.
     """
-    with pytest.raises(HazardExtractionError, match="PGA-0.1"):
+    with pytest.raises(HazardExtractionError, match=r"PGA-0\.1"):
         validate_header(["lon", "lat", "otra_cosa"])
 
 

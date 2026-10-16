@@ -1,7 +1,7 @@
 /**
  * Borde difuminado y ondulado para las capas que son una imagen de una grilla.
  *
- * Lo comparten la lluvia (§L) y la amenaza sísmica (§I). Las dos grillas
+ * Lo comparten la lluvia y la amenaza sísmica. Las dos grillas
  * terminan en una caja y el fenómeno no: sin esto el mapa muestra un corte a
  * cuchillo en una línea recta que no existe.
  *
@@ -9,9 +9,8 @@
  *
  *   1. **Difuminado**: el alfa cae a cero en las últimas `feather` celdas.
  *   2. **Ondulación**: el comienzo de esa caída se corre hacia adentro entre 0
- *      y `wobble` celdas. Un degradado recto se sigue leyendo como una recta
- *      (§L, la cordillera del 30-09): el ojo ve la línea donde el color empieza
- *      a caer.
+ *      y `wobble` celdas. Un degradado recto se sigue leyendo como una recta:
+ *      el ojo ve la línea donde el color empieza a caer.
  */
 
 /**

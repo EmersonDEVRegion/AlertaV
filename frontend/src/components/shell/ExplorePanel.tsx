@@ -27,15 +27,14 @@ import { PropagationNotice } from '@/components/shell/PropagationNotice'
  * de contenido y el mapa libre al lado. Acá la columna tiene tres pestañas y,
  * cuando hay algo seleccionado, la ficha las reemplaza en el mismo lugar:
  *
- *   - **Ahora** (por defecto, §R): «En vivo», «Servicios interrumpidos»
+ *   - **Ahora** (por defecto): «En vivo», «Servicios interrumpidos»
  *     (cortes de luz, plegados) y «Mis lugares».
  *   - **Historial**: «Hoy», «Ayer» y «Antes», y la prensa local plegada.
  *   - **Capas**: las familias con sus contadores y su salud, las empresas de
  *     luz, el filtro de sismos, las capas de referencia y la única leyenda.
  *
- * El mismo componente vive en las dos pantallas; sólo cambia el contenedor.
- * Antes había dos paneles flotantes en escritorio y una barra de fichas en el
- * teléfono, con reglas de exclusión distintas en cada uno.
+ * El mismo componente vive en las dos pantallas; sólo cambia el contenedor, y
+ * las reglas de exclusión son las mismas en escritorio y en el teléfono.
  */
 interface ExploreSelection {
   incidents: readonly Incident[]
@@ -83,8 +82,8 @@ const TABS: readonly { key: ExploreTab; label: string }[] = [
 /**
  * «· N en 24 h» del resumen.
  *
- * Desde §I el historial trae hoy y ayer completos (entre 24 y 48 h), así que
- * su largo ya no es «en 24 h». El resumen sigue contando las últimas 24 h, que
+ * El historial trae hoy y ayer completos (entre 24 y 48 h), así que su largo
+ * no es «en 24 h». El resumen sigue contando las últimas 24 h, que
  * es lo que dice; la pestaña Historial cuenta lo que lista. Va en su propio
  * componente para que el reloj no repinte el panel entero.
  */
@@ -220,7 +219,7 @@ export const ExplorePanel = memo(function ExplorePanel({
               <div className="space-y-2">
                 <HistoryFeed {...history} scope="past" />
                 {/* La prensa al final y plegada: es contexto, no entra al mapa
-                    (desde el 2026-10-06) y abierta empujaba la lista. */}
+                    y abierta empujaría la lista. */}
                 <NewsFeed defaultOpen={false} />
               </div>
             )}
@@ -228,7 +227,7 @@ export const ExplorePanel = memo(function ExplorePanel({
               <div className="space-y-2">
                 <IncidentFilters {...incidents} />
                 <ReferenceDock {...reference} inline defaultOpen />
-                {/* Una sola leyenda (§R): antes había una pestaña propia, la
+                {/* Una sola leyenda: antes había una pestaña propia, la
                     del riel de referencia y la de cada familia. */}
                 <section aria-labelledby="leyenda-titulo" className="rounded-control bg-sunken px-2.5 py-2">
                   <h3 id="leyenda-titulo" className="mb-2 text-[11px] font-bold uppercase tracking-wide text-ink-faint">

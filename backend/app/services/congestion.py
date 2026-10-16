@@ -36,10 +36,11 @@ que de verdad generan taco en la región.
 
 from __future__ import annotations
 
-import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
+from app.core.texto import sin_tildes
 
 CHILE_TZ = ZoneInfo("America/Santiago")
 
@@ -165,9 +166,7 @@ class VentanaCongestion:
 
 
 def _plano(texto: str) -> str:
-    limpio = unicodedata.normalize("NFD", str(texto or "").lower())
-    sin_tildes = "".join(c for c in limpio if unicodedata.category(c) != "Mn")
-    return " ".join(sin_tildes.replace(".", " ").split())
+    return " ".join(sin_tildes(texto).replace(".", " ").split())
 
 
 def arteria_de(nombre: str | None) -> Arteria | None:

@@ -1,4 +1,4 @@
-"""Precisión del punto del incidente y radios de aviso por categoría (§K).
+"""Precisión del punto del incidente y radios de aviso por categoría.
 
 Qué agrega
 ----------

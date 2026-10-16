@@ -131,7 +131,7 @@ class EstadoRegional:
 
     modelo: str
 
-    #: El UV va aparte (§R, 15-10): en verano se cruza casi todos los días y,
+    #: El UV va aparte: en verano se cruza casi todos los días y,
     #: como peor caso, tapaba la condición de propagación en la barra. Se sigue
     #: evaluando y el panel del clima lo muestra con su severidad.
     uv_severidad: str = SEVERIDAD_NINGUNA

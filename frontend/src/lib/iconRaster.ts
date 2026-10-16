@@ -14,12 +14,11 @@ import { SDF_RADIUS, alphaToSdf, sdfToImageData } from './sdf'
  *
  * # Por qué se rellena y no se traza
  *
- * Antes se trazaba, porque los glifos venían de lucide y son contornos abiertos.
- * A los tamaños reales de este mapa eso no funciona: con `icon-size` entre 0.3 y
- * 0.6 sobre un lienzo de 64, el glifo mide entre 14 y 29 px en pantalla, y un
+ * A los tamaños reales de este mapa un contorno no funciona: con `icon-size`
+ * entre 0.3 y 0.6 sobre un lienzo de 64, el glifo mide entre 14 y 29 px en pantalla, y un
  * trazo de 2 unidades sobre un lienzo de 24 queda ahí en poco más de un píxel.
- * Todo detalle interior se cierra. La `flame` de lucide lo demostró: su rizo
- * interior colapsaba y el icono se leía como una espiral.
+ * Todo detalle interior se cierra: el rizo interior de una llama colapsa y el
+ * icono se lee como una espiral.
  *
  * Ahora los siete glifos son siluetas cerradas y se rellenan. Si algún día hace
  * falta uno intrínsecamente lineal habrá que reponer el modo de trazo —un

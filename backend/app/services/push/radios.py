@@ -1,8 +1,7 @@
-"""Radio de aviso por categoría (§K, 2026-10-05).
+"""Radio de aviso por categoría.
 
-Hasta el 2026-10-05 había un solo radio por suscripción (5 km por defecto) y la
-PWA no lo dejaba cambiar. Un incendio a 5 km vale el aviso; un corte de luz a
-5 km casi nunca. Ahora cada categoría tiene su radio, que cada persona elige
+Un incendio a 5 km vale el aviso; un corte de luz a 5 km casi nunca. Por eso
+cada categoría tiene su radio, que cada persona elige
 con un deslizador; `0` apaga esa categoría.
 
 Las categorías son las familias del motor (`models.enums.INCIDENT_FAMILY`) más

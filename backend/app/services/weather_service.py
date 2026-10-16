@@ -72,8 +72,7 @@ class WeatherService:
         y sí protege de que una comuna mal declarada en el `.env` meta un punto
         de otra parte del país en la capa.
         """
-        bbox = settings.region_bbox
-        return (bbox.west, bbox.south, bbox.east, bbox.north)
+        return settings.region_bbox.as_tuple()
 
     async def list_current(
         self,

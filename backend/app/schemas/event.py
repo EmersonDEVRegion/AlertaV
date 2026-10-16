@@ -302,7 +302,7 @@ class CitizenReportCreate(BaseModel):
     )
     reported_at: datetime | None = Field(
         default=None,
-        description="Ignorado desde el 2026-09-30: la hora la fija el servidor.",
+        description="Ignorado: la hora la fija el servidor.",
     )
     media_url: str | None = Field(
         default=None,

@@ -1,7 +1,7 @@
 """Feeds de consumo rápido, paralelos al mapa.
 
-Dos: vehículos robados, recuperados y abandonados publicados por GBV, y desde
-el 2026-10-06 la prensa local. Ninguno es un incidente ni una señal del mapa y
+Dos: vehículos robados, recuperados y abandonados publicados por GBV, y la
+prensa local. Ninguno es un incidente ni una señal del mapa y
 ninguno pasa por el motor de correlación.
 """
 
@@ -81,7 +81,7 @@ async def vehicle_feed(
     summary="Prensa local de la V Región, últimas 24 h (fuera del mapa)",
     description=(
         "Notas de los medios locales que el pre-filtro reconoció como "
-        "emergencias, de la más nueva a la más vieja. Desde el 2026-10-06 la "
+        "emergencias, de la más nueva a la más vieja. La "
         "prensa NO entra al motor de correlación: no abre incidentes ni se pega "
         "a uno, porque llega con horas de atraso. Se informa acá, con la hora "
         "de publicación a la vista (`hora_aproximada` si el medio no la dio).\n\n"

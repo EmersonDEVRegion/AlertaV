@@ -890,7 +890,7 @@ def test_migracion_0014_encadena_con_la_0013():
 
 # --- Salida desde Chile (proxy) ------------------------------------------------
 #
-# Esval sólo responde a IP chilenas (plan.md, §S1). En producción las dos
+# Esval sólo responde a IP chilenas. En producción las dos
 # peticiones salen por un proxy nuestro en Chile; estos tests fijan que el
 # proxy se use, que no se publique su dirección y que sin él la corrida falle
 # rápido y con el motivo.

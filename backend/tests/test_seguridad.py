@@ -89,7 +89,7 @@ def test_con_el_token_correcto_pasa(cliente, monkeypatch):
         ("post", "/api/v1/collectors/transporte_informa/run"),
         ("post", "/api/v1/collectors/backfill-geocoding"),
         ("post", "/api/v1/incidents/correlate"),
-        # Moderación de comentarios ciudadanos (§C).
+        # Moderación de comentarios ciudadanos.
         ("get", "/api/v1/moderacion"),
         ("post", "/api/v1/moderacion/00000000-0000-0000-0000-000000000000"),
         # Lecturas crudas: traen el texto ciudadano sin revisar y su GPS exacto.

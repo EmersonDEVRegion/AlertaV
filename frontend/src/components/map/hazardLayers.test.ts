@@ -103,8 +103,7 @@ describe('jerarquía de dibujo', () => {
   })
 
   it('declara su única capa para el re-anclaje', () => {
-    // §I: la retícula se fue con los polígonos. Una capa fuera de esta lista no
-    // se re-ancla tras un cambio de tema.
+    // Una capa fuera de esta lista no se re-ancla tras un cambio de tema.
     expect([...HAZARD_LAYER_IDS]).toEqual([HAZARD_FIELD_LAYER_ID])
   })
 
@@ -120,8 +119,8 @@ describe('una sola representación', () => {
   it('es una imagen, no un heatmap ni polígonos', () => {
     /*
      * Un `heatmap` sobre una grilla REGULAR no mide el valor del modelo: mide
-     * densidad, constante por construcción. Y los polígonos (hasta §I)
-     * dibujaban la caja de la grilla con bordes rectos. La imagen interpola
+     * densidad, constante por construcción. Y unos polígonos por celda
+     * dibujarían la caja de la grilla con bordes rectos. La imagen interpola
      * entre nodos y desvanece el borde (`lib/hazardRaster.ts`).
      */
     expect(hazardFieldLayer('dark', true).type).toBe('raster')

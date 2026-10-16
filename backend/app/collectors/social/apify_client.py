@@ -1,10 +1,8 @@
 """Cliente de la API de Apify. Sólo LEE; nunca dispara una corrida.
 
-Hoy lo usa una sola puerta: el webhook de Bomberos
+Lo usa una sola puerta: el webhook de Bomberos
 (`app/services/apify_webhook_service.py`), que lee el dataset que Apify le
-nombra al terminar cada corrida del Task de X. El collector de Instagram, que
-usaba el resto de este módulo (`runs/last`, detección de corridas rancias), se
-borró el 2026-09-23.
+nombra al terminar cada corrida del Task de X.
 
 Por qué este backend no arranca Actors
 --------------------------------------

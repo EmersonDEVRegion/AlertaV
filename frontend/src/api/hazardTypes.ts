@@ -13,11 +13,9 @@
  *
  * Que las celdas **teselen** es la propiedad de la que depende todo lo demás:
  * es lo que permite que un relleno por polígono se lea como una superficie
- * continua en vez de como una nube de rectángulos sueltos. Durante un tiempo no
- * teselaron —el generador infería mal el paso en longitud— y la capa necesitó un
- * mapa de calor encima para disimularlo. Ese remiendo ya no existe; la historia
- * completa está en `domain/hazardSymbology.ts` y en `infer_row_step`, en el
- * script.
+ * continua en vez de como una nube de rectángulos sueltos. El paso en longitud
+ * lo infiere `infer_row_step`, en el script; ver también
+ * `domain/hazardSymbology.ts`.
  *
  * El centro del nodo se conserva igual, aunque hoy ninguna capa lo pinte: sirve
  * para etiquetar, para consultar el valor bajo el cursor y para volver a cruzar

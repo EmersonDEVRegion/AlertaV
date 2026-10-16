@@ -6,9 +6,8 @@ import type { Incident } from '@/api/types'
  * # Para qué
  *
  * Un mapa sin emergencias nuevas se ve igual si el día está tranquilo que si el
- * motor dejó de recibir despachos (§H, 30-09-2026: «aparecen las mismas 3
- * emergencias»). La línea «Último despacho de Bomberos: 10:01 · hace 2 h»
- * separa las dos lecturas sin abrir `/collectors/health`.
+ * motor dejó de recibir despachos. La línea «Último despacho de Bomberos: 10:01
+ * · hace 2 h» separa las dos lecturas sin abrir `/collectors/health`.
  *
  * # Qué hora se toma
  *

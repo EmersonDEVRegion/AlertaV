@@ -470,7 +470,7 @@ def test_la_nota_y_el_tuit_caen_en_el_mismo_punto() -> None:
     assert punto_tuit.omitted == ("street_1", "reference")
 
 
-# --- Zonas de las distribuidoras (§R-A) ---------------------------------------
+# --- Zonas de las distribuidoras ---------------------------------------
 
 
 @pytest.mark.parametrize(

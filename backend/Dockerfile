@@ -3,8 +3,8 @@
 #
 #  Imagen de un solo contenedor que corre TRES procesos: la API y los dos
 #  workers en loop. No es la forma canónica de empaquetar un servicio —lo
-#  canónico es un contenedor por proceso— pero las capas gratuitas de Render y
-#  Koyeb dan un único contenedor, y un incendio detectado 15 minutos tarde por
+#  canónico es un contenedor por proceso— pero el plan gratuito de Render da
+#  un único contenedor, y un incendio detectado 15 minutos tarde por
 #  falta de presupuesto de infraestructura es peor que una imagen impura.
 #  La orquestación vive en start.sh.
 #

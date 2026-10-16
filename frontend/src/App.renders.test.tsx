@@ -226,7 +226,7 @@ describe('App quieta', () => {
       .mocked(fetch)
       .mock.calls.map(([input]) => String(input))
       .find((u) => u.includes('/incidents/active'))
-    // 50 y no 48 (§I): ayer completo, también el día de 25 h.
+    // 50 y no 48: ayer completo, también el día de 25 h.
     expect(url).toContain('hours=50')
     expect(url).toContain('limit=1000')
     expect(url).toContain('status=stale')

@@ -114,7 +114,7 @@ export function PlaceSearch({ onPick }: { onPick: (area: ExploreArea) => void })
   }
 
   const showList = open && options.length > 0
-  // En el teléfono la hoja baja mientras la lista está abierta (§T).
+  // En el teléfono la hoja baja mientras la lista está abierta.
   useLowerSheetWhile(showList, 'buscador')
   const current = options[Math.min(active, options.length - 1)]
 

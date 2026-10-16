@@ -35,29 +35,14 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy import text as sa_text
-from sqlalchemy.dialects.postgresql import ARRAY, ENUM, JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.config import settings
-from app.models.base import Base
+from app.models.base import Base, pg_enum
 from app.models.enums import IncidentStatus, IncidentType, LinkMethod
 
 _SCHEMA = settings.DB_SCHEMA
-
-
-def _pg_enum(python_enum: type, name: str) -> ENUM:
-    """ENUM nativo cuyos valores son los `.value` del Enum de Python.
-
-    `create_type=False`: el tipo lo crea la migración, no el ORM.
-    """
-    return ENUM(
-        python_enum,
-        name=name,
-        schema=_SCHEMA,
-        create_type=False,
-        values_callable=lambda enum_cls: [member.value for member in enum_cls],
-        validate_strings=True,
-    )
 
 
 #: Igual que en `raw_events`: la geometría se deriva en la base, nunca a mano.
@@ -87,12 +72,12 @@ class Incident(Base):
 
     # -- Clasificación -------------------------------------------------------
     type: Mapped[IncidentType] = mapped_column(
-        _pg_enum(IncidentType, "incident_type"),
+        pg_enum(IncidentType, "incident_type"),
         nullable=False,
         server_default=sa_text("'possible_fire'"),
     )
     status: Mapped[IncidentStatus] = mapped_column(
-        _pg_enum(IncidentStatus, "incident_status"),
+        pg_enum(IncidentStatus, "incident_status"),
         nullable=False,
         server_default=sa_text("'active'"),
     )
@@ -159,7 +144,7 @@ class Incident(Base):
         doc="Fuentes distintas que sostienen el incidente. Desnormalizado a propósito.",
     )
 
-    # -- Publicación (§C, migración 0018) ------------------------------------
+    # -- Publicación (migración 0018) ------------------------------------
     ciudadanos_independientes: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
@@ -321,7 +306,7 @@ class IncidentEvent(Base):
         primary_key=True,
     )
     link_method: Mapped[LinkMethod] = mapped_column(
-        _pg_enum(LinkMethod, "link_method"), nullable=False
+        pg_enum(LinkMethod, "link_method"), nullable=False
     )
     link_confidence: Mapped[float] = mapped_column(
         Float,

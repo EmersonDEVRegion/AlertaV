@@ -15,9 +15,8 @@ diseñado para que sea **difícil dibujar algo falso**:
   que ordena todo el proyecto.
 * `confidence_breakdown` va incluido. Cualquiera puede auditar de dónde salió
   el número sin acceso a la base.
-* `family` y `level_label` se calculan acá y viajan en la respuesta. Antes el
-  cliente tenía que replicar la tabla de familias y descartar nuestra etiqueta
-  —que decía "Incendio confirmado" sobre un choque—. Toda decisión de
+* `family` y `level_label` se calculan acá y viajan en la respuesta, para que
+  el cliente no tenga que replicar la tabla de familias. Toda decisión de
   presentación que dependa del dominio se toma en el backend: si mañana entra
   una familia nueva, el mapa la pinta sin desplegar el frontend.
 """
@@ -160,8 +159,8 @@ class IncidentRead(BaseModel):
         description=(
             "Qué tan fino es el punto: `intersection` (el cruce que nombró la "
             "fuente), `exacta` (coordenadas propias: CONAF, Waze, GPS), `street` "
-            "(sobre una calle, sin la esquina) o `sector` (un barrio). `null` en "
-            "incidentes anteriores al 2026-10-05."
+            "(sobre una calle, sin la esquina) o `sector` (un barrio). `null` si "
+            "el incidente es anterior a este campo."
         ),
     )
     commune: str | None = None

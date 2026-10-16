@@ -32,16 +32,14 @@ async def require_operator(
 ) -> None:
     """Rutas de operación: `Authorization: Bearer <OPERATOR_TOKEN>`.
 
-    Hasta el 2026-09-23 los docstrings de estas rutas decían «debe quedar detrás
-    de autenticación de operador» y nada lo imponía: cualquiera con la URL podía
-    disparar collectors (gasto de Gemini, riesgo de bloqueo en Nominatim) o
-    correr el motor. Ahora:
+    Sin token, cualquiera con la URL podría disparar collectors (gasto de
+    Gemini, riesgo de bloqueo en Nominatim) o correr el motor. Por eso:
 
     * **Producción sin token configurado → 503.** Falla cerrada: la ruta no
       existe hasta que alguien la habilite a propósito. No bloquea el arranque
       —un 503 en una ruta de operación no deja a nadie sin mapa—, pero tampoco
       queda abierta.
-    * **Local y staging sin token → abierta**, como antes, para que los scripts
+    * **Local y staging sin token → abierta**, para que los scripts
       y los tests sigan funcionando sin ceremonia.
     * **Con token → comparación en tiempo constante**, sobre bytes para que un
       valor no ASCII no suba como 500 (el mismo cuidado que el webhook).

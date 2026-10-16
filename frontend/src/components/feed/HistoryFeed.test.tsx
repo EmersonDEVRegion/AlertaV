@@ -159,7 +159,7 @@ describe('historial', () => {
     expect(screen.getByText('Sin emergencias hoy ni ayer cerca de Casa.')).toBeInTheDocument()
   })
 
-  describe('secciones plegables (§I)', () => {
+  describe('secciones plegables', () => {
     // 19:00 − 20 h = 23:00 de ayer en Chile.
     const YESTERDAY = makeIncident({
       code: 'INC-2026-00500',

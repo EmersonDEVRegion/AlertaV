@@ -3,11 +3,10 @@ import type { HealthStatus } from '@/api/health'
 /**
  * La marca que separa «no pasó nada» de «no llegó nada».
  *
- * Es el componente entero de una funcionalidad que existe por un accidente
- * concreto: el 2026-09-02 el Actor de Instagram estuvo detenido dos horas, se
- * publicó un choque en Avenida España, `collector_runs` tenía el diagnóstico
- * escrito con todas sus letras, y el mapa mostró «Accidentes viales · 0» —
- * indistinguible de una tarde tranquila—. La persona se enteró por Instagram.
+ * Una fuente puede quedar ciega —un Actor de Apify detenido, un portal
+ * congelado— mientras un choque ocurre. `collector_runs` tiene el diagnóstico
+ * escrito, pero sin esta marca el mapa mostraría «Accidentes viales · 0»,
+ * indistinguible de una tarde tranquila.
  *
  * # Sólo aparece cuando cambia la lectura
  *

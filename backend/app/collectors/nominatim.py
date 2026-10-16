@@ -93,7 +93,7 @@ def get_limiter() -> RateLimiter:
 #: distingue solo: los dos son un pin.
 #:
 #: `INTERSECTION` es la precisión que Nominatim no sabe dar (ver
-#: `build_queries`). Desde el 2026-10-05 la calcula `collectors.overpass` cuando
+#: `build_queries`). La calcula `collectors.overpass` cuando
 #: la fuente nombra dos calles: el punto pasa de la calle a la esquina.
 #:
 #: `SECTOR` es un barrio, población o cerro: lo que devuelve Nominatim cuando se

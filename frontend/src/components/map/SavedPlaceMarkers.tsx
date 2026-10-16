@@ -26,7 +26,7 @@ export const SavedPlaceMarkers = memo(function SavedPlaceMarkers() {
           style={{ pointerEvents: 'none' }}
         >
           <span className="flex flex-col items-center">
-            {/* Cristal (§T): flota sobre el mapa. Ver «Cristal sobre el mapa» en `index.css`. */}
+            {/* Cristal: flota sobre el mapa. Ver «Cristal sobre el mapa» en `index.css`. */}
             <span className="glass flex items-center gap-1 rounded-full py-0.5 pl-1 pr-2 text-[10.5px] font-semibold text-ink">
               <span className="grid size-4 place-items-center rounded-full bg-accent text-accent-ink">
                 <PlaceGlyph name={place.name} className="size-2.5" />

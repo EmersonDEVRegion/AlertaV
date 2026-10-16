@@ -25,7 +25,7 @@ import { useLayerReanchor } from './useLayerReanchor'
  * **El mapa de calor** y su segunda fuente de puntos: ver
  * `domain/hazardSymbology.ts`.
  *
- * **Los polígonos** (§I): el artefacto sigue llegando como celdas, pero se
+ * **Los polígonos**: el artefacto sigue llegando como celdas, pero se
  * pinta como una imagen interpolada con el borde difuminado
  * (`lib/hazardRaster.ts`). La caja recta de la grilla ya no se ve.
  *

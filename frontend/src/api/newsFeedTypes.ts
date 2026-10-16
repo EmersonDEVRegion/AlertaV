@@ -5,9 +5,9 @@
  *
  * # Lo que NO es
  *
- * No es un incidente ni una señal del mapa. Desde el 2026-10-06 la prensa no
- * entra al motor: una nota llega con horas de atraso y abría pines que ya no
- * describían el presente. Se lee como información, con la hora de publicación
+ * No es un incidente ni una señal del mapa. La prensa no entra al motor: una
+ * nota llega con horas de atraso y abriría pines que ya no describen el
+ * presente. Se lee como información, con la hora de publicación
  * a la vista.
  */
 

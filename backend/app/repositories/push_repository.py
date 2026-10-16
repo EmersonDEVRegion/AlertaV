@@ -343,7 +343,7 @@ class PushRepository:
     ) -> list[Recipient]:
         """Suscripciones dentro de su propio radio que todavía no recibieron el aviso.
 
-        «Su propio radio» es el de la categoría del incidente (§K): el que la
+        «Su propio radio» es el de la categoría del incidente: el que la
         persona eligió en `radios`, o el del servidor si nunca lo tocó. Con 0,
         esa categoría no se le avisa.
 
@@ -471,7 +471,7 @@ class PushRepository:
         """Suscripciones dentro del radio de percepción sin aviso de este sismo.
 
         Se mide, como en los incidentes, desde la última ubicación del teléfono
-        Y desde cada lugar guardado (§N): quien está de viaje igual se entera de
+        Y desde cada lugar guardado: quien está de viaje igual se entera de
         que tembló fuerte en Casa. Manda el más cercano, y ése nombra el aviso.
 
         `keys` son las claves de TODAS las versiones del sismo (CSN y USGS): si

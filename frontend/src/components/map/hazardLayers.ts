@@ -4,18 +4,15 @@
  * Una sola capa `raster` sobre una fuente `image`: la superficie de intensidad
  * ya interpolada y con el borde difuminado (`lib/hazardRaster.ts`).
  *
- * # Qué se fue de acá
+ * # Por qué una imagen
  *
- * - **El mapa de calor** (antes de §I): un `heatmap` sobre una grilla regular
- *   mide densidad, que es constante, así que el kernel sólo sumaba el valor de
- *   los vecinos. No es el PGA de ningún punto. Los motivos largos están en
- *   `domain/hazardSymbology.ts`.
- * - **Los polígonos y la retícula** (§I, 15-10-2026): 1648 rectángulos de un
- *   solo color dibujaban la caja de la grilla con bordes rectos y, de cerca,
- *   escalones de 5 km. La imagen interpola entre nodos y desvanece el borde, y
- *   cuesta menos en el teléfono. La retícula —un trazo por celda desde z12,8—
- *   se retiró con ellos: sobre un degradado continuo, una reja de rectángulos
- *   contradice lo que se ve. La resolución la dice la leyenda.
+ * - **No un mapa de calor:** un `heatmap` sobre una grilla regular mide
+ *   densidad, que es constante, así que el kernel sólo suma el valor de los
+ *   vecinos. No es el PGA de ningún punto (ver `domain/hazardSymbology.ts`).
+ * - **No polígonos por celda:** 1648 rectángulos de un solo color dibujan la
+ *   caja de la grilla con bordes rectos y, de cerca, escalones de 5 km. La
+ *   imagen interpola entre nodos, desvanece el borde y cuesta menos en el
+ *   teléfono. La resolución la dice la leyenda.
  *
  * # Jerarquía visual: por qué `beforeId` y no un z-index
  *

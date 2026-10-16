@@ -24,9 +24,8 @@ Este módulo lo rescata del texto. Tres consumidores:
 * `raw_data._extraction.sector_clave` lo lleva al motor de correlación, que
   une dos señales de la misma familia que nombran el mismo sector aunque sus
   puntos no se toquen (ver `CorrelationEngine._step_a_sector`).
-* `comuna_en_texto`, que vivía en el worker de prensa, se mudó acá porque ahora
-  la necesitan también Instagram y X, y la prensa no puede importar de las redes
-  sociales (`test_la_prensa_ya_no_depende_de_las_redes_sociales`).
+* `comuna_en_texto` la usan la prensa y X, y la prensa no puede importar de las
+  redes sociales (`test_la_prensa_ya_no_depende_de_las_redes_sociales`).
 
 Lo que NO hace
 --------------

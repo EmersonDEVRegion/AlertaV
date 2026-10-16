@@ -65,8 +65,8 @@ export const CLOSURE_HIT_LAYER_ID = 'closure-hit'
 /**
  * En orden de dibujo. Lo usa el re-anclaje tras un cambio de estilo.
  *
- * Incluye el icono (`closure-icon`, de `emergencyIconLayers.ts`): antes de §I
- * faltaba, y tras cambiar de tema podía quedar sobre los pines de emergencia.
+ * Incluye el icono (`closure-icon`, de `emergencyIconLayers.ts`): sin él, tras
+ * cambiar de tema podría quedar sobre los pines de emergencia.
  */
 export const ROAD_CLOSURE_LAYER_IDS = [
   CLOSURE_CUT_RING_LAYER_ID,
@@ -209,9 +209,8 @@ const hidden = (visible: boolean) => ({
  * # Estático, y eso es una decisión ya tomada en este repositorio
  *
  * La versión obvia late: un `requestAnimationFrame` escribiendo
- * `circle-stroke-opacity` a ~12 Hz. La capa de lluvia tuvo exactamente eso y
- * **se quitó** —como el anillo de la lluvia, que ya no existe— para no dejar el mapa repintando de
- * forma permanente por un adorno. Repetirlo acá reintroduciría el mismo costo
+ * `circle-stroke-opacity` a ~12 Hz. Deja el mapa repintando de forma
+ * permanente por un adorno. Repetirlo acá reintroduciría el mismo costo
  * en la capa que menos lo justifica: un corte de ruta lleva días o semanas
  * vigente, así que no hay ninguna urgencia que un parpadeo esté comunicando.
  *
@@ -313,11 +312,9 @@ export function closureHitLayer(visible: boolean): RoadClosureLayerSpec {
 /**
  * Las cinco subcapas, en orden de dibujo, con el mismo encendido.
  *
- * Existe para que el encendido viva en UN lugar. Hasta §I el componente armaba
- * cada subcapa por separado y al icono —la quinta, agregada después— nadie le
- * pasó `visible`: al apagar la capa, el icono seguía en el mapa. El test de
- * «encendido y apagado» recorre esta lista entera, así que una sexta subcapa
- * que olvide el encendido cae en el test y no en el teléfono.
+ * Existe para que el encendido viva en UN lugar. El test de «encendido y
+ * apagado» recorre esta lista entera, así que una subcapa nueva que olvide el
+ * encendido cae en el test y no en el teléfono.
  */
 export interface RoadClosureSpecs {
   cutRing: RoadClosureLayerSpec

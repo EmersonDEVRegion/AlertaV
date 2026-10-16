@@ -141,9 +141,8 @@ export function seismicIconLayer(
  *
  * Al revés que incidentes y sismos —que se montan y desmontan con su casilla—,
  * la capa de cortes **nunca desmonta**: se apaga por `visibility`. Por eso este
- * icono recibe `visible` como las otras cuatro subcapas. Hasta §I no lo recibía:
- * al apagar «Cortes de ruta» se escondían los rombos y quedaba el icono, que es
- * justo lo que se ve.
+ * icono recibe `visible` como las otras cuatro subcapas: sin eso, al apagar
+ * «Cortes de ruta» se esconderían los rombos y quedaría el icono.
  */
 export function closureIconLayer(
   theme: 'light' | 'dark',

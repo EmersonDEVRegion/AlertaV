@@ -99,11 +99,9 @@ export interface RoadClosurePalette {
   /**
    * Rango de opacidad del anillo de corte, `[mínimo, máximo]`.
    *
-   * **Se usa el máximo y sólo el máximo.** El anillo es estático: la capa de
-   * lluvia ya tuvo un pulso por `requestAnimationFrame` y se quitó para no
-   * dejar el mapa repintando por un adorno (como el anillo de la lluvia, que ya no existe). El par se
-   * conserva con la misma forma que el de la lluvia por una razón concreta: si
-   * alguien reconsidera la decisión, el extremo bajo ya está calibrado contra
+   * **Se usa el máximo y sólo el máximo.** El anillo es estático: un pulso por
+   * `requestAnimationFrame` dejaría el mapa repintando por un adorno. El par se
+   * conserva por una razón concreta: si alguien reconsidera la decisión, el extremo bajo ya está calibrado contra
    * este fondo y no hay que volver a elegirlo a ojo.
    */
   ringOpacity: readonly [number, number]

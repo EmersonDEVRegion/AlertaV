@@ -1,8 +1,7 @@
 """Texto libre → punto: el geocodificador LLM que comparten varios caminos.
 
-Vivía en el worker de Instagram, que salió del repositorio el 2026-09-23. Lo
-siguen usando `services/backfill.py` (rescate de eventos sin coordenadas) y
-los tests de sectores, así que se muda acá en vez de borrarse con él.
+Lo usan `services/backfill.py` (rescate de eventos sin coordenadas) y los tests
+de sectores.
 """
 
 from __future__ import annotations

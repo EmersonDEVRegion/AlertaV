@@ -1,4 +1,4 @@
-"""Modelos ORM del Fire Data Collector.
+"""Modelos ORM de las señales (`raw_events`), la confianza por fuente y las corridas.
 
 Nota: `text` y `timestamp` son nombres de columna pedidos por la especificación
 y además chocan con `sqlalchemy.text` y con nombres de tipo. Por eso el helper
@@ -27,30 +27,14 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy import text as sa_text
-from sqlalchemy.dialects.postgresql import ENUM, JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.config import settings
-from app.models.base import Base
+from app.models.base import Base, pg_enum
 from app.models.enums import EventSource, EventType
 
 _SCHEMA = settings.DB_SCHEMA
-
-
-def _pg_enum(python_enum: type, name: str) -> ENUM:
-    """ENUM nativo de Postgres cuyos valores son los `.value` del Enum de Python.
-
-    `create_type=False`: el tipo lo crea la migración, no el ORM. Así
-    `Base.metadata.create_all()` en tests no compite con Alembic.
-    """
-    return ENUM(
-        python_enum,
-        name=name,
-        schema=_SCHEMA,
-        create_type=False,
-        values_callable=lambda enum_cls: [member.value for member in enum_cls],
-        validate_strings=True,
-    )
 
 
 # Expresión de la columna generada. Idéntica a la de la migración 0001 para que
@@ -86,10 +70,10 @@ class RawEvent(Base):
         doc="Momento del evento según la fuente, en UTC.",
     )
     source: Mapped[EventSource] = mapped_column(
-        _pg_enum(EventSource, "event_source"), nullable=False
+        pg_enum(EventSource, "event_source"), nullable=False
     )
     type: Mapped[EventType] = mapped_column(
-        _pg_enum(EventType, "event_type"),
+        pg_enum(EventType, "event_type"),
         nullable=False,
         server_default=sa_text("'unknown'"),
     )
@@ -197,7 +181,7 @@ class SourceConfidence(Base):
     __table_args__ = ({"schema": _SCHEMA},)
 
     source: Mapped[EventSource] = mapped_column(
-        _pg_enum(EventSource, "event_source"), primary_key=True
+        pg_enum(EventSource, "event_source"), primary_key=True
     )
     base_confidence: Mapped[float] = mapped_column(Float, nullable=False)
     is_official: Mapped[bool] = mapped_column(
@@ -229,7 +213,7 @@ class CollectorRun(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     source: Mapped[EventSource] = mapped_column(
-        _pg_enum(EventSource, "event_source"), nullable=False
+        pg_enum(EventSource, "event_source"), nullable=False
     )
     collector: Mapped[str] = mapped_column(String(100), nullable=False)
     started_at: Mapped[datetime] = mapped_column(

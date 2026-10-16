@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ApiError } from '@/api/client'
+import { isNotFound } from '@/api/client'
 import type { HealthStatus } from '@/api/health'
 import { fetchWaterCuts } from '@/api/waterCuts'
 import type { WaterCut, WaterCutSource } from '@/api/waterCutTypes'
@@ -52,10 +52,6 @@ export interface WaterCutsState {
 
 const NO_CUTS: WaterCut[] = []
 const pollCuts = pollEvery(env.waterCutPollIntervalMs)
-
-function isNotFound(error: unknown): boolean {
-  return error instanceof ApiError && error.status === 404
-}
 
 /** Emergencias primero; dentro de cada grupo, el que empezó más recién arriba. */
 function byUrgency(a: WaterCut, b: WaterCut): number {

@@ -14,6 +14,7 @@
  */
 
 import { apiGet, buildQuery } from './client'
+import { isRecord, trimmedText } from './parse'
 import type { HealthStatus } from './health'
 import {
   VEHICLE_LOCATIONS,
@@ -30,16 +31,6 @@ const HEALTH_STATUSES: readonly HealthStatus[] = ['ok', 'degraded', 'failing', '
 
 let warnedAboutItems = false
 
-type Raw = Record<string, unknown>
-
-function isRecord(value: unknown): value is Raw {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function text(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null
-}
-
 function oneOf<T extends string>(value: unknown, options: readonly T[]): T | null {
   return typeof value === 'string' && (options as readonly string[]).includes(value)
     ? (value as T)
@@ -50,10 +41,10 @@ function oneOf<T extends string>(value: unknown, options: readonly T[]): T | nul
 function parseItem(raw: unknown): VehicleFeedItem | null {
   if (!isRecord(raw)) return null
 
-  const id = text(raw.id)
+  const id = trimmedText(raw.id)
   const estado = oneOf<VehicleStatus>(raw.estado, VEHICLE_STATUSES)
   const region = oneOf<VehicleLocation>(raw.region, VEHICLE_LOCATIONS)
-  const detectado = text(raw.detectado_en)
+  const detectado = trimmedText(raw.detectado_en)
   // Sin estado, sin fecha de detección o fuera de la región no hay tarjeta
   // posible: no se sabe qué decir ni si cae en la ventana.
   if (!id || !estado || !region || !detectado || !Number.isFinite(Date.parse(detectado))) {
@@ -65,33 +56,33 @@ function parseItem(raw: unknown): VehicleFeedItem | null {
   return {
     id,
     estado,
-    patente: text(raw.patente)?.toUpperCase() ?? null,
-    tipo_vehiculo: text(raw.tipo_vehiculo),
-    marca: text(raw.marca),
-    modelo: text(raw.modelo),
-    color: text(raw.color),
+    patente: trimmedText(raw.patente)?.toUpperCase() ?? null,
+    tipo_vehiculo: trimmedText(raw.tipo_vehiculo),
+    marca: trimmedText(raw.marca),
+    modelo: trimmedText(raw.modelo),
+    color: trimmedText(raw.color),
     anio,
-    delito: text(raw.delito),
-    lugar: text(raw.lugar),
-    comuna: text(raw.comuna),
+    delito: trimmedText(raw.delito),
+    lugar: trimmedText(raw.lugar),
+    comuna: trimmedText(raw.comuna),
     region,
-    recuperado_en: text(raw.recuperado_en),
-    autoridad: text(raw.autoridad),
-    tiempo_abandono: text(raw.tiempo_abandono),
-    fecha_delito: text(raw.fecha_delito),
+    recuperado_en: trimmedText(raw.recuperado_en),
+    autoridad: trimmedText(raw.autoridad),
+    tiempo_abandono: trimmedText(raw.tiempo_abandono),
+    fecha_delito: trimmedText(raw.fecha_delito),
     fecha_precision: raw.fecha_precision === 'dia' ? 'dia' : 'deteccion',
     detectado_en: detectado,
-    url_fuente: text(raw.url_fuente) ?? '',
+    url_fuente: trimmedText(raw.url_fuente) ?? '',
   }
 }
 
 function parseSource(raw: unknown): VehicleFeedSource {
   const source = isRecord(raw) ? raw : {}
   return {
-    collector: text(source.collector) ?? 'gbv_vehiculos',
+    collector: trimmedText(source.collector) ?? 'gbv_vehiculos',
     estado: oneOf<HealthStatus>(source.estado, HEALTH_STATUSES) ?? undefined,
-    ultima_corrida: text(source.ultima_corrida),
-    detalle: text(source.detalle),
+    ultima_corrida: trimmedText(source.ultima_corrida),
+    detalle: trimmedText(source.detalle),
   }
 }
 
@@ -117,7 +108,7 @@ export function parseVehicleFeed(payload: unknown): VehicleFeedResponse {
   }
 
   return {
-    generado_en: text(body.generado_en) ?? '',
+    generado_en: trimmedText(body.generado_en) ?? '',
     horas: typeof body.horas === 'number' ? body.horas : 0,
     total: items.length,
     items,

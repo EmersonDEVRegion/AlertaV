@@ -9,7 +9,7 @@ dos eventos distintos significan dos apagados a medias —uno de los bucles
 seguiría abriendo transacciones mientras el otro cierra el pool.
 
 Por qué un apagado cooperativo y no dejar que la plataforma mate el proceso:
-Koyeb envía SIGTERM y espera 30 segundos antes del SIGKILL. En esos 30 segundos
+Render envía SIGTERM y espera 30 segundos antes del SIGKILL. En esos 30 segundos
 un runner puede terminar la pasada en curso y devolver sus conexiones al pooler.
 Una conexión que muere por SIGKILL queda colgada del lado de Supabase hasta que
 expira, y en la capa gratuita el presupuesto de conexiones es justo.

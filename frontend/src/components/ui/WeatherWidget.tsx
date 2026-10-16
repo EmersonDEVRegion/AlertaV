@@ -173,7 +173,7 @@ function Row({ label, value, tone }: { label: string; value: string; tone?: stri
 }
 
 /**
- * El UV vive acá y no en la barra (§R): en verano se cruza casi a diario y
+ * El UV vive acá y no en la barra: en verano se cruza casi a diario y
  * tapaba la condición de propagación. Con su severidad, dice qué hacer.
  */
 const UV_TAG: Record<WeatherSeverity, string> = {
@@ -381,7 +381,7 @@ function Detail({ snapshot }: { snapshot: WeatherSnapshot }) {
 
 export function WeatherWidget() {
   const snapshot = useTacticalWeather()
-  // En el teléfono la hoja baja mientras el detalle está abierto (§T).
+  // En el teléfono la hoja baja mientras el detalle está abierto.
   useLowerSheetWhile(snapshot.expanded, 'clima')
   const { data } = snapshot
   const known = isKnown(snapshot)
@@ -477,7 +477,7 @@ export function WeatherWidget() {
           aria-label={WEATHER_TEXT.title}
           className={cn(
             'animate-rise absolute right-0 top-[calc(100%+0.5rem)] z-30',
-            // Acotado al espacio sobre la hoja asomada (§T); se desplaza adentro.
+            // Acotado al espacio sobre la hoja asomada; se desplaza adentro.
             'header-popover overflow-y-auto overscroll-contain',
             // `bg-raised` opaco y no `.surface-floating`: esa receta es
             // translúcida con desenfoque y está pensada para posarse sobre el

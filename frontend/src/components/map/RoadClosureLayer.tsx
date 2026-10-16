@@ -83,7 +83,7 @@ export function RoadClosureLayer({ data, visible, theme }: RoadClosureLayerProps
   // react-map-gl compara propiedad por propiedad, así que un objeto nuevo con
   // los mismos valores no produce escrituras — pero memorizarlas evita incluso
   // esa comparación en cada repintado del árbol. Todas salen de
-  // `roadClosureSpecs`, que es donde vive el encendido (ver §I).
+  // `roadClosureSpecs`, que es donde vive el encendido.
   const { cutRing, body, mttDot, icon, hit } = useMemo(
     () => roadClosureSpecs(theme, visible),
     [theme, visible],

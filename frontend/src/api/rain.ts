@@ -21,6 +21,7 @@
  */
 
 import { apiGet, buildQuery } from './client'
+import { toText } from './parse'
 import type {
   RainCollection,
   RainFeature,
@@ -76,10 +77,6 @@ function toStrictBoolean(value: unknown, field: string): boolean {
 
 function toNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
-}
-
-function toText(value: unknown, fallback = ''): string {
-  return typeof value === 'string' ? value : fallback
 }
 
 /**

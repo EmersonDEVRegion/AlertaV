@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ApiError } from '@/api/client'
+import { isNotFound } from '@/api/client'
 import { fetchNewsFeed } from '@/api/newsFeed'
 import type { NewsFeedItem, NewsFeedQuery } from '@/api/newsFeedTypes'
 import { shouldWarn } from '@/components/ui/LayerHealth'
@@ -9,7 +9,7 @@ import { pollEvery } from '@/lib/polling'
 import { queryKeys } from '@/lib/queryClient'
 
 /**
- * Las noticias de las últimas 24 h (desde el 2026-10-06 fuera del mapa).
+ * Las noticias de las últimas 24 h (fuera del mapa).
  *
  * Mismos estados que el radar de vehículos, por la misma razón: `empty` (cero
  * notas con la fuente sana) y `blind` (cero notas con la fuente caída) no
@@ -27,10 +27,6 @@ const NEWS_FEED_PARAMS: NewsFeedQuery = { horas: 24, limit: 60 }
 
 const NO_ITEMS: NewsFeedItem[] = []
 const pollFeed = pollEvery(env.newsPollIntervalMs)
-
-function isNotFound(error: unknown): boolean {
-  return error instanceof ApiError && error.status === 404
-}
 
 export function useNewsFeed(enabled = true): NewsFeedState {
   const query = useQuery({

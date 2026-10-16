@@ -26,6 +26,7 @@
  */
 
 import { apiGet } from './client'
+import { toText } from './parse'
 import type {
   TacticalWeather,
   WeatherHazard,
@@ -85,10 +86,6 @@ function toNumberOrNull(value: unknown): number | null {
 function toCount(value: unknown): number {
   const parsed = toNumberOrNull(value)
   return parsed === null || parsed < 0 ? 0 : Math.trunc(parsed)
-}
-
-function toText(value: unknown, fallback = ''): string {
-  return typeof value === 'string' ? value : fallback
 }
 
 function toTextOrNull(value: unknown): string | null {

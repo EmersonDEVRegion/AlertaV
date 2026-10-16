@@ -3,7 +3,7 @@
 Para qué existe
 ---------------
 Los filtros de frescura de los collectors de texto (`es_reciente` en prensa,
-`is_fresh` en X e Instagram) miden la antigüedad **de la publicación**. Una nota
+`is_fresh` en X) miden la antigüedad **de la publicación**. Una nota
 publicada hace una hora pasa, aunque cuente algo de hace cuatro días.
 
 El 2026-09-03, un jueves, @alertanoticiasvalparaiso publicó: "Una mujer resultó

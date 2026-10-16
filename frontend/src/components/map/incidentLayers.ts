@@ -84,9 +84,9 @@ const ZOOM_STOPS = [
 /**
  * Relleno del anillo de alerta: 7 px en z6 y 11 px en z14, lineal.
  *
- * Antes esto era un `interpolate` propio que se sumaba al radio del disco. Como
- * ahora el zoom vive una sola vez —en la raíz— el relleno se evalúa en JS para
- * cada tope y entra como número constante.
+ * No es un `interpolate` propio sumado al radio del disco: el zoom vive una sola
+ * vez —en la raíz—, así que el relleno se evalúa en JS para cada tope y entra
+ * como número constante.
  */
 const alertPad = (zoom: number) => 7 + (zoom - 6) * 0.5
 

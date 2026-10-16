@@ -49,7 +49,7 @@ class TestGeometria:
 
     def test_la_caja_configurada_cubre_el_mapa_y_cabe_en_el_presupuesto(self) -> None:
         # La caja es `MAP_MAX_BOUNDS` de la PWA: el borde del campo queda en el
-        # límite del mapa y no a la vista (§L). La PWA compara la caja con
+        # límite del mapa y no a la vista. La PWA compara la caja con
         # MAP_MAX_BOUNDS (`frontend/src/config/rainGridBounds.test.ts`).
         grid = build_grid(
             west=settings.RAIN_GRID_WEST,
@@ -192,7 +192,7 @@ class TestCorrida:
 
 
 class TestArranque:
-    """Un arranque del proceso no relee la grilla si la foto sirve (§L)."""
+    """Un arranque del proceso no relee la grilla si la foto sirve."""
 
     def _row(self, **over: Any) -> SimpleNamespace:
         grid = grid_from_settings()

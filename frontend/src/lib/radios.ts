@@ -1,5 +1,5 @@
 /**
- * Radios de aviso por categoría (§K). Espejo de `app/services/push/radios.py`.
+ * Radios de aviso por categoría. Espejo de `app/services/push/radios.py`.
  *
  * El servidor declara las categorías y sus radios por defecto en
  * `/push/status`; esto es el respaldo para un servidor anterior y la escala del

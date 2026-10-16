@@ -155,7 +155,7 @@ def extract_commune(
             # `collectors.weather`, cuyo `__init__` carga un collector que
             # importa `collectors.base`, que importa `services`… que importa
             # este módulo. Arriba del archivo, `python -m app.workers` moría
-            # con un import circular (el deploy del 2026-09-28).
+            # con un import circular.
             from app.collectors.lugares import comuna_por_nombre
 
             # El nombre canónico si es una comuna de la región («Vina del Mar»

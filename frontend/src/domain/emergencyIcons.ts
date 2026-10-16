@@ -10,14 +10,13 @@
  * falla: simplemente cae en el respaldo y todos los puntos comparten icono.
  * De ahí que este mapa se declare contra los enum reales.
  *
- * # Material Symbols Rounded, relleno (§L, 30-09-2026)
+ * # Material Symbols Rounded, relleno
  *
  * Los glifos salen de **Material Symbols Rounded, variante rellena, peso 600**
  * (`@material-symbols/svg-600`, versión 0.47.5), © Google LLC, bajo licencia
  * **Apache-2.0** — el texto está en `frontend/licenses/material-symbols.txt`.
- * Antes eran siluetas dibujadas a mano para este mapa; se veían bien a 40 px
- * pero no del todo a 14, sobre todo el auto. Material se diseñó para leerse a
- * 20–24 px con relleno, que es justo el rango de un símbolo de mapa.
+ * Material se diseñó para leerse a 20–24 px con relleno (una silueta dibujada
+ * a mano se ve bien a 40 px pero no a 14), que es justo el rango de un símbolo de mapa.
  *
  * Los `paths` están **convertidos** del lienzo original (`0 -960 960 960`) al de
  * 24 que asume el rasterizador (`lib/iconRaster.ts`): `translate(0 960)` y
@@ -92,7 +91,7 @@ export const ICON_GLYPHS: Record<IconId, IconGlyph> = {
   },
   /*
    * Auto con el signo de alerta (`car_crash`). Reemplaza al vehículo dibujado
-   * a mano, que a 14 px se leía como un borrón (§L).
+   * a mano, que a 14 px se leía como un borrón.
    */
   'av-crash': {
     label: 'Accidente vial',

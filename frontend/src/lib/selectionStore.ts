@@ -5,9 +5,9 @@
  * # Por qué no vive en `App`
  *
  * La selección es el estado más efímero de la aplicación —cambia con cada
- * toque— y vivía en el mismo componente que sostiene los 500 incidentes, sus
- * particiones y los dos paneles. Cada toque en un pin repintaba la barra, los
- * paneles y el mapa para mover un anillo.
+ * toque—. En el componente que sostiene los 500 incidentes, sus particiones y
+ * los dos paneles, cada toque en un pin repintaría la barra, los paneles y el
+ * mapa para mover un anillo.
  *
  * Con un store externo y `useSyncExternalStore`, cada componente se suscribe
  * sólo al pedazo que usa y recibe un PRIMITIVO: la capa del anillo lee un
@@ -17,10 +17,9 @@
  *
  * # Exclusión mutua por construcción
  *
- * Antes eran dos `useState` más un booleano del radar, y la regla «abrir uno
- * cierra los otros» vivía repartida en tres manejadores y un `useEffect`. Acá es
- * un solo valor: no hay forma de representar un incidente y el radar abiertos
- * a la vez. Una capa nueva que se seleccione entra como una variante más de
+ * La regla «abrir uno cierra los otros» no se reparte en manejadores y efectos:
+ * la selección es un solo valor, y no hay forma de representar un incidente y el
+ * radar abiertos a la vez. Una capa nueva que se seleccione entra como una variante más de
  * `Selection`, no como otro `useState`: así entraron los cortes de agua.
  */
 
