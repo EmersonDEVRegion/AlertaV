@@ -147,7 +147,7 @@ export const SOURCE_GROUPS: readonly SourceGroup[] = [
       {
         name: 'OpenStreetMap',
         url: 'https://www.openstreetmap.org/copyright',
-        what: 'Cartografía, búsqueda de direcciones (Nominatim) y cruces de calles (Overpass).',
+        what: 'Cartografía, búsqueda de direcciones (Nominatim) y el índice de esquinas de la región, armado cada mes desde el extracto de Geofabrik (ODbL).',
       },
       {
         name: 'CARTO',

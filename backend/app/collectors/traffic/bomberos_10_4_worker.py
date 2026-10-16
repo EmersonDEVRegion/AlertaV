@@ -76,9 +76,9 @@ from typing import Any
 
 import feedparser
 
-from app.collectors import vocabulary
+from app.collectors import cruces_locales, vocabulary
 from app.collectors.cuarteles import cuartel_nombrado, punto_de_cuartel
-from app.collectors.nominatim import GeocodeResult, build_client, geocode
+from app.collectors.nominatim import GeocodeResult, build_client, geocode, resultado_de_cruce
 from app.collectors.traffic import gemini
 from app.collectors.vocabulary import (
     CBV,
@@ -319,6 +319,7 @@ async def decode_dispatches(
             )
 
         if decoded is not None:
+            decoded = anotar_numeracion(decoded, dispatch.raw_text)
             # El modo se anota POR DESPACHO y no por lote: con el presupuesto
             # agotado a mitad de camino, los primeros avisos pasaron por el
             # modelo y los últimos no. Un solo valor para todos mentiría sobre
@@ -337,6 +338,37 @@ async def decode_dispatches(
             },
         )
     return (decodificados, por_reglas)
+
+
+#: «altura 1400», «#1400», «N° 1400»: la numeración que escribe la central de
+#: Los Andes («📍 Las Araucarias Altura, altura 1400 · Sector 505»).
+_NUMERACION = re.compile(
+    r"(?:\baltura\b[\s,]*(?:altura\s*)?|#\s*|\bn(?:ro|°|º)\.?\s*)(?P<numero>\d{1,5})\b",
+    re.IGNORECASE,
+)
+#: Lo que sobra al final de una calle cuando el extractor dejó la numeración
+#: pegada («Ramón Trincado Altura 5»).
+_COLA_NUMERACION = re.compile(r"\s*(?:\baltura\b|#|\bn(?:ro|°|º)\.?).*$", re.IGNORECASE)
+
+
+def anotar_numeracion(decoded: dict[str, Any], aviso: str | None) -> dict[str, Any]:
+    """Separa la numeración de la calle: `street_1` limpia y `numero` aparte.
+
+    Sólo cuenta cuando hay una calle y ninguna transversal: con dos calles, el
+    punto es la esquina y el número sobra. El número se lee del aviso crudo y
+    no del campo del modelo, que a veces lo descarta («Las Araucarias»).
+    """
+    calle = str(decoded.get("street_1") or "").strip()
+    if not calle:
+        return decoded
+    limpia = _COLA_NUMERACION.sub("", calle).strip(" ,.-") or calle
+    salida = {**decoded, "street_1": limpia}
+    if decoded.get("street_2"):
+        return salida
+    encontrado = _NUMERACION.search(aviso or "") or _NUMERACION.search(calle)
+    if encontrado is not None and int(encontrado.group("numero")) > 0:
+        salida["numero"] = encontrado.group("numero")
+    return salida
 
 
 #: Jurisdicción de cada central, por su cuenta de X. Es la comuna que la caja
@@ -461,14 +493,6 @@ async def geocode_dispatches(
                 resueltos += 1
                 salida.append(replace(dispatch, point=punto_de_cuartel(cuartel, destino)))
                 continue
-            # Sin vía principal no hay nada que buscar. Preguntar sólo por la
-            # comuna devolvería el centroide comunal, que como ubicación de una
-            # emergencia es peor que no tener ninguna: parece un dato y no lo es.
-            if not calles.get("street_1") or gastados >= max_geocodes:
-                salida.append(dispatch)
-                continue
-
-            punto: GeocodeResult | None = None
             # La comuna del despacho si el decodificador la sacó; si no —el
             # caso normal, la central no la escribe— la de SU central, y recién
             # después la que pasó el llamador. Ver `HANDLE_COMUNA`.
@@ -480,6 +504,24 @@ async def geocode_dispatches(
                     for alternativa in comunas_alternativas(dispatch.cuenta)
                     if alternativa != principal
                 ]
+
+            # El índice de cruces mira la jurisdicción entera de una vez y no
+            # gasta presupuesto de Nominatim: una esquina de Concón despachada
+            # por el CBVM sale acá sin probar primero Viña.
+            local = await _cruce_en_jurisdiccion(calles, intentos)
+            if local is not None:
+                resueltos += 1
+                salida.append(replace(dispatch, point=local))
+                continue
+
+            # Sin vía principal no hay nada que buscar. Preguntar sólo por la
+            # comuna devolvería el centroide comunal, que como ubicación de una
+            # emergencia es peor que no tener ninguna: parece un dato y no lo es.
+            if not calles.get("street_1") or gastados >= max_geocodes:
+                salida.append(dispatch)
+                continue
+
+            punto: GeocodeResult | None = None
 
             for intento in intentos:
                 if gastados >= max_geocodes:
@@ -509,6 +551,23 @@ async def geocode_dispatches(
         extra={"resueltos": resueltos, "intentos": gastados, "tope": max_geocodes},
     )
     return (salida, resueltos)
+
+
+async def _cruce_en_jurisdiccion(
+    calles: dict[str, Any], comunas: Sequence[str | None]
+) -> GeocodeResult | None:
+    """La esquina del índice local si es UNA sola en toda la jurisdicción."""
+    if not calles.get("street_1") or not calles.get("street_2"):
+        return None
+    locales = await cruces_locales.buscar(calles["street_1"], calles["street_2"], comunas)
+    if len(locales) != 1:
+        return None
+    return resultado_de_cruce(
+        locales[0],
+        calles,
+        comuna=cruces_locales.comuna_de(locales[0], comunas),
+        sector=str(calles.get("sector") or "").strip() or None,
+    )
 
 
 def dispatch_type(dispatch: Dispatch) -> EventType:
@@ -632,6 +691,7 @@ def dispatches_to_events(
                         "street_1": (dispatch.decoded or {}).get("street_1"),
                         "street_2": (dispatch.decoded or {}).get("street_2"),
                         "city": (dispatch.decoded or {}).get("city"),
+                        "numero": (dispatch.decoded or {}).get("numero"),
                         "resumen": (dispatch.decoded or {}).get("resumen"),
                     },
                     # Separado de `_extraction`, igual que en el MTT: qué leyó
@@ -651,6 +711,7 @@ __all__ = [
     "BOMBEROS_CONFIDENCE",
     "Dispatch",
     "EstadoFeed",
+    "anotar_numeracion",
     "build_external_id",
     "build_text",
     "decode_dispatches",

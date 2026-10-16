@@ -38,6 +38,7 @@ cachea.
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import logging
 import re
@@ -55,6 +56,7 @@ from app.collectors.vocabulary import (
     resolve_clave,
 )
 from app.core.config import settings
+from app.core.texto import sin_tildes
 
 logger = logging.getLogger(__name__)
 
@@ -223,7 +225,7 @@ def response_text(response: Any) -> str:
     return texto if isinstance(texto, str) else ""
 
 
-def parse_response(raw: str) -> dict[str, Any] | None:
+def parse_response(raw: str, *, original: str | None = None) -> dict[str, Any] | None:
     """Texto crudo del modelo → dict validado. None si no sirve.
 
     Devolver None es un resultado legítimo y esperado, no una excepción: el aviso
@@ -265,9 +267,9 @@ def parse_response(raw: str) -> dict[str, Any] | None:
         return None
 
     return {
-        "street_1": street_1,
-        "street_2": _clean(payload.get("street_2")),
-        "city": _clean(payload.get("city")),
+        "street_1": reparar_controles(street_1, original),
+        "street_2": reparar_controles(_clean(payload.get("street_2")), original),
+        "city": reparar_controles(_clean(payload.get("city")), original),
     }
 
 
@@ -283,6 +285,66 @@ def _clean(value: Any) -> str | None:
     if not text or text.lower() in {"null", "none", "n/a", "na", "desconocido", "-"}:
         return None
     return text
+
+
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+_BORDES = " ,.;:*/·|-"
+
+
+def _palabra_reparada(palabra: str, del_aviso: dict[str, str]) -> str:
+    """La palabra del aviso de la que `palabra` es una copia dañada, o ella misma.
+
+    Sólo se reemplazan palabras que parecen dañadas: con una cifra metida entre
+    letras («G3MEZ», «CARRE1O») o con una letra de menos («MXICO»). Una palabra
+    que el modelo cambió a propósito («Av.» por «Avenida») no tiene ninguna de
+    las dos marcas y se respeta.
+    """
+    clave = sin_tildes(palabra).strip(_BORDES)
+    if len(clave) < 4 or clave in del_aviso:
+        return palabra
+    con_cifra = any(c.isdigit() for c in clave) and any(c.isalpha() for c in clave)
+    mejor: tuple[float, str] | None = None
+    for candidata, original in del_aviso.items():
+        if not con_cifra and len(candidata) != len(clave) + 1:
+            continue
+        if con_cifra and len(candidata) != len(clave):
+            continue
+        razon = difflib.SequenceMatcher(None, clave, candidata).ratio()
+        if razon >= 0.8 and (mejor is None or razon > mejor[0]):
+            mejor = (razon, original)
+    return mejor[1] if mejor is not None else palabra
+
+
+def reparar_controles(valor: str | None, original: str | None) -> str | None:
+    """Repone las letras que el modelo cambió al copiar un nombre del aviso.
+
+    Gemini devuelve a veces las letras acentuadas cambiadas por otra cosa:
+    «NAV\x10O SAN MART\x10N» por «NAVÍO SAN MARTÍN», «G3MEZ CARRE1O» por
+    «GÓMEZ CARREÑO», «MXICO» por «MÉXICO». Entre septiembre y octubre de 2026,
+    en 13 de 229 despachos. El aviso original sí está bien, así que:
+
+    1. Con caracteres de control, el campo se busca en el aviso con cada uno
+       como comodín y se devuelve ese tramo.
+    2. Si no, cada palabra con marcas de daño (`_palabra_reparada`) se cambia
+       por la del aviso que más se le parece.
+    3. Lo demás queda como vino, sin los controles.
+    """
+    if not valor:
+        return valor
+    texto = original or ""
+    if _CONTROL.search(valor):
+        patron = "".join("." if _CONTROL.match(c) else re.escape(c) for c in valor)
+        encontrado = re.search(patron, texto, re.IGNORECASE)
+        if encontrado is not None:
+            return encontrado.group(0)
+
+    limpio = _clean(_CONTROL.sub("", valor))
+    if not limpio or not texto:
+        return limpio
+    del_aviso = {
+        sin_tildes(p).strip(_BORDES): p.strip(_BORDES) for p in texto.split() if p.strip(_BORDES)
+    }
+    return " ".join(_palabra_reparada(p, del_aviso) for p in limpio.split())
 
 
 def registrar_uso(response: Any, operacion: str) -> None:
@@ -387,7 +449,7 @@ async def extract_streets(text: str) -> dict[str, Any] | None:
         )
         return None
 
-    return parse_response(raw)
+    return parse_response(raw, original=payload)
 
 
 # =============================================================================
@@ -789,7 +851,11 @@ def format_dispatch_summary(
 
 
 def parse_dispatch_response(
-    raw: str, *, source_handle: str, sistema: SistemaClaves | None = None
+    raw: str,
+    *,
+    source_handle: str,
+    sistema: SistemaClaves | None = None,
+    original: str | None = None,
 ) -> dict[str, Any] | None:
     """Texto crudo del modelo → dict validado con `resumen`. None si no sirve.
 
@@ -828,8 +894,9 @@ def parse_dispatch_response(
         logger.debug("el despacho no trae ni clave ni vía", extra={"muestra": body[:200]})
         return None
 
-    street_2 = _clean(payload.get("street_2"))
-    city = _clean(payload.get("city"))
+    street_1 = reparar_controles(street_1, original)
+    street_2 = reparar_controles(_clean(payload.get("street_2")), original)
+    city = reparar_controles(_clean(payload.get("city")), original)
     significado = _clean(payload.get("significado"))
 
     resumen = format_dispatch_summary(
@@ -924,7 +991,9 @@ async def extract_dispatch(
         )
         return None
 
-    return parse_dispatch_response(raw, source_handle=source_handle, sistema=sistema)
+    return parse_dispatch_response(
+        raw, source_handle=source_handle, sistema=sistema, original=payload
+    )
 
 
 #: Separadores de intersección del formato telegráfico. El `*` de @CGI_CBV
@@ -1304,6 +1373,7 @@ __all__ = [
     "registrar_uso",
     "reordenar_clave_parentesis",
     "reordenar_clave_primero",
+    "reparar_controles",
     "response_text",
     "unidades_del_aviso",
 ]

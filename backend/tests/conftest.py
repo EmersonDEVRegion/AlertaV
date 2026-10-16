@@ -19,6 +19,8 @@ def _sin_cache_ni_red_opcional() -> Iterator[None]:
       respuesta que otro test simuló antes.
     * Overpass (`app/collectors/overpass.py`): cada geocodificación con dos
       calles saldría a buscar el cruce a un servidor público.
+    * El índice local de cruces (`app/collectors/cruces_locales.py`): cada
+      geocodificación con dos calles y comuna consultaría la base.
     * La pausa por cuota de Open-Meteo (`app/collectors/weather/cuota.py`): un
       test que simula un 429 diario dejaría sin red a los siguientes.
 
@@ -29,10 +31,19 @@ def _sin_cache_ni_red_opcional() -> Iterator[None]:
     limpian algo que un test parchó (el cliente de Gemini, por ejemplo) se
     encontrarían todavía el parche.
     """
-    anteriores = (settings.API_RESPONSE_CACHE_SECONDS, settings.OVERPASS_ENABLED)
+    anteriores = (
+        settings.API_RESPONSE_CACHE_SECONDS,
+        settings.OVERPASS_ENABLED,
+        settings.CRUCES_LOCALES_ENABLED,
+    )
     settings.API_RESPONSE_CACHE_SECONDS = 0
     settings.OVERPASS_ENABLED = False
+    settings.CRUCES_LOCALES_ENABLED = False
     cuota.reiniciar()
     yield
     cuota.reiniciar()
-    settings.API_RESPONSE_CACHE_SECONDS, settings.OVERPASS_ENABLED = anteriores
+    (
+        settings.API_RESPONSE_CACHE_SECONDS,
+        settings.OVERPASS_ENABLED,
+        settings.CRUCES_LOCALES_ENABLED,
+    ) = anteriores

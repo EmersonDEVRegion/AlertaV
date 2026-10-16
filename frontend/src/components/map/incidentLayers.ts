@@ -3,6 +3,7 @@
  *
  * Orden de dibujo, de abajo hacia arriba:
  *
+ *   0. `uncertainty`  — círculo en metros: dónde puede estar el hecho.
  *   1. `alert-halo`   — anillo exterior. Eje SENAPRED.
  *   2. `casing`       — aro blanco. Separa el relleno del anillo de alerta.
  *   3. `core`         — disco relleno. Tramo de `confidence_level`.
@@ -128,6 +129,50 @@ function circleRadius({ scale = 1, pad = 0 }: RadiusOptions = {}): ExpressionSpe
 const CORE_RADIUS = circleRadius()
 
 const HALO_RADIUS = circleRadius({ pad: alertPad })
+
+/**
+ * Metros por píxel en el ecuador con zoom 0, para mosaicos de 512 px como los
+ * de MapLibre, ya multiplicado por el coseno de la latitud de la región (33° S).
+ * Entre los 32° y los 34° S el error es de menos de un 2 %: el círculo es una
+ * cota, no una medición.
+ */
+const METROS_POR_PIXEL_Z0 = 78_271.517 * Math.cos((33 * Math.PI) / 180)
+
+/** `incertidumbre_m` → píxeles. Exponencial en base 2: exacto en todo zoom. */
+function metrosAPixeles(zoom: number): ExpressionSpecification {
+  return ['*', ['get', 'incertidumbre_m'], round((2 ** zoom / METROS_POR_PIXEL_Z0) * 1e4) / 1e4]
+}
+
+/**
+ * Círculo de incertidumbre: hasta dónde puede estar el hecho según la precisión
+ * del punto (ver `domain/locationPrecision`). Sólo de cerca, desde zoom 13, que
+ * es donde 60 m empiezan a verse: más lejos el disco del incidente ya los tapa.
+ * Mismo color del tramo, muy tenue, para que se lea como «por aquí» y no como
+ * un segundo incidente.
+ */
+export const uncertaintyLayer: IncidentLayer = {
+  id: 'incidents-uncertainty',
+  type: 'circle',
+  minzoom: 13,
+  filter: ['>', ['get', 'incertidumbre_m'], 0],
+  paint: {
+    'circle-radius': [
+      'interpolate',
+      ['exponential', 2],
+      ['zoom'],
+      13,
+      metrosAPixeles(13),
+      22,
+      metrosAPixeles(22),
+    ] as unknown as ExpressionSpecification,
+    'circle-color': LEVEL_COLOR_EXPRESSION as unknown as ExpressionSpecification,
+    'circle-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0, 14, 0.1],
+    'circle-stroke-color': LEVEL_COLOR_EXPRESSION as unknown as ExpressionSpecification,
+    'circle-stroke-width': 1,
+    'circle-stroke-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0, 14, 0.45],
+    'circle-pitch-alignment': 'map',
+  },
+}
 
 /** Sólo los incidentes con alerta oficial vigente llevan anillo. */
 const HAS_ALERT: ExpressionSpecification = ['!=', ['get', 'alert_level'], '']

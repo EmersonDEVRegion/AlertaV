@@ -83,6 +83,7 @@ import {
   coreLayer,
   hitLayer,
   selectedLayer,
+  uncertaintyLayer,
   unverifiedLayer,
 } from './incidentLayers'
 import {
@@ -547,6 +548,7 @@ export const IncidentMap = memo(function IncidentMap({
   // cambia esa prop, no en cada render.
   const incidentSpecs = useMemo(
     () => ({
+      uncertainty: withFamilies(uncertaintyLayer, families),
       halo: withFamilies(alertHaloLayer, families),
       casing: withFamilies(casingLayer, families),
       core: withFamilies(coreLayer, families),
@@ -750,6 +752,7 @@ export const IncidentMap = memo(function IncidentMap({
         data={data}
         promoteId="code"
       >
+        <Layer {...incidentSpecs.uncertainty} />
         <Layer {...incidentSpecs.halo} />
         <Layer {...incidentSpecs.casing} />
         {/*
