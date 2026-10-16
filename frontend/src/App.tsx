@@ -7,12 +7,10 @@ import { IncidentMap } from '@/components/map/IncidentMap'
 import {
   DEFAULT_LAYER_VISIBILITY,
   DEFAULT_PROVIDER_VISIBILITY,
-} from '@/components/ui/SidePanel'
-import type {
-  LayerVisibility,
-  ProviderVisibility,
-  WaterPanel,
-} from '@/components/ui/SidePanel'
+  type LayerVisibility,
+  type ProviderVisibility,
+} from '@/domain/layers'
+import type { WaterLayerStatus } from '@/components/layers/LayersTab'
 import { providerOf } from '@/domain/powerSymbology'
 import { layerOf } from '@/domain/families'
 import type { IncidentLayerKey } from '@/domain/families'
@@ -317,20 +315,15 @@ export default function App() {
     return counts
   }, [current])
 
-  /** Índice del acordeón: los mismos incidentes, agrupados por capa. */
-  const incidentsByLayer = useMemo(() => {
-    const groups: Record<IncidentLayerKey, Incident[]> = {
-      fire: [],
-      traffic: [],
-      power: [],
-      otros: [],
+  /** Los cortes de luz del mapa por empresa: el número de cada ficha de filtro. */
+  const providerCounts = useMemo(() => {
+    const counts = { chilquinta: 0, cge: 0 }
+    for (const incident of current) {
+      if (layerOf(incident.type) !== 'power') continue
+      const provider = providerOf(incident)
+      if (provider) counts[provider] += 1
     }
-    for (const incident of current) groups[layerOf(incident.type)].push(incident)
-    // Los más recientes arriba: es el orden en que alguien quiere revisarlos.
-    for (const key of Object.keys(groups) as IncidentLayerKey[]) {
-      groups[key].sort((a, b) => b.last_seen_at.localeCompare(a.last_seen_at))
-    }
-    return groups
+    return counts
   }, [current])
   // --- Radio de percepción sísmica -----------------------------------------
   const reachCollection = useMemo(
@@ -360,24 +353,6 @@ export default function App() {
     (incident: Incident) => {
       selectIncident(incident.code)
       flyTo(incident.lon, incident.lat, FOCUS_ZOOM)
-    },
-    [flyTo],
-  )
-
-  const focusSeismic = useCallback(
-    (event: SeismicEvent) => {
-      selectSeismic(event.usgs_id)
-      flyTo(event.lon, event.lat, SEISMIC_FOCUS_ZOOM)
-    },
-    [flyTo],
-  )
-
-  // Un corte sin punto (el visor de Esval no respondió) abre la tarjeta igual,
-  // sin mover la cámara: no hay adónde volar.
-  const focusWaterCut = useCallback(
-    (cut: WaterCut) => {
-      selectWaterCut(cut.id)
-      if (cut.coordinates) flyTo(cut.coordinates[0], cut.coordinates[1], FOCUS_ZOOM)
     },
     [flyTo],
   )
@@ -419,17 +394,12 @@ export default function App() {
     [flyTo],
   )
 
-  const waterPanel = useMemo<WaterPanel | null>(
+  const waterStatus = useMemo<WaterLayerStatus | null>(
     () =>
       water.available
-        ? {
-            cuts: water.cuts,
-            status: water.sourceStatus,
-            detail: water.source?.detalle ?? null,
-            onFocus: focusWaterCut,
-          }
+        ? { status: water.sourceStatus, detail: water.source?.detalle ?? null }
         : null,
-    [water, focusWaterCut],
+    [water.available, water.sourceStatus, water.source?.detalle],
   )
 
   // --- Notificación tocada --------------------------------------------------
@@ -494,18 +464,15 @@ export default function App() {
       visibility,
       onChange: setVisibility,
       counts: { ...countsByLayer, seismic: seismicList.length, water: mapWaterCuts.length },
-      incidentsByLayer,
-      seismicEvents: seismicList,
-      onFocusIncident: focusIncident,
-      onFocusSeismic: focusSeismic,
       seismicFilter,
       onSeismicFilterChange: setSeismicFilter,
       providers,
       onProvidersChange: setProviders,
+      providerCounts,
       // Va acá y no en cada rama por el mismo motivo que el resto: declarar las
       // propiedades dos veces garantiza que una se quede atrás.
       health: health.data,
-      water: waterPanel,
+      water: waterStatus,
       confirmedOnly,
       onConfirmedOnlyChange: setConfirmedOnly,
     }),
@@ -515,10 +482,8 @@ export default function App() {
       countsByLayer,
       seismicList,
       mapWaterCuts,
-      waterPanel,
-      incidentsByLayer,
-      focusIncident,
-      focusSeismic,
+      waterStatus,
+      providerCounts,
       seismicFilter,
       providers,
       health.data,

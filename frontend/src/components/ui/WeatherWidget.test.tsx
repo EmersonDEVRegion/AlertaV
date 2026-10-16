@@ -17,7 +17,7 @@
  *   3. **Nada de esto se disfraza de alerta oficial.** La cautela que la capa
  *      arrastra en todos sus textos también vale para 180 px de barra.
  *
- * Hereda además la cobertura de lluvia que vivía en `ReferenceDock.test.tsx`:
+ * Hereda además la cobertura de lluvia que vivía en las pruebas de las capas de referencia:
  * la tarjeta se fusionó acá, y con ella su interruptor.
  */
 

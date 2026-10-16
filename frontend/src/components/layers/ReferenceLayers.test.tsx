@@ -1,10 +1,5 @@
 /**
- * Controlador de capas de referencia.
- *
- * Hereda la cobertura que vivía en `SidePanel.test.tsx` —la capa se mudó, los
- * tests con ella— y añade lo que el panel viejo no podía comprobar porque no
- * tenía sitio para mostrarlo: el motivo real de un fallo y la nota de relevo
- * por zoom.
+ * Capas de referencia: los azulejos y la ficha que aparece al encender uno.
  *
  * El test que más importa sigue siendo el del estado vacío. Una comuna ausente
  * del GeoJSON significa "comuna seca", así que una colección vacía es una
@@ -16,8 +11,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ReferenceDock } from './ReferenceDock'
-import type { ReferenceDockProps } from './ReferenceDock'
+import { ReferenceLayers } from './ReferenceLayers'
+import type { ReferenceLayersProps } from './ReferenceLayers'
 import type { CuartelesStatus } from '@/hooks/useCuarteles'
 import type { HazardStatus } from '@/hooks/useSeismicHazard'
 import type { RoadClosureStatus } from '@/hooks/useRoadClosures'
@@ -35,14 +30,14 @@ type Override = Partial<{
   cuartelesCount: number
 }>
 
-function renderDock(over: Override = {}) {
+function renderLayers(over: Override = {}) {
   const onHazardToggle = vi.fn()
   const onHazardRetry = vi.fn()
   const onClosureToggle = vi.fn()
   const onClosureRetry = vi.fn()
   const onCuartelesToggle = vi.fn()
 
-  const props: ReferenceDockProps = {
+  const props: ReferenceLayersProps = {
     hazardEnabled: over.hazardEnabled ?? false,
     hazardStatus: over.hazardStatus ?? 'idle',
     hazardError: over.hazardError ?? null,
@@ -63,7 +58,7 @@ function renderDock(over: Override = {}) {
     theme: 'light',
   }
 
-  render(<ReferenceDock {...props} />)
+  render(<ReferenceLayers {...props} />)
   return {
     onHazardToggle,
     onHazardRetry,
@@ -73,21 +68,20 @@ function renderDock(over: Override = {}) {
   }
 }
 
-const hazardSwitch = () => screen.getByRole('switch', { name: /amenaza sísmica/i })
-const closureSwitch = () =>
-  screen.getByRole('switch', { name: /cortes e intervenciones|cortes de ruta/i })
+const hazardSwitch = () => screen.getByRole('button', { name: /amenaza sísmica/i })
+const closureSwitch = () => screen.getByRole('button', { name: /cortes de ruta/i })
 
 describe('carga diferida', () => {
   it('las dos arrancan apagadas: nada se pide sin un gesto del usuario', () => {
-    renderDock()
+    renderLayers()
 
-    expect(hazardSwitch()).toHaveAttribute('aria-checked', 'false')
-    expect(closureSwitch()).toHaveAttribute('aria-checked', 'false')
+    expect(hazardSwitch()).toHaveAttribute('aria-pressed', 'false')
+    expect(closureSwitch()).toHaveAttribute('aria-pressed', 'false')
   })
 
-  it('cada interruptor avisa por separado', async () => {
+  it('cada azulejo avisa por separado', async () => {
     const user = userEvent.setup()
-    const { onHazardToggle, onClosureToggle } = renderDock()
+    const { onHazardToggle, onClosureToggle } = renderLayers()
 
     await user.click(hazardSwitch())
     expect(onHazardToggle).toHaveBeenCalledTimes(1)
@@ -100,12 +94,12 @@ describe('carga diferida', () => {
 
 describe('amenaza sísmica', () => {
   it('describe la espera sin prometer un resultado', () => {
-    renderDock({ hazardEnabled: true, hazardStatus: 'loading' })
+    renderLayers({ hazardEnabled: true, hazardStatus: 'loading' })
     expect(screen.getByText(/descargando modelo/i)).toBeInTheDocument()
   })
 
   it('muestra el MOTIVO del fallo, no un «no se pudo cargar» genérico', () => {
-    renderDock({
+    renderLayers({
       hazardEnabled: true,
       hazardStatus: 'error',
       hazardError: 'La capa de amenaza no está publicada en el servidor.',
@@ -117,23 +111,23 @@ describe('amenaza sísmica', () => {
     expect(screen.getByRole('button', { name: /reintentar/i })).toBeInTheDocument()
   })
 
-  it('el interruptor sigue encendido tras un fallo', () => {
-    renderDock({ hazardEnabled: true, hazardStatus: 'error', hazardError: 'caída' })
+  it('el azulejo sigue encendido tras un fallo', () => {
+    renderLayers({ hazardEnabled: true, hazardStatus: 'error', hazardError: 'caída' })
 
     // La contraparte visual del arreglo de la Fase 1: el estado del control lo
     // decide el usuario, y el resultado de la descarga se cuenta en el
     // subtítulo. Un control que se apaga solo deja de ser un control.
-    expect(hazardSwitch()).toHaveAttribute('aria-checked', 'true')
+    expect(hazardSwitch()).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('no llama evento a un modelo probabilístico', () => {
-    renderDock({ hazardEnabled: true, hazardStatus: 'ready' })
+    renderLayers({ hazardEnabled: true, hazardStatus: 'ready' })
 
     expect(screen.getByText(/no un evento en curso/i)).toBeInTheDocument()
   })
 
   it('declara la resolución del modelo en vez de dejarla implícita', () => {
-    renderDock({ hazardEnabled: true, hazardStatus: 'ready' })
+    renderLayers({ hazardEnabled: true, hazardStatus: 'ready' })
 
     /*
      * Antes acá se anunciaba un relevo de representación —«concentración
@@ -158,48 +152,35 @@ describe('amenaza sísmica', () => {
  * componente que las responde.
  */
 
-describe('plegado del dock', () => {
-  it('arranca abierto: esconder el control lo volvería invisible', () => {
-    renderDock()
-    expect(
-      screen.getByRole('button', { name: /capas de referencia/i }),
-    ).toHaveAttribute('aria-expanded', 'true')
+describe('ficha de la capa encendida', () => {
+  it('apagadas no hay fichas: el mosaico es todo', () => {
+    renderLayers()
+    expect(screen.queryAllByRole('region')).toHaveLength(1) // sólo el grupo «Referencia»
   })
 
-  it('al plegarse deja los interruptores en el DOM, no los desmonta', async () => {
-    const user = userEvent.setup()
-    renderDock()
-
-    await user.click(screen.getByRole('button', { name: /capas de referencia/i }))
-
-    // Se anima con `grid-template-rows`, así que el contenido sigue existiendo.
-    // Si alguien lo cambiara por un `&&`, la transición se perdería y el panel
-    // saltaría.
-    expect(hazardSwitch()).toBeInTheDocument()
-    expect(closureSwitch()).toBeInTheDocument()
+  it('cortes de ruta: el azulejo dice lo accionable y la ficha el detalle', () => {
+    renderLayers({ closureEnabled: true, closureStatus: 'ready', closureCount: 14, closureCutCount: 2 })
+    expect(closureSwitch()).toHaveTextContent('2 cortadas')
+    expect(screen.getByText('2 rutas cortadas · 14 vigentes')).toBeInTheDocument()
   })
 
-  it('plegado resume cuántas capas quedaron encendidas', async () => {
-    const user = userEvent.setup()
-    renderDock({ hazardEnabled: true, closureEnabled: true, hazardStatus: 'ready' })
-
-    const header = screen.getByRole('button', { name: /capas de referencia/i })
-    await user.click(header)
-
-    expect(header).toHaveTextContent('2')
+  it('sin cortes informados no es un fallo', () => {
+    renderLayers({ closureEnabled: true, closureStatus: 'empty' })
+    expect(screen.getByText(/la capa está encendida y al día/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /reintentar/i })).not.toBeInTheDocument()
   })
 })
 
 describe('Cuarteles de Bomberos', () => {
-  it('el interruptor avisa y la tarjeta cuenta los cuarteles', async () => {
-    const { onCuartelesToggle } = renderDock({ cuartelesStatus: 'ready', cuartelesCount: 146 })
-    expect(screen.getByText('146 cuarteles en la región')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('switch', { name: /cuarteles de bomberos/i }))
+  it('el azulejo avisa al tocarlo', async () => {
+    const { onCuartelesToggle } = renderLayers({ cuartelesStatus: 'ready', cuartelesCount: 146 })
+    await userEvent.click(screen.getByRole('button', { name: /cuarteles de bomberos/i }))
     expect(onCuartelesToggle).toHaveBeenCalledOnce()
   })
 
-  it('encendida, recuerda que en una emergencia se llama al 132', () => {
-    renderDock({ cuartelesEnabled: true, cuartelesStatus: 'ready', cuartelesCount: 146 })
+  it('encendida, cuenta los cuarteles y recuerda que se llama al 132', () => {
+    renderLayers({ cuartelesEnabled: true, cuartelesStatus: 'ready', cuartelesCount: 146 })
+    expect(screen.getByText('146 cuarteles en la región')).toBeInTheDocument()
     expect(screen.getByText(/llama al 132/)).toBeInTheDocument()
   })
 })

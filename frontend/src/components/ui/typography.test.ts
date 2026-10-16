@@ -13,10 +13,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const CSS = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')
-const BADGE = readFileSync(
-  resolve(process.cwd(), 'src/components/ui/primitives/Badge.tsx'),
-  'utf8',
-)
+const LAYERS = readFileSync(resolve(process.cwd(), 'src/components/layers/LayersTab.tsx'), 'utf8')
 
 describe('cifras que no desplazan el layout', () => {
   it('activa cifras tabulares en toda la aplicación, no caso por caso', () => {
@@ -36,12 +33,8 @@ describe('cifras que no desplazan el layout', () => {
 
   it('ofrece tres cifras para los contadores que pasan de 99', () => {
     expect(CSS).toMatch(/\.count-3 \{\s*min-width: 3ch;\s*\}/)
-    // Un enjambre sísmico llega a tres dígitos; el resto de las capas no.
-    expect(BADGE).toContain("three: 'count-3'")
-  })
-
-  it('el badge de contador aplica la clase, no reimplementa el ancho', () => {
-    expect(BADGE).toContain("count: 'count ")
+    // Un enjambre sísmico o un temporal de cortes llega a tres dígitos.
+    expect(LAYERS).toContain('count count-3')
   })
 })
 
