@@ -53,6 +53,8 @@ Desde `backend/`, con el entorno de desarrollo activo.
 |---|---|---|
 | `scripts/check_sources.py` | Lee CONAF, SENAPRED y las demás fuentes de verdad y avisa si cambió el formato | No |
 | `scripts/probar_cruce.py` | Prueba un cruce de calles contra Nominatim y Overpass | No |
+| `scripts/osm_cruces.py` | Arma el índice de esquinas desde un extracto de OSM (lo corre el workflow `osm-cruces` cada mes) | No: lo carga el backend desde el release |
+| `scripts/replay_cruces.py` | Mide el índice de esquinas contra despachos exportados (cuántos quedan en una esquina, cuánto se mueve el punto) | No |
 | `scripts/smoke_test.py` | Pruebas de punta a punta contra un PostGIS real | Sí, una base desechable |
 | `scripts/smoke_push.py` | El SQL de los avisos push contra un PostGIS real | Sí, limpia lo que crea |
 | `scripts/replay_correlacion.py` | Reproduce días reales de señales con el motor, para calibrarlo | Lee producción; escribe sólo en una base desechable |
@@ -68,6 +70,8 @@ Desde `backend/`, con el entorno de desarrollo activo.
 | Pausar los avisos sin perder suscripciones | `PUSH_ENABLED=false` |
 | Reclamo de GBV por el radar de vehículos | `VITE_VEHICLE_RADAR=off` en Vercel y redeploy |
 | Volver a meter la prensa al motor | `CORRELATION_PRENSA=true` |
+| El índice de esquinas ubica mal | `CRUCES_LOCALES_ENABLED=false` (vuelve a Nominatim sobre la calle) |
+| Rehacer el índice de esquinas ya | Actions → `osm-cruces` → *Run workflow*; los workers lo cargan en menos de 6 h |
 | Volver a un solo radio para todas las familias | `CORRELATION_PERFILES=false` |
 | Open-Meteo agotó la cuota diaria u horaria | Nada: el clima y la grilla se pausan solos hasta que se renueva |
 | Costo de Apify | `.\infra\apify\configurar.ps1 -Auditar` |

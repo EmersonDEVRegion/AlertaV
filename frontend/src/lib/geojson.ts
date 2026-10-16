@@ -20,6 +20,7 @@ import type { ConfidenceLevel, Incident, IncidentType } from '@/api/types'
 import type { WaterCut } from '@/api/waterCutTypes'
 import { type IncidentLayerKey, layerOf } from '@/domain/families'
 import { providerOf } from '@/domain/powerSymbology'
+import { incertidumbreDe } from '@/domain/locationPrecision'
 import { isClosed, levelOf, needsVerificationCaveat } from '@/domain/symbology'
 
 interface IncidentFeatureProps {
@@ -48,6 +49,8 @@ interface IncidentFeatureProps {
   alert_level: string
   confidence: number
   is_official_confirmed: boolean
+  /** Radio del círculo de incertidumbre, en metros. 0 = sin círculo. */
+  incertidumbre_m: number
 }
 
 export type IncidentFeatureCollection = FeatureCollection<Point, IncidentFeatureProps>
@@ -73,6 +76,7 @@ export function toFeatureCollection(
         alert_level: incident.alert_level ?? '',
         confidence: incident.confidence,
         is_official_confirmed: incident.is_official_confirmed,
+        incertidumbre_m: incertidumbreDe(incident.ubicacion_precision),
       },
     })),
   }

@@ -51,7 +51,7 @@ regional · GBV · reportes ciudadanos. Detalle en [`docs/fuentes.md`](docs/fuen
 | Base | PostgreSQL 17 + PostGIS (Supabase) |
 | Frontend | React 19, TypeScript 7, Vite, MapLibre GL, TanStack Query, Tailwind CSS 4 |
 | Avisos | Web Push con VAPID propio (RFC 8291) |
-| Texto libre | Gemini para extraer calles; Nominatim y Overpass para geocodificar |
+| Texto libre | Gemini para extraer calles; un índice propio de esquinas de OSM y Nominatim para geocodificar |
 | Infraestructura | Render, Vercel, Supabase, Apify, Oracle Cloud; todo en planes gratuitos |
 
 ## Repositorio

@@ -171,11 +171,14 @@ def sector_clave_sql() -> ColumnElement[Any]:
 #: distribuidora), sin `_geocoding`.
 RANGO_DE_PRECISION: dict[str | None, int] = {
     "intersection": 0,
+    "address": 0,
     None: 1,
     "street": 2,
     "sector": 3,
 }
 NOMBRE_DE_PRECISION: dict[int, str] = {0: "intersection", 1: "exacta", 2: "street", 3: "sector"}
+#: Una dirección con número (`address`) comparte el rango del cruce: tan fina
+#: como una esquina. El incidente la nombra como tal si es su mejor señal.
 
 
 def rango_de_precision(precision: str | None) -> int:
@@ -187,7 +190,7 @@ def rango_de_precision(precision: str | None) -> int:
 class UbicacionIncidente:
     lat: float
     lon: float
-    #: `intersection`, `exacta`, `street` o `sector`: la del mejor punto.
+    #: `intersection`, `address`, `exacta`, `street` o `sector`: la del mejor punto.
     precision: str
 
 
@@ -204,7 +207,10 @@ def ubicacion_de(
     total = sum(pesos)
     lat = sum(s[0] * w for s, w in zip(elegidas, pesos, strict=True)) / total
     lon = sum(s[1] * w for s, w in zip(elegidas, pesos, strict=True)) / total
-    return UbicacionIncidente(lat=lat, lon=lon, precision=NOMBRE_DE_PRECISION[mejor])
+    nombre = NOMBRE_DE_PRECISION[mejor]
+    if all(s[3] == "address" for s in elegidas):
+        nombre = "address"
+    return UbicacionIncidente(lat=lat, lon=lon, precision=nombre)
 
 
 @dataclass(frozen=True, slots=True)

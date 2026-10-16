@@ -93,8 +93,9 @@ def get_limiter() -> RateLimiter:
 #: distingue solo: los dos son un pin.
 #:
 #: `INTERSECTION` es la precisión que Nominatim no sabe dar (ver
-#: `build_queries`). La calcula `collectors.overpass` cuando
-#: la fuente nombra dos calles: el punto pasa de la calle a la esquina.
+#: `build_queries`). La da el índice de cruces de la base
+#: (`collectors.cruces_locales`) o, como respaldo, `collectors.overpass`,
+#: cuando la fuente nombra dos calles: el punto pasa de la calle a la esquina.
 #:
 #: `SECTOR` es un barrio, población o cerro: lo que devuelve Nominatim cuando se
 #: le pide "Miraflores Alto, Viña del Mar", o cuando la "calle" que leyó el
@@ -103,6 +104,9 @@ def get_limiter() -> RateLimiter:
 #: `precision_de`).
 PRECISION_STREET = "street"
 PRECISION_INTERSECTION = "intersection"
+#: La numeración que dio la fuente («Las Araucarias, altura 1400»), resuelta
+#: por Nominatim a una dirección con número de OSM. Tan fina como un cruce.
+PRECISION_ADDRESS = "address"
 PRECISION_SECTOR = "sector"
 PRECISION_COMUNA = "comuna"
 
@@ -236,8 +240,8 @@ class GeocodeResult:
     #: Zonas que Nominatim declara para el punto (`address.suburb` y afines).
     #: Es lo que permite auditar después por qué la guarda lo aceptó.
     zonas: tuple[str, ...] = ()
-    #: Quién dio el punto: `nominatim`, `overpass` (un cruce calculado) o
-    #: `sig_bomberos` (un cuartel).
+    #: Quién dio el punto: `nominatim`, `osm_local` (el índice de cruces),
+    #: `overpass` (un cruce calculado en línea) o `sig_bomberos` (un cuartel).
     provider: str = "nominatim"
     #: Con `provider="overpass"`: cómo se calculó el cruce (`metodo`,
     #: `separacion_m`, `via_1`, `via_2`, `candidatos`) y dónde había dejado el
@@ -658,6 +662,18 @@ async def geocode(
         # no se pueden poner bien. Ver el bloque de `COMUNA_VIEWBOX`.
         extra = {"viewbox": ",".join(str(v) for v in caja)}
 
+    # El índice local primero: sin red y en la esquina. Con una sola esquina
+    # posible no hace falta Nominatim; con varias, Nominatim desempata más abajo.
+    locales = await _cruces_locales(streets, esperada)
+    if len(locales) == 1:
+        return resultado_de_cruce(
+            locales[0], streets, comuna=esperada, caja=caja, sector=sector, candidatos=1
+        )
+
+    con_numero = await _por_numeracion(client, streets, esperada, limiter=limiter, extra=extra)
+    if con_numero is not None:
+        return con_numero
+
     for query in build_queries(streets):
         for candidato in await _buscar(client, query, limiter=limiter, extra=extra):
             if not comuna_matches(candidato, esperada):
@@ -692,6 +708,28 @@ async def geocode(
                 sector=sector,
                 zonas=tuple(result_sectores(candidato)),
             )
+            if locales:
+                from app.collectors import cruces_locales
+
+                cercano = cruces_locales.mas_cercano(
+                    locales, (lat, lon), maximo_m=settings.CRUCES_DESEMPATE_M
+                )
+                if cercano is not None:
+                    return replace(
+                        resultado_de_cruce(
+                            cercano,
+                            streets,
+                            comuna=esperada,
+                            caja=caja,
+                            sector=sector,
+                            candidatos=len(locales),
+                        ),
+                        cruce={
+                            **_detalle_local(cercano, len(locales)),
+                            "nominatim_lat": lat,
+                            "nominatim_lon": lon,
+                        },
+                    )
             return await _afinar_con_cruce(client, streets, sobre_calle, caja=caja)
 
     # Ninguna calle sola resolvió, pero con una caja de comuna todavía se puede
@@ -752,6 +790,108 @@ async def geocode(
             zonas=tuple(result_sectores(candidato)),
         )
 
+    return None
+
+
+async def _cruces_locales(streets: Mapping[str, Any], comuna: Any) -> list[Any]:
+    """Las esquinas del índice local para las dos calles, en la comuna esperada."""
+    if not comuna or not streets.get("street_1") or not streets.get("street_2"):
+        return []
+    # Import tardío: `cruces_locales` usa `overpass`, que usa este módulo.
+    from app.collectors import cruces_locales
+
+    return await cruces_locales.buscar(
+        str(streets.get("street_1")), str(streets.get("street_2")), [str(comuna)]
+    )
+
+
+def _detalle_local(cruce: Any, candidatos: int) -> dict[str, Any]:
+    return {
+        "metodo": cruce.metodo,
+        "separacion_m": 0.0,
+        "via_1": cruce.via_1,
+        "via_2": cruce.via_2,
+        "candidatos": candidatos,
+        "nodos": cruce.nodos,
+        "parecido": cruce.parecido,
+    }
+
+
+def resultado_de_cruce(
+    cruce: Any,
+    streets: Mapping[str, Any],
+    *,
+    comuna: Any,
+    caja: tuple[float, float, float, float] | None = None,
+    sector: str | None = None,
+    candidatos: int = 1,
+) -> GeocodeResult:
+    """Una esquina del índice local (`cruces_locales.CruceLocal`) como punto."""
+    calles = dict(streets)
+    return GeocodeResult(
+        lat=cruce.lat,
+        lon=cruce.lon,
+        display_name=f"{cruce.via_1} / {cruce.via_2}",
+        query=f"{streets.get('street_1')} / {streets.get('street_2')}",
+        precision=PRECISION_INTERSECTION,
+        matched="street_1",
+        omitted=_sin_calles(omitted_keys(calles, matched="street_1")),
+        comuna=str(comuna) if comuna else None,
+        viewbox=caja,
+        sector=sector,
+        provider="osm_local",
+        cruce=_detalle_local(cruce, candidatos),
+    )
+
+
+async def _por_numeracion(
+    client: httpx.AsyncClient,
+    streets: Mapping[str, Any],
+    comuna: Any,
+    *,
+    limiter: RateLimiter | None,
+    extra: Mapping[str, Any],
+) -> GeocodeResult | None:
+    """«Las Araucarias, altura 1400» → la dirección con número, si OSM la tiene.
+
+    Sólo cuando la fuente dio número y no una transversal (con dos calles manda
+    el cruce). Se acepta únicamente un resultado que OSM conoce **con ese
+    número** (`address.house_number`): en Chile la numeración no es lo bastante
+    regular como para interpolarla sobre la calle, y un punto inventado a mitad
+    de cuadra parecería un dato. Cuesta una petición, y sólo a los avisos con
+    número.
+    """
+    numero = str(streets.get("numero") or "").strip()
+    calle = str(streets.get("street_1") or "").strip()
+    if not numero or not calle or streets.get("street_2"):
+        return None
+    ciudad = str(comuna or streets.get("city") or "").strip()
+    query = ", ".join(p for p in (f"{calle} {numero}", ciudad, DEFAULT_REGION) if p)
+    for candidato in await _buscar(client, query, limiter=limiter, extra=extra):
+        if not comuna_matches(candidato, comuna):
+            continue
+        address = candidato.get("address")
+        if not isinstance(address, Mapping):
+            continue
+        if str(address.get("house_number") or "").strip() != numero:
+            continue
+        lat = as_float(candidato.get("lat"))
+        lon = as_float(candidato.get("lon"))
+        if lat is None or lon is None:
+            continue
+        return GeocodeResult(
+            lat=lat,
+            lon=lon,
+            display_name=candidato.get("display_name"),
+            osm_type=candidato.get("osm_type"),
+            importance=as_float(candidato.get("importance")),
+            query=query,
+            precision=PRECISION_ADDRESS,
+            matched="street_1",
+            omitted=omitted_keys(dict(streets), matched="street_1"),
+            comuna=result_comuna(candidato),
+            zonas=tuple(result_sectores(candidato)),
+        )
     return None
 
 
@@ -834,6 +974,7 @@ def build_client(timeout: float | None = None) -> httpx.AsyncClient:
 
 __all__ = [
     "COMUNA_VIEWBOX",
+    "PRECISION_ADDRESS",
     "PRECISION_COMUNA",
     "PRECISION_INTERSECTION",
     "PRECISION_SECTOR",
@@ -853,6 +994,7 @@ __all__ = [
     "precision_de",
     "result_comuna",
     "result_sectores",
+    "resultado_de_cruce",
     "sector_matches",
     "viewbox_for",
 ]

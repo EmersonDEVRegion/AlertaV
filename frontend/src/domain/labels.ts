@@ -54,10 +54,12 @@ export const TYPE_LABEL: Record<IncidentType, string> = {
  * se dice: un punto con coordenadas propias no necesita aclaración.
  */
 export const UBICACION_PRECISION_LABEL: Record<UbicacionPrecision, string | null> = {
-  intersection: 'Ubicación: en el cruce que informó la fuente.',
+  intersection: 'Ubicación: en el cruce que informó la fuente (± 60 m).',
+  address: 'Ubicación: en la dirección informada.',
   exacta: null,
-  street: 'Ubicación aproximada: sobre la calle informada, no necesariamente en la esquina.',
-  sector: 'Ubicación aproximada: el sector informado, no una dirección.',
+  street:
+    'Ubicación aproximada (± 300 m): sobre la calle informada, no necesariamente en la esquina.',
+  sector: 'Ubicación aproximada (± 600 m): el sector informado, no una dirección.',
 }
 
 export const STATUS_LABEL: Record<IncidentStatus, string> = {

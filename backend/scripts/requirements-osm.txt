@@ -1,0 +1,3 @@
+# Sólo para `scripts/osm_cruces.py` (GitHub Actions). No van a Render.
+osmium==4.0.2
+shapely==2.0.6

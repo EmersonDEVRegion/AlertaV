@@ -23,6 +23,7 @@ from app.models.enums import (
 )
 from app.models.event import CollectorRun, RawEvent, SourceConfidence
 from app.models.incident import Incident, IncidentCounter, IncidentEvent
+from app.models.osm import OsmCruce, OsmIndice
 from app.models.push import PushDelivery, PushPlace, PushSubscription
 from app.models.seismic import SeismicDetail
 from app.models.weather_grid import WeatherGrid
@@ -48,6 +49,8 @@ __all__ = [
     "IncidentStatus",
     "IncidentType",
     "LinkMethod",
+    "OsmCruce",
+    "OsmIndice",
     "PushDelivery",
     "PushPlace",
     "PushSubscription",

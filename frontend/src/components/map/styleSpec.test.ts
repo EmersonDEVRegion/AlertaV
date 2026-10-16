@@ -35,6 +35,7 @@ import {
 } from './rainLayers'
 import { closureBodyLayer, roadClosureSpecs } from './roadClosureLayers'
 import { coneFillLayer, coneLineLayer, reachFillLayer, reachLineLayer } from './overlayLayers'
+import { alertHaloLayer, casingLayer, coreLayer, uncertaintyLayer } from './incidentLayers'
 
 const THEMES = ['light', 'dark'] as const
 
@@ -90,6 +91,12 @@ function buildStyle(): StyleSpecification {
     layers.push({ ...layer, source: 'overlay' } as LayerSpecification)
   }
 
+  // El círculo de incertidumbre interpola en base 2 sobre el zoom con una
+  // expresión de datos en cada tope: la forma que el validador vigila.
+  for (const layer of [uncertaintyLayer, alertHaloLayer, casingLayer, coreLayer]) {
+    layers.push({ ...layer, source: 'incidents' } as LayerSpecification)
+  }
+
   return {
     version: 8,
     name: 'alertav-check',
@@ -117,6 +124,7 @@ function buildStyle(): StyleSpecification {
       },
       overlay: emptySource,
       closures: emptySource,
+      incidents: emptySource,
     },
     layers,
   }

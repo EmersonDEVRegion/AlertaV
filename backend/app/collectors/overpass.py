@@ -47,44 +47,14 @@ from typing import Any
 
 import httpx
 
-from app.collectors.geoservices import normalise_text
 from app.collectors.nominatim import RateLimiter
 from app.core.config import settings
+from app.core.nombres_via import nombre_nucleo, nombres_calzan, significativas
 
 logger = logging.getLogger(__name__)
 
 #: Una consulta por segundo como máximo, compartida por todo el proceso.
 _LIMITER = RateLimiter(1.0)
-
-#: Palabras que indican el tipo de vía y no su nombre. La central escribe
-#: «AVENIDA ALEMANIA» y OSM «Avenida Alemania»; otra fuente escribe «Av.
-#: Alemania» o sólo «Alemania». Se sacan de los dos lados antes de comparar.
-_TIPOS_DE_VIA = frozenset(
-    {"avenida", "av", "avda", "calle", "pasaje", "pje", "psje", "camino", "callejon"}
-)
-
-#: Abreviaturas frecuentes en despachos y prensa, a su forma de OSM.
-_ABREVIATURAS = {
-    "pdte": "presidente",
-    "pte": "presidente",
-    "gral": "general",
-    "dr": "doctor",
-    "tte": "teniente",
-    "cap": "capitan",
-    "cptn": "capitan",
-    "sta": "santa",
-    "sto": "santo",
-    "sn": "san",
-    "ing": "ingeniero",
-    "prof": "profesor",
-    "almte": "almirante",
-    "cmdte": "comandante",
-}
-
-#: Palabras que no distinguen una calle de otra.
-_VACIAS = frozenset({"de", "del", "la", "las", "los", "el", "y"})
-
-_NO_ALFANUM = re.compile(r"[^a-z0-9 ]+")
 
 #: Letra → su variante con tilde, para el filtro del servidor (que no sabe
 #: comparar sin tildes). No se usan clases como `[eé]`: si Overpass compila la
@@ -93,41 +63,6 @@ _NO_ALFANUM = re.compile(r"[^a-z0-9 ]+")
 _TILDES = {"a": "á", "e": "é", "i": "í", "o": "ó", "u": "ú", "n": "ñ"}
 
 PRECISION_INTERSECTION = "intersection"
-
-
-def nombre_nucleo(nombre: str | None) -> tuple[str, ...]:
-    """Las palabras que nombran la calle, sin tildes, tipo de vía ni abreviaturas.
-
-    «AVENIDA ALEMANIA» → («alemania»,); «Av. Pdte. Errázuriz» → («presidente»,
-    «errazuriz»). Las palabras vacías se conservan salvo al comienzo («Las
-    Monjas» → («las», «monjas»)) porque a veces son parte del nombre.
-    """
-    texto = _NO_ALFANUM.sub(" ", normalise_text(nombre).replace(".", " "))
-    palabras = [_ABREVIATURAS.get(p, p) for p in texto.split()]
-    while palabras and palabras[0] in _TIPOS_DE_VIA:
-        palabras.pop(0)
-    return tuple(palabras)
-
-
-def _significativas(nucleo: Sequence[str]) -> tuple[str, ...]:
-    return tuple(p for p in nucleo if p not in _VACIAS)
-
-
-def nombres_calzan(buscado: str | None, osm: str | None) -> bool:
-    """¿El nombre de OSM es la calle que nombró la fuente?
-
-    Calza si, sin tildes ni tipo de vía, las palabras significativas son las
-    mismas, o si las de la fuente son el final de las de OSM: la central
-    escribe «ALVAREZ» y OSM «Doctor Álvarez». Al revés no: si la fuente nombra
-    más que OSM («ANDRES BELLO» contra una «Bello»), es otra calle.
-    """
-    a = _significativas(nombre_nucleo(buscado))
-    b = _significativas(nombre_nucleo(osm))
-    if not a or not b:
-        return False
-    if a == b:
-        return True
-    return len(a) < len(b) and b[-len(a) :] == a
 
 
 def variantes_con_tilde(palabra: str) -> list[str]:
@@ -155,7 +90,7 @@ def patron_servidor(nombre: str) -> str | None:
     Sólo sirve para que la respuesta sea chica; la comparación de verdad es
     `nombres_calzan`. None si el nombre no tiene ninguna palabra útil.
     """
-    palabras = sorted(_significativas(nombre_nucleo(nombre)), key=len, reverse=True)
+    palabras = sorted(significativas(nombre_nucleo(nombre)), key=len, reverse=True)
     if not palabras or len(palabras[0]) < 3:
         return None
     return "(" + "|".join(re.escape(v) for v in variantes_con_tilde(palabras[0])) + ")"

@@ -1133,11 +1133,36 @@ class Settings(BaseSettings):
     #: en Buenos Aires, que es exactamente lo que hace Nominatim sin esto.
     NOMINATIM_COUNTRY_CODES: str = "cl"
 
+    # -- Índice local de cruces (OSM en PostGIS) --------------------------------
+    #: Cuando una fuente nombra dos calles («ARLEGUI / TRASLAVIÑA») y se sabe la
+    #: comuna, la esquina sale de `osm_cruces`. Ver `app.collectors.cruces_locales`.
+    CRUCES_LOCALES_ENABLED: bool = True
+    #: Nodos con los mismos nombres a menos de esto son la misma esquina: una
+    #: avenida de doble calzada cruza dos veces a la transversal.
+    CRUCES_AGRUPAR_M: float = Field(default=80.0, ge=10.0, le=300.0)
+    #: Similitud mínima (0 a 1) para aceptar un nombre con error de tipeo
+    #: cuando la otra calle del cruce calzó exacta. Ver `nombres_via.parecidos`.
+    CRUCES_PARECIDO_MIN: float = Field(default=0.85, ge=0.5, le=1.0)
+    #: Con varias esquinas posibles en la comuna, la más cercana al punto de
+    #: Nominatim gana sólo si está a menos de esto.
+    CRUCES_DESEMPATE_M: float = Field(default=1500.0, ge=100.0, le=20_000.0)
+    #: De dónde se baja el índice: el release `osm-cruces-*` que publica el
+    #: workflow mensual del repositorio. Ver `app.services.osm_cruces_service`.
+    OSM_CRUCES_REPO: str = "EmersonDEVRegion/AlertaV"
+    OSM_CRUCES_ASSET: str = "osm_cruces.csv.gz"
+    #: Cada cuánto se revisa si hay un release nuevo. Revisar es una petición.
+    OSM_CRUCES_POLL_SECONDS: int = Field(default=21_600, ge=600, le=604_800)
+    #: Un índice con menos filas que esto se rechaza: un extracto roto no puede
+    #: reemplazar a uno bueno.
+    OSM_CRUCES_MIN_FILAS: int = Field(default=20_000, ge=0)
+    OSM_CRUCES_MAX_BYTES: int = Field(default=80_000_000, ge=1_000_000)
+
     # -- Overpass (cruces de calles) -------------------------------------------
-    #: Cuando una fuente nombra dos calles («LAS MONJAS / ANDRES BELLO»), el
-    #: cruce se calcula con Overpass sobre los datos de OSM. Ver
-    #: `app.collectors.overpass`. Apagado = el punto queda sobre una calle.
-    OVERPASS_ENABLED: bool = True
+    #: Respaldo del índice local: calcula el cruce consultando un servidor
+    #: público. Apagado por defecto porque desde Render falla casi siempre
+    #: (`ConnectError`, `ReadTimeout`, 502) y cada intento cuesta hasta 40 s.
+    #: Ver `app.collectors.overpass`.
+    OVERPASS_ENABLED: bool = False
     #: Servidores públicos, en orden. Si uno responde 429 o 5xx, el siguiente.
     OVERPASS_URLS: list[str] = [
         "https://overpass-api.de/api/interpreter",

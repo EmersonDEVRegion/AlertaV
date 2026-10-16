@@ -235,6 +235,32 @@ GiST sigue haciendo el prefiltrado por caja envolvente.
 | Fusión de incidentes convergentes | Un incendio que avanza produce racimos sucesivos que terminan tocándose. Sobrevive el más antiguo —es el que tiene folio circulando por radio— y el absorbido queda en `merged` apuntando a su sucesor, de modo que un folio ya comunicado sigue resolviendo a algo. |
 | `stale` ≠ `extinguished` | Que dejen de llegar detecciones satelitales no significa que el fuego se apagó: significa que no pasó un satélite. Sólo una fuente confirmatoria cierra una emergencia. |
 
+### Geocodificación: de la esquina escrita al punto
+
+Las centrales de Bomberos escriben la esquina («ARLEGUI / TRASLAVIÑA») en el
+92 % de los despachos. Nominatim no sabe ubicar cruces: devuelve el punto donde
+OSM ancla una de las dos calles, a decenas de metros o a kilómetros de la
+esquina. Por eso el punto se resuelve en este orden
+(`app/collectors/nominatim.py`, `geocode`):
+
+1. **Índice de esquinas** (`collectors/cruces_locales.py`). La tabla
+   `osm_cruces` guarda cada nodo de OSM donde se tocan dos vías de nombre
+   distinto, con las comunas a menos de ~100 m. La arma cada mes el workflow
+   `osm-cruces` desde el extracto de Geofabrik y la carga el propio backend
+   desde el release (`services/osm_cruces_service.py`): GitHub nunca ve la base.
+   Los nombres se comparan con `core/nombres_via.py`, el mismo módulo que usó
+   el script para indexarlos. Sólo se busca con comuna; una esquina única es el
+   punto, y con varias (dos calles que se cruzan dos veces) desempata el punto
+   de Nominatim.
+2. **Numeración** («altura 1400»): Nominatim, aceptado sólo si OSM tiene ese
+   número exacto (`precision = "address"`).
+3. **Nominatim sobre la calle**, con las guardas de comuna y sector
+   (`precision = "street"`), y **el sector solo** si no hay calle.
+
+Overpass queda como respaldo apagado (`OVERPASS_ENABLED`): desde Render fallaba
+casi siempre. La PWA dibuja un círculo de incertidumbre según la precisión
+(60 m en un cruce, 300 m sobre una calle, 600 m en un sector).
+
 ### Vínculo por sector
 
 La prensa y las cuentas locales casi nunca dan una esquina, y a veces el

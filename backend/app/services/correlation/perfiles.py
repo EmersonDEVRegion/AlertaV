@@ -66,6 +66,7 @@ PERFILES: dict[str, Perfil] = {
 HOLGURA_M: dict[str | None, float] = {
     None: 0.0,
     "intersection": 0.0,
+    "address": 0.0,
     "street": 800.0,
     "sector": 1200.0,
 }

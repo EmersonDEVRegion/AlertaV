@@ -306,6 +306,29 @@ async def _rain_grid_loop(intervalo: int) -> None:
     logger.info("grilla de lluvia detenida")
 
 
+async def _osm_cruces_loop(intervalo: int) -> None:
+    """Carga el índice de cruces de OSM cuando hay un release nuevo.
+
+    Ver `osm_cruces_service`. La primera revisión va unos minutos después del
+    arranque para no competir con el resto de los collectors; las siguientes,
+    cada `OSM_CRUCES_POLL_SECONDS`. Revisar es una petición a GitHub: el
+    archivo sólo se baja cuando cambió.
+    """
+    from app.services.osm_cruces_service import refrescar
+
+    if not await sleep_unless_stopped(random.uniform(120, 600)):
+        return
+    while not is_shutting_down():
+        try:
+            async with _cupos(), AsyncSessionLocal() as session:
+                estado = await refrescar(session)
+            logger.info("índice de cruces revisado", extra={"estado": estado})
+        except Exception:
+            logger.exception("no se pudo revisar el índice de cruces")
+        if not await sleep_unless_stopped(_next_delay(intervalo)):
+            break
+
+
 async def _poda_loop(intervalo: int) -> None:
     """Borra las corridas más viejas que `COLLECTOR_RUNS_RETENTION_DAYS`."""
     if not await sleep_unless_stopped(random.uniform(60, 300)):
@@ -345,6 +368,8 @@ async def run_loop(
         tareas.append(_rain_grid_loop(settings.RAIN_GRID_POLL_INTERVAL_SECONDS))
     if con_inbox:
         tareas.append(_poda_loop(_PODA_INTERVALO_S))
+    if con_inbox and settings.CRUCES_LOCALES_ENABLED:
+        tareas.append(_osm_cruces_loop(settings.OSM_CRUCES_POLL_SECONDS))
     await asyncio.gather(*tareas)
     logger.info("runner detenido")
 
