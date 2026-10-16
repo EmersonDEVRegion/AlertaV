@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Theme } from '@/hooks/useTheme'
 import { Switch } from '@/components/ui/primitives'
+import { GLASS_LABEL, GLASS_LEVELS, setGlassLevel, useGlassLevel } from '@/lib/glassStore'
 import { setExploreTab, type ExploreTab } from '@/lib/exploreStore'
 import { setSheetSnap, useLowerSheetWhile } from '@/lib/sheetStore'
 import { cn } from '@/lib/cn'
@@ -106,6 +107,7 @@ export function AppMenu({ theme, onToggleTheme }: AppMenuProps) {
               accentColor="var(--accent)"
             />
           </div>
+          <GlassPicker />
           <div className="my-1 h-px bg-line" />
           <Item onClick={() => show('layers')}>Capas, filtros y leyenda</Item>
           <div className="my-1 h-px bg-line" />
@@ -127,3 +129,40 @@ export function AppMenu({ theme, onToggleTheme }: AppMenuProps) {
     </div>
   )
 }
+
+/**
+ * Cuánto cristal (§D): tres niveles en un control segmentado. «Equilibrado»
+ * por defecto; «Sólido» quita la transparencia para quien prefiera contraste.
+ */
+function GlassPicker() {
+  const level = useGlassLevel()
+  return (
+    <div className="px-2 pb-1.5 pt-1">
+      <p id="glass-picker-label" className="text-xs font-medium text-ink">
+        Transparencia
+      </p>
+      <div
+        role="radiogroup"
+        aria-labelledby="glass-picker-label"
+        className="mt-1.5 flex rounded-control bg-sunken p-0.5"
+      >
+        {GLASS_LEVELS.map((option) => (
+          <button
+            key={option}
+            type="button"
+            role="radio"
+            aria-checked={level === option}
+            onClick={() => setGlassLevel(option)}
+            className={cn(
+              'flex h-7 flex-1 items-center justify-center rounded-[calc(var(--radius-control)-2px)] text-[11px] font-medium transition',
+              level === option ? 'bg-raised text-ink shadow-sm' : 'text-ink-muted hover:text-ink',
+            )}
+          >
+            {GLASS_LABEL[option]}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+

@@ -9,7 +9,7 @@ import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { formatRelative } from '@/lib/format'
 import { dismissInvite, inviteDismissed } from '@/lib/push'
 import { radiosEfectivos } from '@/lib/radios'
-import { RadiosPorCategoria } from './RadiosPorCategoria'
+import { RadiosPorCategoria, ResumenRadios } from './RadiosPorCategoria'
 import { isHandheld, thisDevice } from '@/lib/device'
 import { usePlaces } from '@/lib/placesStore'
 import { cn } from '@/lib/cn'
@@ -188,7 +188,10 @@ export function NotificationPanel({ push }: { push: PushNotificationsState }) {
   const staleLocation = push.locatedAt !== null && now - push.locatedAt > STALE_LOCATION_MS
 
   return (
-    <div className="w-[19rem] max-w-[calc(100vw-1.5rem)] p-3">
+    // Sin ancho propio: lo pone el contenedor (`NotificationBell`). Con un
+    // ancho fijo acá, la barra vertical de Windows le quitaba 17 px y aparecía
+    // una horizontal (§D).
+    <div className="p-3">
       <div className="flex items-center gap-2">
         <span
           aria-hidden
@@ -253,92 +256,7 @@ export function NotificationPanel({ push }: { push: PushNotificationsState }) {
         </>
       )}
 
-      {phase === 'on' && (
-        <>
-          <div className="mt-2.5 space-y-2 border-t border-line pt-2.5">
-            <PreferenceRow
-              label={PUSH_TEXT.incidents}
-              hint="Cada tipo a la distancia que elijas"
-              checked={push.preferences.notifyIncidents}
-              // No se puede apagar el último: para eso está «Desactivar», que
-              // además borra la ubicación del servidor.
-              disabled={push.step !== null || !push.preferences.notifySeismic}
-              onChange={() =>
-                void push.setPreferences({
-                  ...push.preferences,
-                  notifyIncidents: !push.preferences.notifyIncidents,
-                })
-              }
-            />
-            {push.preferences.notifyIncidents && <RadiosPorCategoria push={push} />}
-            <PreferenceRow
-              label={PUSH_TEXT.seismic}
-              hint="Los que se sintieron donde estás"
-              checked={push.preferences.notifySeismic}
-              disabled={push.step !== null || !push.preferences.notifyIncidents}
-              onChange={() =>
-                void push.setPreferences({
-                  ...push.preferences,
-                  notifySeismic: !push.preferences.notifySeismic,
-                })
-              }
-            />
-          </div>
-
-          <p
-            className={cn(
-              'mt-2.5 text-[10.5px] leading-snug',
-              staleLocation ? 'text-warn-ink' : 'text-ink-muted',
-            )}
-          >
-            {push.locatedAt === null
-              ? 'Ubicación informada.'
-              : now - push.locatedAt < 60_000
-                ? 'Tu ubicación está al día.'
-                : `Tu ubicación es de ${formatRelative(push.locatedAt, now)}.`}{' '}
-            {staleLocation && `${PUSH_TEXT.staleLocation} `}
-            <button
-              type="button"
-              onClick={() => void push.refreshLocation()}
-              disabled={push.step !== null}
-              className="font-semibold text-accent underline-offset-2 hover:underline disabled:opacity-50"
-            >
-              {push.step === 'location' ? 'Ubicando…' : PUSH_TEXT.refresh}
-            </button>
-          </p>
-
-          <p className="mt-1.5 text-[10.5px] leading-snug text-ink-muted">
-            {places.length > 0
-              ? `También te avisamos cerca de ${joinNames(places.map((p) => p.name))}.`
-              : PUSH_TEXT.noPlaces}
-          </p>
-
-          <div className="mt-2.5 flex gap-2">
-            <Button
-              variant="subtle"
-              size="sm"
-              onClick={() => void push.sendProbe()}
-              disabled={push.step !== null}
-            >
-              {PUSH_TEXT.probe}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => void push.disable()}
-              disabled={push.step !== null}
-            >
-              {PUSH_TEXT.disable}
-            </Button>
-          </div>
-
-          {push.probeResult && (
-            <p role="status" className="mt-1.5 text-[10.5px] leading-snug text-success-ink">
-              {push.probeResult}
-            </p>
-          )}
-        </>
-      )}
+      {phase === 'on' && <OnSection push={push} now={now} staleLocation={staleLocation} placeNames={places.map((p) => p.name)} />}
 
       {paused && phase !== 'unavailable' && (
         <p className="mt-2 text-[10.5px] leading-snug text-warn-ink">
@@ -353,12 +271,145 @@ export function NotificationPanel({ push }: { push: PushNotificationsState }) {
         </p>
       )}
 
-      {phase !== 'unavailable' && (
+      {/* Encendidos, la advertencia va plegada en «Sobre los temblores»
+          (dentro de `OnSection`): ya se leyó al activarlos. */}
+      {phase !== 'unavailable' && phase !== 'on' && (
         <p className="mt-2.5 border-t border-line pt-2 text-[9.5px] leading-snug text-ink-faint">
           {PUSH_TEXT.seismicCaveat}
         </p>
       )}
     </div>
+  )
+}
+
+/**
+ * Los avisos encendidos (§D): lo que se mira a diario arriba —qué tipos, a qué
+ * distancia, y los temblores— y lo que se ajusta una vez, plegado.
+ *
+ * Antes eran seis deslizadores de dos líneas, la ubicación, los lugares, dos
+ * botones y la advertencia de los sismos, uno debajo del otro: ~900 px.
+ */
+function OnSection({
+  push,
+  now,
+  staleLocation,
+  placeNames,
+}: {
+  push: PushNotificationsState
+  now: number
+  staleLocation: boolean
+  placeNames: string[]
+}) {
+  const [editing, setEditing] = useState(false)
+  const busy = push.step !== null
+  return (
+    <>
+      <div className="mt-2.5 space-y-2.5 border-t border-line pt-2.5">
+        <div className="space-y-1.5">
+          <PreferenceRow
+            label={PUSH_TEXT.incidents}
+            hint="Cada tipo a la distancia que elijas"
+            checked={push.preferences.notifyIncidents}
+            // No se puede apagar el último: para eso está «Desactivar», que
+            // además borra la ubicación del servidor.
+            disabled={busy || !push.preferences.notifySeismic}
+            onChange={() =>
+              void push.setPreferences({
+                ...push.preferences,
+                notifyIncidents: !push.preferences.notifyIncidents,
+              })
+            }
+          />
+          {push.preferences.notifyIncidents && (
+            <>
+              <ResumenRadios push={push} onEditar={() => setEditing(true)} />
+              <button
+                type="button"
+                onClick={() => setEditing((v) => !v)}
+                aria-expanded={editing}
+                className="inline-flex items-center gap-1 text-[10.5px] font-semibold text-accent underline-offset-2 hover:underline"
+              >
+                {editing ? 'Listo' : 'Ajustar distancias'}
+                <svg
+                  viewBox="0 0 24 24"
+                  aria-hidden
+                  className={cn('size-3 transition-transform', editing && 'rotate-180')}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2.5}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
+              {editing && <RadiosPorCategoria push={push} />}
+            </>
+          )}
+        </div>
+        <PreferenceRow
+          label={PUSH_TEXT.seismic}
+          hint="Los que se sintieron donde estás"
+          checked={push.preferences.notifySeismic}
+          disabled={busy || !push.preferences.notifyIncidents}
+          onChange={() =>
+            void push.setPreferences({
+              ...push.preferences,
+              notifySeismic: !push.preferences.notifySeismic,
+            })
+          }
+        />
+      </div>
+
+      <div className="mt-2.5 space-y-1 border-t border-line pt-2 text-[10.5px] leading-snug">
+        <p className={staleLocation ? 'text-warn-ink' : 'text-ink-muted'}>
+          {push.locatedAt === null
+            ? 'Ubicación informada.'
+            : now - push.locatedAt < 60_000
+              ? 'Tu ubicación está al día.'
+              : `Tu ubicación es de ${formatRelative(push.locatedAt, now)}.`}{' '}
+          {staleLocation && `${PUSH_TEXT.staleLocation} `}
+          <button
+            type="button"
+            onClick={() => void push.refreshLocation()}
+            disabled={busy}
+            className="font-semibold text-accent underline-offset-2 hover:underline disabled:opacity-50"
+          >
+            {push.step === 'location' ? 'Ubicando…' : PUSH_TEXT.refresh}
+          </button>
+        </p>
+        <p className="text-ink-muted">
+          {placeNames.length > 0
+            ? `También te avisamos cerca de ${joinNames(placeNames)}.`
+            : PUSH_TEXT.noPlaces}
+        </p>
+      </div>
+
+      <div className="mt-2 flex items-center gap-1.5">
+        <Button variant="subtle" size="sm" onClick={() => void push.sendProbe()} disabled={busy}>
+          {PUSH_TEXT.probe}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => void push.disable()} disabled={busy}>
+          {PUSH_TEXT.disable}
+        </Button>
+      </div>
+
+      {push.probeResult && (
+        <p role="status" className="mt-1.5 text-[10.5px] leading-snug text-success-ink">
+          {push.probeResult}
+        </p>
+      )}
+
+      <details className="group mt-2 border-t border-line pt-1.5">
+        <summary className="cursor-pointer list-none text-[10px] font-semibold text-ink-faint hover:text-ink-muted [&::-webkit-details-marker]:hidden">
+          <span aria-hidden className="mr-1 inline-block transition-transform group-open:rotate-90">
+            ›
+          </span>
+          Sobre los temblores
+        </summary>
+        <p className="mt-1 text-[9.5px] leading-snug text-ink-faint">{PUSH_TEXT.seismicCaveat}</p>
+      </details>
+    </>
   )
 }
 
@@ -475,7 +526,10 @@ export function NotificationBell() {
             // Con los deslizadores por categoría el panel puede ser más alto que
             // el espacio libre: se desplaza adentro. `header-popover` lo acota
             // a lo que queda sobre la hoja asomada (ver `index.css`).
-            'header-popover overflow-y-auto overscroll-contain',
+            'header-popover overflow-y-auto overflow-x-hidden overscroll-contain',
+            // El ancho vive acá y no en el contenido: la barra vertical (17 px
+            // en Windows) se come espacio del contenido en vez de desbordarlo.
+            'thin-scroll w-[19rem] max-w-[calc(100vw-1.5rem)]',
             // Opaco, como el detalle meteorológico: cuelga de la barra oscura.
             'rounded-surface bg-raised shadow-[var(--shadow-raised)] ring-1 ring-line',
           )}

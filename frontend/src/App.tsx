@@ -598,7 +598,7 @@ export default function App() {
     ],
   )
 
-  const reportInline = useMemo(() => <CitizenReportControl placement="inline" />, [])
+  const reportInline = useMemo(() => <CitizenReportControl />, [])
 
   const retryIncidents = useCallback(() => void refetch(), [refetch])
   const menu = useMemo(
@@ -660,17 +660,14 @@ export default function App() {
         {isCompact ? (
           <BottomSheet {...exploreProps} headerAction={reportInline} />
         ) : (
-          <DesktopColumn {...exploreProps} />
+          <DesktopColumn {...exploreProps} headerAction={reportInline} />
         )}
 
         {/*
-          El botón vive dentro del `main` relativo, no en el árbol del mapa: así
-          no compite con los controles de MapLibre ni se pierde en un repintado
-          del canvas. En teléfono no flota: va en el encabezado de la hoja
-          (`reportInline`).
+          «Reportar» vive en el encabezado de la columna o de la hoja
+          (`reportInline`), en las dos pantallas (§D). Flotando sobre el mapa
+          quedaba descentrado y tapaba los paneles de la barra.
         */}
-        {!isCompact && <CitizenReportControl />}
-
         {/* «Elegir en el mapa» de Mis lugares: la mira y su barra. */}
         <PlacePicker mapRef={mapRef} />
 

@@ -1,5 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import type { PushNotificationsState } from '@/hooks/usePushNotifications'
+import { GlyphIcon } from '@/components/ui/GlyphIcon'
+import type { IconId } from '@/domain/emergencyIcons'
+import { cn } from '@/lib/cn'
 import {
   CATEGORIAS_RESPALDO,
   PASOS,
@@ -9,11 +13,67 @@ import {
   radiosEfectivos,
 } from '@/lib/radios'
 
+/** El ícono de cada categoría de aviso: los mismos glifos del mapa. */
+const ICONO_CATEGORIA: Readonly<Record<string, IconId>> = {
+  fire: 'av-flame',
+  traffic: 'av-crash',
+  power: 'av-bolt',
+  hydro: 'av-flood',
+  other: 'av-alert',
+  water: 'av-drop',
+}
+
+const iconoDe = (clave: string): IconId => ICONO_CATEGORIA[clave] ?? 'av-alert'
+
+/**
+ * Las distancias en una línea de fichas (§D): lo que se mira a diario, sin
+ * abrir el editor. Tocar una ficha abre el editor.
+ */
+export function ResumenRadios({
+  push,
+  onEditar,
+}: {
+  push: PushNotificationsState
+  onEditar: () => void
+}) {
+  const categorias = push.server?.categorias?.length
+    ? push.server.categorias
+    : CATEGORIAS_RESPALDO
+  const radios = radiosEfectivos(push.server?.radios_por_defecto, push.preferences.radios)
+  return (
+    <ul aria-label="Distancias de aviso" className="flex flex-wrap gap-1">
+      {categorias.map(({ clave, etiqueta }) => {
+        const metros = radios[clave] ?? 0
+        const texto = metros > 0 ? formatRadio(metros) : 'No'
+        return (
+          <li key={clave}>
+            <button
+              type="button"
+              onClick={onEditar}
+              title={`${etiqueta}: ${metros > 0 ? texto : 'no avisar'}`}
+              aria-label={`${etiqueta}: ${metros > 0 ? texto : 'no avisar'}`}
+              className={cn(
+                'inline-flex h-6 items-center gap-1 rounded-full bg-sunken px-2 text-[10.5px] font-semibold tabular-nums ring-1 ring-line transition-colors hover:bg-hover',
+                metros > 0 ? 'text-ink' : 'text-ink-faint',
+              )}
+            >
+              <GlyphIcon id={iconoDe(clave)} className="size-3 shrink-0" />
+              {texto}
+            </button>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 /** Cuánto esperar después del último movimiento antes de guardar. */
 const GUARDAR_TRAS_MS = 700
 
 /**
- * Un deslizador por categoría de aviso.
+ * Un deslizador por categoría de aviso, una línea cada uno (§D): ícono,
+ * nombre, barra delgada y valor. Antes eran dos líneas con una barra de 20 px
+ * por categoría y el panel pasaba de 900 px.
  *
  * Libre de 300 m a 20 km en escala logarítmica —los primeros kilómetros ocupan
  * la mayor parte del recorrido— y, en el extremo izquierdo, «No avisar». Lo que
@@ -67,60 +127,67 @@ export function RadiosPorCategoria({ push }: { push: PushNotificationsState }) {
   }
 
   return (
-    <fieldset className="mt-2 space-y-1.5 rounded-control bg-sunken p-2 ring-1 ring-line">
+    <fieldset className="mt-1.5 space-y-0.5 rounded-control bg-sunken px-2 py-1.5 ring-1 ring-line">
       <legend className="sr-only">Distancia de aviso por tipo de emergencia</legend>
-      <p className="text-[10.5px] font-semibold uppercase tracking-wide text-ink-muted">
-        Avisar a qué distancia
-      </p>
       {categorias.map(({ clave, etiqueta }) => (
         <FilaRadio
           key={clave}
+          icono={iconoDe(clave)}
           etiqueta={etiqueta}
           metros={borrador[clave] ?? guardados[clave] ?? 0}
           onCambio={(metros) => cambiar(clave, metros)}
         />
       ))}
-      <p className="text-[9.5px] leading-snug text-ink-faint">
-        Vale para tu ubicación y para tus lugares guardados. Todo a la izquierda: no avisar.
+      <p className="pt-0.5 text-[9.5px] leading-snug text-ink-faint">
+        Todo a la izquierda: no avisar. Vale también para tus lugares guardados.
       </p>
     </fieldset>
   )
 }
 
 function FilaRadio({
+  icono,
   etiqueta,
   metros,
   onCambio,
 }: {
+  icono: IconId
   etiqueta: string
   metros: number
   onCambio: (metros: number) => void
 }) {
   const id = useId()
   const texto = formatRadio(metros)
+  const posicion = posicionDeMetros(metros)
   return (
-    <div>
-      <div className="flex items-baseline justify-between gap-2">
-        <label htmlFor={id} className="text-[11px] font-semibold text-ink">
-          {etiqueta}
-        </label>
-        <span
-          className={`shrink-0 text-[10.5px] tabular-nums ${metros > 0 ? 'text-ink' : 'text-ink-faint'}`}
-        >
-          {texto}
-        </span>
-      </div>
+    <div className="grid h-7 grid-cols-[0.875rem_minmax(0,6.5rem)_minmax(0,1fr)_2.75rem] items-center gap-2">
+      <GlyphIcon
+        id={icono}
+        className={cn('size-3.5', metros > 0 ? 'text-ink-muted' : 'text-ink-faint')}
+      />
+      <label htmlFor={id} className="truncate text-[11px] font-medium text-ink" title={etiqueta}>
+        {etiqueta}
+      </label>
       <input
         id={id}
         type="range"
         min={0}
         max={PASOS}
         step={1}
-        value={posicionDeMetros(metros)}
+        value={posicion}
         aria-valuetext={texto}
         onChange={(event) => onCambio(metrosDePosicion(Number(event.target.value)))}
-        className="mt-0.5 h-5 w-full cursor-pointer accent-[var(--accent)]"
+        className="range-thin w-full"
+        style={{ '--pct': `${(posicion / PASOS) * 100}%` } as CSSProperties}
       />
+      <span
+        className={cn(
+          'text-right text-[10.5px] tabular-nums',
+          metros > 0 ? 'font-semibold text-ink' : 'text-ink-faint',
+        )}
+      >
+        {metros > 0 ? texto : 'No'}
+      </span>
     </div>
   )
 }
