@@ -64,4 +64,7 @@ jobs:
       - name: Tests
         env:
           ALERTAV_PG_INTEGRACION: "1"
-        run: pytest -q
+        run: |
+          set -o pipefail
+          pytest -q -p no:cacheprovider | tee "$RUNNER_TEMP/pytest.txt"
+          echo "::notice title=pytest::$(tail -n 1 "$RUNNER_TEMP/pytest.txt")"
