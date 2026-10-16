@@ -19,6 +19,7 @@ import {
 } from '@/lib/tacticalWeatherStore'
 import type { WeatherSnapshot } from '@/lib/tacticalWeatherStore'
 import { cn } from '@/lib/cn'
+import { useLowerSheetWhile } from '@/lib/sheetStore'
 import {
   RAIN_SCALE_TICKS,
   rainScaleGradient,
@@ -380,6 +381,8 @@ function Detail({ snapshot }: { snapshot: WeatherSnapshot }) {
 
 export function WeatherWidget() {
   const snapshot = useTacticalWeather()
+  // En el teléfono la hoja baja mientras el detalle está abierto (§T).
+  useLowerSheetWhile(snapshot.expanded, 'clima')
   const { data } = snapshot
   const known = isKnown(snapshot)
   const trigger = data.disparo_principal
@@ -474,6 +477,8 @@ export function WeatherWidget() {
           aria-label={WEATHER_TEXT.title}
           className={cn(
             'animate-rise absolute right-0 top-[calc(100%+0.5rem)] z-30',
+            // Acotado al espacio sobre la hoja asomada (§T); se desplaza adentro.
+            'header-popover overflow-y-auto overscroll-contain',
             // `bg-raised` opaco y no `.surface-floating`: esa receta es
             // translúcida con desenfoque y está pensada para posarse sobre el
             // mapa. Este detalle cuelga de la barra oscura, así que la mitad

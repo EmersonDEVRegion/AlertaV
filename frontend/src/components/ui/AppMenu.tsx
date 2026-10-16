@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import type { Theme } from '@/hooks/useTheme'
 import { Switch } from '@/components/ui/primitives'
 import { setExploreTab, type ExploreTab } from '@/lib/exploreStore'
-import { setSheetSnap } from '@/lib/sheetStore'
+import { setSheetSnap, useLowerSheetWhile } from '@/lib/sheetStore'
 import { cn } from '@/lib/cn'
 import type { AboutTab } from '@/components/ui/AboutSheet'
 
@@ -39,6 +39,9 @@ export function AppMenu({ theme, onToggleTheme }: AppMenuProps) {
   const [open, setOpen] = useState(false)
   const [about, setAbout] = useState<AboutTab | null>(null)
   const root = useRef<HTMLDivElement>(null)
+  // En el teléfono la hoja baja mientras el menú está abierto (§T). «Ver
+  // leyenda» la sube a media altura, y eso manda: no se le devuelve la de antes.
+  useLowerSheetWhile(open, 'menu')
 
   useEffect(() => {
     if (!open) return
@@ -92,7 +95,7 @@ export function AppMenu({ theme, onToggleTheme }: AppMenuProps) {
         <div
           role="menu"
           aria-label="Más opciones"
-          className="animate-rise absolute right-0 top-[calc(100%+0.5rem)] z-30 w-60 rounded-surface bg-raised p-1 shadow-[var(--shadow-raised)] ring-1 ring-line"
+          className="header-popover animate-rise absolute right-0 top-[calc(100%+0.5rem)] z-30 w-60 overflow-y-auto rounded-surface bg-raised p-1 shadow-[var(--shadow-raised)] ring-1 ring-line"
         >
           <div className="flex items-center gap-2.5 px-2 py-2">
             <span className="flex-1 text-xs font-medium text-ink">Modo oscuro</span>

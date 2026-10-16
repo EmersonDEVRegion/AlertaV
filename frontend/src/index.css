@@ -691,11 +691,12 @@ html.dark body {
  * =========================================================================== */
 
 .maplibregl-ctrl-group {
-  background: var(--surface-panel) !important;
-  border-radius: var(--radius-control) !important;
-  box-shadow: var(--shadow-panel) !important;
-  backdrop-filter: blur(var(--blur-panel)) saturate(var(--blur-saturate));
-  -webkit-backdrop-filter: blur(var(--blur-panel)) saturate(var(--blur-saturate));
+  /* Cristal (§T): ver «Cristal sobre el mapa» al final del archivo. */
+  background: var(--glass-background) !important;
+  border-radius: var(--glass-radius) !important;
+  box-shadow: var(--glass-shadow) !important;
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
   overflow: hidden;
 }
 
@@ -761,11 +762,11 @@ html.dark .maplibregl-ctrl-icon {
 .maplibregl-map .maplibregl-ctrl-attrib,
 .maplibregl-map .maplibregl-ctrl-attrib.maplibregl-compact,
 .maplibregl-map .maplibregl-ctrl-attrib.maplibregl-compact-show {
-  background-color: var(--surface-panel);
+  background: var(--glass-background);
   color: var(--ink-faint);
-  box-shadow: var(--shadow-panel);
-  backdrop-filter: blur(var(--blur-panel)) saturate(var(--blur-saturate));
-  -webkit-backdrop-filter: blur(var(--blur-panel)) saturate(var(--blur-saturate));
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
 }
 
 /* Plegada es un disco de 24 px y se queda redonda; desplegada es una barra y
@@ -811,12 +812,13 @@ html.dark .maplibregl-map .maplibregl-ctrl-attrib-button {
 }
 
 .maplibregl-map .maplibregl-ctrl-scale {
-  background-color: var(--surface-panel);
+  background: var(--glass-background);
   border-color: var(--line-strong);
   color: var(--ink-muted);
   border-radius: 0 0 var(--radius-control) 0;
-  backdrop-filter: blur(var(--blur-panel)) saturate(var(--blur-saturate));
-  -webkit-backdrop-filter: blur(var(--blur-panel)) saturate(var(--blur-saturate));
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -847,3 +849,151 @@ html.dark .maplibregl-map .maplibregl-ctrl-attrib-button {
 [data-shell='sheet'] .maplibregl-ctrl-bottom-right {
   bottom: 7.25rem;
 }
+
+/* ===========================================================================
+ * La franja bajo la barra de estado, en el iPhone instalado (§T, 16-10-2026)
+ * ===========================================================================
+ *
+ * Con AlertaV instalada en la pantalla de inicio, iOS (visto en 27.0.1) dibuja
+ * la app por debajo de la barra de estado y difumina lo que queda bajo la hora
+ * y unos ~20 pt más abajo. En Safari, sin instalar, no pasa. Desde la web no
+ * se puede apagar, así que esa franja se deja sin nada que leer: sólo el color
+ * de la barra, que difuminado se ve igual.
+ *
+ *   - `display-mode: standalone`: sólo la app instalada.
+ *   - `-webkit-touch-callout`: sólo existe en el WebKit de iOS. Android y el
+ *     escritorio instalados no tienen el efecto y no pagan el alto extra.
+ *
+ * Va fuera de toda capa a propósito: en Tailwind 4 las utilidades viven en
+ * `@layer utilities`, y una regla sin capa les gana sin `!important`.
+ */
+@media (display-mode: standalone) {
+  @supports (-webkit-touch-callout: none) {
+    .app-header {
+      padding-top: calc(max(0.5rem, env(safe-area-inset-top)) + var(--ios-status-fade));
+    }
+
+    /* El buscador desplegado cubre la barra: su campo baja lo mismo. */
+    .app-search-overlay {
+      top: calc(env(safe-area-inset-top) + var(--ios-status-fade));
+    }
+  }
+}
+
+:root {
+  /* Alto de la franja que difumina iOS bajo la barra de estado. */
+  --ios-status-fade: 0.875rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * Paneles que cuelgan de la barra (§T)
+ * ---------------------------------------------------------------------------
+ *
+ * Avisos, clima y el menú «⋯». Al abrir uno, la hoja del teléfono baja a
+ * asomada (`useLowerSheetWhile` en `lib/sheetStore.ts`), y el panel se acota al
+ * espacio que queda entre la barra y la hoja asomada: así no se pisan nunca,
+ * ni en un iPhone chico. Lo que no cabe se desplaza dentro del panel.
+ *
+ * `--app-header-h` lo publica `AppHeader` (mide la barra), y `--sheet-peek`
+ * repite `SHEET_PEEK_REM` de `components/shell/BottomSheet.tsx`. El quiebre es
+ * `COMPACT_BREAKPOINT` de `hooks/useMediaQuery.ts`.
+ */
+:root {
+  --sheet-peek: 7.25rem;
+}
+
+.header-popover {
+  max-height: calc(100dvh - var(--app-header-h, 3.5rem) - 1rem);
+}
+
+@media (max-width: 767.98px) {
+  .header-popover {
+    max-height: calc(100dvh - var(--app-header-h, 3.5rem) - 0.5rem - var(--sheet-peek) - 0.5rem);
+  }
+}
+
+/* ===========================================================================
+ * Cristal sobre el mapa (§T, 16-10-2026)
+ * ===========================================================================
+ *
+ * Inspirado en el Liquid Glass de iOS 26, **sólo** en lo que flota sobre el
+ * mapa: zoom y ubicación, la escala, el botón «i» de la atribución y el chip
+ * de los lugares guardados (`.glass`). La barra, la hoja y los paneles con
+ * texto siguen opacos: se leen en la calle, de día, y el cristal les quita
+ * contraste.
+ *
+ * Qué NO es: la refracción del borde ni los brillos que se mueven. En la web
+ * eso se hace con un filtro SVG dentro de `backdrop-filter`, y el WebKit de
+ * iOS no lo soporta. Esto es un cristal esmerilado bien hecho:
+ *
+ *   - relleno translúcido y un brillo de arriba hacia abajo (la luz cae desde
+ *     arriba, como en el sistema);
+ *   - desenfoque con saturación alta: la saturación es lo que hace que el
+ *     mapa de abajo se lea como color detrás de un vidrio y no como niebla;
+ *   - canto de luz arriba (`inset 0 1px`) y un aro fino, más una sombra
+ *     amplia y suave que lo despega del terreno;
+ *   - cápsulas: el radio llega a la mitad del ancho del botón (36 px).
+ *
+ * Costo: cada elemento remuestrea el mapa en cada cuadro. Son cuatro o cinco
+ * elementos chicos; no se extiende a superficies grandes por eso mismo.
+ *
+ * Para quitarlo: devolver los tokens de abajo a `--surface-panel`,
+ * `--shadow-panel` y `--radius-control`, y el blur a `--blur-panel`.
+ */
+:root {
+  --glass-radius: 1.125rem;
+  --glass-fill: rgb(255 255 255 / 0.52);
+  --glass-sheen: rgb(255 255 255 / 0.55);
+  --glass-rim: rgb(255 255 255 / 0.75);
+  --glass-ring: rgb(15 23 42 / 0.08);
+  --glass-drop: rgb(15 23 42 / 0.18);
+  --glass-filter: blur(16px) saturate(1.9) brightness(1.04);
+}
+
+html.dark {
+  --glass-fill: rgb(28 28 34 / 0.46);
+  --glass-sheen: rgb(255 255 255 / 0.1);
+  --glass-rim: rgb(255 255 255 / 0.18);
+  --glass-ring: rgb(255 255 255 / 0.08);
+  --glass-drop: rgb(0 0 0 / 0.45);
+  --glass-filter: blur(16px) saturate(1.8) brightness(0.92);
+}
+
+:root,
+html.dark {
+  --glass-background: linear-gradient(180deg, var(--glass-sheen), transparent 60%),
+    var(--glass-fill);
+  --glass-shadow: inset 0 1px 0 var(--glass-rim), 0 0 0 1px var(--glass-ring),
+    0 10px 28px -10px var(--glass-drop), 0 2px 6px -2px var(--glass-drop);
+}
+
+/*
+ * Sin desenfoque o con «Reducir transparencia»: el relleno pasa a opaco.
+ * Un vidrio translúcido sin desenfoque deja ver las líneas del mapa a través
+ * del botón, y eso sí se lee mal.
+ */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root,
+  html.dark {
+    --glass-fill: var(--surface-raised);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root,
+  html.dark {
+    --glass-fill: var(--surface-raised);
+    --glass-sheen: transparent;
+    --glass-filter: none;
+  }
+}
+
+@layer components {
+  .glass {
+    background: var(--glass-background);
+    box-shadow: var(--glass-shadow);
+    backdrop-filter: var(--glass-filter);
+    -webkit-backdrop-filter: var(--glass-filter);
+  }
+}
+
