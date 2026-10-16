@@ -7,7 +7,8 @@
  * - `intersection`: media cuadra. El siniestro está en alguna de las cuatro
  *   esquinas de la cuadra nombrada.
  * - `street`: el punto quedó sobre una de las calles, no en la esquina. Entre
- *   30 y 314 m de la esquina en ciudad.
+ *   30 y 314 m de la esquina en ciudad, y con el índice de esquinas sólo quedan
+ *   así los despachos que no nombran un cruce.
  * - `sector`: el tamaño típico de un barrio o población.
  * - `despacho`, `exacta` y `address`: el marcador de la imagen de Viper (el
  *   punto con que despachó la central), coordenadas propias de la fuente o una
@@ -21,7 +22,7 @@ export const INCERTIDUMBRE_M: Record<UbicacionPrecision, number> = {
   exacta: 0,
   address: 0,
   intersection: 60,
-  street: 300,
+  street: 200,
   sector: 600,
 }
 

@@ -8,7 +8,7 @@ import { uncertaintyLayer } from './incidentLayers'
 describe('círculo de incertidumbre', () => {
   it('el radio sale de la precisión y lo exacto no lleva círculo', () => {
     expect(incertidumbreDe('intersection')).toBe(60)
-    expect(incertidumbreDe('street')).toBe(300)
+    expect(incertidumbreDe('street')).toBe(200)
     expect(incertidumbreDe('sector')).toBe(600)
     expect(incertidumbreDe('exacta')).toBe(0)
     expect(incertidumbreDe('address')).toBe(0)
@@ -36,11 +36,23 @@ describe('círculo de incertidumbre', () => {
       ubicacion_precision: 'street',
     } as unknown as Incident
     const feature = toFeatureCollection([incidente]).features[0]
-    expect(feature?.properties.incertidumbre_m).toBe(300)
+    expect(feature?.properties.incertidumbre_m).toBe(200)
+  })
+
+  it('sólo se dibuja el del incidente abierto, y sin relleno', () => {
+    const capa = uncertaintyLayer('INC-2026-00001')
+    expect(capa.filter).toEqual([
+      'all',
+      ['==', ['get', 'code'], 'INC-2026-00001'],
+      ['>', ['get', 'incertidumbre_m'], 0],
+    ])
+    expect(capa.paint?.['circle-color']).toBe('transparent')
+    // Sin selección, el filtro no calza con ningún código.
+    expect(uncertaintyLayer(null).filter).toContainEqual(['==', ['get', 'code'], ' '])
   })
 
   it('convierte metros a píxeles en base 2: 300 m ≈ 300 px en zoom 16 a 33° S', () => {
-    const radio = uncertaintyLayer.paint?.['circle-radius'] as unknown as unknown[]
+    const radio = uncertaintyLayer('INC-2026-00001').paint?.['circle-radius'] as unknown as unknown[]
     expect(radio.slice(0, 3)).toEqual(['interpolate', ['exponential', 2], ['zoom']])
     const [, , , z13, en13, z22, en22] = radio as [unknown, unknown, unknown, number, unknown[], number, unknown[]]
     const factor = (zoom: number, tope: unknown[]) => {

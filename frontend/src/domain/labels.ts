@@ -59,7 +59,7 @@ export const UBICACION_PRECISION_LABEL: Record<UbicacionPrecision, string | null
   address: 'Ubicación: en la dirección informada.',
   exacta: null,
   street:
-    'Ubicación aproximada (± 300 m): sobre la calle informada, no necesariamente en la esquina.',
+    'Ubicación aproximada (± 200 m): sobre la calle informada, no necesariamente en la esquina.',
   sector: 'Ubicación aproximada (± 600 m): el sector informado, no una dirección.',
 }
 

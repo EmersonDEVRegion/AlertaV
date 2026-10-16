@@ -145,33 +145,43 @@ function metrosAPixeles(zoom: number): ExpressionSpecification {
 
 /**
  * Círculo de incertidumbre: hasta dónde puede estar el hecho según la precisión
- * del punto (ver `domain/locationPrecision`). Sólo de cerca, desde zoom 13, que
- * es donde 60 m empiezan a verse: más lejos el disco del incidente ya los tapa.
- * Mismo color del tramo, muy tenue, para que se lea como «por aquí» y no como
- * un segundo incidente.
+ * del punto (ver `domain/locationPrecision`).
+ *
+ * **Sólo el del incidente abierto, y sólo el contorno.** Un disco relleno
+ * alrededor de cada emergencia se lee como su zona afectada o un radio de
+ * evacuación, que es lo contrario de lo que dice. Con la ficha abierta, el
+ * rótulo «Ubicación aproximada (± 200 m)» está al lado y explica el trazo.
+ *
+ * Desde zoom 13, que es donde 60 m empiezan a verse: más lejos el disco del
+ * incidente ya los tapa.
  */
-export const uncertaintyLayer: IncidentLayer = {
-  id: 'incidents-uncertainty',
-  type: 'circle',
-  minzoom: 13,
-  filter: ['>', ['get', 'incertidumbre_m'], 0],
-  paint: {
-    'circle-radius': [
-      'interpolate',
-      ['exponential', 2],
-      ['zoom'],
-      13,
-      metrosAPixeles(13),
-      22,
-      metrosAPixeles(22),
-    ] as unknown as ExpressionSpecification,
-    'circle-color': LEVEL_COLOR_EXPRESSION as unknown as ExpressionSpecification,
-    'circle-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0, 14, 0.1],
-    'circle-stroke-color': LEVEL_COLOR_EXPRESSION as unknown as ExpressionSpecification,
-    'circle-stroke-width': 1,
-    'circle-stroke-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0, 14, 0.45],
-    'circle-pitch-alignment': 'map',
-  },
+export function uncertaintyLayer(code: string | null): IncidentLayer {
+  return {
+    id: 'incidents-uncertainty',
+    type: 'circle',
+    minzoom: 13,
+    filter: [
+      'all',
+      ['==', ['get', 'code'], code ?? ' '],
+      ['>', ['get', 'incertidumbre_m'], 0],
+    ],
+    paint: {
+      'circle-radius': [
+        'interpolate',
+        ['exponential', 2],
+        ['zoom'],
+        13,
+        metrosAPixeles(13),
+        22,
+        metrosAPixeles(22),
+      ] as unknown as ExpressionSpecification,
+      'circle-color': 'transparent',
+      'circle-stroke-color': LEVEL_COLOR_EXPRESSION as unknown as ExpressionSpecification,
+      'circle-stroke-width': 1.5,
+      'circle-stroke-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0, 14, 0.7],
+      'circle-pitch-alignment': 'map',
+    },
+  }
 }
 
 /** Sólo los incidentes con alerta oficial vigente llevan anillo. */
