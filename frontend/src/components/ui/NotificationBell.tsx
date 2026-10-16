@@ -54,11 +54,11 @@ export const PUSH_TEXT = {
   seismicCaveat:
     'Los temblores llegan unos minutos después del movimiento: no es una alerta temprana. Si estás en la costa y el sismo te impide mantenerte en pie, evacúa a una zona segura sin esperar ningún aviso.',
   locationNote:
-    'Usamos la última ubicación que la app conoce: se actualiza cada vez que la abres. La guardamos redondeada (unos 100 m) y la borramos si desactivas los avisos.',
+    'Cada aviso dice desde dónde se midió: «de tu última ubicación» (la última que la app conoce; se actualiza cada vez que la abres) o el nombre de tu lugar guardado, como «de Casa». La ubicación se guarda redondeada (unos 100 m) y se borra si desactivas los avisos.',
   desktopNote:
     'En un computador la ubicación es aproximada (sale de la red) y los avisos llegan mientras el navegador esté abierto. Para tu casa, guárdala en «Mis lugares».',
   noPlaces:
-    'Guarda tu casa o tu trabajo en «Mis lugares» (pestaña Historial) para recibir avisos de ahí aunque estés en otra parte.',
+    'Guarda tu casa o tu trabajo en «Mis lugares» (pestaña Historial) para recibir avisos de ahí, también de temblores, aunque estés en otra parte.',
   staleLocation: 'Si ya no estás ahí, actualízala: los avisos se miden desde ese punto.',
 } as const
 

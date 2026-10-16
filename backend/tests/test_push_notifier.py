@@ -175,7 +175,10 @@ class TestIncidentes:
 
         assert result.sent == 2
         titles = sorted(payload["title"] for _, payload, _ in sender.sent)
-        assert titles == ["Incendio forestal a 4,1 km", "Incendio forestal a 800 m"]
+        assert titles == [
+            "🔥 Incendio forestal a 4,1 km de tu última ubicación",
+            "🔥 Incendio forestal a 800 m de tu última ubicación",
+        ]
         assert {kwargs["topic"] for _, _, kwargs in sender.sent} == {"INC-2026-00142"}
         assert all(o.status == "sent" for o in repo.outcomes)
 
@@ -206,8 +209,11 @@ class TestIncidentes:
         await notifier.run(now=NOW)
 
         by_endpoint = {sub.endpoint: payload for sub, payload, _ in sender.sent}
-        assert by_endpoint[home.endpoint]["title"] == "Incendio forestal a 1,2 km de Casa"
-        assert by_endpoint[stale.endpoint]["title"] == "Incendio forestal a 2 km"
+        assert by_endpoint[home.endpoint]["title"] == "🔥 Incendio forestal a 1,2 km de Casa"
+        assert by_endpoint[home.endpoint]["origin"] == "place"
+        assert by_endpoint[stale.endpoint]["title"] == (
+            "🔥 Incendio forestal a 2 km de tu última ubicación"
+        )
         assert "de hace 4 días" in by_endpoint[stale.endpoint]["body"]
 
     async def test_una_senal_aislada_no_avisa_a_nadie(self) -> None:
@@ -309,9 +315,8 @@ class TestIncidentes:
         await notifier.run(now=NOW)
 
         ((_, payload, _),) = sender.sent
-        assert payload["title"] == "Corte de luz a 600 m"
-        assert "CGE · 320 clientes sin luz" in payload["body"]
-        assert "Reposición estimada: 19:00" in payload["body"]
+        assert payload["title"] == "⚡ Corte de luz a 600 m de tu última ubicación"
+        assert "320 clientes · vuelve ~19:00 · CGE" in payload["body"]
 
 
 def _q(key: str, provider: str, **overrides: Any) -> QuakeView:
@@ -343,13 +348,32 @@ class TestSismos:
         assert result.quakes_considered == 1
         assert len(sender.sent) == 1
         _, payload, kwargs = sender.sent[0]
-        assert payload["title"] == "Sismo de magnitud 4,6 a 45 km"
-        assert payload["body"].endswith("Fuente: CSN")
+        assert payload["title"] == "🌎 Sismo 4,6 a 45 km de tu última ubicación"
+        assert payload["body"].endswith("· CSN")
         assert kwargs["ttl_seconds"] == 1800
         # La consulta de destinatarios excluye a quien ya supo por CUALQUIERA
         # de las dos versiones.
         assert sorted(repo.quake_queries[0]["keys"]) == ["csn:9", "usgs:us1"]
         assert repo.reserved == [("seismic", "csn:9", 1)]
+
+    async def test_un_sismo_que_se_siente_en_casa_lo_nombra(self) -> None:
+        casa = Recipient(
+            subscription_id=5,
+            endpoint="https://fcm.googleapis.com/fcm/send/5",
+            p256dh="p",
+            auth="a",
+            distance_m=30_000,
+            place="Casa",
+        )
+        repo = FakeRepo(quakes=[_q("csn:9", "csn")], quake_recipients=[casa])
+        sender = FakeSender()
+        notifier, _ = _notifier(repo, sender)
+
+        await notifier.run(now=NOW)
+
+        ((_, payload, _),) = sender.sent
+        assert payload["title"] == "🌎 Sismo 4,6 a 30 km de Casa"
+        assert payload["origin"] == "place" and payload["place"] == "Casa"
 
     async def test_el_radio_de_busqueda_es_el_de_percepcion(self) -> None:
         repo = FakeRepo(quakes=[_q("csn:9", "csn", magnitude=4.0, depth_km=15.0)])

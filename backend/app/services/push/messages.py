@@ -1,21 +1,22 @@
 """Redacción de las notificaciones. Puro: entra un hecho, sale un mensaje.
 
 Una notificación se lee de reojo, en la pantalla bloqueada, a veces a las tres
-de la mañana. Tres reglas ordenan todo lo de acá:
+de la mañana. Android muestra plegadas una o dos líneas, e iOS unas cuatro, y
+además agrega su propia línea «from AlertaV». Cuatro reglas ordenan lo de acá
+(§N, 2026-10-16):
 
-1. **El título dice qué y a qué distancia.** Es lo único que se ve seguro en
-   todos los teléfonos: «Incendio forestal a 1,2 km».
-2. **El cuerpo dice dónde, desde cuándo y cuánto sabemos.** Y lo dice con las
-   mismas palabras que la ficha del mapa: un aviso que afirma más que el mapa
-   es una mentira con ícono.
-3. **Nunca se afirma una verificación que no hubo.** Un incidente en el tramo
-   `confirmed` sin CONAF ni Bomberos lleva «sin verificar en terreno», igual
-   que el pin hueco del mapa.
-
-La distancia se mide desde la última ubicación que el teléfono informó, no
-desde donde está ahora (con la app cerrada, el navegador no la entrega). Por eso
-el título dice «a 1,2 km» y no «a 1,2 km de ti»: la PWA explica el matiz en el
-panel de avisos, y el título no promete una precisión que no tiene.
+1. **El título dice qué, a qué distancia y desde dónde.** Un emoji por tipo
+   para leerlo sin leer: «🔥 Incendio forestal a 1,2 km de Casa». El origen va
+   siempre: el nombre del lugar guardado, o «de tu última ubicación», porque
+   con la app cerrada el navegador no entrega la ubicación actual y el
+   servidor sólo conoce la última que el teléfono informó.
+2. **El cuerpo es una línea:** dónde, desde cuándo y cuánto sabemos, separado
+   por «·». Lo crítico (una alerta de SENAPRED) va antes, en su propia línea.
+3. **Sin relleno:** nada de «Fuente:», porcentajes ni «(estimado)». La ficha del
+   mapa tiene el detalle; el aviso sólo tiene que decir si vale la pena abrirla.
+4. **Nunca se afirma una verificación que no hubo.** Un incidente en el tramo
+   `confirmed` sin CONAF ni Bomberos dice «Sin verificar», igual que el pin
+   hueco del mapa.
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ CHILE_TZ = ZoneInfo("America/Santiago")
 
 #: Versión del formato del mensaje. El service worker la lee para poder
 #: convivir con mensajes viejos que sigan en cola tras un despliegue.
-PAYLOAD_VERSION = 1
+PAYLOAD_VERSION = 2
 
 #: Cuánto guarda el servicio de push el mensaje si el teléfono no tiene señal.
 #: Un incendio sigue siendo noticia una hora después; un sismo, a la media hora,
@@ -72,13 +73,35 @@ _VERIFIERS = {
     "cge": "CGE",
 }
 
-_ALERT_TEXT = {
-    "roja": "Alerta roja de SENAPRED",
-    "amarilla": "Alerta amarilla de SENAPRED",
-    "temprana_preventiva": "Alerta temprana preventiva de SENAPRED",
+_PROVIDER_NAME = {"csn": "CSN", "usgs": "USGS"}
+
+#: Un emoji por tipo, al comienzo del título. En la bandeja se reconoce el tipo
+#: antes de leer la palabra. En la interfaz se usan íconos (Material Symbols);
+#: una notificación sólo admite texto, y ahí el emoji es el ícono.
+_EMOJI: dict[IncidentType, str] = {
+    IncidentType.POSSIBLE_FIRE: "🔥",
+    IncidentType.WILDFIRE: "🔥",
+    IncidentType.STRUCTURAL_FIRE: "🔥",
+    IncidentType.FLOOD: "🌊",
+    IncidentType.LANDSLIDE: "⛰️",
+    IncidentType.ACCIDENT: "🚗",
+    IncidentType.POWER_OUTAGE: "⚡",
+    IncidentType.RESCUE: "🆘",
+    IncidentType.OTHER: "⚠️",
+}
+SEISMIC_EMOJI = "🌎"
+WATER_EMOJI = "💧"
+
+#: La alerta de SENAPRED con el color de la alerta: es lo más importante del
+#: aviso y va en la primera línea del cuerpo.
+_ALERT_LINE = {
+    "roja": "🔴 Alerta roja de SENAPRED",
+    "amarilla": "🟡 Alerta amarilla de SENAPRED",
+    "temprana_preventiva": "🟢 Alerta temprana preventiva de SENAPRED",
 }
 
-_PROVIDER_NAME = {"csn": "CSN", "usgs": "USGS"}
+#: Desde dónde se midió la distancia cuando no fue desde un lugar guardado.
+LAST_LOCATION = "tu última ubicación"
 
 
 # ---------------------------------------------------------------------------
@@ -151,10 +174,16 @@ class PushMessage:
     url: str
     kind: str
     ttl_seconds: int
+    #: Desde dónde se midió la distancia: `"place"` (un lugar guardado),
+    #: `"location"` (la última ubicación del teléfono) o `None` (sin distancia,
+    #: como el aviso de prueba).
+    origin: str | None = None
+    #: El nombre del lugar guardado, si `origin` es `"place"`.
+    place: str | None = None
 
     def payload(self, *, now: datetime) -> dict[str, Any]:
         """Lo que recibe `push-sw.js`. Debe caber holgado en ~3,9 KB."""
-        return {
+        data: dict[str, Any] = {
             "v": PAYLOAD_VERSION,
             "kind": self.kind,
             "title": self.title,
@@ -163,6 +192,11 @@ class PushMessage:
             "url": self.url,
             "ts": int(now.timestamp() * 1000),
         }
+        if self.origin:
+            data["origin"] = self.origin
+        if self.place:
+            data["place"] = self.place
+        return data
 
     @property
     def topic(self) -> str:
@@ -174,6 +208,36 @@ class OutageFacts:
     provider: str | None = None
     affected_clients: int | None = None
     estimated_restoration: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Origin:
+    """Desde dónde se midió la distancia, ya redactado para el aviso."""
+
+    #: «de Casa» o «de tu última ubicación», para el final del título.
+    suffix: str
+    #: «Ubicación de hace 3 días», o `None` si no hace falta decirlo.
+    note: str | None
+    kind: str
+    place: str | None
+
+
+def origin_of(*, place: str | None, located_at: datetime | None, now: datetime | None) -> Origin:
+    """Redacta el origen de la distancia.
+
+    Con `place` se midió desde un lugar guardado y se nombra. Sin él, se midió
+    desde la última ubicación que el teléfono informó; si tiene más de un día,
+    el cuerpo lo dice, porque «a 1,2 km» de donde uno estuvo el lunes no es lo
+    mismo que de donde está.
+    """
+    if place:
+        return Origin(suffix=f"de {place}", note=None, kind="place", place=place)
+    note = None
+    if located_at is not None and now is not None:
+        age = format_location_age(located_at, now)
+        if age:
+            note = f"📍 Ubicación {age}"
+    return Origin(suffix=f"de {LAST_LOCATION}", note=note, kind="location", place=None)
 
 
 def _certainty(
@@ -190,18 +254,21 @@ def _certainty(
             quien = " y ".join(verifiers) if len(verifiers) <= 2 else ", ".join(verifiers)
             verbo = "Informado" if incident_type is IncidentType.POWER_OUTAGE else "Confirmado"
             return f"{verbo} por {quien}"
-        return "Confirmado por una fuente oficial"
+        return "Confirmado por fuente oficial"
 
     tramo = level_for(confidence)
     level = style_for(tramo, family_of_incident(incident_type))
-    pct = round(confidence * 100)
     fuentes = "1 fuente" if source_count == 1 else f"{source_count} fuentes"
     # La etiqueta del tramo `confirmed` dice «Incendio confirmado». Sin una
     # fuente que haya ido al lugar eso es falso en una notificación, igual que lo
     # sería en el mapa sin el pin hueco; se reemplaza por lo que sí se sabe.
     if tramo is ConfidenceLevel.CONFIRMED:
-        return f"Sin verificar en terreno · {fuentes} coinciden ({pct} %)"
-    return f"{level.label} · {fuentes} ({pct} %)"
+        return f"Sin verificar ({fuentes})"
+    return f"{level.label} ({fuentes})"
+
+
+def _join(parts: Sequence[str | None]) -> str:
+    return " · ".join(part for part in parts if part)
 
 
 def incident_message(
@@ -223,54 +290,52 @@ def incident_message(
 ) -> PushMessage:
     """Aviso de una emergencia cercana.
 
-    Con `place` la distancia se midió desde un lugar guardado y el título lo
-    nombra: «Incendio forestal a 1,2 km de Casa». Sin él, se midió desde la
-    última ubicación del teléfono; si ésta tiene más de un día, el cuerpo lo
-    dice, porque «a 1,2 km» de donde uno estuvo el lunes no es lo mismo.
+    🔥 Incendio forestal a 1,2 km de Casa
+    Viña del Mar · desde 14:32 · Confirmado por Bomberos
     """
+    origin = origin_of(place=place, located_at=located_at, now=now)
     noun = _NOUN.get(incident_type, "Emergencia")
-    title = f"{noun} a {format_distance(distance_m)}"
-    if place:
-        title += f" de {place}"
+    emoji = _EMOJI.get(incident_type, "⚠️")
+    title = f"{emoji} {noun} a {format_distance(distance_m)} {origin.suffix}"
 
     lines: list[str] = []
+    if alert_level in _ALERT_LINE:
+        lines.append(_ALERT_LINE[alert_level])
 
-    where = [commune] if commune else []
-    hora = format_clock(first_seen_at)
-    # «desde la 01:15» pero «desde las 14:32»: la una es singular.
-    articulo = "la" if hora.startswith("01:") else "las"
-    where.append(f"desde {articulo} {hora}")
-    lines.append(" · ".join(where))
-
+    desde = f"desde {format_clock(first_seen_at)}"
     if incident_type is IncidentType.POWER_OUTAGE and outage is not None:
-        detalle: list[str] = []
-        if outage.provider:
-            detalle.append(_VERIFIERS.get(outage.provider.lower(), outage.provider))
+        clientes = None
         if outage.affected_clients:
             n = outage.affected_clients
-            detalle.append("1 cliente sin luz" if n == 1 else f"{_thousands(n)} clientes sin luz")
-        if detalle:
-            lines.append(" · ".join(detalle))
-        if outage.estimated_restoration is not None:
-            lines.append(f"Reposición estimada: {format_clock(outage.estimated_restoration)}")
+            clientes = "1 cliente" if n == 1 else f"{_thousands(n)} clientes"
+        vuelve = (
+            f"vuelve ~{format_clock(outage.estimated_restoration)}"
+            if outage.estimated_restoration is not None
+            else None
+        )
+        proveedor = (
+            _VERIFIERS.get(outage.provider.lower(), outage.provider) if outage.provider else None
+        )
+        lines.append(_join([commune, desde, clientes, vuelve, proveedor]))
     else:
         lines.append(
-            _certainty(
-                confidence=confidence,
-                source_count=source_count,
-                sources=sources,
-                is_official_confirmed=is_official_confirmed,
-                incident_type=incident_type,
+            _join(
+                [
+                    commune,
+                    desde,
+                    _certainty(
+                        confidence=confidence,
+                        source_count=source_count,
+                        sources=sources,
+                        is_official_confirmed=is_official_confirmed,
+                        incident_type=incident_type,
+                    ),
+                ]
             )
         )
 
-    if alert_level in _ALERT_TEXT:
-        lines.append(_ALERT_TEXT[alert_level])
-
-    if not place and located_at is not None and now is not None:
-        age = format_location_age(located_at, now)
-        if age:
-            lines.append(f"Distancia desde tu ubicación {age}")
+    if origin.note:
+        lines.append(origin.note)
 
     return PushMessage(
         title=title,
@@ -279,6 +344,8 @@ def incident_message(
         url="/?" + urlencode({"incidente": code}),
         kind="incident",
         ttl_seconds=INCIDENT_TTL_SECONDS,
+        origin=origin.kind,
+        place=origin.place,
     )
 
 
@@ -293,25 +360,32 @@ def seismic_message(
     lon: float,
     place: str | None,
     depth_km: float | None,
+    saved_place: str | None = None,
+    located_at: datetime | None = None,
+    now: datetime | None = None,
 ) -> PushMessage:
-    """Aviso de un sismo que probablemente se sintió en la ubicación."""
-    title = f"Sismo de magnitud {_decimal(magnitude, 1)} a {format_distance(distance_m)}"
+    """Aviso de un sismo que probablemente se sintió en la ubicación o en un lugar.
 
-    first = [f"Epicentro a {format_distance(distance_m)} de tu ubicación"]
-    first.append(format_clock(timestamp))
-    lines = [" · ".join(first)]
+        🌎 Sismo 4,8 a 62 km de tu última ubicación
+        25 km al O de Valparaíso · 14:32 · 35 km de prof. · CSN
 
-    second: list[str] = []
+    `place` es la referencia del epicentro que publica la red; `saved_place`, el
+    lugar guardado desde el que se midió la distancia.
+    """
+    origin = origin_of(place=saved_place, located_at=located_at, now=now)
+    title = (
+        f"{SEISMIC_EMOJI} Sismo {_decimal(magnitude, 1)} "
+        f"a {format_distance(distance_m)} {origin.suffix}"
+    )
+
     # La referencia del USGS viene en inglés («25 km WSW of Valparaíso»). Se
     # muestra igual: es la única que hay cuando el CSN todavía no publica, y la
-    # fuente va nombrada al final para que se entienda el idioma.
-    if place:
-        second.append(place)
-    if depth_km is not None:
-        second.append(f"{round(abs(depth_km))} km de profundidad")
-    if second:
-        lines.append(" · ".join(second))
-    lines.append(f"Fuente: {_PROVIDER_NAME.get(provider, provider.upper())}")
+    # red va nombrada al final para que se entienda el idioma.
+    profundidad = f"{round(abs(depth_km))} km de prof." if depth_km is not None else None
+    red = _PROVIDER_NAME.get(provider, provider.upper())
+    lines = [_join([place, format_clock(timestamp), profundidad, red])]
+    if origin.note:
+        lines.append(origin.note)
 
     return PushMessage(
         title=title,
@@ -320,10 +394,15 @@ def seismic_message(
         url="/?" + urlencode({"sismo": key, "lat": f"{lat:.4f}", "lon": f"{lon:.4f}"}),
         kind="seismic",
         ttl_seconds=SEISMIC_TTL_SECONDS,
+        origin=origin.kind,
+        place=origin.place,
     )
 
 
 WATER_CUT_TTL_SECONDS = 6 * 3600
+
+#: Largo máximo de las calles en el aviso. Esval puede mandar un párrafo.
+_CALLES_MAX = 60
 
 
 def _momento(valor: str | None, now: datetime | None) -> str | None:
@@ -358,30 +437,37 @@ def water_cut_message(
     programado: bool | None,
     motivo: str | None,
     place: str | None = None,
+    located_at: datetime | None = None,
     now: datetime | None = None,
 ) -> PushMessage:
-    """Aviso de un corte de agua de Esval cerca de la ubicación o de un lugar guardado."""
-    nombre = "Corte de agua programado" if programado else "Corte de agua"
-    title = f"{nombre} a {format_distance(distance_m)}"
-    if place:
-        title += f" de {place}"
+    """Aviso de un corte de agua de Esval cerca de la ubicación o de un lugar guardado.
 
-    lines: list[str] = []
-    donde = [parte for parte in (calles or sector, comuna) if parte]
-    if donde:
-        # Las calles de Esval pueden ser un párrafo: el aviso lleva el comienzo.
-        primera = donde[0] if len(donde[0]) <= 90 else donde[0][:87].rstrip() + "…"
-        lines.append(" · ".join([primera, *donde[1:]]))
+        💧 Corte de agua programado a 650 m de Casa
+        1 Norte entre 3 y 5 Poniente · Viña del Mar · 23:00 a 06/10 06:00 · Esval
+
+    El motivo no va: casi siempre es «mantención» y no cambia qué hacer.
+    """
+    del motivo  # Ver el docstring: se recibe para no cambiar la firma del notificador.
+    origin = origin_of(place=place, located_at=located_at, now=now)
+    nombre = "Corte de agua programado" if programado else "Corte de agua"
+    title = f"{WATER_EMOJI} {nombre} a {format_distance(distance_m)} {origin.suffix}"
+
+    donde = calles or sector
+    if donde and len(donde) > _CALLES_MAX:
+        donde = donde[: _CALLES_MAX - 1].rstrip(" ,;") + "…"
     desde, hasta = _momento(inicio, now), _momento(fin, now)
     if desde and hasta:
-        lines.append(f"Desde {desde} hasta {hasta} (estimado)")
+        cuando: str | None = f"{desde} a {hasta}"
     elif desde:
-        lines.append(f"Desde {desde}")
+        cuando = f"desde {desde}"
     elif hasta:
-        lines.append(f"Reposición estimada: {hasta}")
-    if motivo:
-        lines.append(motivo)
-    lines.append("Fuente: Esval")
+        cuando = f"hasta {hasta}"
+    else:
+        cuando = None
+
+    lines = [_join([donde, comuna, cuando, "Esval"])]
+    if origin.note:
+        lines.append(origin.note)
 
     return PushMessage(
         title=title,
@@ -390,14 +476,16 @@ def water_cut_message(
         url="/?" + urlencode({"corte_agua": public_id, "lat": f"{lat:.4f}", "lon": f"{lon:.4f}"}),
         kind="water_cut",
         ttl_seconds=WATER_CUT_TTL_SECONDS,
+        origin=origin.kind,
+        place=origin.place,
     )
 
 
-_PROBE_NOMBRES = (
-    ("fire", "incendios"),
-    ("traffic", "accidentes"),
-    ("power", "cortes de luz"),
-    ("water", "cortes de agua"),
+_PROBE_CATEGORIAS = (
+    ("fire", "🔥"),
+    ("traffic", "🚗"),
+    ("power", "⚡"),
+    ("water", "💧"),
 )
 
 
@@ -406,40 +494,42 @@ def probe_message(
 ) -> PushMessage:
     """Lo que llega al tocar «Enviar prueba» en la PWA.
 
-    Con `radios` (§K) cuenta las distancias que la persona eligió para las
-    categorías principales; sin ellos, el radio único de antes.
+        ✅ Avisos activados
+        🔥 5 km · 🚗 2 km · ⚡ 1 km · 💧 1 km · 🌎 sismos que se sientan
+
+    El título no dice «AlertaV»: el teléfono ya agrega el nombre de la app.
     """
     if radios is None:
-        cuando = f"una emergencia a menos de {format_distance(radius_m)}"
+        partes = [f"Emergencias a menos de {format_distance(radius_m)}"]
     else:
         partes = [
-            f"{nombre} a menos de {format_distance(radios[clave])}"
-            for clave, nombre in _PROBE_NOMBRES
+            f"{emoji} {format_distance(radios[clave])}"
+            for clave, emoji in _PROBE_CATEGORIAS
             if radios.get(clave, 0) > 0
         ]
-        cuando = (
-            "una emergencia cerca (" + ", ".join(partes) + ")"
-            if partes
-            else "una emergencia cerca"
-        )
+    partes.append(f"{SEISMIC_EMOJI} sismos que se sientan")
     return PushMessage(
-        title="AlertaV: avisos activados",
-        body=f"Así llegará un aviso cuando haya {cuando} o un sismo que se sienta donde estás.",
+        title="✅ Avisos activados",
+        body=" · ".join(partes) + f"\nDistancias desde {LAST_LOCATION} y tus lugares guardados.",
         tag="alertav-prueba",
         url="/",
         kind="test",
         ttl_seconds=TEST_TTL_SECONDS,
     )
 
+
 __all__ = [
     "INCIDENT_TTL_SECONDS",
+    "LAST_LOCATION",
     "SEISMIC_TTL_SECONDS",
+    "Origin",
     "OutageFacts",
     "PushMessage",
     "format_clock",
     "format_distance",
     "format_location_age",
     "incident_message",
+    "origin_of",
     "probe_message",
     "safe_topic",
     "seismic_message",

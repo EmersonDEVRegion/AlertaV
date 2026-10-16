@@ -26,11 +26,15 @@ self.addEventListener('push', (event) => {
     } catch {
       // Un mensaje que no es JSON sólo puede venir de una prueba manual desde
       // las herramientas del navegador. Se muestra tal cual, sin inventar nada.
-      data = { title: 'AlertaV', body: event.data.text() }
+      data = { title: 'Aviso', body: event.data.text() }
     }
   }
 
-  const title = typeof data.title === 'string' && data.title ? data.title : 'AlertaV'
+  // Sin «AlertaV» en el título: el sistema ya muestra el nombre de la app como
+  // remitente (iOS agrega «from AlertaV»; Android, el nombre de la PWA).
+  // Desde `v: 2` el mensaje trae también `origin` («place» o «location») y
+  // `place`; el título ya los dice, así que aquí no se usan todavía.
+  const title = typeof data.title === 'string' && data.title ? data.title : 'Aviso'
   const urgent = data.kind === 'incident' || data.kind === 'seismic'
 
   /** @type {NotificationOptions} */

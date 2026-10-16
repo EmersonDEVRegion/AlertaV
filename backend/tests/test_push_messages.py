@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -61,16 +61,21 @@ class TestDistancia:
 
 class TestIncidente:
     def test_el_titulo_dice_que_y_a_que_distancia(self) -> None:
-        assert _incident().title == "Incendio forestal a 1,2 km"
+        assert _incident().title == "🔥 Incendio forestal a 1,2 km de tu última ubicación"
 
-    def test_el_cuerpo_dice_donde_desde_cuando_y_cuanto_sabemos(self) -> None:
-        lines = _incident().body.split("\n")
-        assert lines[0] == "Viña del Mar · desde las 14:32"
-        assert lines[1] == "Posible emergencia · 2 fuentes (45 %)"
+    def test_el_cuerpo_es_una_linea(self) -> None:
+        assert _incident().body == "Viña del Mar · desde 14:32 · Posible emergencia (2 fuentes)"
 
-    def test_la_una_es_singular(self) -> None:
-        body = _incident(first_seen_at=datetime(2026, 9, 23, 4, 15, tzinfo=UTC)).body
-        assert "desde la 01:15" in body
+    def test_sin_porcentaje(self) -> None:
+        assert "%" not in _incident(confidence=0.72, source_count=3).body
+
+    def test_el_payload_dice_el_origen(self) -> None:
+        payload = _incident().payload(now=T0)
+        assert payload["v"] == 2
+        assert payload["origin"] == "location"
+        assert "place" not in payload
+        casa = _incident(place="Casa").payload(now=T0)
+        assert casa["origin"] == "place" and casa["place"] == "Casa"
 
     def test_confirmado_por_quien_fue_al_lugar(self) -> None:
         body = _incident(
@@ -84,13 +89,15 @@ class TestIncidente:
     def test_tramo_alto_sin_verificacion_no_dice_confirmado(self) -> None:
         body = _incident(confidence=0.72, source_count=3).body
         assert "confirmado" not in body.lower()
-        assert "Sin verificar en terreno · 3 fuentes coinciden (72 %)" in body
+        assert body.endswith("Sin verificar (3 fuentes)")
 
-    def test_la_alerta_de_senapred_va_aparte(self) -> None:
-        assert _incident(alert_level="roja").body.endswith("Alerta roja de SENAPRED")
+    def test_la_alerta_de_senapred_va_primero(self) -> None:
+        lines = _incident(alert_level="roja").body.split("\n")
+        assert lines[0] == "🔴 Alerta roja de SENAPRED"
+        assert lines[1].startswith("Viña del Mar")
 
     def test_sin_comuna_igual_dice_la_hora(self) -> None:
-        assert _incident(commune=None).body.startswith("desde las 14:32")
+        assert _incident(commune=None).body.startswith("desde 14:32")
 
     def test_el_enlace_abre_el_incidente(self) -> None:
         message = _incident()
@@ -113,16 +120,12 @@ class TestIncidente:
                 estimated_restoration=datetime(2026, 9, 23, 21, 30, tzinfo=UTC),
             ),
         )
-        assert message.title == "Corte de luz a 800 m"
-        assert message.body.split("\n") == [
-            "Quilpué · desde las 14:32",
-            "Chilquinta · 1.250 clientes sin luz",
-            "Reposición estimada: 18:30",
-        ]
+        assert message.title == "⚡ Corte de luz a 800 m de tu última ubicación"
+        assert message.body == "Quilpué · desde 14:32 · 1.250 clientes · vuelve ~18:30 · Chilquinta"
 
     def test_accidente(self) -> None:
         assert _incident(incident_type=IncidentType.ACCIDENT).title.startswith(
-            "Accidente de tránsito"
+            "🚗 Accidente de tránsito"
         )
 
 
@@ -143,14 +146,19 @@ class TestSismo:
         return seismic_message(**base)  # type: ignore[arg-type]
 
     def test_titulo_con_magnitud_y_distancia(self) -> None:
-        assert self._message().title == "Sismo de magnitud 4,8 a 62 km"
+        assert self._message().title == "🌎 Sismo 4,8 a 62 km de tu última ubicación"
 
     def test_cuerpo(self) -> None:
-        assert self._message().body.split("\n") == [
-            "Epicentro a 62 km de tu ubicación · 14:32",
-            "25 km al O de Valparaíso · 35 km de profundidad",
-            "Fuente: CSN",
-        ]
+        assert self._message().body == "25 km al O de Valparaíso · 14:32 · 35 km de prof. · CSN"
+
+    def test_desde_un_lugar_guardado(self) -> None:
+        message = self._message(saved_place="Casa")
+        assert message.title == "🌎 Sismo 4,8 a 62 km de Casa"
+        assert message.payload(now=T0)["place"] == "Casa"
+
+    def test_ubicacion_vieja(self) -> None:
+        message = self._message(located_at=T0 - timedelta(days=2, hours=1), now=T0)
+        assert message.body.endswith("\n📍 Ubicación de hace 2 días")
 
     def test_tag_y_topic_validos(self) -> None:
         message = self._message(key="usgs:us6000tlm3")
@@ -165,15 +173,15 @@ def test_topic_se_recorta_a_32_caracteres() -> None:
 
 def test_prueba() -> None:
     message = probe_message(radius_m=5000)
+    assert message.title == "✅ Avisos activados"
+    assert "AlertaV" not in message.title  # el teléfono ya agrega «from AlertaV»
     assert "a menos de 5 km" in message.body
 
 
 def test_la_prueba_cuenta_los_radios_elegidos() -> None:
     message = probe_message(radios={"fire": 5000, "traffic": 2000, "power": 0, "water": 1000})
-    assert "incendios a menos de 5 km" in message.body
-    assert "accidentes a menos de 2 km" in message.body
-    assert "cortes de luz" not in message.body
-    assert "cortes de agua a menos de 1 km" in message.body
+    first = message.body.split("\n")[0]
+    assert first == "🔥 5 km · 🚗 2 km · 💧 1 km · 🌎 sismos que se sientan"
 
 
 def test_el_payload_cabe_con_holgura() -> None:
