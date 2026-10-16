@@ -316,7 +316,7 @@ recalculan. Una alerta levantada tiene que dejar de teñir el mapa, y reconstrui
 es más simple de auditar que caducar enlace por enlace. Los vínculos espaciales,
 en cambio, son historia y no se tocan nunca.
 
-Dos reglas que evitan falsos positivos caros:
+Tres reglas que evitan falsos positivos caros:
 
 - **Las alertas regionales y nacionales no se adosan a incidentes concretos**
   (`CORRELATION_ATTACH_REGIONAL_ALERTS=false`). Una alerta temprana preventiva
@@ -326,6 +326,12 @@ Dos reglas que evitan falsos positivos caros:
   crecida no se une a un incendio que casualmente ocurre en la misma comuna. Si
   la alerta no declara el fenómeno, se une igual pero con la confianza del
   vínculo penalizada y una nota que lo dice.
+- **Sólo las familias que SENAPRED alerta reciben alertas**
+  (`ALERTABLE_FAMILIES`: `fire` e `hydro`). Un corte de luz, un choque o un
+  rescate no son el objeto de una alerta, ni siquiera de una que no declara el
+  fenómeno: una alerta comunal por viento no convierte cada corte de la comuna
+  en «Alerta Amarilla». La ficha de esos incidentes no muestra el eje; en
+  incendios e hidro, la barra aparece sólo con una alerta vigente.
 
 **Límite conocido y medido.** El Paso B sólo alcanza a incidentes que tienen
 comuna. La comuna sale de los atributos de la fuente, del texto y, como último

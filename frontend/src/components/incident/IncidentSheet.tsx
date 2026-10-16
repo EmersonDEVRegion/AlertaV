@@ -14,6 +14,7 @@ import {
   EMERGENCY_CONTACT,
   UNCONFIRMED_NOUN,
   VERIFYING_SOURCES,
+  alertApplies,
   layerOf,
 } from '@/domain/families'
 import { styleFor } from '@/domain/palette'
@@ -71,6 +72,7 @@ export const IncidentSheet = memo(function IncidentSheet({
   }, [onClose])
 
   const layer = layerOf(incident.type)
+  const alertable = alertApplies(incident.type)
   // La paleta la decide la familia: un accidente vial no se pinta ni se rotula
   // como un incendio. `styleFor` ya resuelve el atenuado de los cerrados.
   const style = styleFor(incident)
@@ -140,7 +142,7 @@ export const IncidentSheet = memo(function IncidentSheet({
               {STATUS_LABEL[incident.status]}
             </span>
           )}
-          <AlertBadge level={incident.alert_level} />
+          {alertable && <AlertBadge level={incident.alert_level} />}
           {incident.is_multi_source && (
             <span className="rounded-full bg-sunken px-2.5 py-1 text-xs font-medium text-ink-muted ring-1 ring-line">
               {incident.source_count} fuentes independientes
@@ -181,16 +183,20 @@ export const IncidentSheet = memo(function IncidentSheet({
                 : `${style.meaning} Ninguna fuente lo verificó en terreno.`
             }
           />
-          <ConfidenceBar
-            label="Estado de alerta"
-            value={incident.alert_confidence}
-            color={incident.alert_level ? '#3b82f6' : '#94a3b8'}
-            caption={
-              incident.alert_level
-                ? 'Hay una alerta de SENAPRED vigente asociada a este incidente.'
-                : 'Sin alerta oficial vigente asociada. Es un eje distinto de la confianza del hecho: su ausencia no desmiente el incidente.'
-            }
-          />
+          {/* El eje de alerta sólo existe donde SENAPRED alerta (incendios e
+              hidrometeorológicos), y sólo se dibuja cuando hay una vigente: una
+              barra vacía en cada ficha sugiere una gravedad que nadie declaró. */}
+          {alertable &&
+            (incident.alert_level ? (
+              <ConfidenceBar
+                label="Estado de alerta"
+                value={incident.alert_confidence}
+                color="#3b82f6"
+                caption="Hay una alerta de SENAPRED vigente asociada a este incidente. Es un eje distinto de la confianza del hecho."
+              />
+            ) : (
+              <p className="text-xs text-ink-muted">Sin alerta de SENAPRED vigente.</p>
+            ))}
         </div>
 
         {/* --- Corte de suministro ------------------------------------------- */}

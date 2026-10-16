@@ -231,6 +231,48 @@ class TestCoincidencia:
         assert matches[0].link_confidence < LINK_CONFIDENCE_EXACT
         assert "no declara el fenómeno" in matches[0].note
 
+    def test_una_alerta_sin_fenomeno_no_alcanza_a_familias_no_alertables(
+        self,
+    ) -> None:
+        """Una alerta por viento no declara familia: no se pega a cortes de luz,
+        choques ni rescates de la comuna, que no son objeto de una alerta."""
+        viento = {**ALERTA_VINA, "Razon": "Evento meteorológico", "Evento": "Viento"}
+        no_alertables = [
+            IncidentView(incident_id=n, commune="Viña del Mar", type=tipo)
+            for n, tipo in enumerate(
+                (
+                    IncidentType.POWER_OUTAGE,
+                    IncidentType.ACCIDENT,
+                    IncidentType.RESCUE,
+                    IncidentType.OTHER,
+                ),
+                start=20,
+            )
+        ]
+        matches = match_alerts_to_incidents(
+            [alerta(viento)], [*no_alertables, INCENDIO_VINA]
+        )
+        assert {match.incident_id for match in matches} == {1}
+
+    def test_ni_las_regionales_alcanzan_a_un_corte_de_luz(self) -> None:
+        corte = IncidentView(
+            incident_id=30, commune="Viña del Mar", type=IncidentType.POWER_OUTAGE
+        )
+        sin_evento = {**ALERTA_NACIONAL, "Evento": None, "Razon": "Sistema frontal"}
+        assert (
+            match_alerts_to_incidents(
+                [alerta(sin_evento)], [corte], attach_regional=True
+            )
+            == []
+        )
+
+    def test_una_crecida_se_une_a_un_deslizamiento(self) -> None:
+        aluvion = IncidentView(
+            incident_id=31, commune="Viña del Mar", type=IncidentType.LANDSLIDE
+        )
+        matches = match_alerts_to_incidents([alerta(ALERTA_CRECIDA)], [aluvion])
+        assert [match.incident_id for match in matches] == [31]
+
     def test_es_determinista(self) -> None:
         alerts = [alerta(ALERTA_VINA), alerta(ALERTA_DOS_COMUNAS, event_id=101)]
         incidents = [INCENDIO_VINA, INCENDIO_VINA_2, INCENDIO_QUILPUE, SIN_COMUNA]

@@ -41,6 +41,18 @@ function familyOf(type: IncidentType): IncidentFamily {
   return INCIDENT_FAMILY[type] ?? 'other'
 }
 
+/**
+ * Familias sobre las que SENAPRED declara alertas. Espejo de
+ * `ALERTABLE_FAMILIES` en `backend/app/models/enums.py`: el motor no adosa
+ * alertas a las demás, y la ficha no les reserva el eje.
+ */
+const ALERTABLE_FAMILIES: ReadonlySet<IncidentFamily> = new Set(['fire', 'hydro'])
+
+/** ¿Puede este incidente tener un estado de alerta de SENAPRED? */
+export function alertApplies(type: IncidentType): boolean {
+  return ALERTABLE_FAMILIES.has(familyOf(type))
+}
+
 // ---------------------------------------------------------------------------
 // Agrupación para el control de capas
 // ---------------------------------------------------------------------------
