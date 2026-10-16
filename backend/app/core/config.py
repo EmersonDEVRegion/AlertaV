@@ -1159,6 +1159,28 @@ class Settings(BaseSettings):
     OSM_CRUCES_MIN_FILAS: int = Field(default=20_000, ge=0)
     OSM_CRUCES_MAX_BYTES: int = Field(default=80_000_000, ge=1_000_000)
 
+    # -- Imágenes de Viper (el punto exacto del despacho) ------------------------
+    #: Leer el marcador de la imagen que la central adjunta a cada despacho.
+    #: Ver `app.collectors.viper`. Apagado = queda el punto del índice de esquinas.
+    VIPER_ENABLED: bool = True
+    #: Imágenes por entrega del webhook. Cada una son unos segundos y ~80 mosaicos.
+    VIPER_MAX_POR_ENTREGA: int = Field(default=10, ge=0, le=50)
+    #: Lecturas del encabezado con Gemini por entrega (sólo cuando no calzó).
+    VIPER_MAX_LECTURAS_POR_ENTREGA: int = Field(default=3, ge=0, le=20)
+    #: Radio de búsqueda alrededor de una semilla en la esquina, y alrededor de
+    #: una semilla menos fina (o cuando el radio corto no alcanzó).
+    VIPER_RADIO_M: float = Field(default=250.0, ge=50.0, le=2_000.0)
+    VIPER_RADIO_AMPLIO_M: float = Field(default=800.0, ge=100.0, le=3_000.0)
+    #: Correlación mínima del calce fino (0 a 1) y ventaja mínima del mejor
+    #: calce sobre el segundo. Las imágenes reales calzan con ≥ 0,99.
+    VIPER_NCC_MIN: float = Field(default=0.9, ge=0.5, le=1.0)
+    VIPER_MARGEN_MIN: float = Field(default=0.25, ge=0.0, le=1.0)
+    #: Mosaicos de OSM por día como máximo, y cuántos se guardan en memoria.
+    #: La política de `tile.openstreetmap.org` prohíbe el uso masivo.
+    VIPER_MAX_MOSAICOS_DIA: int = Field(default=3_000, ge=0, le=20_000)
+    VIPER_CACHE_MOSAICOS: int = Field(default=600, ge=0, le=5_000)
+    OSM_TILES_URL: str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+
     # -- Overpass (cruces de calles) -------------------------------------------
     #: Respaldo del índice local: calcula el cruce consultando un servidor
     #: público. Apagado por defecto porque desde Render falla casi siempre

@@ -12,6 +12,7 @@ describe('círculo de incertidumbre', () => {
     expect(incertidumbreDe('sector')).toBe(600)
     expect(incertidumbreDe('exacta')).toBe(0)
     expect(incertidumbreDe('address')).toBe(0)
+    expect(incertidumbreDe('despacho')).toBe(0)
     expect(incertidumbreDe(null)).toBe(0)
     expect(incertidumbreDe(undefined)).toBe(0)
   })

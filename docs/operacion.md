@@ -71,6 +71,7 @@ Desde `backend/`, con el entorno de desarrollo activo.
 | Reclamo de GBV por el radar de vehículos | `VITE_VEHICLE_RADAR=off` en Vercel y redeploy |
 | Volver a meter la prensa al motor | `CORRELATION_PRENSA=true` |
 | El índice de esquinas ubica mal | `CRUCES_LOCALES_ENABLED=false` (vuelve a Nominatim sobre la calle) |
+| Las imágenes de Viper ubican mal, o un reclamo por el uso de mosaicos de OSM | `VIPER_ENABLED=false` (queda el índice de esquinas) |
 | Rehacer el índice de esquinas ya | Actions → `osm-cruces` → *Run workflow*; los workers lo cargan en menos de 6 h |
 | Volver a un solo radio para todas las familias | `CORRELATION_PERFILES=false` |
 | Open-Meteo agotó la cuota diaria u horaria | Nada: el clima y la grilla se pausan solos hasta que se renueva |

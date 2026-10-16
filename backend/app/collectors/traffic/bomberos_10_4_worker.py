@@ -154,6 +154,9 @@ class Dispatch:
     #: Unidades que llegaron después en un «SALE … A …» del mismo lote y se
     #: anexaron a este despacho (ver `_colapsar_seguimientos` en el webhook).
     unidades_extra: tuple[str, ...] = ()
+    #: La imagen de Viper que la central adjunta al tuit (`media[0].mediaUrl`).
+    #: De ahí sale el punto exacto, ver `collectors/viper.py`.
+    imagen_url: str | None = None
 
 
 def strip_html(fragment: str) -> str:
@@ -670,6 +673,7 @@ def dispatches_to_events(
                             )
                         ),
                         "url": dispatch.url,
+                        "imagen": dispatch.imagen_url,
                         "fecha_declarada": (
                             dispatch.occurred_at.isoformat() if dispatch.occurred_at else None
                         ),

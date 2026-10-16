@@ -107,6 +107,9 @@ PRECISION_INTERSECTION = "intersection"
 #: La numeración que dio la fuente («Las Araucarias, altura 1400»), resuelta
 #: por Nominatim a una dirección con número de OSM. Tan fina como un cruce.
 PRECISION_ADDRESS = "address"
+#: El marcador que la central dibujó en la imagen de Viper del despacho
+#: (`collectors/viper.py`): el punto con que despachó. El más fino de todos.
+PRECISION_DISPATCH = "despacho"
 PRECISION_SECTOR = "sector"
 PRECISION_COMUNA = "comuna"
 
@@ -241,13 +244,17 @@ class GeocodeResult:
     #: Es lo que permite auditar después por qué la guarda lo aceptó.
     zonas: tuple[str, ...] = ()
     #: Quién dio el punto: `nominatim`, `osm_local` (el índice de cruces),
-    #: `overpass` (un cruce calculado en línea) o `sig_bomberos` (un cuartel).
+    #: `overpass` (un cruce calculado en línea), `sig_bomberos` (un cuartel) o
+    #: `viper` (el marcador de la imagen del despacho).
     provider: str = "nominatim"
     #: Con `provider="overpass"`: cómo se calculó el cruce (`metodo`,
     #: `separacion_m`, `via_1`, `via_2`, `candidatos`) y dónde había dejado el
     #: punto Nominatim (`nominatim_lat`, `nominatim_lon`), para poder medir
     #: cuánto se movió.
     cruce: dict[str, Any] | None = None
+    #: Con `provider="viper"`: cómo calzó la imagen (`ncc`, `margen`, `radio_m`,
+    #: `distancia_semilla_m`) y de qué punto partió la búsqueda.
+    viper: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -266,6 +273,7 @@ class GeocodeResult:
             "viewbox": list(self.viewbox) if self.viewbox else None,
             "provider": self.provider,
             "cruce": dict(self.cruce) if self.cruce else None,
+            "viper": dict(self.viper) if self.viper else None,
         }
 
     @classmethod
@@ -298,6 +306,7 @@ class GeocodeResult:
             zonas=tuple(datos.get("zonas") or ()),
             provider=str(datos.get("provider") or "nominatim"),
             cruce=dict(datos["cruce"]) if isinstance(datos.get("cruce"), Mapping) else None,
+            viper=dict(datos["viper"]) if isinstance(datos.get("viper"), Mapping) else None,
         )
 
 
@@ -976,6 +985,7 @@ __all__ = [
     "COMUNA_VIEWBOX",
     "PRECISION_ADDRESS",
     "PRECISION_COMUNA",
+    "PRECISION_DISPATCH",
     "PRECISION_INTERSECTION",
     "PRECISION_SECTOR",
     "PRECISION_STREET",

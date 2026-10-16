@@ -996,6 +996,77 @@ async def extract_dispatch(
     )
 
 
+#: Lo que se le pide a Gemini del encabezado de una imagen de Viper.
+ENCABEZADO_VIPER_SCHEMA: dict[str, Any] = {
+    "type": "OBJECT",
+    "properties": {
+        "direccion": {"type": "STRING", "nullable": True},
+        "comuna": {"type": "STRING", "nullable": True},
+    },
+    "required": ["direccion", "comuna"],
+}
+
+INSTRUCCION_ENCABEZADO_VIPER = """\
+La imagen es el encabezado de un despacho de Bomberos de Chile, generado por el
+sistema Viper. Trae la clave, la fecha y hora, y una línea «DIRECCIÓN, COMUNA»:
+la comuna es lo que va después de la última coma, en rojo.
+
+Devuelve JSON con:
+- "direccion": la dirección tal como está escrita, sin la comuna.
+- "comuna": la comuna tal como está escrita.
+
+Transcribe; no completes ni corrijas. Si algo no se lee, null.
+"""
+
+
+async def leer_encabezado_viper(png: bytes) -> dict[str, str | None] | None:
+    """`{direccion, comuna}` del encabezado de una imagen de Viper. None si no se pudo.
+
+    **Nunca lanza**, igual que `extract_dispatch`. Se usa sólo cuando la imagen
+    no calzó con la semilla, para ver si el despacho es de otra comuna
+    (ver `collectors/viper.py`).
+    """
+    if not png:
+        return None
+    try:
+        client = _client()
+    except GeminiUnavailableError as exc:
+        logger.warning("lectura del encabezado de Viper no disponible: %s", exc)
+        return None
+    try:
+        from google.genai import types
+
+        response = await asyncio.wait_for(
+            client.aio.models.generate_content(
+                model=settings.GEMINI_MODEL,
+                contents=[types.Part.from_bytes(data=png, mime_type="image/png")],
+                config=types.GenerateContentConfig(
+                    system_instruction=INSTRUCCION_ENCABEZADO_VIPER,
+                    response_mime_type="application/json",
+                    response_schema=ENCABEZADO_VIPER_SCHEMA,
+                    temperature=0.0,
+                    max_output_tokens=256,
+                ),
+            ),
+            timeout=settings.GEMINI_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        logger.warning(
+            "la lectura del encabezado de Viper falló",
+            extra={"error": f"{type(exc).__name__}: {exc}"},
+        )
+        return None
+    registrar_uso(response, "leer_encabezado_viper")
+    body = _strip_fence(response_text(response))
+    try:
+        payload = json.loads(body) if body else None
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return {"direccion": _clean(payload.get("direccion")), "comuna": _clean(payload.get("comuna"))}
+
+
 #: Separadores de intersección del formato telegráfico. El `*` de @CGI_CBV
 #: delimita campos y la `/` separa las dos vías, pero no todos los Cuerpos usan
 #: los mismos, así que la heurística acepta el conjunto completo.

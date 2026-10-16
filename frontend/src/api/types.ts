@@ -165,7 +165,13 @@ export interface OutageDetail {
   vigente?: boolean | null
 }
 
-export type UbicacionPrecision = 'intersection' | 'address' | 'exacta' | 'street' | 'sector'
+export type UbicacionPrecision =
+  | 'despacho'
+  | 'intersection'
+  | 'address'
+  | 'exacta'
+  | 'street'
+  | 'sector'
 
 /** `IncidentRead` — lo que devuelve `GET /api/v1/incidents/active`. */
 export interface Incident {

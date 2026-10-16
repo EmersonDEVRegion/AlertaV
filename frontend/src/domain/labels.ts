@@ -54,6 +54,7 @@ export const TYPE_LABEL: Record<IncidentType, string> = {
  * se dice: un punto con coordenadas propias no necesita aclaración.
  */
 export const UBICACION_PRECISION_LABEL: Record<UbicacionPrecision, string | null> = {
+  despacho: 'Ubicación: el punto que marcó la central de Bomberos al despachar.',
   intersection: 'Ubicación: en el cruce que informó la fuente (± 60 m).',
   address: 'Ubicación: en la dirección informada.',
   exacta: null,
