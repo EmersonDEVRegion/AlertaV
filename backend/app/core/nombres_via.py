@@ -51,15 +51,12 @@ ABREVIATURAS = {
 #: y «UNO NORTE» en los despachos; los pasajes van de «Pasaje Dos» a
 #: «Pasaje 2» según quién los haya cargado. Sólo cardinales: «Primero de Mayo»
 #: y «Segundo» como nombre propio son demasiado ambiguos para tocarlos.
-NUMEROS = {
-    palabra: str(valor)
-    for valor, palabra in enumerate(
-        (
-            "cero uno dos tres cuatro cinco seis siete ocho nueve diez once doce trece "
-            "catorce quince dieciseis diecisiete dieciocho diecinueve veinte"
-        ).split()
-    )
-}
+_CARDINALES = (
+    "cero", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve",
+    "diez", "once", "doce", "trece", "catorce", "quince", "dieciseis", "diecisiete",
+    "dieciocho", "diecinueve", "veinte",
+)
+NUMEROS = {palabra: str(valor) for valor, palabra in enumerate(_CARDINALES)}
 
 #: Palabras que no distinguen una calle de otra.
 VACIAS = frozenset({"de", "del", "la", "las", "los", "el", "y"})
