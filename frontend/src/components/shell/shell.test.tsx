@@ -10,8 +10,8 @@ import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
-import { DEFAULT_LAYER_VISIBILITY, DEFAULT_PROVIDER_VISIBILITY } from '@/components/ui/SidePanel'
-import { emptyByLayer, makeIncident, makeWaterCut } from '@/test/fixtures'
+import { DEFAULT_LAYER_VISIBILITY, DEFAULT_PROVIDER_VISIBILITY } from '@/domain/layers'
+import { makeIncident, makeWaterCut } from '@/test/fixtures'
 import { resetSelection, selectWaterCut } from '@/lib/selectionStore'
 import { getSheetSnap, resetSheet } from '@/lib/sheetStore'
 import { resetExplore } from '@/lib/exploreStore'
@@ -35,14 +35,11 @@ function props(over: Partial<ExplorePanelProps> = {}): ExplorePanelProps {
       visibility: DEFAULT_LAYER_VISIBILITY,
       onChange: vi.fn(),
       counts: { fire: 1, traffic: 0, power: 0, water: 1, otros: 0, seismic: 0 },
-      incidentsByLayer: { ...emptyByLayer, fire: [FIRE] },
-      seismicEvents: [],
-      onFocusIncident: vi.fn(),
-      onFocusSeismic: vi.fn(),
       seismicFilter: 'relevant',
       onSeismicFilterChange: vi.fn(),
       providers: DEFAULT_PROVIDER_VISIBILITY,
       onProvidersChange: vi.fn(),
+      providerCounts: { chilquinta: 0, cge: 0 },
     },
     reference: {
       hazardEnabled: false,
@@ -122,28 +119,36 @@ describe('columna de escritorio', () => {
     ])
   })
 
+  it('la pestaña Capas avisa cuando hay algo oculto', () => {
+    const base = props()
+    render(
+      withQuery(
+        <DesktopColumn
+          {...props({ incidents: { ...base.incidents, visibility: { ...DEFAULT_LAYER_VISIBILITY, fire: false } } })}
+        />,
+      ),
+    )
+    expect(screen.getByRole('tab', { name: /capas, 1 filtro activo/i })).toBeInTheDocument()
+  })
+
   it('cada pestaña abre lo suyo', async () => {
     const user = userEvent.setup()
     render(withQuery(<DesktopColumn {...props()} />))
 
     // Ahora: lo que está en el mapa, sin las capas de referencia.
     expect(screen.getByText('Incendio estructural — Concón')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /capas de referencia/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Referencia' })).not.toBeInTheDocument()
 
     // Historial: lo que ya salió del mapa (acá, nada).
     await user.click(screen.getByRole('tab', { name: /historial/i }))
     expect(screen.queryByText('Incendio estructural — Concón')).not.toBeInTheDocument()
     expect(screen.getByText(/nada terminado hoy ni ayer/i)).toBeInTheDocument()
 
-    // Capas: filtros, capas de referencia abiertas y la única leyenda.
+    // Capas: el mosaico, la referencia y la única leyenda (plegada).
     await user.click(screen.getByRole('tab', { name: /capas/i }))
-    expect(screen.getByRole('checkbox', { name: /incendios/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /capas de referencia/i })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    )
-    expect(screen.getByRole('heading', { name: 'Leyenda' })).toBeInTheDocument()
-    expect(screen.getByText(/el color mide evidencia/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /incendios/i })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('region', { name: 'Referencia' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /leyenda/i })).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('la ficha reemplaza a la lista en el mismo lugar, y cerrarla la devuelve', async () => {

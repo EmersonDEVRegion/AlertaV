@@ -128,9 +128,12 @@ describe('altura del panel', () => {
 })
 
 describe('cohesión del sistema de diseño', () => {
-  const CHROME = ['SidePanel', 'IncidentListItem', 'MapOverlayState'].map((n) =>
-    readFileSync(resolve(process.cwd(), `src/components/ui/${n}.tsx`), 'utf8'),
-  )
+  const CHROME = [
+    'layers/LayersTab',
+    'layers/LayerTile',
+    'layers/ReferenceLayers',
+    'ui/MapOverlayState',
+  ].map((n) => readFileSync(resolve(process.cwd(), `src/components/${n}.tsx`), 'utf8'))
   const ALL = [PANEL, ...CHROME].join('\n')
 
   it('el cromo usa sólo los tres radios por rol', () => {

@@ -9,7 +9,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Button, Checkbox, Switch } from './index'
+import { Button, Chip, Switch } from './index'
 
 describe('Switch', () => {
   it('expone rol y estado para el lector de pantalla', () => {
@@ -47,20 +47,27 @@ describe('Switch', () => {
   })
 })
 
-describe('Checkbox', () => {
-  it('sigue siendo un input nativo', () => {
-    render(<Checkbox checked onCheckedChange={vi.fn()} label="Incendios" />)
-    const el = screen.getByRole('checkbox', { name: 'Incendios' })
-    // Conserva la semántica del sistema: estado, foco y comportamiento móvil.
-    expect(el.tagName).toBe('INPUT')
-    expect(el).toBeChecked()
+describe('Chip', () => {
+  it('es un botón con estado, no una casilla', async () => {
+    const onToggle = vi.fn()
+    render(
+      <Chip on={false} onToggle={onToggle}>
+        CGE
+      </Chip>,
+    )
+    const el = screen.getByRole('button', { name: 'CGE' })
+    expect(el).toHaveAttribute('aria-pressed', 'false')
+    await userEvent.click(el)
+    expect(onToggle).toHaveBeenCalledOnce()
   })
 
-  it('informa el nuevo valor, no el evento', async () => {
-    const onChange = vi.fn()
-    render(<Checkbox checked={false} onCheckedChange={onChange} label="Sismos" />)
-    await userEvent.click(screen.getByRole('checkbox'))
-    expect(onChange).toHaveBeenCalledWith(true)
+  it('como opción excluyente se anuncia como radio', () => {
+    render(
+      <Chip radio on onToggle={vi.fn()}>
+        Relevantes
+      </Chip>,
+    )
+    expect(screen.getByRole('radio', { name: 'Relevantes' })).toHaveAttribute('aria-checked', 'true')
   })
 })
 

@@ -80,19 +80,27 @@ export function LayerHealth({ status, count, detail }: LayerHealthProps) {
   if (!shouldWarn(status, count)) return null
 
   const texto = TEXTO[status as Exclude<HealthStatus, 'ok'>]
+  // El motivo de la fuente va al final: es lo más técnico y lo que menos
+  // le sirve a quien sólo necesita saber que no puede confiar en el cero.
+  const title = detail ? `${texto.largo}\n\n${detail}` : texto.largo
 
   return (
     <span
-      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-warn-bg px-1.5
-        py-0.5 text-[10px] font-medium text-warn-ink ring-1 ring-warn-line"
-      // El motivo de la fuente va al final: es lo más técnico y lo que menos
-      // le sirve a quien sólo necesita saber que no puede confiar en el cero.
-      title={detail ? `${texto.largo}\n\n${detail}` : texto.largo}
+      // Sin píldora: va en la línea de estado del azulejo de la capa, donde el
+      // ámbar del texto ya basta para separarlo del resto.
+      className="inline-flex shrink-0 items-center gap-1 text-[10px] font-medium text-warn-ink"
+      title={title}
     >
-      <svg viewBox="0 0 24 24" aria-hidden className="size-3" fill="currentColor">
-        <path d="M12 2.6a1.5 1.5 0 0 1 1.3.75l8.4 14.55a1.5 1.5 0 0 1-1.3 2.25H3.6a1.5 1.5 0 0 1-1.3-2.25l8.4-14.55A1.5 1.5 0 0 1 12 2.6zm-1.3 5.9v5.4h2.6V8.5zm0 7.1v2.6h2.6v-2.6z" />
-      </svg>
+      <WarnGlyph />
       {texto.corto}
     </span>
+  )
+}
+
+function WarnGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="size-3" fill="currentColor">
+      <path d="M12 2.6a1.5 1.5 0 0 1 1.3.75l8.4 14.55a1.5 1.5 0 0 1-1.3 2.25H3.6a1.5 1.5 0 0 1-1.3-2.25l8.4-14.55A1.5 1.5 0 0 1 12 2.6zm-1.3 5.9v5.4h2.6V8.5zm0 7.1v2.6h2.6v-2.6z" />
+    </svg>
   )
 }

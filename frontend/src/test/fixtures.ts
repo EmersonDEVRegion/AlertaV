@@ -3,7 +3,6 @@
 import type { Incident } from '@/api/types'
 import type { VehicleFeedItem } from '@/api/vehicleFeedTypes'
 import type { WaterCut } from '@/api/waterCutTypes'
-import type { IncidentLayerKey } from '@/domain/families'
 
 export function makeIncident(over: Partial<Incident> = {}): Incident {
   return {
@@ -34,13 +33,6 @@ export function makeIncident(over: Partial<Incident> = {}): Incident {
     is_multi_source: true,
     ...over,
   }
-}
-
-export const emptyByLayer: Record<IncidentLayerKey, Incident[]> = {
-  fire: [],
-  traffic: [],
-  power: [],
-  otros: [],
 }
 
 /** Reloj fijo de los tests del radar: 23-sep-2026, 15:00 en Chile. */

@@ -164,8 +164,8 @@ así que todo su diseño busca que no se lea como un evento:
 - **Dos rampas, una por tema.** Sobre fondo oscuro más amenaza es más brillante;
   sobre fondo claro, más oscuro. Una sola rampa dejaría el extremo alto
   invisible en uno de los dos.
-- Va en su propia sección del panel, bajo el título «Capas de referencia», y con
-  un interruptor en vez de una casilla.
+- En la pestaña «Capas» va en su propio grupo, «Referencia», separado del
+  mosaico de emergencias (ver la sección siguiente a la columna).
 
 **Carga diferida sin re-descarga.** `useSeismicHazard` lleva dos banderas:
 `enabled` (lo que el usuario pide ahora) y `hasMounted` (si la fuente llegó a
@@ -258,6 +258,32 @@ contenedores:
 
 La ficha de un incidente, un sismo o un corte de agua reemplaza al contenido de
 la columna en el mismo lugar (`DetailSurface`); cerrarla lo devuelve.
+
+## La pestaña «Capas»: un mosaico, no casillas
+
+`components/layers/LayersTab.tsx`. Tres grupos con el mismo rótulo que las
+secciones de «Ahora»:
+
+- **Emergencias.** Un azulejo por capa (`LayerTile`, un `<button aria-pressed>`)
+  con el glifo y el color del mapa (`domain/layers.ts`). Encendido se tiñe del
+  color de la capa; apagado queda en contorno gris. Arriba a la derecha, lo que
+  la capa tiene en el mapa; bajo el nombre, «Sin datos» cuando un cero no es
+  calma (`LayerHealth`). Debajo, los filtros finos como fichas (`Chip`):
+  empresa de luz, relevancia de los sismos y «sólo verificados»; los de una capa
+  sólo existen con la capa encendida.
+- **Referencia.** Amenaza sísmica, cortes de ruta y cuarteles, apagadas al
+  abrir. Al encender una, su ficha aparece bajo el mosaico con la leyenda, el
+  estado y el reintento (`ReferenceLayers`).
+- **Leyenda**, plegada: es consulta, no control.
+
+Una casilla dice «seleccionar» y la dibuja el sistema, distinta en cada
+plataforma; una capa es «ver u ocultar», y el azulejo lo muestra con lo mismo
+que se ve en el mapa. No hay lista de incidentes por capa: es la de «Ahora».
+
+**Nada se recuerda entre visitas.** Quien abre la app porque huele a humo no
+puede encontrarse los incendios apagados desde la semana pasada. Mientras algo
+esté oculto (capas, empresas o verificados), la pestaña lleva un punto y el grupo
+ofrece «Mostrar todo».
 
 ## Offline sí, pero con la edad del dato a la vista
 

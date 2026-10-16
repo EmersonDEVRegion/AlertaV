@@ -1,12 +1,12 @@
 import { memo, useMemo } from 'react'
 import type { HTMLAttributes, ReactNode } from 'react'
-import { LegendBody } from '@/components/map/MapLegend'
 import { HistoryFeed, type HistoryFeedProps } from '@/components/feed/HistoryFeed'
 import { NewsFeed } from '@/components/feed/NewsFeed'
 import { DetailEmbed } from '@/components/incident/DetailSurface'
 import { SelectionDetails } from '@/components/incident/SelectionDetails'
-import { IncidentFilters, type SidePanelProps } from '@/components/ui/SidePanel'
-import { ReferenceDock, type ReferenceDockProps } from '@/components/ui/ReferenceDock'
+import { LayersTab, type EmergencyLayersProps } from '@/components/layers/LayersTab'
+import type { ReferenceLayersProps } from '@/components/layers/ReferenceLayers'
+import { hiddenFilterCount } from '@/domain/layers'
 import type { SeismicEvent } from '@/api/seismicTypes'
 import type { Incident } from '@/api/types'
 import type { WaterCut } from '@/api/waterCutTypes'
@@ -30,8 +30,8 @@ import { PropagationNotice } from '@/components/shell/PropagationNotice'
  *   - **Ahora** (por defecto): «En vivo», «Servicios interrumpidos»
  *     (cortes de luz, plegados) y «Mis lugares».
  *   - **Historial**: «Hoy», «Ayer» y «Antes», y la prensa local plegada.
- *   - **Capas**: las familias con sus contadores y su salud, las empresas de
- *     luz, el filtro de sismos, las capas de referencia y la única leyenda.
+ *   - **Capas**: el mosaico de capas de emergencia con sus filtros, las de
+ *     referencia y la única leyenda (`components/layers/LayersTab.tsx`).
  *
  * El mismo componente vive en las dos pantallas; sólo cambia el contenedor, y
  * las reglas de exclusión son las mismas en escritorio y en el teléfono.
@@ -43,8 +43,8 @@ interface ExploreSelection {
 }
 
 export interface ExplorePanelProps {
-  incidents: SidePanelProps
-  reference: ReferenceDockProps
+  incidents: EmergencyLayersProps
+  reference: ReferenceLayersProps
   history: HistoryFeedProps
   selection: ExploreSelection
   /** Incidentes en el mapa con las capas encendidas. */
@@ -128,6 +128,14 @@ export const ExplorePanel = memo(function ExplorePanel({
     history: history.history.length - nowCount,
   }
 
+  // Un filtro olvidado es la forma más fácil de leer mal el mapa: la pestaña
+  // lo avisa aunque se esté mirando otra.
+  const hiddenFilters = hiddenFilterCount(
+    incidents.visibility,
+    incidents.providers,
+    Boolean(incidents.confirmedOnly),
+  )
+
   const choose = (next: ExploreTab) => {
     setExploreTab(next)
     onInteract?.()
@@ -191,6 +199,14 @@ export const ExplorePanel = memo(function ExplorePanel({
                     {tabCount[t.key]}
                   </span>
                 )}
+                {t.key === 'layers' && hiddenFilters > 0 && (
+                  <>
+                    <span aria-hidden className="size-1.5 rounded-full bg-accent" />
+                    <span className="sr-only">
+                      {hiddenFilters === 1 ? ', 1 filtro activo' : `, ${hiddenFilters} filtros activos`}
+                    </span>
+                  </>
+                )}
               </button>
             ))}
           </div>
@@ -223,20 +239,7 @@ export const ExplorePanel = memo(function ExplorePanel({
                 <NewsFeed defaultOpen={false} />
               </div>
             )}
-            {tab === 'layers' && (
-              <div className="space-y-2">
-                <IncidentFilters {...incidents} />
-                <ReferenceDock {...reference} inline defaultOpen />
-                {/* Una sola leyenda: antes había una pestaña propia, la
-                    del riel de referencia y la de cada familia. */}
-                <section aria-labelledby="leyenda-titulo" className="rounded-control bg-sunken px-2.5 py-2">
-                  <h3 id="leyenda-titulo" className="mb-2 text-[11px] font-bold uppercase tracking-wide text-ink-faint">
-                    Leyenda
-                  </h3>
-                  <LegendBody />
-                </section>
-              </div>
-            )}
+            {tab === 'layers' && <LayersTab emergencies={incidents} reference={reference} />}
           </div>
         </SelectionDetails>
       </div>
