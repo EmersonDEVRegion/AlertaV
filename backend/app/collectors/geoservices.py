@@ -624,11 +624,11 @@ async def request_response(
                 # cualquier reintento dentro de la corrida.
                 #
                 # Lo que sí se hace es DISTINGUIRLO. Como "HTTP 429 — <cuerpo>"
-                # sería indistinguible de un 404 o un 403 salvo por el número:
-                # un operador mirando `collector_runs` no podría separar «nos están limitando el ritmo» —que se responde
-                # bajando la cadencia— de «la URL cambió» —que se responde
-                # editando la configuración—. Son dos acciones opuestas y el
-                # mensaje no ayudaba a elegir.
+                # sería indistinguible de un 404 o un 403 salvo por el número: un
+                # operador mirando `collector_runs` no podría separar «nos están
+                # limitando el ritmo» —que se responde bajando la cadencia— de «la
+                # URL cambió» —que se responde editando la configuración—. Son dos
+                # acciones opuestas y el mensaje tiene que ayudar a elegir.
                 if status_code == 429:
                     espera_pedida = _retry_after_seconds(exc.response)
                     motivo = _motivo_del_rechazo(exc.response)
