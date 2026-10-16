@@ -4,6 +4,7 @@ import { PlaceGlyph } from '@/components/places/SavedPlaces'
 import type { ExploreArea } from '@/lib/exploreStore'
 import { usePlaces } from '@/lib/placesStore'
 import { cn } from '@/lib/cn'
+import { useLowerSheetWhile } from '@/lib/sheetStore'
 
 /**
  * Buscador de la barra: las 36 comunas de la región y los lugares guardados.
@@ -113,6 +114,8 @@ export function PlaceSearch({ onPick }: { onPick: (area: ExploreArea) => void })
   }
 
   const showList = open && options.length > 0
+  // En el teléfono la hoja baja mientras la lista está abierta (§T).
+  useLowerSheetWhile(showList, 'buscador')
   const current = options[Math.min(active, options.length - 1)]
 
   return (
@@ -134,7 +137,7 @@ export function PlaceSearch({ onPick }: { onPick: (area: ExploreArea) => void })
         className={cn(
           'w-full',
           expanded
-            ? 'absolute inset-x-0 bottom-0 top-[env(safe-area-inset-top)] z-10 flex items-center gap-2 bg-chrome px-3'
+            ? 'app-search-overlay absolute inset-x-0 bottom-0 top-[env(safe-area-inset-top)] z-10 flex items-center gap-2 bg-chrome px-3'
             : 'relative hidden max-w-sm sm:block',
         )}
       >

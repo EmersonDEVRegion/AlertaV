@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useLayoutEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { WeatherWidget } from '@/components/ui/WeatherWidget'
 import { LiveStatus } from '@/components/ui/LiveStatus'
@@ -109,11 +109,36 @@ export const AppHeader = memo(function AppHeader({
   radar,
   menu,
 }: AppHeaderProps) {
+  const header = useRef<HTMLElement>(null)
+
+  /*
+   * El alto de la barra, en `--app-header-h` (§T).
+   *
+   * Los paneles que cuelgan de ella (avisos, clima, menú) se acotan al espacio
+   * que queda debajo —y en el teléfono, sobre la hoja asomada— con
+   * `.header-popover`. El alto cambia con la barra de estado y con el aire extra
+   * del iPhone instalado, así que se mide en vez de suponerlo.
+   */
+  useLayoutEffect(() => {
+    const el = header.current
+    if (!el) return
+    const root = document.documentElement
+    const publish = () => root.style.setProperty('--app-header-h', `${el.offsetHeight}px`)
+    publish()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(publish)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
   return (
     <header
+      ref={header}
       className={cn(
         // Sobre la hoja inferior: ver `lib/stacking.ts`.
-        'relative flex items-center gap-2 bg-chrome px-3 py-2 sm:gap-3',
+        // `app-header`: en el iPhone instalado gana aire arriba (ver
+        // `index.css`, «La franja bajo la barra de estado»).
+        'app-header relative flex items-center gap-2 bg-chrome px-3 py-2 sm:gap-3',
         STACK.header,
         'pt-[max(0.5rem,env(safe-area-inset-top))] text-ink-on-chrome',
         // El hilo inferior en vez de una sombra: separa la barra del mapa sin

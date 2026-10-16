@@ -13,6 +13,7 @@ import { RadiosPorCategoria } from './RadiosPorCategoria'
 import { isHandheld, thisDevice } from '@/lib/device'
 import { usePlaces } from '@/lib/placesStore'
 import { cn } from '@/lib/cn'
+import { useLowerSheetWhile } from '@/lib/sheetStore'
 
 /**
  * Avisos push: la campana de la barra superior y su panel.
@@ -398,6 +399,8 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false)
   const [invite, setInvite] = useState(false)
   const root = useRef<HTMLDivElement>(null)
+  // En el teléfono la hoja baja mientras el panel está abierto (§T).
+  useLowerSheetWhile(open, 'avisos')
 
   // La invitación: una vez, a los 20 s, sólo si se puede activar y nadie la
   // descartó antes.
@@ -470,8 +473,9 @@ export function NotificationBell() {
           className={cn(
             'animate-rise absolute right-0 top-[calc(100%+0.5rem)] z-30',
             // Con los deslizadores por categoría el panel puede ser más alto que
-            // la pantalla de un teléfono: se desplaza adentro.
-            'max-h-[calc(100dvh-5.5rem)] overflow-y-auto overscroll-contain',
+            // el espacio libre: se desplaza adentro. `header-popover` lo acota
+            // a lo que queda sobre la hoja asomada (ver `index.css`).
+            'header-popover overflow-y-auto overscroll-contain',
             // Opaco, como el detalle meteorológico: cuelga de la barra oscura.
             'rounded-surface bg-raised shadow-[var(--shadow-raised)] ring-1 ring-line',
           )}
