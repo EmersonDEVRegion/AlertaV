@@ -996,3 +996,123 @@ html.dark {
   }
 }
 
+/* ---------------------------------------------------------------------------
+ * Tres niveles de cristal (§D, 16-10-2026)
+ * ---------------------------------------------------------------------------
+ *
+ * Elegibles en el menú «⋯» (`lib/glassStore.ts` pone `data-glass` en `<html>`):
+ *
+ *   - `cristal`: los valores de §T (más transparente).
+ *   - `equilibrado` (por defecto): más relleno, más contraste para leer.
+ *   - `solido`: sin transparencia ni desenfoque.
+ *
+ * Mueve los mismos tokens del bloque de arriba y `--surface-panel`, que es el
+ * relleno de la columna de escritorio y de los paneles flotantes
+ * (`.surface-floating`). «Reducir transparencia» del sistema sigue mandando:
+ * su bloque va más abajo y gana por orden.
+ */
+html[data-glass='equilibrado'] {
+  --glass-fill: rgb(255 255 255 / 0.74);
+  --glass-sheen: rgb(255 255 255 / 0.45);
+  --surface-panel: rgb(255 255 255 / 0.92);
+}
+
+html.dark[data-glass='equilibrado'] {
+  --glass-fill: rgb(28 28 34 / 0.7);
+  --glass-sheen: rgb(255 255 255 / 0.08);
+  --surface-panel: rgb(19 19 22 / 0.92);
+}
+
+html[data-glass='solido'],
+html.dark[data-glass='solido'] {
+  --glass-fill: var(--surface-raised);
+  --glass-sheen: transparent;
+  --glass-filter: none;
+  --surface-panel: var(--surface-raised);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  html[data-glass],
+  html.dark[data-glass] {
+    --glass-fill: var(--surface-raised);
+    --glass-sheen: transparent;
+    --glass-filter: none;
+    --surface-panel: var(--surface-raised);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Detalles del panel de avisos (§D)
+ * ------------------------------------------------------------------------- */
+
+/* Barra de desplazamiento fina: la clásica de Windows mide 17 px y en un panel
+   de 19 rem se comía casi una columna entera. */
+.thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/*
+ * Deslizador delgado: riel de 4 px y perilla de 14 px.
+ * El área de toque sigue siendo la del `input` (28 px de alto en su fila), así
+ * que en el teléfono se acierta igual que antes.
+ */
+.range-thin {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 1.25rem;
+  background: transparent;
+  cursor: pointer;
+  --range-fill: var(--accent);
+}
+
+.range-thin::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  /* WebKit no tiene «progreso»: el tramo elegido se pinta con `--pct`, que
+     pone la fila (`RadiosPorCategoria`). */
+  background: linear-gradient(
+    to right,
+    var(--range-fill) var(--pct, 0%),
+    var(--line-strong) var(--pct, 0%)
+  );
+}
+
+.range-thin::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line-strong);
+}
+
+.range-thin::-moz-range-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--range-fill);
+}
+
+.range-thin::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 999px;
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 2px var(--range-fill), 0 1px 3px rgb(0 0 0 / 0.3);
+}
+
+.range-thin::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 2px var(--range-fill), 0 1px 3px rgb(0 0 0 / 0.3);
+}
+
+.range-thin:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 999px;
+}
+

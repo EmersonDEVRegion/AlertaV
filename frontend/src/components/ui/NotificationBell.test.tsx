@@ -80,6 +80,11 @@ describe('NotificationPanel', () => {
       const push = state({ phase: 'on', locatedAt: Date.now() })
       render(<NotificationPanel push={push} />)
 
+      // §D: las distancias se ven como fichas; el editor está plegado.
+      expect(screen.queryByRole('slider')).toBeNull()
+      expect(screen.getByRole('button', { name: 'Cortes de luz: 1 km' })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Ajustar distancias' }))
+
       const luz = screen.getByRole('slider', { name: 'Cortes de luz' })
       expect(luz).toHaveAttribute('aria-valuetext', '1 km')
       expect(screen.getByRole('slider', { name: 'Incendios' })).toHaveAttribute(
@@ -180,5 +185,18 @@ describe('NotificationPanel', () => {
   it('muestra el error del último intento', () => {
     render(<NotificationPanel push={state({ message: 'Sin tu ubicación no podemos…' })} />)
     expect(screen.getByRole('alert')).toHaveTextContent('Sin tu ubicación')
+  })
+
+  it('tocar una ficha de distancia abre el editor (§D)', () => {
+    render(<NotificationPanel push={state({ phase: 'on', locatedAt: Date.now() })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Incendios: 5 km' }))
+    expect(screen.getAllByRole('slider')).toHaveLength(6)
+    expect(screen.getByRole('button', { name: 'Listo' })).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('encendidos, la advertencia de los temblores va plegada pero presente (§D)', () => {
+    render(<NotificationPanel push={state({ phase: 'on', locatedAt: Date.now() })} />)
+    expect(screen.getByText('Sobre los temblores')).toBeInTheDocument()
+    expect(screen.getByText(PUSH_TEXT.seismicCaveat)).toBeInTheDocument()
   })
 })

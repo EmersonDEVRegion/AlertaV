@@ -109,7 +109,9 @@ describe('altura del panel', () => {
     // columna y la hoja se anclan al `main` (top/bottom), que ya descuenta la
     // barra de la app.
     expect(PANEL).not.toMatch(/\b(max-)?h-\[calc\(100vh/)
-    expect(PANEL).toContain('bottom-3 left-3 top-3')
+    // §D: la columna mide su contenido, con tope en el alto del `main`.
+    expect(PANEL).toContain('left-3 top-3')
+    expect(PANEL).toContain('max-h-[calc(100%-1.5rem)]')
     // La hoja se ancla abajo y mide lo visible (ver `BottomSheet`): su lista
     // no puede quedar bajo el borde de la pantalla.
     expect(PANEL).toContain('inset-x-0 bottom-0 flex flex-col')
