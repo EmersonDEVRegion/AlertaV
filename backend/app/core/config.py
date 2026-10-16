@@ -47,6 +47,7 @@ _AGENTES: tuple[str, ...] = (
     "TRANSPORTE_INFORMA_USER_AGENT",
     "GBV_USER_AGENT",
     "ESVAL_USER_AGENT",
+    "DMC_USER_AGENT",
     "LOCAL_NEWS_USER_AGENT",
 )
 
@@ -399,6 +400,25 @@ class Settings(BaseSettings):
     #: vacío hace que el collector falle al construirse con el motivo, en vez de
     #: esperar tres timeouts por corrida.
     ESVAL_PROXY_URL: str = ""
+
+    # -- Avisos meteorológicos: Dirección Meteorológica de Chile -------------
+    #: Interruptor. `false` saca el collector del registro y hace que
+    #: `GET /feed/avisos-meteo` responda 404 (la PWA esconde la franja). Es lo
+    #: que se apaga si la DMC pide no leer su archivo.
+    DMC_AVISOS_ENABLED: bool = True
+    #: El archivo que alimenta el mapa «Sistema de Alerta Meteorológica» de
+    #: meteochile.gob.cl. No documentado; ver `collectors/dmc/aaa_parser.py`.
+    DMC_AAA_URL: str = "https://archivos.meteochile.gob.cl/portaldmc/AAA/datos_AAA.json"
+    #: 10 minutos. La DMC emite pocas veces al día; el archivo declara
+    #: `max-age=60`.
+    DMC_POLL_INTERVAL_SECONDS: int = Field(default=600, ge=120, le=86400)
+    DMC_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0, le=120)
+    #: Vacío = identidad de `app.core.identidad`. Con valor: ASCII, sin tildes.
+    DMC_USER_AGENT: str = ""
+    #: Proxy de salida opcional, con la misma forma que `ESVAL_PROXY_URL`. Vacío
+    #: = directo. Sólo hace falta si el host de la DMC dejara de responder a
+    #: Render; el de `infra/proxy-cl/` tendría que permitir su host. **Secreto.**
+    DMC_PROXY_URL: str = ""
 
     # -- Sismos: Centro Sismológico Nacional ---------------------------------
     # El CSN es la razón de ser de este collector: su umbral de detección en
@@ -1509,6 +1529,7 @@ class Settings(BaseSettings):
         # tiene que ser un proxy con credenciales: uno abierto en internet es
         # un proxy para cualquiera.
         errores.extend(_problemas_del_proxy(self.ESVAL_PROXY_URL, "ESVAL_PROXY_URL"))
+        errores.extend(_problemas_del_proxy(self.DMC_PROXY_URL, "DMC_PROXY_URL"))
 
         if errores:
             raise ValueError(

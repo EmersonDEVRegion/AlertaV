@@ -52,6 +52,13 @@ export const queryKeys = {
     all: ['news'] as const,
     feed: (params: unknown) => ['news', 'feed', params] as const,
   },
+  /**
+   * Avisos, alertas y alarmas de la DMC. Fuera del mapa: la franja de
+   * «Ahora». Ver `api/meteoWarnings.ts`.
+   */
+  meteoWarnings: {
+    all: ['meteo-warnings'] as const,
+  },
   seismic: {
     all: ['seismic'] as const,
     list: (params: unknown) => ['seismic', 'list', params] as const,

@@ -1,8 +1,8 @@
 """Feeds de consumo rápido, paralelos al mapa.
 
-Dos: vehículos robados, recuperados y abandonados publicados por GBV, y la
-prensa local. Ninguno es un incidente ni una señal del mapa y
-ninguno pasa por el motor de correlación.
+Tres: vehículos robados, recuperados y abandonados publicados por GBV, la
+prensa local y los avisos meteorológicos de la DMC. Ninguno es un incidente
+ni una señal del mapa y ninguno pasa por el motor de correlación.
 """
 
 from __future__ import annotations
@@ -11,9 +11,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.api.deps import NewsFeedServiceDep, VehicleFeedServiceDep
+from app.api.deps import MeteoWarningServiceDep, NewsFeedServiceDep, VehicleFeedServiceDep
 from app.collectors.lugares import comuna_por_nombre
+from app.core.config import settings
 from app.models.enums import VehicleStatus
+from app.schemas.meteo_warning import MeteoWarningResponse
 from app.schemas.news_feed import NewsFeedResponse
 from app.schemas.vehicle_feed import VehicleFeedResponse
 from app.services.news_feed_service import FEED_HORAS
@@ -98,3 +100,28 @@ async def news_feed(
     limit: Annotated[int, Query(ge=1, le=200)] = 60,
 ) -> NewsFeedResponse:
     return await service.feed(horas=horas, limit=limit)
+
+
+@router.get(
+    "/avisos-meteo",
+    response_model=MeteoWarningResponse,
+    summary="Avisos, alertas y alarmas meteorológicas de la DMC para la V Región",
+    description=(
+        "Lo que el Sistema de Alerta Meteorológica de la **Dirección "
+        "Meteorológica de Chile** tiene vigente para la Región de Valparaíso "
+        "continental: Aviso (severidad moderada), Alerta (fuerte) y Alarma "
+        "(intensa), de lo más severo a lo menos.\n\n"
+        "**Es un pronóstico, no un hecho**, y **no es una alerta de SENAPRED**: "
+        "no crea incidentes ni manda push. `desde` y `hasta` son una lectura del "
+        "texto de la DMC (que sólo dice «la tarde», «la noche»); el texto "
+        "original va en `desde_texto` y `hasta_texto`.\n\n"
+        "Vigente = visto en la última lectura del archivo de la DMC. "
+        "`fuente.estado` distinto de `ok` significa que una lista vacía NO "
+        "quiere decir que no haya avisos. 404 = la fuente está apagada "
+        "(`DMC_AVISOS_ENABLED=false`)."
+    ),
+)
+async def meteo_warnings(service: MeteoWarningServiceDep) -> MeteoWarningResponse:
+    if not settings.DMC_AVISOS_ENABLED:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="avisos de la DMC apagados")
+    return await service.vigentes()

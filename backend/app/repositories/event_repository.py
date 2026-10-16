@@ -432,6 +432,31 @@ class EventRepository:
         stmt = self.water_cuts_stmt(vistos_desde=vistos_desde, bbox=bbox, limit=limit)
         return (await self.session.execute(stmt)).scalars().all()
 
+    def weather_warnings_stmt(self, *, vistos_desde: datetime, limit: int = 50) -> Select:
+        """Avisos de la DMC vistos desde `vistos_desde`.
+
+        Misma regla que los cortes de agua: la DMC retira el aviso del archivo
+        cuando deja de regir, así que la vigencia la decide `_dmc.visto_en`,
+        que cada corrida reescribe. Sin coordenadas: un aviso es de una zona.
+        """
+        visto_en = cast(RawEvent.raw_data["_dmc"]["visto_en"].astext, DateTime(timezone=True))
+        return (
+            select(RawEvent)
+            .where(
+                RawEvent.source == EventSource.DMC,
+                RawEvent.type == EventType.WEATHER_WARNING,
+                visto_en >= vistos_desde,
+            )
+            .order_by(RawEvent.timestamp.desc(), RawEvent.id.desc())
+            .limit(limit)
+        )
+
+    async def list_weather_warnings(
+        self, *, vistos_desde: datetime, limit: int = 50
+    ) -> Sequence[RawEvent]:
+        stmt = self.weather_warnings_stmt(vistos_desde=vistos_desde, limit=limit)
+        return (await self.session.execute(stmt)).scalars().all()
+
     async def add(self, event: EventCreate) -> RawEvent:
         """Inserta un evento y devuelve la entidad persistida."""
         entity = RawEvent(**event.to_orm_kwargs())

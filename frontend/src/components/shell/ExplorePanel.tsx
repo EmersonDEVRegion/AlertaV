@@ -17,6 +17,7 @@ import { LAST_24H_MS } from '@/domain/displayWindow'
 import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { setExploreTab, useExploreTab, type ExploreArea, type ExploreTab } from '@/lib/exploreStore'
 import { PropagationNotice } from '@/components/shell/PropagationNotice'
+import { MeteoWarnings } from '@/components/shell/MeteoWarnings'
 
 /**
  * El contenido de la columna (escritorio) y de la hoja inferior (teléfono).
@@ -27,7 +28,7 @@ import { PropagationNotice } from '@/components/shell/PropagationNotice'
  * de contenido y el mapa libre al lado. Acá la columna tiene tres pestañas y,
  * cuando hay algo seleccionado, la ficha las reemplaza en el mismo lugar:
  *
- *   - **Ahora** (por defecto): «En vivo», «Servicios interrumpidos»
+ *   - **Ahora** (por defecto): los avisos de la DMC, «En vivo», «Servicios interrumpidos»
  *     (cortes de luz, plegados) y «Mis lugares».
  *   - **Historial**: «Hoy», «Ayer» y «Antes», y la prensa local plegada.
  *   - **Capas**: el mosaico de capas de emergencia con sus filtros, las de
@@ -220,6 +221,9 @@ export const ExplorePanel = memo(function ExplorePanel({
           >
             {tab === 'now' && (
               <div className="space-y-2">
+                {/* Lo que puede venir, antes de lo que está pasando: el viento
+                    de mañana explica los cortes de mañana. */}
+                <MeteoWarnings />
                 <HistoryFeed {...history} scope="now" />
                 {/* «Mis lugares» acá: es la pregunta de «Ahora», ¿hay algo
                     cerca de mi casa? Sin lugares guardados es una invitación. */}

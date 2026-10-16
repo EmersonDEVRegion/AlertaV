@@ -105,6 +105,11 @@ export const SOURCE_GROUPS: readonly SourceGroup[] = [
     title: 'Clima',
     sources: [
       {
+        name: 'Dirección Meteorológica de Chile (DMC)',
+        url: 'https://www.meteochile.gob.cl/',
+        what: 'Avisos, alertas y alarmas meteorológicas vigentes para la región, de su Sistema de Alerta Meteorológica. Son pronósticos: se muestran en «Ahora» y no crean incidentes.',
+      },
+      {
         name: 'Open-Meteo',
         url: 'https://open-meteo.com/',
         what: 'Pronóstico por comuna: viento, humedad, temperatura, lluvia e índice UV. Con él se calcula la condición de propagación (regla 30-30-30).',

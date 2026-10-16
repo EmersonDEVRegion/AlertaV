@@ -151,6 +151,26 @@ crea incidentes ni manda push, y sale por su propia ruta,
 - Un corte sin punto (el visor de Esval no respondió) cuenta en la lista y abre
   la tarjeta, pero no se dibuja ni mueve la cámara.
 
+## Avisos de la DMC: lo que puede venir
+
+Arriba de «Ahora», una sección «Avisos meteorológicos · DMC»
+(`components/shell/MeteoWarnings.tsx`) con los avisos, alertas y alarmas
+vigentes para la región, de lo más severo a lo menos.
+
+- **Violeta en tres intensidades** (tokens `--dmc-1/2/3-*` en `index.css`):
+  ni el semáforo de SENAPRED ni el índigo del acento. El rótulo dice siempre
+  «DMC · Aviso», «DMC · Alerta» o «DMC · Alarma», y al abrir la tarjeta: «No es
+  una alerta de SENAPRED».
+- **Una tarjeta por aviso:** glifo del fenómeno (`domain/weatherGlyphs.ts`,
+  Material Symbols fuera del set del mapa), vigencia por tramo («lun 19 tarde →
+  mar 20 noche»; la DMC no da horas y no se inventan) y zonas («Toda la región»
+  o «Litoral y Cordillera de la Costa»). Abierta: observación, la tabla de
+  valores estimados y el enlace al mapa oficial.
+- **Sin avisos no se dibuja nada.** Con la fuente caída y sin avisos, una línea
+  lo dice. Con la ruta en 404 (fuente apagada), nada.
+- Lo vencido se descarta con el reloj del teléfono: sin red, la respuesta
+  guardada puede tener horas.
+
 ## Amenaza sísmica: capa de referencia, no de emergencia
 
 `/api/v1/events/seismic/hazard` (que sirve `backend/static/geo/amenaza_sismica_valpo.json`)

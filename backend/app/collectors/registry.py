@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.collectors.base import BaseCollector
 from app.collectors.conaf.collector import ConafCollector
+from app.collectors.dmc.avisos_worker import DmcAvisosCollector
 from app.collectors.firms.collector import FirmsCollector
 from app.collectors.mop.vialidad_worker import MopVialidadCollector
 from app.collectors.news.local_news_worker import LocalNewsCollector
@@ -22,6 +23,7 @@ from app.collectors.usgs.collector import UsgsCollector
 from app.collectors.vehicles.gbv_worker import GbvCollector
 from app.collectors.water.esval_worker import EsvalCollector
 from app.collectors.weather.openmeteo_worker import OpenMeteoCollector
+from app.core.config import settings
 
 COLLECTORS: dict[str, type[BaseCollector]] = {
     # -- Incendios y emergencias ---------------------------------------------
@@ -160,6 +162,16 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     # Próximos hitos:
     #   BroadcastifyCollector.name: BroadcastifyCollector,  # STT → evento
 }
+
+
+# -- Avisos meteorológicos (DMC) ----------------------------------------------
+# Avisos, alertas y alarmas del pronóstico oficial. Emite `weather_warning`,
+# fuera de `CORRELATABLE_EVENT_TYPES`: no crea incidentes ni manda push. Se lee
+# en `GET /feed/avisos-meteo` (la franja de «Ahora»). Fuera del dict de arriba
+# porque tiene interruptor: con `DMC_AVISOS_ENABLED=false` no se registra y no
+# se hace ninguna petición a la DMC.
+if settings.DMC_AVISOS_ENABLED:
+    COLLECTORS[DmcAvisosCollector.name] = DmcAvisosCollector
 
 
 def collector_class(name: str) -> type[BaseCollector]:

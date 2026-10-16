@@ -177,6 +177,19 @@
   --success-ink: #065f46;
   --success-line: rgb(16 185 129 / 0.25);
 
+  /* Avisos de la DMC: violeta en tres intensidades. Ni el semáforo de
+     SENAPRED (amarillo, rojo) ni el índigo del acento: un pronóstico no es
+     una alerta de protección civil ni un botón. */
+  --dmc-1-bg: #f5f3ff;
+  --dmc-1-ink: #5b21b6;
+  --dmc-1-line: #c4b5fd;
+  --dmc-2-bg: #ddd6fe;
+  --dmc-2-ink: #3b0764;
+  --dmc-2-line: #7c3aed;
+  --dmc-3-bg: #6d28d9;
+  --dmc-3-ink: #ffffff;
+  --dmc-3-line: #4c1d95;
+
   /*
    * Sombras en tres capas. El anillo va DENTRO del token, no aparte.
    *
@@ -266,6 +279,16 @@ html.dark {
   --success-ink: #6ee7b7;
   --success-line: rgb(16 185 129 / 0.35);
 
+  --dmc-1-bg: rgb(76 29 149 / 0.22);
+  --dmc-1-ink: #c4b5fd;
+  --dmc-1-line: rgb(139 92 246 / 0.45);
+  --dmc-2-bg: rgb(109 40 217 / 0.55);
+  --dmc-2-ink: #ede9fe;
+  --dmc-2-line: #a78bfa;
+  --dmc-3-bg: #7c3aed;
+  --dmc-3-ink: #ffffff;
+  --dmc-3-line: #c4b5fd;
+
   /* El anillo pasa a ser lo primero y lo más importante: es el canto de la
      tarjeta. La difusión se alarga porque en oscuro se percibe menos. */
   --shadow-panel:
@@ -328,6 +351,15 @@ html.dark {
   --color-success-bg: var(--success-bg);
   --color-success-ink: var(--success-ink);
   --color-success-line: var(--success-line);
+  --color-dmc-1-bg: var(--dmc-1-bg);
+  --color-dmc-1-ink: var(--dmc-1-ink);
+  --color-dmc-1-line: var(--dmc-1-line);
+  --color-dmc-2-bg: var(--dmc-2-bg);
+  --color-dmc-2-ink: var(--dmc-2-ink);
+  --color-dmc-2-line: var(--dmc-2-line);
+  --color-dmc-3-bg: var(--dmc-3-bg);
+  --color-dmc-3-ink: var(--dmc-3-ink);
+  --color-dmc-3-line: var(--dmc-3-line);
 }
 
 /* --- Clases de composición -------------------------------------------------

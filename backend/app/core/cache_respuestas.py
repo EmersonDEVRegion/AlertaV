@@ -55,6 +55,7 @@ RUTAS: frozenset[str] = frozenset(
         f"{_P}/events/road-closures/geojson",
         f"{_P}/events/water-cuts/geojson",
         f"{_P}/feed/vehiculos",
+        f"{_P}/feed/avisos-meteo",
     }
 )
 #: Prefijos que también se guardan: la ficha de un incidente, que se sondea

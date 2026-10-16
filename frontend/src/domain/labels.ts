@@ -29,6 +29,7 @@ const SOURCE_LABEL: Record<EventSource, string> = {
   mop: 'Vialidad (MOP)',
   gbv: 'GBV (vehículos)',
   esval: 'Esval (agua)',
+  dmc: 'DMC (meteorología)',
   other: 'Otra fuente',
 }
 

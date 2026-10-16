@@ -23,6 +23,7 @@ token configurado, responde 503 (falla cerrada).
 | GET | `/events/water-cuts/geojson` | pública | Cortes de agua vigentes de Esval |
 | GET | `/feed/vehiculos` | pública | Vehículos robados, recuperados y abandonados (GBV), 48 h |
 | GET | `/feed/noticias` | pública | Prensa local, 24 h (fuera del mapa) |
+| GET | `/feed/avisos-meteo` | pública | Avisos, alertas y alarmas vigentes de la DMC para la región (404 si la fuente está apagada) |
 | GET | `/collectors/health` | pública | Frescura de la recolección por familia (la lee el mapa) |
 | POST | `/events/citizen-report` | pública, con freno por IP, dispositivo y red | Reporte ciudadano |
 | GET | `/share/i/{code}` | pública | HTML con Open Graph que redirige a `/?incidente=` (Vercel reenvía `/i/:code`) |

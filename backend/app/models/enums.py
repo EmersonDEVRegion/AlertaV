@@ -67,6 +67,10 @@ class EventSource(str, Enum):
     #: feed aparte (`GET /feed/vehiculos`), fuera del mapa y del motor de
     #: correlación. Ver collectors/vehicles/.
     GBV = "gbv"
+    #: Dirección Meteorológica de Chile: avisos, alertas y alarmas del
+    #: pronóstico oficial. Emite `weather_warning`, que es contexto y no
+    #: siniestro. Ver collectors/dmc/.
+    DMC = "dmc"
     OTHER = "other"
 
 
@@ -84,6 +88,8 @@ class EventType(str, Enum):
         está programada de antemano. Contexto, igual que WEATHER_OBSERVATION.
       - WATER_CUT: corte de agua informado por la sanitaria. Mismo trato que
         ROAD_CLOSURE: hecho cierto, contexto, fuera del motor.
+      - WEATHER_WARNING: aviso, alerta o alarma de la DMC. Un pronóstico
+        oficial: dice lo que puede ocurrir, no lo que ocurrió. Fuera del motor.
     """
 
     WILDFIRE = "wildfire"
@@ -141,6 +147,15 @@ class EventType(str, Enum):
     #: manda a Nominatim los cortes que lleguen sin coordenadas— y fuera de
     #: `EVENT_TO_INCIDENT_TYPE`.
     WATER_CUT = "water_cut"
+    #: Aviso, alerta o alarma meteorológica de la DMC.
+    #:
+    #: No es `alert`: ése es el tipo de las alertas de SENAPRED, que el Paso B
+    #: adosa a incidentes de su comuna. Un aviso de la DMC habla de una zona de
+    #: pronóstico y de días que todavía no llegan; pegado a un incendio de hoy
+    #: diría algo que no es. Fuera de `CORRELATABLE_EVENT_TYPES` y de
+    #: `EVENT_TO_INCIDENT_TYPE`, como `weather_observation`. Se lee en
+    #: `GET /feed/avisos-meteo`.
+    WEATHER_WARNING = "weather_warning"
     OTHER = "other"
     UNKNOWN = "unknown"
 
@@ -553,6 +568,10 @@ SOURCE_BASE_CONFIDENCE: dict[EventSource, float] = {
     # `water_cut` no correlaciona, este número no mueve ningún incidente; su
     # regla en `confidence.py` pesa cero.
     EventSource.ESVAL: 1.00,
+    # La DMC es la autoridad del pronóstico oficial: el 1.0 dice que el aviso
+    # existe, no que el fenómeno vaya a ocurrir. `weather_warning` no
+    # correlaciona y su regla en `confidence.py` pesa cero.
+    EventSource.DMC: 1.00,
     EventSource.MUNICIPALITY: 0.90,
     EventSource.MEDIA: 0.70,
     EventSource.BROADCASTIFY: 0.65,
