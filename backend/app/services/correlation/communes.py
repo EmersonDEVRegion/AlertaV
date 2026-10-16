@@ -20,6 +20,9 @@ Dos reglas que evitan falsos positivos caros:
   mapa entero sin decir nada sobre ninguno.
 * **La familia del fenómeno tiene que coincidir.** Una alerta roja por crecida
   no se une a un incendio que casualmente ocurre en la misma comuna.
+* **Sólo reciben alertas las familias que SENAPRED alerta** (`ALERTABLE_FAMILIES`).
+  Un corte de luz o un choque no se tiñen con una alerta, ni siquiera con una
+  que no declara su fenómeno.
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.collectors.geoservices import normalise_text
-from app.models.enums import INCIDENT_FAMILY, IncidentType
+from app.models.enums import ALERTABLE_FAMILIES, INCIDENT_FAMILY, IncidentType
 
 #: Alias del campo comuna en las capas institucionales.
 COMMUNE_ALIASES: tuple[str, ...] = (
@@ -351,8 +354,11 @@ def _families_compatible(alert_family: str, incident_family: str) -> bool:
 
     Si la alerta no declara el fenómeno (`unknown`), se admite el vínculo pero
     con un descuento: es mejor un enlace anotado y penalizado que perder la
-    única alerta roja del día por un campo mal poblado.
+    única alerta roja del día por un campo mal poblado. Ese margen vale sólo
+    dentro de las familias alertables: fuera de ellas no hay vínculo posible.
     """
+    if incident_family not in ALERTABLE_FAMILIES:
+        return False
     if alert_family == "unknown":
         return True
     return alert_family == incident_family

@@ -497,6 +497,15 @@ INCIDENT_FAMILY: dict[IncidentType, str] = {
 #: distinto de lo que dice esta tabla.
 
 
+#: Familias sobre las que SENAPRED declara alertas: incendios y fenómenos
+#: hidrometeorológicos. Un corte de luz, un choque o un rescate no son el objeto
+#: de una alerta; a lo sumo su consecuencia (el viento tumba la línea), y esa
+#: relación es regional y causal, no un juicio sobre ese incidente. Pegarles la
+#: alerta haría que un corte se leyera como «Alerta Amarilla». El frontend
+#: espeja esta lista en `domain/symbology.ts`.
+ALERTABLE_FAMILIES: frozenset[str] = frozenset({"fire", "hydro"})
+
+
 def family_of_incident(incident_type: IncidentType) -> str:
     return INCIDENT_FAMILY.get(incident_type, DEFAULT_FAMILY)
 
