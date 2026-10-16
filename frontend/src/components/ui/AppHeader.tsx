@@ -57,10 +57,9 @@ function Brand() {
     <div className="flex shrink-0 items-center gap-2">
       <span className="relative grid size-7 place-items-center">
         {/*
-          La marca: el mismo triángulo con V de `public/icons/favicon.svg` (§H).
-          Antes iban tres arcos fijos que se leían como el ícono de Wi-Fi —como
-          si midieran la conexión— y no cambiaban con nada. El estado vivo ya lo
-          dice el punto de `LiveStatus`; la marca sólo identifica.
+          La marca: el mismo triángulo con V de `public/icons/favicon.svg`.
+          No mide nada (unos arcos se leerían como el ícono de Wi-Fi): el estado
+          vivo lo dice el punto de `LiveStatus`; la marca sólo identifica.
 
           La V se cala con el color de la barra (`stroke-chrome`) y no con el
           azul marino del ícono, para que siga siendo un hueco en la barra.
@@ -112,7 +111,7 @@ export const AppHeader = memo(function AppHeader({
   const header = useRef<HTMLElement>(null)
 
   /*
-   * El alto de la barra, en `--app-header-h` (§T).
+   * El alto de la barra, en `--app-header-h`.
    *
    * Los paneles que cuelgan de ella (avisos, clima, menú) se acotan al espacio
    * que queda debajo —y en el teléfono, sobre la hoja asomada— con

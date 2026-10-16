@@ -118,7 +118,7 @@ export interface TacticalWeather {
   en_critico: number
   comunas_en_alerta: string[]
   /**
-   * Severidad del índice UV. **Va aparte** (§R): no dispara la barra ni cuenta
+   * Severidad del índice UV. **Va aparte**: no dispara la barra ni cuenta
    * en `comunas_en_alerta`; el panel del clima la muestra en su fila.
    */
   uv_severidad: WeatherSeverity

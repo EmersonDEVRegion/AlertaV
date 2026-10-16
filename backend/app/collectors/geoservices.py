@@ -28,6 +28,7 @@ import httpx
 
 from app.core.exceptions import CollectorError
 from app.core.identidad import user_agent
+from app.core.texto import sin_tildes
 
 logger = logging.getLogger(__name__)
 
@@ -211,14 +212,8 @@ def as_float(value: Any) -> float | None:
 
 
 def normalise_text(value: Any) -> str:
-    """Minúsculas sin tildes: para comparar 'Valparaíso' con 'VALPARAISO'."""
-    import unicodedata
-
-    if value is None:
-        return ""
-    decomposed = unicodedata.normalize("NFD", str(value))
-    stripped = "".join(char for char in decomposed if unicodedata.category(char) != "Mn")
-    return " ".join(stripped.lower().split())
+    """Minúsculas sin tildes ni espacios repetidos: 'Valparaíso' == 'VALPARAISO'."""
+    return " ".join(sin_tildes(value).split())
 
 
 # --- Parseo de GeoJSON -------------------------------------------------------
@@ -628,10 +623,9 @@ async def request_response(
                 # minutos, el propio ciclo ya es un backoff mucho más largo que
                 # cualquier reintento dentro de la corrida.
                 #
-                # Lo que sí cambió es que ahora se DISTINGUE. Antes un 429 salía
-                # como "HTTP 429 — <cuerpo>", indistinguible de un 404 o un 403
-                # salvo por el número: un operador mirando `collector_runs` no
-                # podía separar «nos están limitando el ritmo» —que se responde
+                # Lo que sí se hace es DISTINGUIRLO. Como "HTTP 429 — <cuerpo>"
+                # sería indistinguible de un 404 o un 403 salvo por el número:
+                # un operador mirando `collector_runs` no podría separar «nos están limitando el ritmo» —que se responde
                 # bajando la cadencia— de «la URL cambió» —que se responde
                 # editando la configuración—. Son dos acciones opuestas y el
                 # mensaje no ayudaba a elegir.

@@ -191,9 +191,9 @@ export const env = {
     900_000,
   ),
   /**
-   * Radar de vehículos (GBV). Encendido desde el 15-10-2026 (§R): se avisó a
-   * GBV el 29-09 y no respondió. Ante cualquier reclamo o carta de cese, se
-   * apaga con `VITE_VEHICLE_RADAR=off` en Vercel y un redeploy. Ver `flag`.
+   * Radar de vehículos (GBV). Encendido por defecto; ante cualquier reclamo o
+   * carta de cese, se apaga con `VITE_VEHICLE_RADAR=off` en Vercel y un
+   * redeploy. Ver `flag`.
    */
   vehicleRadarEnabled: flag(import.meta.env.VITE_VEHICLE_RADAR, true),
   /**

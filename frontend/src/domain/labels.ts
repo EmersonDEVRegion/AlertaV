@@ -50,7 +50,7 @@ export const TYPE_LABEL: Record<IncidentType, string> = {
 }
 
 /**
- * Qué tan fino es el punto del incidente, dicho en la ficha (§K). `exacta` no
+ * Qué tan fino es el punto del incidente, dicho en la ficha. `exacta` no
  * se dice: un punto con coordenadas propias no necesita aclaración.
  */
 export const UBICACION_PRECISION_LABEL: Record<UbicacionPrecision, string | null> = {

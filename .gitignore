@@ -4,7 +4,7 @@
 /Claude outputs/
 /plan.md
 
-# Restos de Python y pytest (§R-A)
+# Restos de Python y pytest
 __pycache__/
 *.pyc
 pytest-cache-files-*/

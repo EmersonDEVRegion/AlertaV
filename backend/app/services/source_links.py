@@ -3,7 +3,7 @@
 Para qué existe
 ---------------
 Cada collector guarda en `raw_data` la traza de dónde salió lo que ingirió, pero
-**cada uno con su propia llave**: la prensa escribe `url`, Instagram
+**cada uno con su propia llave**: la prensa escribe `url`, las redes sociales
 `permalink`, Bomberos deja el identificador del tuit dentro de `_bomberos.guid`.
 Eso está bien —`raw_data` es el crudo de cada fuente y forzarlo a un esquema
 común borraría información— pero significa que el panel no puede pedir "el

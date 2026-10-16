@@ -2,21 +2,15 @@
 
 Por qué existe este módulo
 --------------------------
-Nació como un bloque de constantes dentro del worker de Instagram, porque ese
-fue el primer collector que tuvo que leer texto libre. Después lo importó el
-worker de prensa, y el resultado era un collector de diarios dependiendo de uno
-de redes sociales: una flecha que no describe ninguna relación real entre las
-dos fuentes, sólo el orden en que se escribieron.
+Todo collector que lee texto libre (prensa, despachos, tránsito) clasifica con
+este diccionario y con ningún otro. **Dos diccionarios de emergencia que se
+editan por separado terminan divergiendo**, y el día que alguien agregue un
+término en uno y no en el otro, media plataforma deja de ver esa clase de
+siniestro sin que nada falle. Que no dependa de ningún collector evita además
+flechas falsas entre fuentes: la prensa no tiene por qué importar de X.
 
-Los dos workers ya lo tenían anotado como deuda —`app/collectors/codes.py` en
-uno, `app/collectors/vocabulario.py` en el otro— y con un argumento que sigue
-siendo el bueno: **dos diccionarios de emergencia que se editan por separado
-terminan divergiendo**, y el día que alguien agregue un término en uno y no en
-el otro, media plataforma deja de ver esa clase de siniestro sin que nada falle.
-Este archivo es el pago de esa deuda, y el vacío que la hizo urgente está en el
-bloque de hidrometeorología: el sistema no tenía una sola palabra para nombrar
-un anegamiento ni un socavón, que es exactamente lo que le pasa a Valparaíso
-entre mayo y agosto.
+El bloque de hidrometeorología es el que más pesa en la región: un anegamiento
+o un socavón es exactamente lo que le pasa a Valparaíso entre mayo y agosto.
 
 Qué vive acá y qué no
 ---------------------
@@ -306,8 +300,8 @@ TRAFFIC_TERMS: frozenset[str] = frozenset(
 #: Intervención de la vía: desvíos, faenas, cortes y restricciones.
 #:
 #: **NO forma parte de `CRITICAL_TERMS` y eso es la mitad del diseño.** Una faena
-#: programada no es una emergencia, y `is_emergency` la alimenta a los workers de
-#: prensa e Instagram, donde un "corte de tránsito por obras" entrando como
+#: programada no es una emergencia, y `is_emergency` alimenta al worker de
+#: prensa, donde un "corte de tránsito por obras" entrando como
 #: siniestro sería ruido puro. Este conjunto existe para la capa táctica del MTT
 #: —una fuente que publica avisos operativos por diseño— y se consulta aparte,
 #: por `es_operacion_vial`.
@@ -557,10 +551,9 @@ OPERATIONAL_TERMS: frozenset[str] = frozenset(
 # Fuente: tabla oficial publicada del CBV (16 compañías, comuna de Valparaíso).
 # Es la que usa @CGI_CBV. La de @CBVM132 es otro sistema: ver `CBVM_CODE_TYPES`.
 #
-# ## Estas tablas describían OTRO sistema de claves
+# ## No confundir con el esquema nacional
 #
-# Hasta el 2026-09-02 acá vivía una familia `10-x` con incendios y rescates, y
-# un `12` como "llamado a servicio especial". En el CBV real:
+# En el CBV la familia `10` no es «incendio»:
 #
 #   * `10` es **abastecer o aspirar agua** — logística, no una emergencia. Y no
 #     tiene subclaves: `10-0` … `10-4` no existen.
@@ -568,13 +561,10 @@ OPERATIONAL_TERMS: frozenset[str] = frozenset(
 #   * `3-1` y `3-2` son **incendios vehiculares**, no peticiones de Carabineros
 #     y ambulancia. Esas son `W-1` y `W-2`.
 #   * Los accidentes de tránsito son `5-x` (rescate vehicular) y `9-x`
-#     (accidente en túnel), que no estaban en ninguna tabla.
+#     (accidente en túnel).
 #
-# El daño era de los dos lados. Por un lado, `BOMBEROS_ACCIDENT_KEYS` incluía
-# `12`: una academia podía entrar al mapa como emergencia confirmada con
-# confianza 1.00. Por el otro, ninguna clave de accidente real estaba
-# configurada, así que la fuente más útil del sistema no aportaba un solo
-# evento — y su descarte era silencioso hasta el aviso que se agregó ese día.
+# Leer estas claves con la tabla nacional haría entrar una academia como
+# emergencia confirmada con confianza 1.00 y dejaría fuera los accidentes.
 #
 # ## Lo que NO está acá
 #
@@ -1864,7 +1854,7 @@ def classify_event_type(texto: str) -> EventType | None:
     dejarla escrita:
 
     * `WILDFIRE` afirmaría que hay un incendio forestal, que es lo que CONAF
-      confirma yendo al lugar. Una publicación de Instagram no puede afirmar eso.
+      confirma yendo al lugar. Una publicación en redes no puede afirmar eso.
     * `SMOKE` es un avistamiento de humo. Tampoco: el texto dice fuego.
     * `OTHER` cae en la familia `other`, así que **no se fusiona** con los
       incendios que CONAF o FIRMS reporten a 500 m. Pierde corroboración, y ese
@@ -1935,7 +1925,7 @@ def classify_event_type(texto: str) -> EventType | None:
 # `classify_event_type` tiene una invariante escrita en su docstring: devuelve
 # `None` si y sólo si `is_emergency` devolvió `False`. Un desvío por obras no es
 # una emergencia y `is_emergency` tiene que seguir diciendo que no —de eso
-# dependen los workers de prensa e Instagram, donde un aviso de faena es ruido—.
+# depende el worker de prensa, donde un aviso de faena es ruido—.
 # Así que agregar la familia vial a la cadena general habría roto la invariante
 # o habría convertido las faenas en emergencias. Ninguna de las dos.
 #
@@ -2032,7 +2022,7 @@ def clasificar_transito(texto: str) -> EventType | None:
 # Este bloque salió de un test que falló, y conviene contar por qué, porque es
 # un defecto del léxico compartido y no un capricho de la prensa.
 #
-# El diccionario se calibró contra captions de Instagram, donde una emergencia
+# El diccionario se calibró contra publicaciones de redes, donde una emergencia
 # se anuncia con un **sustantivo**: "RESCATE en el Tranque La Luz", "CHOQUE en la
 # Ruta 68". Un titular de prensa usa **verbo conjugado**: "Rescatan a
 # excursionistas perdidos", "Chocan dos vehículos en San Felipe". Y la

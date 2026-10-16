@@ -731,7 +731,7 @@ def test_el_raw_data_trae_lo_que_el_feed_filtra_y_nunca_extraction():
 
 
 def test_un_robo_con_fecha_usa_la_medianoche_chilena_de_ese_dia():
-    ficha, vehiculo = _vehiculo_robado()
+    _ficha, vehiculo = _vehiculo_robado()
     evento = build_event(
         vehiculo, external_id="x", semilla=False, visto_en=VISTO_EN, ficha_raw={}, detalle_raw=None
     )

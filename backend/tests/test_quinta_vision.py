@@ -1,4 +1,4 @@
-"""Quinta Visión Ahora y el filtro por categoría (§L, 2026-09-30).
+"""Quinta Visión Ahora y el filtro por categoría.
 
 Entró y salió de la rotación el mismo día: Cloudflare le responde a Render con
 un desafío (403) y no se esquiva (ver `LOCAL_NEWS_SOURCES`). La fila quedó

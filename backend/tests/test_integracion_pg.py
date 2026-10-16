@@ -606,7 +606,7 @@ def test_los_lugares_guardados_cuentan_para_el_radio_y_se_avisa_una_vez():
     assert abs((mine[0].located_at - hace_tres_dias).total_seconds()) < 5
 
 
-# --- Reportes ciudadanos: quórum, cupo y moderación (§C) -----------------------
+# --- Reportes ciudadanos: quórum, cupo y moderación -----------------------
 
 MARCA_CIUDADANA = "integracion-ciudadana"
 
@@ -761,7 +761,7 @@ def test_el_cupo_y_la_moderacion_leen_la_base():
     assert rechazados == [f"{MARCA_CIUDADANA} 9 8765 4321"]
 
 
-# --- §K: radios por categoría, cortes de agua y punto del incidente ------------
+# --- Radios por categoría, cortes de agua y punto del incidente ---------------
 
 ENDPOINT_RADIOS = "https://fcm.googleapis.com/fcm/send/integracion-radios"
 MARCA_K = "integracion-k"
@@ -1010,7 +1010,7 @@ def test_la_prensa_se_retira_de_los_incidentes_que_ya_estaban_abiertos():
             por_id = {i.id: i for i in (await session.execute(select(Incident))).scalars().all()}
         return antes, resultado, despues, notas, por_id
 
-    antes, resultado, despues, notas, por_id = correr(caso)
+    antes, resultado, _despues, notas, por_id = correr(caso)
     assert len(antes) == 2
     assert resultado.prensa_desvinculada == 2
     assert resultado.solo_prensa_descartados == 1

@@ -3,7 +3,7 @@
     python -m scripts.probar_cruce "LAS MONJAS" "ANDRES BELLO" --comuna Valparaíso
     python -m scripts.probar_cruce --casos
 
-`--casos` corre los dos despachos del 05-10-2026 que motivaron §K. Imprime el
+`--casos` corre dos despachos reales de Valparaíso. Imprime el
 punto que daba Nominatim, el del cruce y cuánto se movió. Respeta el límite de
 1 petición por segundo de los dos servicios.
 """

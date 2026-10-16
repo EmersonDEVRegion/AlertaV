@@ -48,7 +48,7 @@ export interface HistoryFeedProps {
 }
 
 /**
- * Qué parte del historial se muestra (§R): `now` en la pestaña «Ahora» (en vivo
+ * Qué parte del historial se muestra: `now` en la pestaña «Ahora» (en vivo
  * y servicios interrumpidos), `past` en «Historial» (hoy, ayer y antes).
  */
 export type HistoryScope = 'all' | 'now' | 'past'
@@ -137,7 +137,7 @@ const HistoryItem = memo(function HistoryItem({
               {nested
                 ? where
                 : // Los cortes de luz se rotulan con la comuna limpia: su título
-                  // trae la zona de la distribuidora tal cual (§R-A).
+                  // trae la zona de la distribuidora tal cual.
                   incident.type === 'power_outage' || !incident.title
                   ? `${TYPE_LABEL[incident.type]} — ${where}`
                   : incident.title}
@@ -248,7 +248,7 @@ const OutageGroupItem = memo(function OutageGroupItem({
 })
 
 /**
- * Qué secciones arrancan abiertas (§I). Lo que está pasando y lo de hoy, sí;
+ * Qué secciones arrancan abiertas. Lo que está pasando y lo de hoy, sí;
  * ayer, plegado: es contexto, y abierto empujaba hacia abajo todo lo demás.
  * Lo que la persona pliegue o abra se recuerda en el teléfono.
  */

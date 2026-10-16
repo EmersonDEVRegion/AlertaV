@@ -123,11 +123,10 @@ class BaseCollector(abc.ABC):
         pocos datos, no cuando una fuente de respaldo reemplazó a la principal
         —eso es `warn`—, sino cuando la ventana al mundo está tapada.
 
-        El caso canónico es un pull sobre caché ajena: el collector de Instagram
-        lee el dataset de la última corrida del Actor, así que si el Actor deja
-        de correr, sigue devolviendo datos válidos y viejos indefinidamente. No
-        falla nunca, y esa es exactamente la razón por la que hace falta decirlo
-        en voz alta.
+        El caso canónico es un pull sobre caché ajena: quien lee el dataset de la
+        última corrida de un Actor de Apify sigue recibiendo datos válidos y
+        viejos indefinidamente si el Actor deja de correr. No falla nunca, y esa
+        es exactamente la razón por la que hace falta decirlo en voz alta.
 
         Gana sobre `warn`: una corrida ciega que además rechazó filas es ciega.
         """

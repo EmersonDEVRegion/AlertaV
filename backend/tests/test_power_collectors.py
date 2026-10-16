@@ -1023,7 +1023,7 @@ def test_los_campos_reales_del_archivo_se_leen():
     evento = eventos[0]
     assert evento.external_id == "chilquinta:10209025"
     assert evento.raw_data["affected_clients"] == 68
-    # §R-A: la comuna se guarda con su nombre canónico; el registro original
+    # La comuna se guarda con su nombre canónico; el registro original
     # sigue en `_source_record`.
     assert evento.raw_data["comuna"] == "Viña del Mar"
     assert evento.raw_data[OUTAGE_KEY]["restoration_at"] is not None

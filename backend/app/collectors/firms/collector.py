@@ -16,6 +16,7 @@ from typing import Any
 
 from app.collectors.base import BaseCollector
 from app.collectors.firms.client import FirmsClient
+from app.collectors.geoservices import as_float
 from app.core.config import settings
 from app.core.exceptions import CollectorError
 from app.models.enums import EventSource, EventType
@@ -31,15 +32,6 @@ _MODIS_CONFIDENCE_FLOOR = 0.10
 _MODIS_CONFIDENCE_CEILING = 0.85
 
 
-def _as_float(value: Any) -> float | None:
-    try:
-        if value is None or str(value).strip() == "":
-            return None
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def map_confidence(raw_confidence: Any) -> float:
     """Normaliza la confianza de FIRMS a [0,1].
 
@@ -53,7 +45,7 @@ def map_confidence(raw_confidence: Any) -> float:
     if token in _VIIRS_CONFIDENCE:
         return _VIIRS_CONFIDENCE[token]
 
-    numeric = _as_float(token)
+    numeric = as_float(token)
     if numeric is None:
         return 0.5
 
@@ -104,7 +96,7 @@ def build_external_id(record: dict[str, Any], *, lat: float, lon: float) -> str:
 def build_text(record: dict[str, Any]) -> str:
     """Descripción legible. Deja explícito que no es un incendio confirmado."""
     sensor = record.get("_sensor", "FIRMS")
-    frp = _as_float(record.get("frp"))
+    frp = as_float(record.get("frp"))
     daynight = "día" if str(record.get("daynight", "")).upper() == "D" else "noche"
     frp_text = f", FRP {frp:.1f} MW" if frp is not None else ""
     return (
@@ -174,8 +166,8 @@ class FirmsCollector(BaseCollector):
         events: list[EventCreate] = []
 
         for record in records:
-            lat = _as_float(record.get("latitude"))
-            lon = _as_float(record.get("longitude"))
+            lat = as_float(record.get("latitude"))
+            lon = as_float(record.get("longitude"))
             if lat is None or lon is None:
                 logger.debug("detección FIRMS sin coordenadas", extra={"record": record})
                 continue

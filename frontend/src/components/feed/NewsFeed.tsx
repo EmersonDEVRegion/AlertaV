@@ -14,9 +14,8 @@ import { formatRelativeShort } from '@/lib/format'
 /**
  * Noticias de la prensa local, últimas 24 h. **No van al mapa.**
  *
- * Hasta el 2026-10-06 una nota abría un pin, y llegaba con horas de atraso:
- * el mapa mostraba como presente algo que ya había pasado. Ahora la prensa no
- * entra al motor (`CORRELATION_PRENSA`) y se lee acá, con la hora de
+ * Una nota llega con horas de atraso: en el mapa se mostraría como presente
+ * algo que ya pasó. Por eso la prensa no entra al motor (`CORRELATION_PRENSA`) y se lee acá, con la hora de
  * publicación a la vista. Es información, no una alerta: por eso no tiene
  * color de emergencia ni se puede tocar para volar al mapa.
  *
@@ -83,9 +82,9 @@ export function NewsFeedView({
   defaultOpen = true,
 }: NewsFeedState & {
   /**
-   * Abierta o plegada la primera vez. En la pestaña Historial va plegada
-   * (§I): está arriba de todo, y abierta empujaría el historial fuera de la
-   * hoja a media altura. Después manda lo que la persona elija.
+   * Abierta o plegada la primera vez. En la pestaña Historial va plegada:
+   * está arriba de todo, y abierta empujaría el historial fuera de la hoja a
+   * media altura. Después manda lo que la persona elija.
    */
   defaultOpen?: boolean
 }) {
@@ -103,7 +102,7 @@ export function NewsFeedView({
     [items, area],
   )
 
-  // Un backend sin la ruta (anterior al 06-10) no muestra nada: no es un corte.
+  // Sin la ruta en el backend no se muestra nada: no es un corte.
   if (status === 'unavailable') return null
 
   const visible = all ? shown : shown.slice(0, NEWS_PREVIEW)

@@ -46,12 +46,10 @@ _UPSERT_UPDATE_COLUMNS = ("type", "text", "confidence")
 def _set_del_upsert(excluded: Any) -> dict[str, Any]:
     """Cláusula SET del `ON CONFLICT`: la fila nueva manda, salvo para borrar un punto.
 
-    Hasta el 2026-09-23 el upsert pisaba `lat`/`lon` con lo que viniera. Una
-    señal que ya tenía punto y volvía a pasar en una corrida donde se agotó el
-    cupo de Gemini o de Nominatim —o Nominatim falló, o cayó el KML de Esval—
-    quedaba con `NULL`: desaparecía del mapa y del motor sin que nada lo avisara.
-
-    Ahora un `NULL` entrante no borra un punto existente. El `raw_data` nuevo
+    Un `NULL` entrante no borra un punto existente. Una señal que ya tenía
+    punto y vuelve a pasar en una corrida donde se agotó el cupo de Gemini o de
+    Nominatim —o Nominatim falló, o cayó el KML de Esval— quedaría si no con
+    `NULL`: desaparecería del mapa y del motor sin que nada lo avisara. El `raw_data` nuevo
     igual se escribe (trae datos frescos, como el `visto_en` de Esval), pero
     conserva el `_geocoding` anterior y queda marcado con `_punto_heredado`, para
     que al auditar se sepa de dónde salió la coordenada.

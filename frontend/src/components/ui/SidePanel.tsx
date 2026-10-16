@@ -42,12 +42,11 @@ import { WaterCutListItem } from './WaterCutListItem'
  *
  * Lo que queda es homogéneo, y eso es la mitad del beneficio: **todas las filas
  * de este panel hacen lo mismo** —filtrar un conjunto ya descargado— así que
- * todas pueden tener la misma forma. Antes convivían casillas e interruptores
- * en la misma lista y la diferencia de forma tenía que cargar sola con una
- * distinción conceptual que el espacio no ayudaba a hacer.
+ * todas pueden tener la misma forma. Casillas e interruptores en la misma lista
+ * obligarían a la forma a cargar sola con una distinción conceptual que el
+ * espacio no ayuda a hacer.
  *
- * La separación física también resuelve el riesgo que motivó aquella
- * distinción: un vecino que veía la amenaza sísmica encendida junto a los
+ * La separación física también resuelve el riesgo que motiva esa distinción: un vecino que veía la amenaza sísmica encendida junto a los
  * incendios activos podía leer el modelo probabilístico como un evento en
  * curso. Ahora ni siquiera comparten superficie.
  *
@@ -168,9 +167,8 @@ function isIncidentRow(key: keyof LayerVisibility): key is IncidentLayerKey {
 /**
  * Las capas de emergencia: casilla, contador, salud y la lista de cada una.
  *
- * Antes era el panel flotante de la derecha (`SidePanel`, dentro de un
- * `<Sheet>`). Con la columna única es la pestaña «Capas» de
- * `components/shell/ExplorePanel.tsx`, en escritorio y en teléfono.
+ * Es la pestaña «Capas» de `components/shell/ExplorePanel.tsx`, en escritorio y
+ * en teléfono.
  */
 export function IncidentFilters({
   visibility,

@@ -1,7 +1,7 @@
 """Feed de prensa local: la lectura detrás de `GET /feed/noticias`.
 
-Las noticias siguen entrando como siempre (`prensa_local` → `raw_events`), pero
-desde el 2026-10-06 no pasan por el motor (`CORRELATION_PRENSA`): no abren
+Las noticias entran como cualquier señal (`prensa_local` → `raw_events`), pero
+no pasan por el motor (`CORRELATION_PRENSA`): no abren
 incidentes ni se pegan a uno. Este feed es el único lugar donde se leen.
 """
 

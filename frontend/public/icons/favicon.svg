@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AlertaV">
   <!--
-    Marca de AlertaV: el triángulo de aviso con una V calada (§H, 30-09-2026).
+    Marca de AlertaV: el triángulo de aviso con una V calada.
 
     Fuente ÚNICA de todos los íconos: `npm run icons` (scripts/icons.mjs) genera
     desde este archivo los PNG de la PWA, el de iOS, el maskable y el badge de

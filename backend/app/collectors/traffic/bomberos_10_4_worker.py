@@ -20,11 +20,8 @@ su propio Schedule y avisa a este backend cuando termina; el endpoint encola el
 aviso y el proceso de workers lee el dataset que nombra. Ver
 `app/api/v1/endpoints/apify.py` y `app/services/apify_webhook_service.py`.
 
-El lector RSS que existió antes (`Bomberos104Collector`, sobre un puente
-RSSHub) se borró el 2026-09-23: la ruta de Twitter de RSSHub desapareció cuando
-X cerró su API y el espejo de xcancel tampoco responde. Este módulo conserva lo
-que el webhook usa: el `Dispatch`, su decodificación, su geocodificación y su
-conversión a evento. `revisar_feed` queda porque la usa la prensa local.
+Este módulo tiene lo que el webhook usa: el `Dispatch`, su decodificación, su
+geocodificación y su conversión a evento. `revisar_feed` lo usa la prensa local.
 
 * **El texto es prosa, no campos.** No hay `<address>` ni `<code>`: hay una
   frase. Lo que se guarda como dirección es el texto del aviso completo, en
@@ -173,8 +170,7 @@ def strip_html(fragment: str) -> str:
 class EstadoFeed:
     """Qué llegó de un feed RSS/Atom, en las tres categorías que importan.
 
-    La usa hoy la prensa local (`news/local_news_worker.py`); nació en el lector
-    RSS de Bomberos, que ya no existe.
+    La usa la prensa local (`news/local_news_worker.py`).
 
     Las dos primeras ya se distinguían; la tercera se añadió después de que una
     fuente muerta pasara días reportando corridas `success`.

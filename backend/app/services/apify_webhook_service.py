@@ -40,18 +40,18 @@ en el historial de quien copie la URL para depurar. `apify_client.build_client`
 es la única función del repositorio que toca el token, y esa unicidad es lo que
 permite afirmar que no se filtra.
 
-El inbox (desde el 2026-09-23)
-------------------------------
-Hasta esa fecha el endpoint respondía 200 y procesaba en una `BackgroundTask`
-del proceso de la API. Tres defectos, los tres de la auditoría:
+El inbox
+--------
+El endpoint no procesa: encola y responde. Procesar en una `BackgroundTask`
+del proceso de la API tendría tres defectos:
 
-* **Un redeploy perdía la entrega.** Render reinicia el contenedor con cada
-  push; la tarea en vuelo moría con él y Apify no reintenta un 2xx.
-* **Postgres caído también.** El 200 ya se había enviado cuando la tarea
-  intentaba abrir la sesión: el fallo quedaba sólo en el log.
+* **Un redeploy perdería la entrega.** Render reinicia el contenedor con cada
+  push; la tarea en vuelo moriría con él y Apify no reintenta un 2xx.
+* **Postgres caído también.** El 200 ya se habría enviado cuando la tarea
+  intentara abrir la sesión: el fallo quedaría sólo en el log.
 * **Gemini y Nominatim desde dos procesos.** El limitador de 1 req/s de
-  Nominatim es por proceso; la API y los workers lo duplicaban contra la misma
-  IP de salida.
+  Nominatim es por proceso; la API y los workers lo duplicarían contra la
+  misma IP de salida.
 
 Ahora el endpoint sólo **encola** (`encolar_dataset`): escribe una fila
 `running` en `collector_runs` con `params.inbox = "pendiente"` y responde. Si la
@@ -421,10 +421,9 @@ def fecha_de_tuit(valor: Any) -> datetime | None:
     """Fecha de publicación de un tuit, en UTC. None si no se entiende.
 
     `parse_timestamp` sabe de ISO y de epoch, pero NO del formato clásico de X.
-    Hasta el 2026-09-29 ese formato caía a None, y un despacho sin fecha pasa
-    `is_fresh` por diseño: con un Actor que devolviera tuits de verdad, la
-    primera entrega habría metido al mapa despachos de hace días con la hora
-    de hoy. Se parsea a mano y no con `strptime("%a %b …")`, que depende del
+    Sin esto ese formato caería a None, y un despacho sin fecha pasa
+    `is_fresh` por diseño: la primera entrega metería al mapa despachos de
+    hace días con la hora de hoy. Se parsea a mano y no con `strptime("%a %b …")`, que depende del
     locale del proceso: en un Windows en español «Mar» es martes.
     """
     if isinstance(valor, str):
@@ -735,9 +734,9 @@ async def _sin_repetidos(
     """Quita los despachos que ya están en la base tal cual. Devuelve `(nuevos, ya_ingeridos)`.
 
     Cada entrega relee los últimos `APIFY_WEBHOOK_MAX_ITEMS` tuits de la cuenta,
-    así que casi todo lo que trae ya entró en la entrega anterior. Antes se
-    decodificaba y geocodificaba todo de nuevo —una llamada al modelo y una a
-    Nominatim por despacho repetido— para que el upsert terminara descartándolo.
+    así que casi todo lo que trae ya entró en la entrega anterior. Decodificar
+    y geocodificar todo de nuevo costaría una llamada al modelo y una a
+    Nominatim por despacho repetido, para que el upsert terminara descartándolo.
 
     Sólo se salta lo que está idéntico Y ubicado: un despacho con el aviso
     corregido se reprocesa (el upsert actualiza), y uno que quedó sin punto

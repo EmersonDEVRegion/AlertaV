@@ -162,7 +162,7 @@ class IncidentService:
                 note=link.note,
                 # `raw_data` entero NO se expone: guarda la traza de cada
                 # collector —consultas internas, respuestas del modelo, URL
-                # firmadas del CDN de Instagram que caducan— y publicarlo sería
+                # firmadas de CDN que caducan— y publicarlo sería
                 # convertir un detalle de implementación en contrato público.
                 # Salen dos campos derivados y ya validados.
                 source_url=source_url_for(event.source, event.raw_data),

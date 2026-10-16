@@ -221,7 +221,7 @@ describe('encendido y apagado', () => {
     expect(closureHitLayer(false).layout?.visibility).toBe('none')
   })
 
-  it('apagada, no queda NINGUNA subcapa visible (§I: el icono quedaba en el mapa)', () => {
+  it('apagada, no queda NINGUNA subcapa visible, icono incluido', () => {
     for (const theme of THEMES) {
       const off = Object.values(roadClosureSpecs(theme, false))
       expect(off).toHaveLength(ROAD_CLOSURE_LAYER_IDS.length)

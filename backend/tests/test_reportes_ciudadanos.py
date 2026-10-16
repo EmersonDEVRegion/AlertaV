@@ -1,4 +1,4 @@
-"""Reportes ciudadanos antes del lanzamiento (§C, 2026-09-30).
+"""Reportes ciudadanos antes del lanzamiento.
 
 Lo que se fija acá, en el orden en que lo vive un reporte:
 

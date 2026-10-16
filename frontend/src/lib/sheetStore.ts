@@ -30,7 +30,7 @@ export function setSheetSnap(next: SheetSnap): void {
 }
 
 /*
- * Bajar la hoja mientras un panel de la barra está abierto (§T, 16-10-2026).
+ * Bajar la hoja mientras un panel de la barra está abierto.
  *
  * En el teléfono, el panel de avisos, el del clima, el menú «⋯» o la lista del
  * buscador cuelgan de la barra y, con la hoja a media altura, se pisaban con

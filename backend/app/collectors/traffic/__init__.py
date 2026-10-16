@@ -14,9 +14,6 @@ Los despachos de Bomberos no son un collector: entran por
 (`bomberos_10_4_worker`) y el extractor de calles con Gemini (`gemini`), que
 comparten el webhook, el MTT y la prensa.
 
-Waze salió del repositorio el 2026-09-23: el convenio de Waze for Cities nunca
-se aprobó.
-
 Todas emiten `type=accident`, que cae en la familia `traffic` y por lo tanto no
 puede fundirse con incendios: ver el docstring de
 `app/services/correlation/engine.py`.

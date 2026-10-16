@@ -27,11 +27,9 @@ const INCIDENT_FAMILY: Record<IncidentType, IncidentFamily> = {
   possible_fire: 'fire',
   wildfire: 'fire',
   structural_fire: 'fire',
-  // `traffic` es familia propia desde que existen los collectors de accidentes.
-  // Antes compartía `other` con rescates y despachos genéricos.
+  // Familias propias: en `other`, un choque o un corte de luz se podrían fundir
+  // con un rescate o un despacho genérico.
   accident: 'traffic',
-  // Familia propia desde que existen los collectors de Chilquinta y CGE. Antes
-  // habría caído en `other` y un corte se habría podido fundir con un rescate.
   power_outage: 'power',
   flood: 'hydro',
   landslide: 'hydro',

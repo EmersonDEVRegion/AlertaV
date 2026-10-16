@@ -178,12 +178,12 @@ export const HAZARD_FILL_OPACITY: Record<
 }
 
 /**
- * Borde de la imagen (§I), en celdas del modelo (~5 km).
+ * Borde de la imagen, en celdas del modelo (~5 km).
  *
  * La grilla del CSN termina en una caja recta y el terreno no: sin difuminado
  * el mapa dibujaba un rectángulo violeta con los bordes a cuchillo. El alfa cae
  * en las últimas `FEATHER` celdas, y el comienzo de esa caída ondula hasta
- * `WOBBLE` celdas hacia adentro (la misma receta que la lluvia, §L).
+ * `WOBBLE` celdas hacia adentro (la misma receta que la lluvia).
  *
  * Juntos son ~22 km como máximo. Con 2 celdas (~10 km), a escala regional el
  * difuminado medía unos 13 px en el teléfono y todavía se leía como una línea.
@@ -202,7 +202,7 @@ export const HAZARD_LEGEND = {
   high: `${HAZARD_MAX_G} g`,
   /**
    * Qué se está mirando: el degradado es una interpolación entre nodos cada
-   * ~5 km, no una medición continua del terreno. Desde §I no hay retícula.
+   * ~5 km, no una medición continua del terreno.
    */
   scale: 'Modelo cada ~5 km, interpolado',
   caveat:

@@ -1,4 +1,4 @@
-"""Cruces de calles con Overpass (§K, 2026-10-05).
+"""Cruces de calles con Overpass.
 
 Los dos casos que lo motivaron, del 05-10-2026 en Valparaíso:
 

@@ -1,9 +1,8 @@
 /**
  * La marca que separa los dos ceros.
  *
- * Existe por el 2026-09-02: el Actor de Instagram detenido dos horas, un choque
- * publicado en Avenida España, el diagnóstico escrito en `collector_runs`, y el
- * mapa mostrando «Accidentes viales · 0» igual que en una tarde tranquila.
+ * Con una fuente ciega, «Accidentes viales · 0» no puede verse igual que en una
+ * tarde tranquila.
  */
 
 import { describe, expect, it } from 'vitest'

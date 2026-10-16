@@ -45,7 +45,7 @@ export const queryKeys = {
     feed: (params: unknown) => ['vehicles', 'feed', params] as const,
   },
   /**
-   * Prensa local (desde el 2026-10-06). Fuera del mapa: sólo un feed
+   * Prensa local. Fuera del mapa: sólo un feed
    * informativo en el historial. Ver `api/newsFeed.ts`.
    */
   news: {

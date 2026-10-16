@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ApiError } from '@/api/client'
+import { isNotFound } from '@/api/client'
 import type { HealthStatus } from '@/api/health'
 import { fetchVehicleFeed } from '@/api/vehicleFeed'
 import type { VehicleFeedItem, VehicleFeedQuery, VehicleFeedSource } from '@/api/vehicleFeedTypes'
@@ -58,10 +58,6 @@ export interface VehicleFeedState {
 }
 
 const FEED_PARAMS: VehicleFeedQuery = { horas: FEED_WINDOW_HOURS, limit: FEED_LIMIT }
-
-function isNotFound(error: unknown): boolean {
-  return error instanceof ApiError && error.status === 404
-}
 
 const NO_ITEMS: VehicleFeedItem[] = []
 const pollFeed = pollEvery(env.vehiclePollIntervalMs)

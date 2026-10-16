@@ -5,7 +5,7 @@ import { cn } from '@/lib/cn'
  * Encabezado plegable de una sección: chevrón, rótulo en versalitas y conteo.
  *
  * Lo comparten las secciones del historial («En vivo», «Hoy», «Ayer») y las
- * Noticias (§I), para que plegar se vea y se toque igual en toda la pestaña.
+ * Noticias, para que plegar se vea y se toque igual en toda la pestaña.
  *
  * Todo el encabezado es el botón: en el teléfono un objetivo del ancho de la
  * hoja se acierta sin mirar.

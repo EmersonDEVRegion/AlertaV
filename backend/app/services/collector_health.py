@@ -4,12 +4,10 @@ Para qué existe
 ---------------
 Para que un contador en cero deje de ser ambiguo.
 
-Hasta ahora «Accidentes viales · 0» significaba dos cosas opuestas —no ocurrió
-ninguno, o no nos está llegando ninguno— y se veían idénticas. El 2026-09-02 esa
-ambigüedad costó un accidente concreto: el Actor de Instagram estuvo detenido dos
-horas, `collector_runs` lo registró con su diagnóstico redactado cada cinco
-minutos, y el mapa mostró el mismo cero de un día tranquilo. La persona se
-enteró por Instagram.
+«Accidentes viales · 0» puede significar dos cosas opuestas —no ocurrió
+ninguno, o no nos está llegando ninguno— que se ven idénticas. Una fuente
+detenida queda registrada en `collector_runs` con su diagnóstico, pero el mapa
+muestra el mismo cero de un día tranquilo.
 
 Este módulo traduce lo que la base ya sabía a lo que la interfaz necesita.
 
@@ -22,11 +20,10 @@ deliberadamente conservadora, ver `_peor`.
 
 Por qué la frescura no basta y hace falta `degraded`
 ----------------------------------------------------
-El collector de Instagram **corre cada cinco minutos sin fallar nunca**: lee el
-dataset de la última corrida del Actor, que sigue ahí aunque el Actor lleve días
-detenido. Su última corrida siempre es reciente. Cualquier chequeo basado sólo en
-«¿cuándo corrió por última vez?» lo habría declarado sano justo durante las dos
-horas en que estuvo ciego.
+Un lector de datasets de Apify **corre sin fallar nunca**: lee la última corrida
+del Actor, que sigue ahí aunque el Actor lleve días detenido. Su última corrida
+siempre es reciente. Cualquier chequeo basado sólo en «¿cuándo corrió por última
+vez?» lo declararía sano justo mientras está ciego.
 
 De ahí que `DEGRADED` exista y que este módulo lo mire primero: es el collector
 declarando que lo que leyó no describe el presente, y eso ninguna cifra de
@@ -52,10 +49,8 @@ from app.models.event import CollectorRun
 #:
 #: **`principal` vs `apoyo` decide si la caída de esa fuente vuelve
 #: sospechoso el cero de la familia**, y no es una etiqueta decorativa: la
-#: primera versión de este módulo trataba a todas por igual y por eso daba
-#: `traffic: ok` el 2026-09-02, con Instagram (hoy retirado) ciego y
-#: Transporte Informa sano.
-#: O sea, no habría atrapado el caso para el que se escribió.
+#: tratar a todas por igual daría `traffic: ok` con la fuente principal ciega y
+#: una de apoyo sana.
 #:
 #: `transporte_informa` es apoyo porque **no sustituye a nadie en accidentes**:
 #: emite sobre todo `road_closure`, que está fuera de `CORRELATABLE_EVENT_TYPES`
@@ -72,7 +67,7 @@ COLLECTOR_ROLES: dict[str, dict[str, str]] = {
     "cge_cortes": {"power": "principal"},
     "transporte_informa": {"traffic": "apoyo"},
     #: Los tuits de @TTIValparaiso, que llegan en las entregas del webhook de
-    #: X (desde el 2026-10-06). Apoyo por lo mismo que el portal. Su corrida
+    #: X. Apoyo por lo mismo que el portal. Su corrida
     #: sólo existe cuando la entrega trae tuits de la cuenta.
     "transporte_informa_x": {"traffic": "apoyo"},
     "prensa_local": {"fire": "apoyo", "traffic": "principal", "otros": "apoyo"},
@@ -84,8 +79,8 @@ COLLECTOR_ROLES: dict[str, dict[str, str]] = {
         "traffic": "principal",
         "otros": "principal",
     },
-    #: El canario diario del webhook (desde el 2026-09-30). La entrega principal
-    #: pide sólo lo nuevo y ya no puede decir si ve cada cuenta; esto sí. Sólo
+    #: El canario diario del webhook. La entrega principal pide sólo lo nuevo y
+    #: no puede decir si ve cada cuenta; esto sí. Sólo
     #: cuenta cuando está configurado (`APIFY_X_CANARIO_IDS`).
     "bomberos_apify_canario": {
         "fire": "principal",
@@ -102,13 +97,7 @@ _TRANSITO_X = "transporte_informa_x"
 
 
 def active_roles() -> dict[str, dict[str, str]]:
-    """Roles vigentes. Hoy son todos los de `COLLECTOR_ROLES`.
-
-    Existía un mecanismo para apagar capas por configuración (Instagram y la
-    prensa por X). Esas capas se borraron el 2026-09-23 y con ellas el
-    mecanismo; la función se conserva porque es la puerta que usa
-    `build_health`.
-    """
+    """Roles vigentes: los de `COLLECTOR_ROLES`, sin el canario si no está configurado."""
     roles = dict(COLLECTOR_ROLES)
     if not [i for i in settings.APIFY_X_CANARIO_IDS if i.strip()]:
         roles.pop(_CANARIO, None)

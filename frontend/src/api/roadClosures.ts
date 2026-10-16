@@ -19,6 +19,7 @@
  */
 
 import { apiGet, buildQuery } from './client'
+import { toText } from './parse'
 import type {
   RoadClosureCollection,
   RoadClosureFeature,
@@ -76,10 +77,6 @@ function normaliseSeverity(value: unknown): number | null {
   }
 
   return Math.min(5, Math.max(0, Math.round(value)))
-}
-
-function toText(value: unknown): string {
-  return typeof value === 'string' ? value : ''
 }
 
 function toTextOrNull(value: unknown): string | null {

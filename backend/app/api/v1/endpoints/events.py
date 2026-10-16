@@ -51,8 +51,6 @@ router = APIRouter(prefix="/events", tags=["events"])
 #: Freno de ráfagas del endpoint ciudadano, en memoria y por IP. Es sólo la
 #: primera línea, antes de tocar la base: el límite de verdad (por dispositivo y
 #: por red, persistente) vive en `IngestService.citizen_retry_after`.
-#: (`POST /events` y `POST /events/batch`, que dejaban a cualquiera inyectar
-#: señales con cualquier fuente y confianza, se borraron el 2026-09-23.)
 citizen_report_limiter = RateLimiter(interval_seconds=settings.CITIZEN_REPORT_BURST_SECONDS)
 
 
@@ -171,7 +169,7 @@ def _anonimizar(ip: str) -> str:
 
 # Las rutas de lectura cruda (`""`, `/geojson`, `/stats`, `/{id}` y
 # `/{id}/neighbours`) no las consume la PWA: sirven para calibrar el motor y para
-# `scripts/smoke_test.py`. Desde el 2026-09-30 piden el token de operador: traen
+# `scripts/smoke_test.py`. Piden el token de operador porque traen
 # los reportes ciudadanos con su texto sin revisar y su GPS exacto, que la API
 # pública ya no muestra (ver `app.services.ciudadanos`).
 @router.get(

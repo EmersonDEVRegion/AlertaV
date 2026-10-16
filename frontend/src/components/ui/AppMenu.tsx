@@ -39,7 +39,7 @@ export function AppMenu({ theme, onToggleTheme }: AppMenuProps) {
   const [open, setOpen] = useState(false)
   const [about, setAbout] = useState<AboutTab | null>(null)
   const root = useRef<HTMLDivElement>(null)
-  // En el teléfono la hoja baja mientras el menú está abierto (§T). «Ver
+  // En el teléfono la hoja baja mientras el menú está abierto. «Ver
   // leyenda» la sube a media altura, y eso manda: no se le devuelve la de antes.
   useLowerSheetWhile(open, 'menu')
 

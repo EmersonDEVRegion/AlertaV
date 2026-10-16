@@ -20,7 +20,7 @@ export const INITIAL_VIEW_STATE = {
  * por `maxBounds` y la cámara se detendría a mitad de camino sin explicación.
  *
  * La grilla de lluvia del backend (`RAIN_GRID_*`) cubre esta misma caja, para
- * que el borde del campo quede en el límite del mapa (§L). Si esto cambia, esa
+ * que el borde del campo quede en el límite del mapa. Si esto cambia, esa
  * caja también: lo vigila `rainGridBounds.test.ts`.
  */
 export const MAP_MAX_BOUNDS: [number, number, number, number] = [
@@ -80,7 +80,7 @@ export const MAP_ATTRIBUTION =
   '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> | <a href="https://carto.com/attributions" target="_blank" rel="noreferrer">CARTO</a>'
 
 /**
- * Textos de los controles de MapLibre en español (§R-A). Sin esto, un lector de
+ * Textos de los controles de MapLibre en español. Sin esto, un lector de
  * pantalla anunciaba «Zoom in», «Location not available» y «Toggle attribution».
  */
 export const MAP_LOCALE: Record<string, string> = {

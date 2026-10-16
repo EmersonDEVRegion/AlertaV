@@ -58,7 +58,7 @@ describe('campo de lluvia interpolado', () => {
   })
 
   it('el final del difuminado ondula: a la misma distancia del borde el alfa no es constante', () => {
-    // §L: un degradado recto se seguía leyendo como una recta sobre la cordillera.
+    // Un degradado recto se sigue leyendo como una recta sobre la cordillera.
     const n = 41
     const wet: RainGrid = { ...GRID, nx: n, ny: n, values: Array(n * n).fill(8) }
     const pixels = rainPixels(wet, n, n)

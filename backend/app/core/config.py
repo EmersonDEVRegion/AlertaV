@@ -95,6 +95,10 @@ class BoundingBox(BaseSettings):
     def contains(self, lat: float, lon: float) -> bool:
         return self.south <= lat <= self.north and self.west <= lon <= self.east
 
+    def as_tuple(self) -> tuple[float, float, float, float]:
+        """`(west, south, east, north)`, el orden de PostGIS (`ST_MakeEnvelope`)."""
+        return (self.west, self.south, self.east, self.north)
+
     def as_firms_param(self) -> str:
         """Formato que espera la API de área de NASA FIRMS: west,south,east,north."""
         return f"{self.west},{self.south},{self.east},{self.north}"
@@ -109,7 +113,7 @@ class Settings(BaseSettings):
     )
 
     # -- Aplicación ----------------------------------------------------------
-    PROJECT_NAME: str = "AlertaV — Fire Data Collector"
+    PROJECT_NAME: str = "AlertaV API"
     VERSION: str = "0.1.0"
     API_V1_PREFIX: str = "/api/v1"
     ENVIRONMENT: Literal["local", "staging", "production"] = "local"
@@ -384,12 +388,12 @@ class Settings(BaseSettings):
     #: `http://usuario:clave@host:puerto`. **Es un secreto.**
     #:
     #: Esval sólo responde a IP chilenas: sus dos hosts descartan en silencio
-    #: todo lo de afuera, datacenters y hogares por igual (probado el
-    #: 2026-09-29 desde 40 nodos fuera de Chile y 8 dentro; `plan.md`, §S1).
-    #: Render no tiene regiones en Sudamérica, así que desde ahí la API no
-    #: responde nunca. El proxy (tinyproxy en Oracle Cloud, `infra/proxy-cl/`)
-    #: sólo deja pasar `CONNECT` a esos dos hosts: el TLS va de punta a punta y
-    #: el servidor chileno no puede alterar lo que llega.
+    #: todo lo de afuera, datacenters y hogares por igual (probado desde 40
+    #: nodos fuera de Chile y 8 dentro). Render no tiene regiones en Sudamérica,
+    #: así que desde ahí la API no responde nunca. El proxy (tinyproxy en Oracle
+    #: Cloud, `infra/proxy-cl/`) sólo deja pasar `CONNECT` a esos dos hosts: el
+    #: TLS va de punta a punta y el servidor chileno no puede alterar lo que
+    #: llega.
     #:
     #: Vacío = directo, que es lo que sirve en local desde Chile. En producción,
     #: vacío hace que el collector falle al construirse con el motivo, en vez de
@@ -423,38 +427,13 @@ class Settings(BaseSettings):
 
     # -- Accidentes viales: despachos de Bomberos ----------------------------
     #
-    # `BOMBEROS_DISPATCH_URL` fue eliminada. Apuntaba a un puente tipo RSSHub
-    # sobre la cuenta de la central, y ese camino está **muerto**, no degradado:
-    # la ruta de Twitter de RSSHub dejó de existir cuando X cerró su API, y el
-    # espejo de xcancel que la reemplazaba tampoco responde. Un ajuste que no
-    # puede tomar ningún valor que funcione no es configuración: es una trampa
-    # para el próximo que despliegue, que la rellena, ve el collector arrancar y
-    # tarda días en descubrir que la fuente no existe.
+    # Los despachos entran por `POST /api/v1/apify/webhook`, que Apify llama al
+    # terminar cada corrida del Actor de X. Ver `app/api/v1/endpoints/apify.py`.
     #
-    # Los despachos entran hoy por `POST /api/v1/apify/webhook`, que Apify llama
-    # al terminar cada corrida del Actor de X/Twitter. Ver
-    # `app/api/v1/endpoints/apify.py`. Las claves, el handle y el tope de
-    # llamadas al modelo siguen acá porque los usan los dos caminos.
-    #
-    #: Claves radiales que se ingieren como despacho. Se comparan por prefijo de
-    #: tupla tras normalizar, de modo que `10-4` también captura `10-0-4` y
-    #: `10-4-1`. Ver `vocabulary.matches_key` y `vocabulary.parse_key`.
-    #:
-    #: La familia entera y no sólo el rescate vehicular: la 10-0/10-1
-    #: (estructural), la 10-2 (pastizales) y la 10-3 (rescate) describen
-    #: emergencias que el resto del sistema ya sabe clasificar —están en
-    #: `CODE_TYPES`— y dejarlas fuera desperdiciaba la fuente de mayor confianza
-    #: del catálogo para todo lo que no fuera un choque.
-    #:
-    #: `12` es la forma literal "CLAVE 12" que publica el Cuerpo de Valparaíso,
-    #: sin familia por delante. Necesita `parse_key` para ser reconocida: hasta
-    #: ese cambio, configurarla no producía error **ni coincidencia**.
-    #: Claves del CBV que se ingieren. **Sólo emergencias reales.**
-    #:
-    #: La lista anterior —`10-0` … `10-4` y `12`— era de otro sistema de claves.
-    #: En el CBV, `10` es «abastecer o aspirar agua» y `12` es «Academia de
-    #: Cuerpo»: una academia podía entrar al mapa como emergencia confirmada
-    #: con confianza 1.00, y ninguna clave de accidente real estaba configurada.
+    #: Claves del CBV (@CGI_CBV) que se ingieren como despacho. **Sólo
+    #: emergencias reales.** Se comparan por prefijo de tupla tras normalizar, de
+    #: modo que `5-1` también captura `5-1-1`. Ver `vocabulary.matches_key` y
+    #: `vocabulary.parse_key`.
     #:
     #: Quedan fuera a propósito 7, 8, 10, 11, 12, 13 y 14 — ver
     #: `vocabulary.NON_INCIDENT_CODES`, que explica cada una.
@@ -609,10 +588,9 @@ class Settings(BaseSettings):
     TRANSPORTE_INFORMA_POLL_INTERVAL_SECONDS: int = 600  # 10 min
     #: User-Agent propio del scraper del MTT.
     #:
-    #: Antes usaba `NOMINATIM_USER_AGENT`, que estaba a mano y era falso: le
-    #: decía al portal del Ministerio que quien lo visitaba era el cliente de
-    #: OpenStreetMap. Un operador del MTT mirando su log no tenía forma de saber
-    #: quién le pegaba ni a quién escribirle.
+    #: No reutiliza `NOMINATIM_USER_AGENT`: le diría al portal del Ministerio que
+    #: quien lo visita es el cliente de OpenStreetMap, y un operador del MTT
+    #: mirando su log no sabría quién le pega ni a quién escribirle.
     #:
     #: Lleva navegador y plataforma porque un WordPress detrás de un WAF trata
     #: un UA sin ellos como bot y devuelve 403, y lleva **el nombre del proyecto
@@ -695,10 +673,9 @@ class Settings(BaseSettings):
 
     # -- Apify ----------------------------------------------------------------
     #
-    # Desde 2026-09-22 Apify queda para UNA cosa: el Task de X que raspa a las
-    # centrales de Bomberos (desde el 2026-09-30, cinco: ver `SISTEMAS_CLAVES`) y entrega por
-    # `/apify/webhook`. Las capas de Instagram y de prensa por X se borraron el
-    # 2026-09-23: lo que cubrían lo toma la prensa local por RSS, sin costo.
+    # Apify se usa para UNA cosa: el Task de X que raspa a las centrales de
+    # Bomberos (ver `SISTEMAS_CLAVES`) y a @TTIValparaiso, y entrega por
+    # `/apify/webhook`.
     #
     #: Cada cuántos minutos corre el Schedule del Task de X en el panel de
     #: Apify. **No lo dispara**: es lo que la salud espera, y con él decide
@@ -768,10 +745,10 @@ class Settings(BaseSettings):
     APIFY_WEBHOOK_MAX_AGE_MINUTES: int = Field(default=180, ge=5, le=1440)
     #: Cuentas de X que el Task tiene que traer en CADA entrega, sin arroba.
     #:
-    #: Existe por lo que pasó del 2026-08-31 al 2026-09-29: el Actor de X dejó
-    #: de devolver tuits en el plan Free —diez items `{"noResults": true}` por
-    #: corrida— y cada entrega cerró en `success` con 0 insertados. Un mes sin
-    #: un despacho con la salud en verde. Con el orden «más recientes primero»
+    #: Un Actor de X puede dejar de devolver tuits —diez items
+    #: `{"noResults": true}` por corrida— y cerrar cada entrega en `success` con
+    #: 0 insertados: la salud quedaría en verde sin un despacho. Con el orden
+    #: «más recientes primero»
     #: y sin filtro de fecha, un Actor que funciona trae SIEMPRE los últimos
     #: tuits de cada cuenta, aunque sean de ayer. Así que una entrega sin un
     #: solo tuit propio de una de estas cuentas no es calma: es ceguera.
@@ -781,9 +758,8 @@ class Settings(BaseSettings):
     #:
     #: Vacía = no se exige nada (así corren los tests).
     #:
-    #: Desde el 2026-10-06 incluye a @TTIValparaiso (ver
-    #: `APIFY_X_TRANSITO_HANDLES`): el canario la trae como a las centrales y su
-    #: ausencia es la misma ceguera.
+    #: Incluye a @TTIValparaiso (ver `APIFY_X_TRANSITO_HANDLES`): el canario la
+    #: trae como a las centrales y su ausencia es la misma ceguera.
     APIFY_X_CUENTAS_ESPERADAS: CsvList = Field(
         default_factory=lambda: [
             "CGI_CBV", "CBVM132", "despachoscbla", "CBQuilpue", "cbquillota",
@@ -791,7 +767,7 @@ class Settings(BaseSettings):
         ]
     )
     #: Cuentas de X de **tránsito** que viajan en el mismo Task que las
-    #: centrales de Bomberos (desde el 2026-10-06).
+    #: centrales de Bomberos.
     #:
     #: Hoy una: @TTIValparaiso, TransporteInforma Región de Valparaíso, el canal
     #: del MTT en X. Es la misma fuente que `transporte_informa` lee en la web,
@@ -813,7 +789,7 @@ class Settings(BaseSettings):
     #: Tasks (o Actors) cuya entrega es el **canario** diario, no la corrida
     #: con ventana de tiempo.
     #:
-    #: Desde el 2026-09-30 el Task principal pide sólo lo publicado en los
+    #: El Task principal pide sólo lo publicado en los
     #: últimos minutos (`within_time`), así que una entrega vacía es normal y
     #: la ceguera ya no se puede medir en ella. La mide el canario: un Task sin
     #: ventana, una vez al día, con los últimos tuits de cada cuenta. Sus
@@ -834,96 +810,43 @@ class Settings(BaseSettings):
 
     # -- Prensa local: Alerta Noticias y Pura Noticia -------------------------
     #: Portales de la V Región, raspados de forma nativa y a costo cero. Formato
-    #: `slug|nombre|feed_url|portada_url[|confianza]`, separando varios con `;` —
-    #: el mismo idioma que `FIRMS_SOURCES` y `OPENMETEO_COMUNAS`. Vacío =
-    #: collector apagado (el constructor lanza y la corrida queda `failed` a la
-    #: vista).
+    #: `slug|nombre|feed_url|portada_url[|confianza[|categoría requerida]]`,
+    #: separando varios con `;` —el mismo idioma que `FIRMS_SOURCES` y
+    #: `OPENMETEO_COMUNAS`—. Vacío = collector apagado (el constructor lanza y la
+    #: corrida queda `failed` a la vista).
     #:
-    #: Las dos URL son opcionales por separado, y los valores por defecto usan
-    #: esa asimetría porque los portales son distintos de verdad:
+    #: Las dos URL son opcionales por separado, porque los portales son distintos:
     #:
-    #: * **Alerta Noticias** (verificado el 3 de septiembre de 2026) es WordPress
-    #:   7.1 y `category/valparaiso/feed/` devuelve RSS 2.0 ya acotado a la
-    #:   región, con `<guid>` estable, `<pubDate>` con hora y `<category>` con la
-    #:   comuna. Se declara feed Y portada: la segunda es el respaldo si el feed
-    #:   cae o llega vacío. Lleva confianza propia — ver la nota de abajo.
-    #: * **Pura Noticia** redirige `www.puranoticia.cl` a `puranoticia.pnt.cl`,
-    #:   que NO es WordPress y **no publica RSS**: el documento no trae
-    #:   `<link rel="alternate">` y `/rss`, `/rss.xml` y `/feed` devuelven cuerpo
-    #:   vacío. Su campo de feed va en blanco a propósito — apuntarlo a un feed
-    #:   inexistente costaría una petición fallida y una advertencia por corrida,
-    #:   para siempre. Se lee su sección regional por HTML.
+    #: * **Alerta Noticias**: WordPress; `category/valparaiso/feed/` ya viene
+    #:   acotado a la región, con `<guid>` estable, hora y la comuna en
+    #:   `<category>`. Feed y portada (respaldo si el feed cae o llega vacío).
+    #:   Entra con **0.35 propio y no con el 0.60 de un medio**: republica lo que
+    #:   le llega por mensaje directo, sin segunda fuente ni corrección.
+    #: * **Pura Noticia**: no publica RSS (`/rss`, `/rss.xml` y `/feed` vuelven
+    #:   vacíos), así que se lee su sección regional por HTML.
+    #: * **Prensa Marga Marga**: WordPress con RSS; cubre Quilpué, Villa Alemana,
+    #:   Limache y Olmué. **Sólo feed, sin portada**: el ticker de su portada
+    #:   lista posts sin fecha visible, y el camino HTML los estamparía con la
+    #:   hora de la corrida. Publica poco; entra porque no cuesta y cubre
+    #:   territorio.
     #:
-    #: Ojo con las dos portadas: son la sección regional y no la raíz. La raíz
-    #: mezcla nacional, internacional y deportes, y ese filtro por sección es lo
-    #: único que acota geográficamente a dos medios que no son regionales.
-    #: **Sitio del Suceso salió de rotación el 2026-09-03**, y no por estar
-    #: caído: su feed responde y está al día — verificado desde un navegador el
-    #: mismo día. Lo que devuelve 403 es nuestra petición, y no por las
-    #: cabeceras: ya mandamos `LOCAL_NEWS_USER_AGENT` y `Accept-Language: es-CL`.
-    #: Cloudflare está rechazando por reputación de IP de datacenter y por la
-    #: huella TLS de httpx, que no se arreglan desde el cliente.
+    #: Las portadas son la sección regional y no la raíz: la raíz mezcla nacional,
+    #: internacional y deportes.
     #:
-    #: Se desregistra como se desregistró Waze: la fila queda escrita y comentada
-    #: en vez de borrada, porque el código sigue siendo correcto y el día que
-    #: aflojen la regla vuelve descomentando una línea. Mantenerlo activo costaba
-    #: una petición fallida y una advertencia cada 15 minutos, para siempre —el
-    #: ruido que enseña a ignorar el amarillo—. La cuenta @sitiodelsuceso ya lo
-    #: cubre parcialmente por la ruta de prensa de X.
+    #: Fuera de rotación, con su fila lista para volver:
+    #:
+    #: * Sitio del Suceso y Quinta Visión Ahora: Cloudflare le responde 403 a la
+    #:   IP de Render (reputación de datacenter y huella TLS de httpx). Pasarlos
+    #:   por el proxy de Oracle sería esquivar a propósito su protección contra
+    #:   bots, y este collector no lo hace (ver `LocalNewsCollector._client`).
+    #:   Vuelven si el medio habilita la IP o publica un feed sin desafío.
+    #: * Quinta Prensa: dejó de publicar en la web.
     #:
     #:     sitiodelsuceso|Sitio del Suceso|https://www.sitiodelsuceso.cl/feed/|
     #:     https://www.sitiodelsuceso.cl/
-    #:
-    #: `alertanoticias` entró el mismo día y por el hueco que dejó Instagram: es
-    #: el mismo publicador que @alertanoticiasvalparaiso, la cuenta más grande de
-    #: las tres, que lleva semanas en `restricted_page`. Su WordPress publica
-    #: `category/valparaiso/feed/`, ya filtrado a la región, gratis y sin Apify.
-    #:
-    #: Entra con **0.35 propio y no con el 0.60 del resto**, que es el quinto
-    #: campo de la fila. Es el mismo número que el worker de Instagram le da al
-    #: mismo publicador, y por el mismo motivo: republica lo que le llega por
-    #: mensaje directo, sin segunda fuente y sin corrección. Leerlo por RSS en vez
-    #: de por Apify cambia cómo llega el texto, no quién lo escribió.
-    #:
-    #: `margamarga` y `quintaprensa` entraron el 2026-09-22, cuando se retiraron
-    #: los Tasks de Instagram y de prensa de Apify. Suman el Marga Marga
-    #: (Quilpué, Villa Alemana, Limache, Olmué) y el interior, que ninguna otra
-    #: fuente de prensa cubría. Los dos son WordPress con RSS estándar.
-    #:
-    #: **Sólo feed, sin portada de respaldo**, y es deliberado. La portada de
-    #: Prensa Marga Marga es un tema de WordPress cuyo ticker «Noticias de última
-    #: hora» son los diez posts más recientes SIN FECHA visible —el más viejo, de
-    #: mayo de 2025—. El camino HTML deja pasar lo que no trae fecha y lo
-    #: estampa con la hora de la corrida, así que un feed caído convertiría un
-    #: homicidio de hace un año en una emergencia de hoy.
-    #:
-    #: Ojo con la expectativa: medido el 2026-09-22, Prensa Marga Marga publica
-    #: una nota por semana (la última, del 11-09) y Quinta Prensa no publica
-    #: desde el 06-07. Lo que esos medios cuentan al minuto va a su Instagram,
-    #: no a la web. Entran porque no cuestan nada y cubren territorio, no porque
-    #: vayan a ser rápidos.
-    #:
-    #: **Quinta Prensa salió de rotación el 2026-09-30**: su última nota es del
-    #: 06-07-2026. Queda escrita y comentada, como Sitio del Suceso, por si vuelve:
-    #:
-    #:     quintaprensa|Quinta Prensa|https://www.quintaprensa.cl/feed/|
-    #:
-    #: **Quinta Visión Ahora entró el mismo día (§L).** WordPress con RSS, muy
-    #: activa (10 notas en dos horas y media el 30-09) y con «AHORA:» en lo
-    #: urgente. `<category>` trae «Región Valparaíso» y la comuna, pero el feed
-    #: mezcla notas nacionales: por eso el sexto campo exige «Región Valparaíso»
-    #: (ver `NewsPortal.categoria_requerida`). Sólo feed, sin portada, y con la
-    #: confianza de medio por defecto (0,60): tiene redacción propia.
-    #:
-    #: **Y salió de rotación esa misma tarde**, como Sitio del Suceso: Cloudflare
-    #: le responde a Render con el desafío «Just a moment…» (HTTP 403). Desde una
-    #: IP chilena el feed responde, pero pasarlo por el proxy de Oracle sería
-    #: esquivar a propósito su protección contra bots, y la regla de este
-    #: collector es no hacerlo (ver `LocalNewsCollector._client`). Vuelve si el
-    #: medio nos habilita o si afloja la regla; la fila queda escrita:
-    #:
     #:     quintavision|Quinta Visión Ahora|https://www.quintavisionahora.cl/feed/|||
     #:     Región Valparaíso
+    #:     quintaprensa|Quinta Prensa|https://www.quintaprensa.cl/feed/|
     LOCAL_NEWS_SOURCES: str = (
         "alertanoticias|Alerta Noticias|"
         "https://alertanoticias.cl/category/valparaiso/feed/|"
@@ -954,8 +877,8 @@ class Settings(BaseSettings):
     #: Noticias a mirar por portal y por corrida, de la más nueva a la más vieja.
     LOCAL_NEWS_MAX_ITEMS_PER_PORTAL: int = Field(default=40, ge=1, le=200)
     #: Antigüedad máxima para considerar que la nota describe el presente. Cuatro
-    #: horas, más holgado que las tres de Instagram: un medio publica después de
-    #: confirmar, y esa demora editorial es justamente lo que lo hace valer 0.60.
+    #: horas: un medio publica después de confirmar, y esa demora editorial es
+    #: justamente lo que lo hace valer 0.60.
     LOCAL_NEWS_MAX_AGE_MINUTES: int = Field(default=240, ge=5, le=1440)
     #: Tope de geocodificaciones por corrida. El más bajo de las capas que
     #: comparten el limitador de Nominatim (MTT 20, Bomberos 25, prensa 10): una
@@ -1030,8 +953,8 @@ class Settings(BaseSettings):
     #:
     #: La caja es la MISMA que `MAP_MAX_BOUNDS` de la PWA (`config/map.ts`):
     #: todo lo que el mapa deja mirar tiene dato, y el único borde del campo queda
-    #: en el límite del mapa, adonde casi nadie llega (§L, 30-09-2026). Antes la
-    #: caja era la región y el corte se veía como una recta sobre la cordillera.
+    #: en el límite del mapa, adonde casi nadie llega. Con la caja de la región,
+    #: el corte se vería como una recta sobre la cordillera.
     #: Si se cambia `MAP_MAX_BOUNDS`, se cambia esto: lo vigila
     #: `frontend/src/config/rainGridBounds.test.ts`.
     #:
@@ -1058,9 +981,8 @@ class Settings(BaseSettings):
     RAIN_GRID_CHUNK_SIZE: int = Field(default=25, ge=1, le=100)
     #: Pausa entre lotes de la grilla, en segundos. Open-Meteo corta con HTTP 429
     #: por encima de ~600 puntos por minuto (cuenta cada coordenada como una
-    #: llamada): la primera corrida de la caja de 650 puntos, sin pausa, cayó en
-    #: el lote 25 de 26 (§L, 30-09-2026). Con 4 s, los 26 lotes toman ~100 s y
-    #: quedan en ~375 puntos por minuto.
+    #: llamada): sin pausa, la caja de 650 puntos cae en el lote 25 de 26. Con
+    #: 4 s, los 26 lotes toman ~100 s y quedan en ~375 puntos por minuto.
     RAIN_GRID_BATCH_PAUSE_SECONDS: float = Field(default=4.0, ge=0, le=60)
     #: Reintento tras una corrida fallida. Con la cadencia de 3 h, esperar la
     #: próxima corrida dejaba el mapa con la foto vieja media tarde.
@@ -1248,14 +1170,14 @@ class Settings(BaseSettings):
     #: Santiago aparecían en el mapa como incidentes «sin comuna». Sin la tabla
     #: no filtra nada. En `false`, vuelve a agrupar todo lo de la caja.
     CORRELATION_SOLO_REGION: bool = True
-    #: ¿La prensa (`EventSource.MEDIA`) entra al motor? Desde el 2026-10-06,
-    #: **no**: una noticia llega con horas de atraso y abría pines que ya no
-    #: describían el presente (con `CORRELATION_MIN_SIGNALS_FOR_INCIDENT=1`,
-    #: una sola nota bastaba). Ahora la prensa sólo se lee en
+    #: ¿La prensa (`EventSource.MEDIA`) entra al motor? Por defecto **no**: una
+    #: noticia llega con horas de atraso y abriría pines que ya no describen el
+    #: presente (con `CORRELATION_MIN_SIGNALS_FOR_INCIDENT=1`, una sola nota
+    #: bastaría). La prensa sólo se lee en
     #: `GET /feed/noticias`: no abre incidentes, no se pega a uno, no mueve
     #: confianza ni punto, y no genera avisos push. Con el interruptor apagado
     #: el motor además desvincula la prensa de los incidentes abiertos y
-    #: descarta los que sólo tenían prensa. En `true`, vuelve lo de antes.
+    #: descarta los que sólo tenían prensa. En `true`, la prensa vuelve al motor.
     CORRELATION_PRENSA: bool = False
     #: Ventana hacia atrás de señales que el motor considera en cada pasada.
     CORRELATION_WINDOW_HOURS: int = Field(default=4, ge=1, le=168)
@@ -1296,7 +1218,7 @@ class Settings(BaseSettings):
     #: Cadencia del worker de correlación.
     CORRELATION_POLL_INTERVAL_SECONDS: int = Field(default=120, ge=15, le=86_400)
 
-    # -- Reportes ciudadanos: anti-spam y publicación (§C, 2026-09-30) -------
+    # -- Reportes ciudadanos: anti-spam y publicación -------
     #: Segundos entre reportes de un mismo DISPOSITIVO. Se cuenta en la base
     #: (`raw_events`), así que sobrevive a un deploy o a un reinicio, que era lo
     #: que borraba el límite en memoria. 0 desactiva los límites (tests, demo).
@@ -1363,7 +1285,7 @@ class Settings(BaseSettings):
 
     # -- Notificaciones push (Web Push) --------------------------------------
     #: Clave privada VAPID: el escalar P-256 de 32 bytes en base64url. La
-    #: pública se deriva de ésta y la PWA la pide a `/push/public-key`, así que
+    #: pública se deriva de ésta y la PWA la pide a `/push/status`, así que
     #: no hay una segunda variable que pueda quedar desincronizada. Se genera
     #: con `python scripts/generate_vapid_keys.py`.
     #:
@@ -1384,11 +1306,11 @@ class Settings(BaseSettings):
     PUSH_POLL_INTERVAL_SECONDS: int = Field(default=60, ge=15, le=3600)
     #: Radio de aviso de emergencias para una suscripción nueva, en metros.
     PUSH_INCIDENT_RADIUS_M: float = Field(default=5000.0, ge=500.0, le=20_000.0)
-    #: Radio de aviso por categoría para quien no eligió el suyo, en metros
-    #: (§K, 2026-10-05). Cada persona lo cambia en la PWA; 0 = no avisar esa
-    #: categoría. Las categorías son las familias del motor
-    #: (`models.enums.INCIDENT_FAMILY`) más los cortes de agua, que no son
-    #: incidentes. `PUSH_INCIDENT_RADIUS_M` queda para lo que no cae en ninguna.
+    #: Radio de aviso por categoría para quien no eligió el suyo, en metros.
+    #: Cada persona lo cambia en la PWA; 0 = no avisar esa categoría. Las
+    #: categorías son las familias del motor (`models.enums.INCIDENT_FAMILY`)
+    #: más los cortes de agua, que no son incidentes. `PUSH_INCIDENT_RADIUS_M`
+    #: queda para lo que no cae en ninguna.
     PUSH_RADIO_FIRE_M: float = Field(default=5000.0, ge=0.0, le=20_000.0)
     PUSH_RADIO_TRAFFIC_M: float = Field(default=2000.0, ge=0.0, le=20_000.0)
     PUSH_RADIO_POWER_M: float = Field(default=1000.0, ge=0.0, le=20_000.0)
@@ -1481,8 +1403,8 @@ class Settings(BaseSettings):
     def _produccion_sin_huecos(self) -> Settings:
         """En producción, la app no arranca con un secreto flojo o un placeholder.
 
-        Existe porque la auditoría del 2026-09-23 encontró que todo lo de abajo
-        tenía un valor por defecto que dejaba la puerta abierta en silencio: un
+        Todo lo de abajo tiene un valor por defecto que deja la puerta abierta
+        en silencio: un
         webhook sin secreto acepta despachos de peso 1.00 de cualquiera, y un
         User-Agent con `TU_CORREO` le miente a Nominatim sobre a quién escribir
         antes de bloquear la IP.

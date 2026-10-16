@@ -1,4 +1,4 @@
-"""Radios de aviso por categoría y punto del incidente (§K, 2026-10-05)."""
+"""Radios de aviso por categoría y punto del incidente."""
 
 from __future__ import annotations
 

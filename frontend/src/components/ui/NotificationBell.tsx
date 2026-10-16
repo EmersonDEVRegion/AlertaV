@@ -399,7 +399,7 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false)
   const [invite, setInvite] = useState(false)
   const root = useRef<HTMLDivElement>(null)
-  // En el teléfono la hoja baja mientras el panel está abierto (§T).
+  // En el teléfono la hoja baja mientras el panel está abierto.
   useLowerSheetWhile(open, 'avisos')
 
   // La invitación: una vez, a los 20 s, sólo si se puede activar y nadie la

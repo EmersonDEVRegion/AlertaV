@@ -1,7 +1,7 @@
 // @vitest-environment node
 /**
- * La grilla de lluvia del backend cubre exactamente lo que el mapa deja mirar
- * (§L): así el único borde del campo queda en el límite del mapa. Si alguien
+ * La grilla de lluvia del backend cubre exactamente lo que el mapa deja mirar:
+ * así el único borde del campo queda en el límite del mapa. Si alguien
  * mueve `MAP_MAX_BOUNDS` sin mover `RAIN_GRID_*` en `backend/app/core/config.py`,
  * el borde vuelve a verse como una recta. El backend comprueba el tamaño de la
  * grilla y el presupuesto de Open-Meteo (`tests/test_rain_grid.py`).

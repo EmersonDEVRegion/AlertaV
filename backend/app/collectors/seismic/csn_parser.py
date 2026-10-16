@@ -295,7 +295,7 @@ def _absolute(href: str | None, base_url: str) -> str | None:
 
 def parse_catalog(html: str, *, base_url: str = "") -> list[CsnQuake]:
     """Todos los sismos de una página del catálogo. Función pura."""
-    soup = BeautifulSoup(html, _html_parser())
+    soup = BeautifulSoup(html, "lxml")
     sismos: list[CsnQuake] = []
     vistos: set[str] = set()
 
@@ -317,7 +317,7 @@ def page_looks_broken(html: str) -> tuple[bool, str | None]:
     Se mira si hay tabla y si tiene filas; que ninguna fila sea un sismo es
     información legítima, que no haya tabla es una alarma.
     """
-    soup = BeautifulSoup(html, _html_parser())
+    soup = BeautifulSoup(html, "lxml")
     if not soup.find("table"):
         return (True, "la respuesta no contiene ninguna tabla")
 
@@ -325,15 +325,6 @@ def page_looks_broken(html: str) -> tuple[bool, str | None]:
     if len(filas) < 2:
         return (True, f"la tabla tiene {len(filas)} filas; se esperaban cabecera y datos")
     return (False, None)
-
-
-def _html_parser() -> str:
-    """`lxml` si está; si no, el parser de la stdlib. Mismo criterio que el MTT."""
-    try:
-        import lxml  # noqa: F401
-    except ImportError:  # pragma: no cover — lxml está en requirements-prod
-        return "html.parser"
-    return "lxml"
 
 
 def catalog_path(day: datetime) -> str:

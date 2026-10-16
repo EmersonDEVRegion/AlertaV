@@ -96,10 +96,6 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     # procesa el bucle del inbox de este mismo runner (ver `run_loop`). Su
     # decodificación vive en las funciones libres de
     # `app/collectors/traffic/bomberos_10_4_worker.py`.
-    #
-    # Waze y el lector RSS de Bomberos se borraron el 2026-09-23: el convenio
-    # de Waze for Cities nunca se aprobó y el puente RSSHub murió sin reemplazo.
-    # Si alguno vuelve, `git log -- app/collectors/traffic/` tiene el código.
     TransporteInformaCollector.name: TransporteInformaCollector,
     # -- Meteorología ---------------------------------------------------------
     # La única capa que habla del futuro: emite `weather_observation`, que está

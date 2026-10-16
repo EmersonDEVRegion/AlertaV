@@ -31,8 +31,7 @@ class SeismicService:
         así que aplicarle el recorte pensado para incendios puntuales borraría
         del mapa justo los eventos que explican por qué tembló.
         """
-        bbox = settings.usgs_bbox
-        return (bbox.west, bbox.south, bbox.east, bbox.north)
+        return settings.usgs_bbox.as_tuple()
 
     async def list_recent(
         self,

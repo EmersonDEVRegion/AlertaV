@@ -11,16 +11,15 @@ import { edgeFade } from './edgeFeather'
 
 /**
  * La amenaza sísmica como imagen: interpolación bilineal entre los nodos del
- * CSN, la rampa violeta en CIELAB y un borde difuminado y ondulado (§I).
+ * CSN, la rampa violeta en CIELAB y un borde difuminado y ondulado.
  *
  * # Por qué una imagen y no los polígonos
  *
- * Hasta §I la capa eran 1648 rectángulos de ~5 km, cada uno de un solo color.
- * La grilla termina en una caja (−72,0 / −69,8 de longitud, −33,8 / −32,0 de
- * latitud), así que el mapa mostraba un borde recto, y de cerca, escalones de
- * 5 km. Es lo mismo que le pasaba a la lluvia y se resuelve igual (§L): una
- * imagen con el borde que se desvanece. De paso, el teléfono dibuja una imagen
- * en vez de 1648 polígonos.
+ * Como 1648 rectángulos de ~5 km de un solo color, la capa mostraría un borde
+ * recto —la grilla termina en una caja: −72,0 / −69,8 de longitud, −33,8 /
+ * −32,0 de latitud— y, de cerca, escalones de 5 km. Se resuelve igual que la
+ * lluvia: una imagen con el borde que se desvanece. De paso, el teléfono dibuja
+ * una imagen en vez de 1648 polígonos.
  *
  * Interpolar entre nodos no inventa nada: cada píxel es el promedio ponderado
  * de los cuatro nodos que lo rodean, y en un nodo vale exactamente su PGA.

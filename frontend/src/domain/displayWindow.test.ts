@@ -73,7 +73,7 @@ describe('reparto entre mapa e historial', () => {
     // NOW es el 29-09 a las 19:00. Ayer es el 28-09 entero, desde las 00:00.
     const fresh = inc({ type: 'structural_fire', last_seen_at: ago(1) })
     const old = inc({ type: 'structural_fire', last_seen_at: ago(8) })
-    // 28-09 a las 18:00: con la ventana móvil de 24 h ya se habría ido (§I).
+    // 28-09 a las 18:00: con la ventana móvil de 24 h ya se habría ido.
     const yesterday = inc({ type: 'structural_fire', last_seen_at: ago(25) })
     // 28-09 a las 00:30: el primer rato de ayer también.
     const earlyYesterday = inc({ type: 'structural_fire', last_seen_at: ago(42.5) })
@@ -161,7 +161,7 @@ describe('secciones', () => {
       ['today', 1],
       ['yesterday', 1],
     ])
-    // §I: «En vivo», no «En el mapa».
+    // «En vivo», no «En el mapa».
     expect(sections.map((s) => s.label)).toEqual(['En vivo', 'Hoy', 'Ayer'])
   })
 
@@ -209,7 +209,7 @@ describe('secciones', () => {
 })
 
 describe('nombre de comuna', () => {
-  it('reconoce zonas, tildes y mayúsculas de las distribuidoras (§R-A)', () => {
+  it('reconoce zonas, tildes y mayúsculas de las distribuidoras', () => {
     expect(communeLabel('VALPARAISO_ORIENTE')).toBe('Valparaíso')
     expect(communeLabel('Quilpue')).toBe('Quilpué')
     expect(communeLabel('HIJUELAS')).toBe('Hijuelas')

@@ -34,6 +34,11 @@ export class ApiError extends Error {
   }
 }
 
+/** ¿La API respondió 404? Un recurso que todavía no existe no es un corte. */
+export function isNotFound(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404
+}
+
 type QueryValue = string | number | boolean | readonly (string | number)[] | undefined | null
 
 /**

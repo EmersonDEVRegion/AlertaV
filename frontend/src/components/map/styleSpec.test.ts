@@ -76,7 +76,7 @@ function buildStyle(): StyleSpecification {
      * por tema, una rampa mal formada en oscuro no se vería nunca desde el
      * tema claro.
      */
-    // Las cinco subcapas, icono incluido (§I), tal como las monta el componente.
+    // Las cinco subcapas, icono incluido, tal como las monta el componente.
     for (const spec of Object.values(roadClosureSpecs(theme, true))) {
       layers.push({
         ...spec,

@@ -1,10 +1,9 @@
 """Límites comunales de la Región de Valparaíso (migración 0015).
 
-El último recurso para darle comuna a un incidente. Hasta el 2026-09-23 la
-comuna salía sólo de los atributos de la fuente o del texto, y la consulta del
-operador de ese día contó 211 incidentes de CGE y 26 de FIRMS sin comuna en 30
-días: el Paso B no les podía adosar ninguna alerta de SENAPRED, y el mapa los
-listaba como «sin comuna».
+El último recurso para darle comuna a un incidente cuando ni los atributos de
+la fuente ni el texto la dicen. Sin esto, cortes de luz de CGE y detecciones de
+FIRMS quedaban «sin comuna»: el Paso B no les podía adosar ninguna alerta de
+SENAPRED y el mapa los listaba así (211 y 26 incidentes en un mes).
 
 Los polígonos vienen de la capa de División Político-Administrativa de la
 Biblioteca del Congreso Nacional (vía `github.com/caracena/chile-geojson`),

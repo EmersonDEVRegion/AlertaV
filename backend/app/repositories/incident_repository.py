@@ -158,7 +158,7 @@ def geocoding_precision_sql() -> ColumnElement[Any]:
 def sector_clave_sql() -> ColumnElement[Any]:
     """`raw_data._extraction.sector_clave` de una señal, como texto.
 
-    La escriben los collectors que leen prosa (prensa, Instagram, X) con
+    La escriben los collectors que leen prosa (prensa y X) con
     `lugares.anotar_sector`: "vina del mar|miraflores alto". Vive en
     `_extraction` y no en `_geocoding` a propósito: una nota sin punto también
     la tiene, y es justamente la que más la necesita.
@@ -358,7 +358,7 @@ class IncidentRepository:
 
         Fuentes fuera del motor (`excluir_fuentes`)
         -------------------------------------------
-        Desde el 2026-10-06 la prensa no entra (`CORRELATION_PRENSA`): sus
+        La prensa no entra (`CORRELATION_PRENSA`): sus
         señales no se agrupan, no abren incidentes ni se pegan a uno. Siguen
         en `raw_events` y se leen en `/feed/noticias`.
         """
@@ -564,7 +564,7 @@ class IncidentRepository:
         Con `desde`/`hasta`, además, el incidente tuvo que estar vivo CERCA DEL
         MOMENTO de la señal —`last_seen_at >= desde` y `first_seen_at <= hasta`—
         y no sólo «en las últimas horas». Sin esto, una nota de prensa de las
-        15:00 se adhería a un choque de las 09:00 a 900 m (auditoría 2026-09-23).
+        15:00 se adheriría a un choque de las 09:00 a 900 m.
 
         `family` es la segunda mitad del aislamiento entre fenómenos. Particionar
         el DBSCAN separa los racimos nuevos entre sí, pero un racimo de
@@ -721,10 +721,10 @@ class IncidentRepository:
     async def recompute_geometry(self, incident_id: int) -> UbicacionIncidente | None:
         """El punto del incidente: el de sus señales MÁS PRECISAS, ponderado por confianza.
 
-        Hasta el 2026-10-05 era el centroide ponderado de **todas** las señales
-        espaciales. Con un despacho de Bomberos en la esquina exacta y una nota
-        de prensa ubicada a mitad de la avenida, el pin quedaba entre los dos:
-        cerca, nunca exacto. Ahora se elige primero la mejor precisión que tenga
+        No es el centroide de **todas** las señales espaciales: con un despacho
+        de Bomberos en la esquina exacta y una nota de prensa ubicada a mitad de
+        la avenida, el pin quedaría entre los dos, cerca y nunca exacto. Se
+        elige primero la mejor precisión que tenga
         el incidente (ver `rango_de_precision`) y se promedia sólo entre las
         señales de ese rango.
 
@@ -886,11 +886,11 @@ class IncidentRepository:
     ) -> int:
         """Descarta incidentes sólo ciudadanos que no juntaron el quórum a tiempo.
 
-        Es la defensa de fondo contra el reporte falso. Hasta el 2026-09-30 la
-        condición era «confianza ≤ 0,40», y tenía un hueco: dos reportes (el
-        mismo teléfono con 4G y después con wifi) sumaban 0,58, se salían de la
-        regla y el incidente falso quedaba en el mapa hasta 12 horas. Ahora la
-        condición es **no publicado**: el motor sólo marca `publico` a lo sólo
+        Es la defensa de fondo contra el reporte falso. La condición es **no
+        publicado** y no un umbral de confianza: con «confianza ≤ 0,40», dos
+        reportes del mismo teléfono (con 4G y después con wifi) sumarían 0,58,
+        saldrían de la regla y el incidente falso quedaría en el mapa hasta 12
+        horas. El motor sólo marca `publico` a lo sólo
         ciudadano que juntó `CITIZEN_QUORUM` vecinos independientes, y eso no
         se consigue repitiendo el reporte.
 

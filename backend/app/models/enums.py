@@ -159,11 +159,10 @@ class CollectorStatus(str, Enum):
 
     **`DEGRADED` = corrí, pero lo que leí no describe el presente.** El
     collector no falló —tiene datos, los entregó— y aun así está ciego. El caso
-    que lo motivó: el Actor de Instagram dejó de correr durante dos horas y el
-    collector siguió leyendo alegremente el dataset de la última corrida buena,
-    reportando `partial` cada cinco minutos mientras un accidente en Avenida
-    España se publicaba y no entraba. La base sabía que estaba ciega; el mapa no
-    tenía cómo enterarse.
+    típico: un Actor de Apify deja de correr y quien lee su último dataset sigue
+    recibiendo datos válidos y viejos, mientras un accidente se publica y no
+    entra. Sin este estado la base sabría que está ciega y el mapa no tendría
+    cómo enterarse.
 
     La diferencia práctica: `partial` se ignora, `degraded` se muestra. Un
     contador en cero con su fuente `degraded` no es «no pasó nada», es «no
@@ -476,11 +475,9 @@ INCIDENT_FAMILY: dict[IncidentType, str] = {
     IncidentType.STRUCTURAL_FIRE: "fire",
     IncidentType.FLOOD: "hydro",
     IncidentType.LANDSLIDE: "hydro",
-    # `traffic` es familia propia desde que existe la capa de accidentes viales.
-    # Antes compartía "other" con rescates y despachos genéricos, y eso bastaba
-    # mientras nadie reportara accidentes: hoy sería el camino por el cual un
-    # choque en la Ruta 68 termina fundido con un despacho de origen desconocido
-    # ocurrido a 800 m. Ver `FAMILY_OF_EVENT` más abajo.
+    # `traffic` es familia propia: compartiendo "other" con rescates y despachos
+    # genéricos, un choque en la Ruta 68 terminaría fundido con un despacho de
+    # origen desconocido ocurrido a 800 m. Ver `FAMILY_OF_EVENT` más abajo.
     IncidentType.ACCIDENT: "traffic",
     # `power` es familia propia por la misma razón que `traffic`: un corte de
     # luz y un incendio pueden coincidir en la misma manzana —de hecho suelen

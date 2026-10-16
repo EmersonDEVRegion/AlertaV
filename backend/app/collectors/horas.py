@@ -39,9 +39,10 @@ dos cosas acá produciría fechas inventadas con aspecto de dato.
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
 from enum import Enum
+
+from app.core.texto import sin_tildes
 
 
 class Precision(str, Enum):
@@ -60,12 +61,6 @@ class HoraDeclarada:
     #: El fragmento que la produjo. Va a `raw_data` para poder auditar la
     #: lectura sin volver a correr el extractor sobre el texto completo.
     fragmento: str
-
-
-def _plano(texto: str) -> str:
-    """Minúsculas y sin tildes. La prensa escribe «madrugada» y «Madrugada»."""
-    limpio = unicodedata.normalize("NFD", str(texto or "").lower())
-    return "".join(c for c in limpio if unicodedata.category(c) != "Mn")
 
 
 #: Franjas del día, con la hora que las representa.
@@ -120,7 +115,7 @@ def parse_hora_declarada(texto: str) -> HoraDeclarada | None:
     inventarla a partir de la publicación es exactamente lo que este módulo
     existe para no hacer.
     """
-    plano = _plano(texto)
+    plano = sin_tildes(texto)
     if not plano:
         return None
 

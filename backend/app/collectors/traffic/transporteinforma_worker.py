@@ -169,7 +169,7 @@ ROAD_CLOSURE_CONFIDENCE = 0.80
 #: Conectores de intersección tal como los escribe el MTT.
 #:
 #: La barra va **sin exigir espacios alrededor**, y no es cosmética. El MTT
-#: escribe «Av. España / Uno Norte» con espacios; las cuentas de Instagram
+#: escribe «Av. España / Uno Norte» con espacios; las cuentas de redes
 #: escriben «Argentina/Colón» pegado, que es como se rotula un cruce en un
 #: titular. Con `\s+/\s+` la segunda forma no separaba nada y `street_1` quedaba
 #: valiendo «Argentina/Colón» — un nombre que no existe en OSM, así que la
@@ -759,11 +759,10 @@ _PORTAL_MARKERS: tuple[str, ...] = (
 #: encarga `clasificar_transito` más adelante, y por eso acá conviene pasarse de
 #: ancho antes que quedarse corto.
 #:
-#: Se deriva del vocabulario compartido en vez de escribirse a mano. Antes era
-#: una tupla literal de siete palabras y le faltaban la mitad de los términos de
-#: cierre que el propio worker necesitaba reconocer: sin "desvío" ni "faena" en
-#: la red gruesa, un aviso de desvío no llegaba siquiera a ser un bloque
-#: candidato, así que ninguna clasificación posterior podía rescatarlo.
+#: Se deriva del vocabulario compartido en vez de escribirse a mano: una lista
+#: propia se queda corta. Sin "desvío" ni "faena" en la red gruesa, un aviso de
+#: desvío no llega siquiera a ser un bloque candidato, y ninguna clasificación
+#: posterior puede rescatarlo.
 TRAFFIC_KEYWORDS: tuple[str, ...] = tuple(
     sorted(set(ACCIDENT_TERMS) | set(ROAD_OPS_TERMS) | set(_PORTAL_MARKERS))
 )
@@ -839,7 +838,7 @@ def parse_notices(html: str) -> list[TrafficNotice]:
     ambigüedad —¿no hay avisos o cambió el DOM?— la resuelve `page_looks_broken`,
     que se consulta aparte.
     """
-    soup = BeautifulSoup(html, _html_parser())
+    soup = BeautifulSoup(html, "lxml")
 
     texts = [
         text
@@ -869,7 +868,7 @@ def page_looks_broken(html: str) -> tuple[bool, str | None]:
     existen los contenedores; que estén vacíos de palabras clave es información
     legítima, que no existan es una alarma.
     """
-    soup = BeautifulSoup(html, _html_parser())
+    soup = BeautifulSoup(html, "lxml")
     if not soup.find("body"):
         return (True, "la respuesta no parece HTML")
 
@@ -897,21 +896,6 @@ def extract_datetime(text: str) -> datetime | None:
     if match.group("time"):
         raw = f"{raw} {match.group('time')}"
     return parse_timestamp(raw)
-
-
-def _html_parser() -> str:
-    """`lxml` si está disponible; si no, el parser de la stdlib.
-
-    lxml es notoriamente más indulgente con el HTML roto que produce un CMS con
-    plugins, y este portal es exactamente ese caso. Pero degradar a `html.parser`
-    es preferible a que el collector no arranque: un scraper que funciona un poco
-    peor sigue recolectando; uno que no importa, no.
-    """
-    try:
-        import lxml  # noqa: F401
-    except ImportError:  # pragma: no cover — lxml está en requirements-prod
-        return "html.parser"
-    return "lxml"
 
 
 @dataclass(slots=True)

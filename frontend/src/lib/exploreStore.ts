@@ -8,9 +8,8 @@ import { useSyncExternalStore } from 'react'
  * es pariente de la columna, y pasar esto por `App` repintaría el mapa.
  */
 /**
- * §R (15-10): «Ahora» (lo que está pasando y tus lugares), «Historial» (lo que
- * ya salió y la prensa) y «Capas» (filtros, capas de referencia y la leyenda,
- * una sola). Antes «Historial» mezclaba cinco cosas y la leyenda estaba en tres.
+ * «Ahora» (lo que está pasando y tus lugares), «Historial» (lo que ya salió y
+ * la prensa) y «Capas» (filtros, capas de referencia y la leyenda, una sola).
  */
 export type ExploreTab = 'now' | 'history' | 'layers'
 

@@ -2,7 +2,7 @@
 
 Qué agrega
 ----------
-Dos columnas en `incidents` (§C, 2026-09-30):
+Dos columnas en `incidents`:
 
 * `ciudadanos_independientes`: cuántos reportes ciudadanos de dispositivos Y
   redes distintos sostienen el incidente. Lo escribe el motor en `_refresh`.

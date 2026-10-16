@@ -1,6 +1,6 @@
 """Contrato de `GET /feed/noticias`: la prensa local, fuera del mapa.
 
-Desde el 2026-10-06 una noticia no es un pin: llega con horas de atraso y el
+Una noticia no es un pin: llega con horas de atraso y el
 mapa tiene que describir el presente. Se lee como un feed informativo, con la
 hora de publicación a la vista para que nadie la confunda con algo en curso.
 """

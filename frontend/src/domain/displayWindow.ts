@@ -42,7 +42,7 @@ export const DISPLAY_WINDOW_MS: Record<IncidentLayerKey, number> = {
  * Lo que se le pide a `/incidents/active` para alimentar mapa e historial con
  * una sola consulta.
  *
- * El historial va desde las 00:00 de AYER (§I), o sea entre 24 y 48 h hacia
+ * El historial va desde las 00:00 de AYER, o sea entre 24 y 48 h hacia
  * atrás según la hora. 50 y no 48: el día en que Chile atrasa la hora dura 25 h,
  * y con 48 justas a las 23:59 se perdería la primera hora de ayer.
  */
@@ -90,7 +90,7 @@ export function isOnMap(incident: Incident, now: number): boolean {
  * última señal (hora de Chile). Lo de ayer se ve completo, y no sólo la parte
  * que cae dentro de las últimas 24 h.
  *
- * # Por qué (§I, 15-10-2026)
+ * # Por qué
  *
  * Con una ventana móvil de 24 h, la sección «Ayer» mostraba un pedazo de ayer
  * que cambiaba con la hora: a las 11:26, de 11:26 a 23:59; a las 23:00, una
@@ -157,7 +157,7 @@ export const HISTORY_STATE_LABEL: Record<HistoryState, string> = {
   controlled: 'Controlado',
   extinguished: 'Extinguido',
   // La empresa dejó de listarlo. Casi siempre es que repuso, pero no lo dice:
-  // por eso «probablemente» (§R-A; antes «Ya no figura», que no se entendía).
+  // por eso «probablemente».
   unlisted: 'Probablemente repuesto',
   // `stale`, o una ventana vencida: dejaron de llegar señales. Nunca
   // «terminado»: nadie declaró el fin. `HistoryFeed` le agrega la hora.
@@ -207,10 +207,10 @@ export interface HistorySection {
 }
 
 const SECTION_LABEL: Record<HistorySection['key'], string> = {
-  // «En vivo» y no «En el mapa» (§I): lo que importa es que está pasando.
+  // «En vivo» y no «En el mapa»: lo que importa es que está pasando.
   now: 'En vivo',
-  // §R: los cortes de luz en curso, aparte y plegados. Son servicios, no
-  // emergencias, y ocupaban casi toda la sección «En vivo».
+  // Los cortes de luz en curso, aparte y plegados. Son servicios, no
+  // emergencias, y ocuparían casi toda la sección «En vivo».
   services: 'Servicios interrumpidos',
   today: 'Hoy',
   yesterday: 'Ayer',
@@ -284,7 +284,7 @@ const COMUNAS_BY_FOLD: readonly (readonly [string, string])[] = COMUNAS.map(
 /**
  * El nombre de la comuna como se escribe: «VIÑA DEL MAR», «Quilpue» y
  * «VALPARAISO_ORIENTE» (zona de Chilquinta) pasan a «Viña del Mar», «Quilpué»
- * y «Valparaíso» (§R-A). Lo que no es una comuna queda en nombre propio.
+ * y «Valparaíso». Lo que no es una comuna queda en nombre propio.
  */
 export function communeLabel(commune: string | null): string | null {
   if (!commune) return null
@@ -355,7 +355,7 @@ export function isService(incident: Pick<Incident, 'type'>): boolean {
   return incident.type === 'power_outage'
 }
 
-/** Las secciones de cada pestaña de la columna (§R). */
+/** Las secciones de cada pestaña de la columna. */
 export const NOW_SECTIONS: readonly HistorySection['key'][] = ['now', 'services']
 export const PAST_SECTIONS: readonly HistorySection['key'][] = ['today', 'yesterday', 'earlier']
 

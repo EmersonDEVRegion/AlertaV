@@ -198,7 +198,7 @@ export default function App() {
   const params = useMemo<ActiveIncidentsQuery>(
     () => ({
       confirmed_only: confirmedOnly,
-      // 1000 y no 500 (§I): con ayer completo, en un temporal grande los cortes
+      // 1000 y no 500: con ayer completo, en un temporal grande los cortes
       // de luz de dos días podían rozar el tope. El backend admite hasta 1000.
       limit: 1000,
       hours: INCIDENT_QUERY_HOURS,
@@ -266,7 +266,7 @@ export default function App() {
   // tráfico sin ganar nada: el backend ya devuelve todo junto.
   const list = useMemo(() => current.filter(isVisible), [current, isVisible])
   // «N en curso» cuenta emergencias: los cortes de luz van en «Servicios
-  // interrumpidos» (§R) y no inflan el resumen.
+  // interrumpidos» y no inflan el resumen.
   const emergencyCount = useMemo(
     () => list.reduce((n, incident) => (isService(incident) ? n : n + 1), 0),
     [list],

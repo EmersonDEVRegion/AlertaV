@@ -13,7 +13,7 @@ import {
 const GUARDAR_TRAS_MS = 700
 
 /**
- * Un deslizador por categoría de aviso (§K).
+ * Un deslizador por categoría de aviso.
  *
  * Libre de 300 m a 20 km en escala logarítmica —los primeros kilómetros ocupan
  * la mayor parte del recorrido— y, en el extremo izquierdo, «No avisar». Lo que

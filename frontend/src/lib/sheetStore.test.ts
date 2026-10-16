@@ -11,7 +11,7 @@ import {
 
 afterEach(() => resetSheet())
 
-describe('bajar la hoja mientras un panel de la barra está abierto (§T)', () => {
+describe('bajar la hoja mientras un panel de la barra está abierto', () => {
   it('baja a asomada y vuelve a la altura que tenía', () => {
     setSheetSnap('half')
     lowerSheet('avisos')

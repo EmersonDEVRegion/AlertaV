@@ -26,6 +26,7 @@
  */
 
 import { HAZARD_SOURCE_URL } from '@/config/map'
+import { isFiniteNumber } from './parse'
 import type {
   HazardCells,
   HazardGrid,
@@ -51,10 +52,6 @@ export class HazardLoadError extends Error {
     super(message)
     this.name = 'HazardLoadError'
   }
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value)
 }
 
 /** Valida la forma del artefacto y lo deja listo para la fuente del mapa. */

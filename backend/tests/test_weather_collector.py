@@ -828,7 +828,7 @@ def test_una_region_en_calma_no_es_una_region_sin_datos():
 
 
 def test_el_uv_no_dispara_la_barra_pero_se_informa_aparte():
-    """§R: en verano el UV alto taparía la propagación en la barra."""
+    """En verano el UV alto taparía la propagación en la barra."""
     solo_uv = evaluar(VALPO, serie(VALPO, [0.0] * 4, uv=12.0).puntos, ahora=AHORA)
     assert solo_uv.severidad == SEVERIDAD_CRITICA  # la comuna sí lo evalúa
 

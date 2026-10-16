@@ -1,7 +1,7 @@
 /**
  * Orden de apilamiento del cromo, de abajo hacia arriba.
  *
- * # Por qué existe este archivo (§I, 15-10-2026)
+ * # Por qué existe este archivo
  *
  * La barra superior y la hoja inferior del teléfono tenían las dos `z-20`, y
  * viven en el mismo contexto de apilamiento (`<main>` no crea uno propio). Con

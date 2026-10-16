@@ -19,10 +19,9 @@ const VehicleRadarPanel = lazy(() =>
  * El radar conectado al store de selección.
  *
  * Abrir el radar es una selección más: cierra la ficha de un incidente o de un
- * sismo, y tocar algo en el mapa lo cierra a él. Esa exclusión antes vivía en
- * `App` (un `useState`, dos manejadores y un `useEffect`) y cada apertura
- * repintaba la aplicación entera. Acá se leen sólo el booleano: el botón y el
- * panel son lo único que se repinta.
+ * sismo, y tocar algo en el mapa lo cierra a él. La exclusión vive en un store
+ * y no en `App` para que una apertura no repinte la aplicación entera: el
+ * botón y el panel son lo único que se repinta.
  */
 
 interface RadarProps {

@@ -15,7 +15,7 @@ export interface PushServerStatus {
   public_key: string | null
   reason: string | null
   incident_radius_m: number
-  /** Radio por categoría para quien no eligió el suyo (§K). Ausente en un servidor anterior. */
+  /** Radio por categoría para quien no eligió el suyo. Ausente en un servidor anterior. */
   radios_por_defecto?: Record<string, number>
   /** Categorías de aviso en el orden en que se muestran. */
   categorias?: { clave: string; etiqueta: string }[]
