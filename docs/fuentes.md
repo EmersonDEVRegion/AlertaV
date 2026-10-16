@@ -22,6 +22,12 @@ en `GET /api/v1/collectors/health`.
 | `prensa_local` | Portales regionales | RSS y HTML | 15 min |
 | `gbv_vehiculos` | GBV, vehículos con denuncia | Sitio de la ONG | 30 min |
 
+Los despachos de Bomberos se ubican con la imagen de Viper que adjuntan
+@CGI_CBV, @CBVM132, @CBQuilpue y @cbquillota (`collectors/viper.py`, mosaicos
+de `tile.openstreetmap.org`) y, si no hay o no calza, con el índice de esquinas
+de OSM que arma cada mes el workflow `osm-cruces` desde Geofabrik
+(`scripts/osm_cruces.py`). Ver `arquitectura.md`, «Geocodificación».
+
 Los cuarteles de Bomberos (`scripts/sig_bomberos.py`) y la amenaza sísmica
 (`scripts/fetch_seismic_hazard.py`) son archivos estáticos en
 `backend/static/geo/`, regenerados a mano.

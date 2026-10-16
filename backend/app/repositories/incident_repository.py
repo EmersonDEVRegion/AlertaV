@@ -166,31 +166,38 @@ def sector_clave_sql() -> ColumnElement[Any]:
     return RawEvent.raw_data["_extraction"]["sector_clave"].astext
 
 
-#: Precisión del punto de un incidente, de mejor a peor. `exacta` es una señal
-#: con coordenadas propias (CONAF, Waze, FIRMS, un GPS ciudadano, una
-#: distribuidora), sin `_geocoding`.
+#: Precisión del punto de un incidente, de mejor a peor. `despacho` es el
+#: marcador de la imagen de Viper: el punto con que despachó la central.
+#: `exacta` es una señal con coordenadas propias (CONAF, FIRMS, un GPS
+#: ciudadano, una distribuidora), sin `_geocoding`. Una dirección con número
+#: (`address`) comparte el rango del cruce.
 RANGO_DE_PRECISION: dict[str | None, int] = {
-    "intersection": 0,
-    "address": 0,
-    None: 1,
-    "street": 2,
-    "sector": 3,
+    "despacho": 0,
+    "intersection": 1,
+    "address": 1,
+    None: 2,
+    "street": 3,
+    "sector": 4,
 }
-NOMBRE_DE_PRECISION: dict[int, str] = {0: "intersection", 1: "exacta", 2: "street", 3: "sector"}
-#: Una dirección con número (`address`) comparte el rango del cruce: tan fina
-#: como una esquina. El incidente la nombra como tal si es su mejor señal.
+NOMBRE_DE_PRECISION: dict[int, str] = {
+    0: "despacho",
+    1: "intersection",
+    2: "exacta",
+    3: "street",
+    4: "sector",
+}
 
 
 def rango_de_precision(precision: str | None) -> int:
-    """0 = cruce, 1 = coordenada propia, 2 = calle, 3 = sector. Lo desconocido, calle."""
-    return RANGO_DE_PRECISION.get(precision, 2)
+    """De 0 (despacho) a 4 (sector). Lo desconocido cuenta como calle."""
+    return RANGO_DE_PRECISION.get(precision, RANGO_DE_PRECISION["street"])
 
 
 @dataclass(frozen=True, slots=True)
 class UbicacionIncidente:
     lat: float
     lon: float
-    #: `intersection`, `address`, `exacta`, `street` o `sector`: la del mejor punto.
+    #: `despacho`, `intersection`, `address`, `exacta`, `street` o `sector`.
     precision: str
 
 

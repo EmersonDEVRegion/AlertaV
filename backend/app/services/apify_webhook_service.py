@@ -99,6 +99,7 @@ from app.collectors.traffic.transito_x import (
     procesar_avisos_transito,
 )
 from app.collectors.traffic.transporteinforma_worker import TrafficNotice
+from app.collectors.viper import ubicar_por_imagen
 from app.collectors.vocabulary import (
     CBV,
     SISTEMAS_CLAVES,
@@ -356,6 +357,33 @@ def tweet_handle(payload: Any) -> str | None:
     return None
 
 
+def tweet_imagen(payload: Any) -> str | None:
+    """La primera foto adjunta al tuit: la imagen de Viper en las centrales que la usan.
+
+    `media[].mediaUrl` es lo que entrega el Actor actual; `extendedEntities` y
+    `media_url_https`, lo que entregan los demás y la API de X.
+    """
+    if not isinstance(payload, Mapping):
+        return None
+    candidatas: list[Any] = []
+    for clave in ("media", "photos"):
+        valor = payload.get(clave)
+        if isinstance(valor, list):
+            candidatas.extend(valor)
+    for contenedor in ("extendedEntities", "extended_entities", "entities"):
+        valor = payload.get(contenedor)
+        if isinstance(valor, Mapping) and isinstance(valor.get("media"), list):
+            candidatas.extend(valor["media"])
+    for medio in candidatas:
+        if not isinstance(medio, Mapping) or medio.get("type", "photo") != "photo":
+            continue
+        for clave in ("mediaUrl", "media_url_https", "url"):
+            url = medio.get(clave)
+            if isinstance(url, str) and url.startswith("https://pbs.twimg.com/"):
+                return url
+    return None
+
+
 def tweet_url(payload: Any) -> str | None:
     """Enlace público del tuit, si el Actor lo trae como URL de X."""
     if not isinstance(payload, Mapping):
@@ -496,6 +524,7 @@ def parse_tweet(
         guid=guid,
         cuenta=tweet_handle(payload),
         url=tweet_url(payload),
+        imagen_url=tweet_imagen(payload),
     )
 
 
@@ -1108,6 +1137,11 @@ async def _process(
                 # nombre común resuelve en otra comuna. Ver `HANDLE_COMUNA`.
                 comuna=comuna_de_handle(settings.BOMBEROS_SOURCE_HANDLE),
             )
+            # El marcador de la imagen de Viper reemplaza al punto del texto
+            # cuando calza: es el punto con que despachó la central.
+            ubicados, por_imagen = await ubicar_por_imagen(
+                ubicados, max_imagenes=settings.VIPER_MAX_POR_ENTREGA
+            )
             events, undated = dispatches_to_events(ubicados, collector=COLLECTOR_NAME)
 
             resultado = await service.ingest_batch(events) if events else None
@@ -1261,6 +1295,7 @@ async def _process(
                     # es la métrica que dice cuántos despachos se registran
                     # pero no llegan al mapa.
                     "geocodificados": geocodificados,
+                    "por_imagen": por_imagen,
                     "sin_punto": len(ubicados) - geocodificados,
                 },
             )
@@ -1320,5 +1355,6 @@ __all__ = [
     "process_dataset",
     "reclamar_siguiente",
     "tweet_handle",
+    "tweet_imagen",
     "tweet_url",
 ]

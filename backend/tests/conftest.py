@@ -21,6 +21,8 @@ def _sin_cache_ni_red_opcional() -> Iterator[None]:
       calles saldría a buscar el cruce a un servidor público.
     * El índice local de cruces (`app/collectors/cruces_locales.py`): cada
       geocodificación con dos calles y comuna consultaría la base.
+    * Las imágenes de Viper (`app/collectors/viper.py`): cada despacho con foto
+      bajaría la imagen y los mosaicos de OSM.
     * La pausa por cuota de Open-Meteo (`app/collectors/weather/cuota.py`): un
       test que simula un 429 diario dejaría sin red a los siguientes.
 
@@ -35,10 +37,12 @@ def _sin_cache_ni_red_opcional() -> Iterator[None]:
         settings.API_RESPONSE_CACHE_SECONDS,
         settings.OVERPASS_ENABLED,
         settings.CRUCES_LOCALES_ENABLED,
+        settings.VIPER_ENABLED,
     )
     settings.API_RESPONSE_CACHE_SECONDS = 0
     settings.OVERPASS_ENABLED = False
     settings.CRUCES_LOCALES_ENABLED = False
+    settings.VIPER_ENABLED = False
     cuota.reiniciar()
     yield
     cuota.reiniciar()
@@ -46,4 +50,5 @@ def _sin_cache_ni_red_opcional() -> Iterator[None]:
         settings.API_RESPONSE_CACHE_SECONDS,
         settings.OVERPASS_ENABLED,
         settings.CRUCES_LOCALES_ENABLED,
+        settings.VIPER_ENABLED,
     ) = anteriores

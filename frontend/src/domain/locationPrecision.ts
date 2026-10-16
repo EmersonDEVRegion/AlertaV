@@ -9,13 +9,15 @@
  * - `street`: el punto quedó sobre una de las calles, no en la esquina. Entre
  *   30 y 314 m de la esquina en ciudad.
  * - `sector`: el tamaño típico de un barrio o población.
- * - `exacta` y `address`: coordenadas propias de la fuente o una dirección con
- *   número. No llevan círculo.
+ * - `despacho`, `exacta` y `address`: el marcador de la imagen de Viper (el
+ *   punto con que despachó la central), coordenadas propias de la fuente o una
+ *   dirección con número. No llevan círculo.
  */
 
 import type { UbicacionPrecision } from '@/api/types'
 
 export const INCERTIDUMBRE_M: Record<UbicacionPrecision, number> = {
+  despacho: 0,
   exacta: 0,
   address: 0,
   intersection: 60,

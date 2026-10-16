@@ -65,6 +65,7 @@ PERFILES: dict[str, Perfil] = {
 #: —FIRMS, CONAF, el GPS de un reporte ciudadano— el punto cuenta como exacto.
 HOLGURA_M: dict[str | None, float] = {
     None: 0.0,
+    "despacho": 0.0,
     "intersection": 0.0,
     "address": 0.0,
     "street": 800.0,

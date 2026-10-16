@@ -27,7 +27,7 @@ export const SOURCE_GROUPS: readonly SourceGroup[] = [
         name: 'Bomberos de la región',
         url: 'https://x.com/CGI_CBV',
         what:
-          'Despachos que publican en X las centrales de Valparaíso (@CGI_CBV), Viña del Mar (@CBVM132), Los Andes y Calle Larga (@despachoscbla), Quilpué (@CBQuilpue) y Quillota (@cbquillota).',
+          'Despachos que publican en X las centrales de Valparaíso (@CGI_CBV), Viña del Mar (@CBVM132), Los Andes y Calle Larga (@despachoscbla), Quilpué (@CBQuilpue) y Quillota (@cbquillota). El punto sale del mapa de la imagen que cada central adjunta (sistema Viper) o, si no, de la esquina que escribe.',
       },
       {
         name: 'SIG Bomberos de Chile',

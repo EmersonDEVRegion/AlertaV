@@ -45,3 +45,10 @@ lxml==6.1.3                # parser de bs4: más rápido y mucho más indulgente
 # 24 de junio de 2026. El unificado trae `client.aio`, que es async nativo — ver
 # app/collectors/traffic/gemini.py.
 google-genai==1.21.0
+
+# --- Imágenes de Viper ----------------------------------------------------------
+# Leer el marcador del mapa que la central adjunta a cada despacho
+# (app/collectors/viper.py): decodificar el JPEG y los mosaicos (Pillow) y
+# calzar la imagen por correlación con FFT en float32 (numpy ≥ 2).
+numpy==2.2.6
+Pillow==11.3.0

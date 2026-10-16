@@ -243,6 +243,15 @@ OSM ancla una de las dos calles, a decenas de metros o a kilómetros de la
 esquina. Por eso el punto se resuelve en este orden
 (`app/collectors/nominatim.py`, `geocode`):
 
+0. **La imagen de Viper** (`collectors/viper.py`), en las cuatro centrales que
+   la adjuntan: su mapa de OSM en zoom 18 trae el marcador del siniestro al
+   centro. Se calza la imagen sobre los mosaicos estándar de OSM
+   (`collectors/osm_tiles.py`) alrededor de la semilla que dan los pasos
+   siguientes, y el centro calzado es el punto (`precision = "despacho"`, a
+   pocos metros). Si no calza, Gemini lee la comuna del encabezado por si el
+   despacho es de otra comuna. Manda sobre el texto cuando no coinciden.
+   Tope diario de mosaicos (`VIPER_MAX_MOSAICOS_DIA`) por la política de uso
+   de OSM.
 1. **Índice de esquinas** (`collectors/cruces_locales.py`). La tabla
    `osm_cruces` guarda cada nodo de OSM donde se tocan dos vías de nombre
    distinto, con las comunas a menos de ~100 m. La arma cada mes el workflow
@@ -259,7 +268,8 @@ esquina. Por eso el punto se resuelve en este orden
 
 Overpass queda como respaldo apagado (`OVERPASS_ENABLED`): desde Render fallaba
 casi siempre. La PWA dibuja un círculo de incertidumbre según la precisión
-(60 m en un cruce, 300 m sobre una calle, 600 m en un sector).
+(60 m en un cruce, 300 m sobre una calle, 600 m en un sector; ninguno con
+Viper).
 
 ### Vínculo por sector
 
