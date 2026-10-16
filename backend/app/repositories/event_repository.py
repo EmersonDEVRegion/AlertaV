@@ -519,7 +519,6 @@ class EventRepository:
         stmt = stmt.order_by(RawEvent.timestamp.desc()).limit(limit).offset(offset)
         return (await self.session.execute(stmt)).scalars().all()
 
-
     def _apply_filters(
         self,
         stmt: Select,

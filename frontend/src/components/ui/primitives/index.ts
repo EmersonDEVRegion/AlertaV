@@ -7,6 +7,5 @@ export { Checkbox } from './Checkbox'
 
 export { Panel } from './Panel'
 
-
 export { Switch } from './Switch'
 

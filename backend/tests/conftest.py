@@ -6,6 +6,7 @@ from collections.abc import Iterator
 
 import pytest
 
+from app.collectors.weather import cuota
 from app.core.config import settings
 
 
@@ -18,6 +19,8 @@ def _sin_cache_ni_red_opcional() -> Iterator[None]:
       respuesta que otro test simuló antes.
     * Overpass (`app/collectors/overpass.py`): cada geocodificación con dos
       calles saldría a buscar el cruce a un servidor público.
+    * La pausa por cuota de Open-Meteo (`app/collectors/weather/cuota.py`): un
+      test que simula un 429 diario dejaría sin red a los siguientes.
 
     Sus propios tests los encienden a mano.
 
@@ -29,5 +32,7 @@ def _sin_cache_ni_red_opcional() -> Iterator[None]:
     anteriores = (settings.API_RESPONSE_CACHE_SECONDS, settings.OVERPASS_ENABLED)
     settings.API_RESPONSE_CACHE_SECONDS = 0
     settings.OVERPASS_ENABLED = False
+    cuota.reiniciar()
     yield
+    cuota.reiniciar()
     settings.API_RESPONSE_CACHE_SECONDS, settings.OVERPASS_ENABLED = anteriores

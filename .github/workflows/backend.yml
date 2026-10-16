@@ -1,0 +1,70 @@
+name: backend
+
+# Lint, migraciones y tests del backend en cada PR y en cada push a main que
+# toque la API. Los tests de integración corren contra un PostGIS desechable
+# con todas las migraciones aplicadas; la migración más nueva se prueba de ida,
+# de vuelta y de ida otra vez.
+
+on:
+  pull_request:
+    paths: ["backend/**", ".github/workflows/backend.yml"]
+  push:
+    branches: [main]
+    paths: ["backend/**", ".github/workflows/backend.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_USER: alertav
+          POSTGRES_PASSWORD: alertav
+          POSTGRES_DB: alertav_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U alertav -d alertav_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: alertav
+      POSTGRES_PASSWORD: alertav
+      POSTGRES_DB: alertav_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-prod.txt
+      - run: pip install -r requirements.txt pytest-github-actions-annotate-failures
+      - run: ruff check --output-format=github .
+      - name: Migraciones (ida, vuelta e ida)
+        run: |
+          alembic upgrade head
+          alembic downgrade -1
+          alembic upgrade head
+      - name: Tests
+        env:
+          ALERTAV_PG_INTEGRACION: "1"
+        run: |
+          set -o pipefail
+          pytest -q -p no:cacheprovider | tee "$RUNNER_TEMP/pytest.txt"
+          echo "::notice title=pytest::$(tail -n 1 "$RUNNER_TEMP/pytest.txt")"

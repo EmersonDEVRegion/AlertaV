@@ -271,14 +271,17 @@ class UsgsCollector(BaseCollector):
 
         for record in records:
             if not in_bbox(record, mapping.bbox):
+                self.exclude()
                 continue
             if not matches_event_type(record, mapping.event_types):
+                self.exclude()
                 continue
             if (
                 mapping.min_magnitude > 0.0
                 and record.magnitude is not None
                 and record.magnitude < mapping.min_magnitude
             ):
+                self.exclude()
                 continue
             if not mapping.include_automatic and record.review_status == "automatic":
                 preliminares_omitidos += 1

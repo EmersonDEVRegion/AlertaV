@@ -1825,6 +1825,7 @@ def _fuego_en_vivienda(texto_limpio: str) -> bool:
     """¿El texto nombra fuego y una edificación? Ver `_BUILDING`."""
     return bool(_FIRE_ROOT.search(texto_limpio) and _BUILDING.search(texto_limpio))
 
+
 #: Cadena de clasificación, de lo más específico a lo más genérico.
 #:
 #: Dos decisiones de orden que conviene dejar escritas:

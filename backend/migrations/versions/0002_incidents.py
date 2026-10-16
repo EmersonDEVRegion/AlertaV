@@ -3,7 +3,7 @@
 Mismo criterio que la 0001: DDL explícito en vez de `op.create_table`. El
 esquema usa columnas GENERATED ... STORED, índices parciales, GiST combinados y
 una función de folio por año — nada de eso lo reproduce fielmente el
-autogenerate de Alembic. El SQL es idéntico a `sql/002_incidents.sql`.
+autogenerate de Alembic.
 
 Revision ID: 0002_incidents
 Revises: 0001_initial_schema

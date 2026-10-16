@@ -91,12 +91,6 @@ _MOTO_SIN_RELLENO = (
     re.compile(r"([A-Z]{2})([1-9][0-9]{2})"),
 )
 
-#: Sólo autos, formato antiguo (2 letras) y nuevo (4 letras). Es la forma
-#: mínima de la regla; `PATENTE_CL` la contiene.
-PATENTE_AUTO_CL = re.compile(
-    rf"(?<![A-Z0-9])(?:[{CONSONANTES_PATENTE}]{{4}}[1-9][0-9]|[A-Z]{{2}}[1-9][0-9]{{3}})(?![A-Z0-9])"
-)
-
 _SEPARADORES_PATENTE = re.compile(r"[\s·.\-]")
 
 

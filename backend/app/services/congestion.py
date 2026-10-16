@@ -163,10 +163,6 @@ class VentanaCongestion:
     #: el número en vez de sólo mostrar dos relojes.
     duracion_min: int
 
-    @property
-    def duracion(self) -> timedelta:
-        return self.hasta - self.desde
-
 
 def _plano(texto: str) -> str:
     limpio = unicodedata.normalize("NFD", str(texto or "").lower())

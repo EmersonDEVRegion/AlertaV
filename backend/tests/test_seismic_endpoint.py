@@ -165,5 +165,3 @@ class TestSeismicEndpoint:
         assert repo.kwargs["min_magnitude"] == 4.5
         assert repo.kwargs["max_depth_km"] == 60.0
         assert repo.kwargs["tsunami_only"] is True
-
-

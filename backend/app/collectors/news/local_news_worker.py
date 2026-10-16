@@ -82,7 +82,7 @@ Lo que este collector NO resuelve
   tres derrumbes y un corte" produce UNA señal con UNA ubicación.
 * **La retrospectiva judicial.** Estos portales cubren tribunales, y una crónica
   de un juicio por el megaincendio de 2024 contiene la palabra "incendio". Ver
-  `_RUIDO_PRENSA`: se excinden las formas fechadas, que son las únicas que no
+  `vocabulary.PRESS_NOISE_PHRASES`: se excinden las formas fechadas, que son las únicas que no
   pueden describir un hecho presente. Lo que no trae fecha lo veta
   `vocabulary.es_cobertura_de_secuelas` (tribunales, reconstrucción,
   aniversarios), y lo que fecha el hecho días atrás, `es_reciente`.
@@ -112,14 +112,7 @@ from app.collectors.nominatim import build_client as build_geo_client
 from app.collectors.traffic import gemini
 from app.collectors.traffic.bomberos_10_4_worker import revisar_feed, strip_html
 from app.collectors.traffic.transporteinforma_worker import extract_streets_via_llm
-from app.collectors.vocabulary import (
-    HEADLINE_VERBS,
-    PRESS_NOISE_PHRASES,
-    clasificar_noticia,
-    es_emergencia,
-    haystack_prensa,
-    tipo_por_verbo,
-)
+from app.collectors.vocabulary import clasificar_noticia, es_emergencia
 from app.core.config import settings
 from app.core.exceptions import CollectorError
 from app.core.identidad import user_agent_o
@@ -129,37 +122,9 @@ from app.schemas.event import EventCreate
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-#  Vocabulario de emergencia
-# =============================================================================
-#
-# El diccionario heurístico no se reimplementa acá **y ya no se importa del
-# worker de Instagram**: vive en `app/collectors/vocabulary.py`, que es donde le
-# corresponde. Este archivo era el tercer acreedor de esa deuda y el que la hizo
-# insostenible —un collector de prensa importando de uno de redes sociales es una
-# dependencia que no describe ninguna relación real entre las dos fuentes—, así
-# que se pagó antes de sumar la fuente que la habría hecho cuádruple.
-#
-# Lo que se llevó el módulo nuevo, y que antes vivía en este archivo:
-#
-# * `_RUIDO_PRENSA` → `PRESS_NOISE_PHRASES`
-# * `_VERBOS_TITULAR` → `HEADLINE_VERBS`
-# * `_haystack_prensa`, `es_emergencia` y `clasificar_noticia`, tal cual
-#
-# Los nombres viejos siguen disponibles como alias más abajo: son superficie
-# pública de este worker desde antes de la extracción y los tests los usan.
-#
-# El módulo trae además el vocabulario que a esta fuente le faltaba más que a
-# ninguna: **inundación y remoción en masa**. Estos portales cubren el invierno
-# de Valparaíso calle por calle, y hasta ahora cada anegamiento y cada socavón
-# pasaba por el pre-filtro sin que una sola palabra lo reconociera.
-
-#: Alias de compatibilidad. El contenido y su justificación están en
-#: `vocabulary`.
-_RUIDO_PRENSA: tuple[str, ...] = PRESS_NOISE_PHRASES
-_VERBOS_TITULAR: dict[str, EventType] = HEADLINE_VERBS
-_haystack_prensa = haystack_prensa
-_tipo_por_verbo = tipo_por_verbo
+# El vocabulario de emergencia (palabras clave, verbos de titular, ruido de
+# prensa) vive en `app/collectors/vocabulary.py`, compartido con Bomberos,
+# Transporte Informa y el webhook de Apify.
 
 
 # =============================================================================
@@ -379,10 +344,7 @@ def external_id_for(item: NewsItem) -> str:
 
 # -- Comunas -------------------------------------------------------------------
 
-#: La tabla y `comuna_en_texto` viven en `app/collectors/lugares.py` desde que
-#: Instagram y X también las necesitan (ver el docstring de ese módulo). El
-#: alias local se conserva para no tocar a quien ya lo importa desde acá.
-_COMUNAS_NORMALIZADAS = COMUNAS_NORMALIZADAS
+#: La tabla de comunas y `comuna_en_texto` viven en `app/collectors/lugares.py`.
 
 
 def comuna_en_categorias(categorias: Sequence[str]) -> str | None:
@@ -402,7 +364,7 @@ def comuna_en_categorias(categorias: Sequence[str]) -> str | None:
         etiqueta = normalise_text(cruda)
         if not etiqueta:
             continue
-        for normalizada, nombre in _COMUNAS_NORMALIZADAS:
+        for normalizada, nombre in COMUNAS_NORMALIZADAS:
             if etiqueta == normalizada:
                 return nombre
     return None
@@ -1470,8 +1432,6 @@ class LocalNewsCollector(BaseCollector):
 
 
 __all__ = [
-    "HEADLINE_VERBS",
-    "PRESS_NOISE_PHRASES",
     "LocalNewsCollector",
     "NewsItem",
     "NewsPortal",

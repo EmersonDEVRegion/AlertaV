@@ -1,7 +1,6 @@
 """Sismos del USGS: valores de enum nuevos y tabla satélite `seismic_details`.
 
 Mismo criterio que la 0001 y la 0002: DDL explícito en vez de `op.create_table`.
-El SQL es idéntico a `sql/003_seismic.sql`.
 
 Dos cosas de esta migración merecen atención antes de ejecutarla:
 

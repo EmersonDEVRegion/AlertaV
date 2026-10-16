@@ -220,4 +220,3 @@ class WeatherService:
             for item in pronosticos
         ]
         return GeoJSONFeatureCollection(features=features)
-

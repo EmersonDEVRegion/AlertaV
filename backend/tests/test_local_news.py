@@ -22,15 +22,12 @@ import pytest
 import respx
 
 from app.collectors.news.local_news_worker import (
-    _VERBOS_TITULAR,
     LocalNewsCollector,
     NewsItem,
     NewsPortal,
     ResolvedNews,
-    clasificar_noticia,
     comuna_en_categorias,
     comuna_en_texto,
-    es_emergencia,
     es_reciente,
     external_id_for,
     parse_fecha_es,
@@ -39,6 +36,7 @@ from app.collectors.news.local_news_worker import (
     parse_portals,
     portada_parece_rota,
 )
+from app.collectors.vocabulary import HEADLINE_VERBS, clasificar_noticia, es_emergencia
 from app.core.exceptions import CollectorError
 from app.models.enums import EventSource, EventType, family_of_event
 
@@ -287,7 +285,7 @@ def test_la_retrospectiva_del_megaincendio_no_paga_una_llamada(texto: str) -> No
 
 
 def test_el_megaincendio_sin_fecha_sigue_pasando() -> None:
-    """La regla que define `_RUIDO_PRENSA`: sólo formas fechadas. 'megaincendio'
+    """La regla que define `PRESS_NOISE_PHRASES`: sólo formas fechadas. 'megaincendio'
     a secas contiene 'incendio' como subcadena, así que excindirlo dejaría al
     sistema ciego justo el día que ocurra el siguiente."""
     assert es_emergencia("Megaincendio forestal avanza sin control en Quilpué") is True
@@ -336,7 +334,7 @@ def test_los_verbos_no_muerden_dentro_de_otra_palabra(titular: str) -> None:
     assert es_emergencia(titular) is False
 
 
-@pytest.mark.parametrize("termino", sorted(_VERBOS_TITULAR))
+@pytest.mark.parametrize("termino", sorted(HEADLINE_VERBS))
 def test_los_verbos_estan_normalizados(termino: str) -> None:
     """Todo se compara sobre texto ya normalizado (sin tildes, en minúscula), así
     que un término con tilde no coincidiría nunca y el fallo sería mudo."""

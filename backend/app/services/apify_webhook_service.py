@@ -1290,6 +1290,7 @@ async def _process(
     if avisos_transito:
         await procesar_avisos_transito(avisos_transito, traza=traza)
 
+
 __all__ = [
     "CANARIO_NAME",
     "COLLECTOR_NAME",

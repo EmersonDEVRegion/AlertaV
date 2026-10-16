@@ -89,6 +89,7 @@ from typing import Any
 import httpx
 
 from app.collectors.geoservices import as_float, parse_timestamp, request_json
+from app.collectors.weather import cuota
 from app.collectors.weather.comunas import Comuna, parse_comunas
 from app.collectors.weather.umbrales import PuntoHorario
 from app.core.config import settings
@@ -633,6 +634,7 @@ class OpenMeteoClient:
         petición única es que el mensaje ahora dice **qué lote** falló, que con 36
         comunas en una sola llamada era imposible de acotar.
         """
+        cuota.verificar(self.origin)
         lotes = self.lotes()
         series: list[SerieComunal] = []
         advertencias: list[str] = []
@@ -652,9 +654,13 @@ class OpenMeteoClient:
                     if len(lotes) == 1
                     else f"{self.origin} [lote {numero}/{len(lotes)}]"
                 )
-                payload = await request_json(
-                    client, self.url, self.params(lote), origin=origen
-                )
+                try:
+                    payload = await request_json(
+                        client, self.url, self.params(lote), origin=origen
+                    )
+                except CollectorError as exc:
+                    cuota.registrar(exc)
+                    raise
                 parciales, avisos = parse_lote(
                     payload, lote, origin=origen, max_drift=self.max_drift
                 )

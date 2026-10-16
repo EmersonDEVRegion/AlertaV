@@ -31,6 +31,7 @@ class CollectorResult:
     inserted: int = 0
     duplicated: int = 0
     rejected: int = 0
+    excluded: int = 0
     status: CollectorStatus = CollectorStatus.SUCCESS
     error: str | None = None
     details: dict[str, Any] = field(default_factory=dict)
@@ -57,6 +58,21 @@ class BaseCollector(abc.ABC):
         return cls.default_interval_seconds
 
     # -- Degradaciones -------------------------------------------------------
+
+    @property
+    def excluded(self) -> int:
+        """Filas que `normalize()` dejó fuera a propósito en esta corrida."""
+        return getattr(self, "_excluded", 0)
+
+    def exclude(self, count: int = 1) -> None:
+        """Cuenta filas que quedan fuera del alcance configurado.
+
+        Fuera de la región, de un tipo que no interesa o bajo el umbral de
+        magnitud: es el filtro haciendo su trabajo, no un problema de mapeo. A
+        diferencia de un rechazo, no marca la corrida como `partial`; en fuentes
+        nacionales ocurre en todas las corridas y taparía los rechazos reales.
+        """
+        self._excluded = self.excluded + count
 
     @property
     def warnings(self) -> list[str]:
@@ -185,7 +201,8 @@ class BaseCollector(abc.ABC):
             result.fetched = len(records)
 
             events = self.normalize(records)
-            result.rejected = max(0, result.fetched - len(events))
+            result.excluded = self.excluded
+            result.rejected = max(0, result.fetched - len(events) - result.excluded)
 
             if events:
                 ingest = await self.service.ingest_batch(events)
@@ -252,6 +269,7 @@ class BaseCollector(abc.ABC):
                 "inserted": result.inserted,
                 "duplicated": result.duplicated,
                 "rejected": result.rejected,
+                "excluded": result.excluded,
             },
         )
         return result

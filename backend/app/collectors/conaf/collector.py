@@ -243,8 +243,10 @@ class ConafCollector(BaseCollector):
 
         for feature in records:
             if mapping.filter_by_region and not matches_region(feature, mapping.regions):
+                self.exclude()
                 continue
             if not matches_state(feature, mapping.states):
+                self.exclude()
                 continue
 
             timestamp = resolve_timestamp(

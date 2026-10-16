@@ -1164,6 +1164,7 @@ def test_chilquinta_ya_no_necesita_credenciales():
     assert not hasattr(settings, "CHILQUINTA_API_KEY")
     assert not hasattr(settings, "CHILQUINTA_COD_EMP")
 
+
 def test_un_punto_derivado_queda_marcado_como_tal():
     """El registro que acaba en `_source_record` es el normalizado, no el crudo.
 

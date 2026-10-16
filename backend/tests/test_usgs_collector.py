@@ -314,6 +314,15 @@ class TestNormalize:
             "usgs:us7000andes",
         ]
 
+    def test_lo_que_queda_fuera_del_alcance_se_cuenta_como_excluido(self) -> None:
+        """Los sismos de Alaska o Indonesia no son filas perdidas: el recorte
+        hace su trabajo, y eso no debe dejar la corrida en `partial`."""
+        records, _ = _records()
+        collector = _collector()
+        events = collector.normalize(records)
+        assert collector.excluded == len(records) - len(events)
+        assert collector.warnings == []
+
     def test_mapea_a_evento_del_dominio(self) -> None:
         records, _ = _records()
         event = _collector().normalize(records)[0]

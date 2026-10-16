@@ -165,6 +165,7 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     #   BroadcastifyCollector.name: BroadcastifyCollector,  # STT → evento
 }
 
+
 def collector_class(name: str) -> type[BaseCollector]:
     """Clase de un collector sin instanciarla.
 
