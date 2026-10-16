@@ -1,27 +1,16 @@
 name: keepalive
 
 # Render (plan gratuito) apaga el servicio tras 15 minutos sin trafico HTTP, y
-# con el se apagan los workers: nadie recolecta ni correlaciona. Medido en
-# collector_runs: del 16 al 18 y del 20 al 22 de septiembre de 2026 no corrio
-# ningun collector. Ver backend/DEPLOY.md, paso 5.
+# con el se apagan los workers: nadie recolecta ni correlaciona. El ping tiene
+# que ser EXTERNO: lo que cuenta es el trafico que entra por el edge de Render.
+# En un repositorio publico, GitHub Actions no consume minutos.
 #
-# Tiene que ser un ping EXTERNO: lo que cuenta para Render es el trafico que
-# entra por su edge. GitHub Actions lo es, y en un repositorio publico no
-# consume minutos.
+# Es un RESPALDO: GitHub no corre los cron puntuales (a veces pasan horas entre
+# corridas) y los apaga tras 60 dias sin actividad en el repositorio. Lo que de
+# verdad mantiene despierta la API es un monitor externo: docs/despliegue.md, §6.
 #
-# No es puntual, y en la practica casi no corre: pide cada 10 minutos, pero del
-# 5 al 6 de octubre de 2026 GitHub lo lanzo cada 6-7 horas (runs #65 a #69). Con
-# eso Render se dormiria igual. Ademas apaga los cron de un repositorio que pasa
-# 60 dias sin actividad. Lo que de verdad mantiene despierta la API tiene que
-# ser un monitor externo (cron-job.org o UptimeRobot, gratis): ver
-# backend/DEPLOY.md, paso 5. Este workflow queda como respaldo.
-#
-# El 05-10 (run #67) el job quedo 15 minutos sin maquina y GitHub lo cancelo:
-# "The job was not acquired by Runner of type hosted even after multiple
-# attempts". Es un fallo de GitHub, no de la API, y no se puede evitar desde
-# aca: llega como correo de "Run cancelled". Para dejar de recibirlos, en
-# GitHub: Settings > Notifications > Actions > "Only notify for failed
-# workflows" (o desmarcar el correo).
+# A veces GitHub no consigue maquina y cancela el job ("Run cancelled"): es un
+# fallo de GitHub, no de la API.
 #
 # El paso nunca falla: un servicio caido no debe convertirse en 144 correos de
 # GitHub al dia. Deja una advertencia en el resumen de la corrida.
@@ -38,8 +27,6 @@ permissions: {}
 
 jobs:
   ping:
-    # Fijo y no `ubuntu-latest`, que pasa a Ubuntu 26 desde el 19-10-2026 y
-    # deja un aviso en cada corrida. Para un curl da lo mismo.
     runs-on: ubuntu-24.04
     # Tiene que caberle el peor caso del curl: 3 intentos x 120 s + 2 x 10 s =
     # 380 s. Con 5 minutos, un arranque en frio lento terminaba en "cancelled".

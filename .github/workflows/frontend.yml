@@ -1,8 +1,8 @@
 name: frontend
 
-# Vercel sólo corre `npm run build` (tsc + vite build): los tests, el linter y
-# knip no corrían en ningún lado. Este workflow los corre en cada PR y en cada
-# push a main que toque la PWA.
+# Vercel sólo corre `npm run build`. Este workflow corre además el linter, knip,
+# los tests y la auditoría de dependencias en cada PR y en cada push a main que
+# toque la PWA.
 
 on:
   pull_request:
@@ -20,14 +20,14 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm

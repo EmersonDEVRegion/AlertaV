@@ -1,27 +1,43 @@
-# Notificaciones push — emergencias cercanas y temblores
+# Notificaciones push
 
-**Fecha:** 2026-09-23
-**Backend:** `app/services/push/`, `app/repositories/push_repository.py`, `app/api/v1/endpoints/push.py`, migración `0012_push_subscriptions`
+**Backend:** `app/services/push/`, `app/repositories/push_repository.py`, `app/api/v1/endpoints/push.py`, migraciones `0012`, `0016` y `0019`
 **Frontend:** `public/push-sw.js`, `src/hooks/usePushNotifications.ts`, `src/components/ui/NotificationBell.tsx`, `src/lib/push.ts`
 
 ---
 
 ## 1. Qué hace
 
-Dos avisos al teléfono, aunque la app esté cerrada:
+Avisos al teléfono, aunque la app esté cerrada:
 
 | Aviso | A quién | Cuándo |
 |---|---|---|
-| **Emergencia cercana** (incendio, accidente, corte de luz, inundación…) | Suscripciones a menos de 5 km del incidente | El incidente está `active`, apareció hace menos de 3 h, y además: lo confirmó CONAF/Bomberos, **o** es un corte de luz, **o** tiene confianza ≥ 30 % con al menos 2 fuentes distintas |
-| **Temblor** | Suscripciones dentro del radio de percepción del sismo | Magnitud ≥ 3,5 (según la versión del CSN si existe) y ocurrido hace menos de 30 min |
+| **Emergencia cercana** (incendio, accidente, corte de luz, inundación…) | Suscripciones dentro del radio de su categoría, medido desde la última ubicación o desde un lugar guardado | El incidente está `active`, apareció hace menos de 3 h, y además: lo confirmó CONAF/Bomberos, **o** es un corte de luz, **o** tiene confianza ≥ 30 % con al menos 2 fuentes distintas |
+| **Corte de agua programado** (Esval) | Suscripciones dentro del radio de cortes de agua | Empezó hace menos de 12 h |
+| **Temblor** | Suscripciones dentro del radio de percepción del sismo, desde su ubicación o sus lugares | Magnitud ≥ 3,5 (según la versión del CSN si existe) y ocurrido hace menos de 30 min |
 
-Cada aviso lleva el tipo y la distancia en el título («Incendio forestal a 1,2 km»,
-«Sismo de magnitud 4,7 a 32 km») y en el cuerpo la comuna, la hora, cuánto sabemos (o quién lo
-confirmó) y, si hay, la alerta de SENAPRED. Un corte de luz lleva distribuidora, clientes
-afectados y reposición estimada. Tocar el aviso abre la app en el incidente.
+Cada persona elige un radio por categoría en la PWA (`0` la apaga). Por defecto:
+🔥 5 km · 🚗 2 km · ⚡ 1 km · 🌊 3 km · 🆘 2 km · 💧 1 km. Gana el lugar más cercano.
 
-**Una sola fuente no basta.** Un píxel de FIRMS (0,40) o una alerta de Waze (0,40) ya superan
-el 30 %; sin la regla de las dos fuentes, la chimenea de Ventanas despertaría a Quintero cada
+Cada aviso tiene un emoji por tipo, la distancia y **desde dónde se midió** en el título, y una
+línea de cuerpo. La alerta de SENAPRED, si hay, va primero. Si la ubicación tiene más de 24 h, una
+segunda línea lo dice. Tocar el aviso abre la app en el incidente.
+
+```text
+🔥 Incendio forestal a 1,2 km de tu última ubicación
+🔴 Alerta roja de SENAPRED
+Viña del Mar · desde 23:57 · Sin verificar (3 fuentes)
+
+⚡ Corte de luz a 800 m de Casa
+Quilpué · desde 00:09 · 1.240 clientes · vuelve ~03:09 · Chilquinta
+
+🌎 Sismo 4,6 a 38 km de Casa
+25 km al O de Valparaíso · 00:09 · 32 km de prof. · CSN
+```
+
+iOS agrega «from AlertaV» (sale del `short_name` del manifiesto) y no se puede cambiar desde la
+web; por eso el título no repite el nombre.
+
+**Una sola fuente no basta.** Un píxel de FIRMS (0,40) ya supera el 30 %; sin la regla de las dos fuentes, la chimenea de Ventanas despertaría a Quintero cada
 noche. `PUSH_INCIDENT_MIN_SOURCES=1` la desactiva.
 
 **Los temblores no son alerta temprana.** El CSN y el USGS publican minutos después y los
@@ -34,7 +50,7 @@ mantenerse en pie.
 ## 2. Cómo funciona
 
 ```
-PWA ── POST /push/subscriptions (endpoint + claves + ubicación) ──► push_subscriptions
+PWA ── POST /push/subscriptions (endpoint + claves + ubicación + radios + lugares) ──► push_subscriptions
                                                                         │
 motor de correlación ─► incidents ──┐                                   │
 collectors CSN/USGS ─► raw_events ──┼─► notificador (cada 60 s) ◄───────┘
@@ -106,7 +122,9 @@ campana lo muestra, y el notificador se queda dormido sin tumbar a los otros mot
 | `PUSH_ENABLED` | `true` | Pausa los envíos sin perder a los suscritos. |
 | `ENABLE_PUSH` | `1` | (start.sh) No levantar el notificador. |
 | `PUSH_POLL_INTERVAL_SECONDS` | `60` | Cadencia del notificador. |
-| `PUSH_INCIDENT_RADIUS_M` | `5000` | Radio de aviso para suscripciones nuevas. |
+| `PUSH_RADIO_FIRE_M` … `PUSH_RADIO_WATER_M` | 5000, 2000, 1000, 3000, 2000, 1000 | Radio por categoría para quien no eligió el suyo. |
+| `PUSH_INCIDENT_RADIUS_M` | `5000` | Radio para lo que no cae en ninguna categoría. |
+| `PUSH_WATER_CUT_MAX_AGE_HOURS` | `12` | Un corte de agua más viejo ya no se avisa. |
 | `PUSH_INCIDENT_MIN_CONFIDENCE` | `0.30` | Umbral de confianza. |
 | `PUSH_INCIDENT_MIN_SOURCES` | `2` | Fuentes distintas exigidas si no hay confirmación oficial. |
 | `PUSH_INCIDENT_MAX_AGE_MINUTES` | `180` | Un incidente más viejo ya no se avisa. |
@@ -126,7 +144,7 @@ campana lo muestra, y el notificador se queda dormido sin tumbar a los otros mot
 |---|---|
 | `GET /api/v1/push/status` | ¿Hay push? Clave pública y umbrales vigentes. |
 | `POST /api/v1/push/subscriptions` | Alta o actualización (idempotente por `endpoint`). |
-| `POST /api/v1/push/unsubscribe` | Baja: borra la suscripción, su ubicación y su registro. |
+| `POST /api/v1/push/unsubscribe` | Baja: borra la suscripción, su ubicación, sus lugares y su registro. |
 | `POST /api/v1/push/test` | Aviso de prueba a una suscripción ya registrada (1 por minuto por IP). |
 
 ---

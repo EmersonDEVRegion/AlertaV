@@ -1,20 +1,9 @@
-# Capa meteorológica — contrato para el frontend
+# Meteorología
 
-**Fecha:** 2026-08-25
-**Backend:** `app/collectors/weather/`, `app/services/weather_service.py`, `app/schemas/weather.py`
-**Rutas:** `GET /api/v1/events/weather/geojson`, `/weather/tactical`
+**Código:** `app/collectors/weather/`, `app/services/weather_service.py`,
+`app/services/rain_grid_service.py`, `app/schemas/weather.py`.
 
-> **Actualización 2026-09-23:** `GET /api/v1/events/weather` (lista) y
-> `/weather/stats` se borraron porque la PWA no las consumía. Lo que este
-> documento dice de ellas queda como historia; la capa se sirve por `/geojson`,
-> que lleva las mismas propiedades por comuna.
-
-Este documento es el hand-off. Todo lo que hace falta para construir la capa de lluvia y
-superponerla a los cortes de ruta está acá; el backend ya está desplegable y con tests.
-
----
-
-## 1. Qué es esta capa, y qué no es
+## Qué es esta capa, y qué no es
 
 Es la **única capa del sistema que habla del futuro**. Todas las demás informan de algo que ya
 ocurrió: un píxel caliente, un corte registrado por la distribuidora, un sismo medido. Esta
@@ -38,63 +27,23 @@ la confianza de ninguno. Existe para superponerse.
 
 ---
 
-## 2. Las rutas
+## Rutas
 
 | Ruta | Devuelve | Para qué |
 | --- | --- | --- |
-| `GET /api/v1/events/weather` | `WeatherForecastRead[]` | Lista tipada. Fichas, tarjetas, tablas. |
-| `GET /api/v1/events/weather/geojson` | `FeatureCollection` | La capa de MapLibre. |
-| `GET /api/v1/events/weather/stats` | `WeatherStats` | Tarjeta de estado / badge. |
-| `GET /api/v1/events/weather/tactical` | `TacticalWeatherRead` | El estado consolidado de la región. Widget de la barra superior. **Añadida en la v2, ver §10.** |
+| `GET /api/v1/events/weather/geojson` | `FeatureCollection` | Lluvia pronosticada por comuna (capa del mapa) |
+| `GET /api/v1/events/weather/grid` | grilla 25 × 26 | Mapa de calor de la lluvia sobre toda la región |
+| `GET /api/v1/events/weather/tactical` | `TacticalWeatherRead` | Estado consolidado de la región (widget de la barra) |
 
-Parámetros comunes:
+La **grilla** es una foto del modelo en celdas de 0,2°, pedida cada 3 horas en
+lotes de 25 puntos con pausa (Open-Meteo limita por minuto, hora y día). Se
+guarda en `weather_grids`; un arranque del proceso no la vuelve a pedir si la
+foto guardada sigue vigente. Si Open-Meteo agota la cuota diaria u horaria, el
+clima y la grilla se pausan solos hasta que se renueva
+(`collectors/weather/cuota.py`).
 
-| Parámetro | Rango | Defecto | Qué hace |
-| --- | --- | --- | --- |
-| `hours` | 1–48 | `3` | Holgura hacia atrás, **no histórico**. Ver §4. |
-| `solo_riesgo` | bool | `false` | Sólo las comunas con el flag. |
-| `limit` | 1–2000 | `500` | Red de seguridad, no paginación. |
-
-`stats` sólo acepta `hours`: nunca filtra por riesgo, porque su trabajo es contar las dos cosas.
-
----
-
-## 3. Payloads reales
-
-Generados con el código de este commit, no escritos a mano.
-
-### `GET /api/v1/events/weather`
-
-```json
-[
-  {
-    "public_id": "3f2b6c1e-0000-4000-8000-000000000001",
-    "comuna": "Valparaíso",
-    "lat": -33.0472,
-    "lon": -71.6127,
-    "inicio": "2026-06-15T14:00:00Z",
-    "fin": "2026-06-16T14:00:00Z",
-    "ventana_horas": 24,
-    "mm_total": 23.1,
-    "mm_hora_max": 8.2,
-    "mm_3h_max": 18.6,
-    "hora_pico": "2026-06-15T16:00:00Z",
-    "probabilidad_max": 90,
-    "horas_con_lluvia": 6,
-    "riesgo_inundacion": true,
-    "nivel": "riesgo_alto",
-    "motivos": [
-      "intensidad 8.2 mm/h ≥ 5.0 mm/h",
-      "acumulado en 3 h 18.6 mm ≥ 15.0 mm"
-    ],
-    "modelo": "best_match",
-    "texto": "Lluvia pronosticada en Valparaíso: 23.1 mm en 24 h, máximo de 8.2 mm/h hacia las 12:00 h (probabilidad 90 %). RIESGO DE INUNDACIÓN: intensidad 8.2 mm/h ≥ 5.0 mm/h; acumulado en 3 h 18.6 mm ≥ 15.0 mm. Comuna: Valparaíso. Pronóstico de Open-Meteo (best_match); no es una alerta oficial: las declara SENAPRED.",
-    "es_pronostico": true
-  }
-]
-```
-
-### `GET /api/v1/events/weather/geojson`
+Parámetros de `/geojson`: `hours` (1–48, holgura hacia atrás, no histórico),
+`solo_riesgo` (sólo comunas con el flag) y `limit`.
 
 ```json
 {
@@ -127,34 +76,7 @@ Generados con el código de este commit, no escritos a mano.
 }
 ```
 
-### `GET /api/v1/events/weather/stats`
-
-```json
-{
-  "comunas": 2,
-  "en_riesgo": 1,
-  "mm_total_max": 23.1,
-  "mm_hora_max": 8.2,
-  "comunas_en_riesgo": ["Valparaíso"],
-  "ventana_inicio": "2026-06-15T14:00:00Z",
-  "ventana_fin": "2026-06-16T14:00:00Z"
-}
-```
-
-### Diferencias entre los dos formatos, a propósito
-
-* **`motivos`**: lista en el JSON tipado, **cadena unida por `; `** en el GeoJSON. MapLibre
-  serializa a texto cualquier arreglo u objeto anidado en `properties`, así que una lista del
-  otro lado llegaría como `"[\"intensidad…\"]"`. Sin riesgo: `""` cuando no hay riesgo.
-* **Fechas**: el JSON tipado usa `…Z` (serializador de Pydantic) y el GeoJSON `…+00:00`
-  (`isoformat()`). Las dos son ISO-8601 válidas y `new Date()` parsea ambas. La capa sísmica ya
-  tenía esa asimetría; se mantiene por consistencia con ella y no por descuido.
-* **`nivel`** es vocabulario de presentación (`seco` | `lluvia` | `riesgo` | `riesgo_alto`).
-  Sirve para el color. **Para decidir si hay riesgo se lee el booleano**, no la cadena.
-
----
-
-## 4. Semántica que hay que respetar
+## Semántica que hay que respetar
 
 **Es una foto, no un histórico.** Cada llamada devuelve **una fila por comuna**: la ventana más
 reciente de cada una. `hours=3` es holgura para cubrir una corrida que llegó tarde o un worker
@@ -179,79 +101,7 @@ aporta nada: `staleTime` de 10 minutos es lo razonable, alineado con lo que ya h
 
 ---
 
-## 5. Ojo con lo que ya existe en el frontend
-
-`frontend/src/api/weather.ts` **ya llama a Open-Meteo directamente desde el navegador**, para el
-viento del cono de propagación de un incendio (`current_weather`, una llamada por incidente
-seleccionado). Eso se queda como está: es otro dato, otro propósito y otra cadencia.
-
-La capa de lluvia **no** debe seguir ese camino. Tiene que pasar por el backend, por tres
-razones concretas:
-
-* el flag lo calcula el backend con umbrales configurables por `.env`; recalcularlo en el
-  cliente crearía dos implementaciones de la misma regla y el día que se muevan los umbrales el
-  mapa y la base dirían cosas distintas;
-* son 36 comunas: una llamada por usuario contra el backend, en vez de una llamada por usuario
-  contra un servicio gratuito de un tercero;
-* el histórico queda en `raw_events` y es lo que permitirá calibrar los umbrales contra los
-  avisos de vía cortada del invierno.
-
-Por el nombre ya ocupado, conviene que el cliente nuevo sea un archivo aparte —`api/rain.ts` o
-`api/weatherLayer.ts`— y que su docstring diga en una línea la diferencia con `weather.ts`.
-
----
-
-## 6. Lo que se pidió: superponer lluvia y cortes de ruta
-
-El cruce que motiva la capa: tres avisos de vía cortada en Valparaíso una tarde de 8 mm/h
-describen una situación muy distinta de tres avisos en un día seco. El backend deliberadamente
-**no** funde esas dos cosas —la meteorología no correlaciona— porque esa lectura la hace una
-persona mirando dos capas.
-
-Los accidentes y cortes de ruta llegan por `GET /api/v1/incidents/active` (familia `traffic`).
-La superposición es de presentación:
-
-```js
-map.addSource('lluvia', { type: 'geojson', data: featureCollection })
-
-// Sólo las comunas en riesgo. `riesgo_inundacion` viaja como booleano real:
-// una expresión de MapLibre no compara tipos distintos, así que esto sólo
-// funciona porque el backend no lo manda como la cadena "true".
-map.addLayer({
-  id: 'lluvia-riesgo',
-  type: 'circle',
-  source: 'lluvia',
-  filter: ['==', ['get', 'riesgo_inundacion'], true],
-  paint: {
-    // El radio comunica intensidad, no certeza.
-    'circle-radius': [
-      'interpolate', ['linear'], ['zoom'],
-      8, ['interpolate', ['linear'], ['get', 'mm_hora_max'], 5, 6, 20, 14],
-      13, ['interpolate', ['linear'], ['get', 'mm_hora_max'], 5, 18, 20, 44]
-    ],
-    'circle-opacity': 0.35,
-    'circle-color': [
-      'match', ['get', 'nivel'],
-      'riesgo_alto', '#1d4ed8',
-      '#3b82f6'
-    ]
-  }
-}, 'incidentes')   // debajo de los incidentes: es contexto, no el sujeto del mapa
-```
-
-Tres advertencias de implementación:
-
-1. **El orden importa.** La capa de lluvia va **por debajo** de la de incidentes. Es contexto:
-   si tapa los puntos de emergencia, invierte la jerarquía del mapa.
-2. **El zoom tiene que ser la raíz de la interpolación del radio**, no una capa sobre un radio
-   ya interpolado — es el mismo problema que ya se resolvió en las capas derivadas del mapa.
-3. **No usar el mismo lenguaje visual que las emergencias.** El azul translúcido y el radio
-   grande dicen "condición ambiental"; un pin con ícono diría "hay un evento acá", que es
-   exactamente lo que no hay.
-
----
-
-## 7. Los umbrales son calibrables, no oficiales
+## Los umbrales de lluvia son calibrables, no oficiales
 
 | Regla | Defecto | Variable |
 | --- | --- | --- |
@@ -267,20 +117,13 @@ invierno. Conviene que la UI no prometa más precisión que eso.
 
 ---
 
-# v2 — La capa táctica multiamenaza
+## Seis amenazas, no una
 
-**Fecha:** 2026-09-02
-**Añade:** `GET /api/v1/events/weather/tactical`, cinco variables nuevas y un estado de alerta
-consolidado. **No rompe nada de lo anterior:** `riesgo_inundacion`, `nivel` y `motivos` siguen
-significando exactamente lo mismo y siguen calculándose sólo con las tres reglas de agua.
+Una sola variable —¿va a llover lo suficiente?— serviría para el invierno y dejaría la mitad del
+año en blanco: en la V Región, febrero mata por incendio de interfaz y por golpe de calor, no por
+anegamiento.
 
-## 8. Qué cambió y por qué
-
-La v1 medía una variable y respondía una pregunta: ¿va a llover lo suficiente? Servía para el
-invierno y dejaba la mitad del año en blanco — en la V Región, febrero mata por incendio de
-interfaz y por golpe de calor, no por anegamiento.
-
-La v2 pide siete variables horarias (`precipitation`, `precipitation_probability`,
+El collector pide siete variables horarias (`precipitation`, `precipitation_probability`,
 `temperature_2m`, `relative_humidity_2m`, `wind_speed_10m`, `wind_gusts_10m`, `uv_index`) en
 la misma petición única para las 36 comunas, y responde **seis** preguntas agrupadas en dos
 severidades: `aviso` (ámbar) y `critica` (rojo).
@@ -301,7 +144,7 @@ cerro, que es lenta; un índice UV de 11 describe lo que le pasa a la piel de al
 afuera *ahora*. Anunciar a las 22:00 que mañana a las 14:00 el UV será 11 no es información
 táctica: es ruido que apaga el widget para el día en que sí importa.
 
-## 9. Los umbrales, uno por uno
+## Los umbrales de la capa táctica
 
 ### Lluvia y remoción en masa
 
@@ -376,7 +219,7 @@ Son las bandas del índice UV global de la OMS/OMM, idénticas en las escalas de
 ICNIRP. Moverlas sería inventar una escala nueva con el nombre y los colores de una que la gente
 ya reconoce.
 
-## 10. La ruta nueva: `GET /api/v1/events/weather/tactical`
+## `GET /api/v1/events/weather/tactical`
 
 Devuelve un solo objeto con el estado consolidado de las 36 comunas. Es la ruta del widget de la
 barra superior, y su forma responde a eso: un número grande y una línea de contexto.
@@ -396,33 +239,35 @@ barra superior, y su forma responde a eso: un número grande y una línea de con
 unidad, umbral, texto, momento}`— para que el navegador no tenga que reimplementarla sólo para
 poder explicarla.
 
-## 11. La fila regional y el discriminador `ambito`
+La PWA muestra el índice UV sólo dentro del panel del clima (`uv_severidad`): no
+dispara la píldora de la barra, que en verano quedaría encendida casi todos los
+días y taparía la condición de propagación.
 
-El collector emite ahora **dos clases de fila** sobre la misma tabla, fuente y tipo:
+## La fila regional y el discriminador `ambito`
+
+El collector emite **dos clases de fila** sobre la misma tabla, fuente y tipo:
 
 * una por comuna **con señal** (lluvia por encima del piso **o** cualquier umbral cruzado), y
 * **una regional por hora**, siempre, con el agregado.
 
 Se distinguen por `_weather.ambito`, que vale `"comuna"` o `"region"`. `WeatherService` filtra por
 ahí: sin ese campo, el agregado aparecería como una comuna fantasma en el centro de la V Región,
-con su propia mancha de lluvia sobre el mapa. Las filas de la v1 no traen el campo y se leen como
-comunales, así que el histórico anterior se sigue sirviendo sin migración.
+con su propia mancha de lluvia sobre el mapa. Una fila sin el campo se lee como comunal.
 
 La fila regional cuesta 24 filas al día y compra dos cosas: que el widget tenga qué decir el 95 %
 de los días del año, y que una corrida sin novedades deje rastro en vez de terminar con cero
 filas, indistinguible de una fuente muerta.
 
-## 12. Qué cuenta como «señal» y por qué cambió
+## Qué cuenta como «señal»
 
-En la v1 era `hay_lluvia`. Con seis variables, «no llovió» dejó de ser sinónimo de «no pasa nada»:
+Con seis variables, «no llovió» no es sinónimo de «no pasa nada»:
 una tarde de febrero en Petorca a 38 °C, con 18 % de humedad, ráfagas de 45 km/h y UV 12 tiene
-0,0 mm y es exactamente el estado que esta capa existe para describir. Con el criterio antiguo no
-habría generado ni una fila.
+0,0 mm y es exactamente el estado que esta capa existe para describir.
 
-Ahora es `hay_senal` = lluvia por encima del piso **o** cualquier umbral táctico cruzado. El piso
-de lluvia (`OPENMETEO_MIN_INGEST_MM`, 0,2 mm) sigue existiendo y sigue significando lo mismo.
+Por eso la condición es `hay_senal` = lluvia por encima del piso **o** cualquier umbral táctico cruzado. El piso
+de lluvia es `OPENMETEO_MIN_INGEST_MM` (0,2 mm).
 
-## 13. Ninguna regla dispara con un dato ausente
+## Ninguna regla dispara con un dato ausente
 
 Las cinco variables nuevas son `float | None` de punta a punta, y **ningún umbral se cumple con un
 `None`**. Si el modelo no publica humedad relativa, el 30-30-30 no se evalúa en vez de evaluarse
@@ -430,5 +275,5 @@ con un cero implícito —que sería una humedad del 0 % y un incendio crítico 
 cien implícito, que apagaría la amenaza para siempre sin que nadie se entere.
 
 Una variable ausente **en todas** las comunas sí levanta advertencia y deja la corrida en
-`partial`: eso ya no es una noche sin sol, es un campo renombrado. Ausente en algunas, no — sería
-el `partial` permanente que ya hace ilegible el estado del USGS.
+`partial`: eso ya no es una noche sin sol, es un campo renombrado. Ausente en algunas, no: sería
+un `partial` permanente, y un estado que siempre está encendido deja de decir algo.

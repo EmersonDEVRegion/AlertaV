@@ -1,7 +1,7 @@
 /**
  * Espejo TypeScript del contrato de la capa meteorológica.
  *
- * Fuente de verdad: `backend/docs/capa-meteorologica.md` y
+ * Fuente de verdad: `docs/meteorologia.md` y
  * `backend/app/schemas/weather.py`.
  *
  * # Por qué este archivo existe aparte de `api/weather.ts`

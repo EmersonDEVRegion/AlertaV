@@ -1,11 +1,18 @@
-# Material de trabajo local que no va al repositorio: bundles, patches, capturas
-# y logs de migraciones que generan las sesiones de trabajo, y la copia local
-# del plan (la versión viva está en el proyecto).
+# Material de trabajo local: salidas de las sesiones y las copias locales del
+# plan y del contexto (las versiones vivas están en el proyecto de claude.ai).
 /Claude outputs/
 /plan.md
+/context.md
 
-# Restos de Python y pytest
+# Entornos y secretos
+.env
+.venv/
+node_modules/
+
+# Restos de Python y de las herramientas
 __pycache__/
 *.pyc
 pytest-cache-files-*/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/

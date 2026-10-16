@@ -4,7 +4,7 @@ Qué agrega
 ----------
 Dos tablas nuevas y nada más. No toca `raw_events` ni `incidents`: el
 notificador sólo lee de ellas. Ver `app/models/push.py` para el porqué de cada
-columna y `docs/notificaciones-push.md` para el flujo completo.
+columna y `docs/notificaciones-push.md` (raíz del repo) para el flujo completo.
 
 * `push_subscriptions` — un navegador suscrito, con su última ubicación
   (redondeada a ~110 m) y su radio de aviso.

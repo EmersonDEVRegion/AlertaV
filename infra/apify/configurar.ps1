@@ -1,37 +1,16 @@
-# Crea en Apify el Task de X de las centrales de Bomberos, su webhook y el
-# Schedule.
-#
-# DESDE EL 2026-09-22 ES UN SOLO TASK. Los de prensa (X) y de Instagram salieron
-# por cuota: el plan gratuito no alcanzaba para tres, y lo que cubrian lo toma
-# la prensa local por RSS en el backend. Correr este script deja el Schedule
-# 'alertav' con el Task de Bomberos solo, borra el webhook huerfano del Task de
-# prensa y LISTA los dos Tasks viejos para que los borres en el panel (no los
-# borra: ver "Tasks duplicados" mas abajo).
-#
-# Es idempotente: busca por nombre antes de crear, y actualiza si ya existe. Se
-# puede correr las veces que haga falta.
-#
-# DESDE EL 2026-09-30: CINCO CENTRALES, VENTANA DE TIEMPO Y CANARIO
-# -----------------------------------------------------------------
-# Se sumaron @despachoscbla (Los Andes), @CBQuilpue y @cbquillota. Con cinco
-# cuentas a 6 tuits cada media hora el peor caso era US$ 6,70 al mes: no cabia
-# en Free. Ahora son DOS Tasks:
+# Crea o actualiza en Apify los dos Tasks de X (las centrales de Bomberos y
+# @TTIValparaiso), sus Schedules y sus webhooks. Ver infra/apify/README.md.
 #
 #   alertav-bomberos  cada 30 min, `within_time` 45m: SOLO lo publicado en los
 #                     ultimos 45 minutos. xquik filtra antes de cobrar, asi que
 #                     una media hora tranquila cuesta solo la plataforma.
 #   alertav-canario   una vez al dia, sin ventana, 2 tuits por cuenta. Es lo
 #                     que prueba que el Actor VE cada cuenta: con la ventana, una
-#                     entrega vacia es calma y ya no sirve para eso. El backend
-#                     lo reconoce por APIFY_X_CANARIO_IDS y lo registra aparte.
+#                     entrega vacia es calma y no sirve para eso. El backend lo
+#                     reconoce por APIFY_X_CANARIO_IDS y lo registra aparte.
 #
-# DESDE EL 2026-09-29 EL ACTOR ES xquik/x-tweet-scraper
-# ------------------------------------------------------
-# apidojo/tweet-scraper dejo de raspar en el plan Free cuando lo lanza el
-# Scheduler: cada corrida escribia diez {"noResults": true}, terminaba en
-# SUCCEEDED y cobraba US$ 0,004. Del 31-08 al 29-09 no entro un solo despacho y
-# la salud se veia verde. El log del Actor lo decia: "The developer of this
-# actor doesn't allow the use of Scheduler in the Free Plan".
+# Es idempotente: busca por nombre antes de crear, y actualiza si ya existe. Se
+# puede correr las veces que haga falta.
 #
 # Un Task no puede cambiar de Actor. Si el Task existente usa otro Actor, el
 # script lo RENOMBRA (alertav-bomberos-<actor>-retirado), crea uno nuevo con el
@@ -40,13 +19,11 @@
 # PRUEBA con una corrida por la API: si no trae tuits de las centrales, el
 # script se detiene y el Schedule queda como estaba.
 #
-# EL ORDEN IMPORTA (2026-09-23)
-# -----------------------------
+# EL ORDEN IMPORTA
+# ----------------
 # Primero el Task, despues el Schedule y recien despues los webhooks. El
 # Schedule es lo que gasta credito, y con la cuenta al tope Apify rechaza crear
-# webhooks: si el webhook iba antes y fallaba, el script abortaba y el Schedule
-# seguia corriendo los tres Tasks viejos. Un fallo de webhook ahora se avisa y
-# no detiene nada.
+# webhooks. Un fallo de webhook se avisa y no detiene nada.
 #
 # SOBRE LAS CREDENCIALES
 # ----------------------
@@ -56,11 +33,11 @@
 # con el token dentro termina en los logs del proxy y en el historial de quien
 # la copie.
 #
-#   .\apify\configurar.ps1
-#   .\apify\configurar.ps1 -DryRun     # muestra qué haría, sin tocar nada
-#   .\apify\configurar.ps1 -Auditar    # lista webhooks, tasks, schedules y consumo
-#   .\apify\configurar.ps1 -Cron "0 */2 * * *"   # otra cadencia (ver COSTO)
-#   .\apify\configurar.ps1 -SinProbar  # no correr la prueba del Task (no recomendado)
+#   .\infra\apify\configurar.ps1
+#   .\infra\apify\configurar.ps1 -DryRun     # muestra qué haría, sin tocar nada
+#   .\infra\apify\configurar.ps1 -Auditar    # lista webhooks, tasks, schedules y consumo
+#   .\infra\apify\configurar.ps1 -Cron "0 */2 * * *"   # otra cadencia (ver COSTO)
+#   .\infra\apify\configurar.ps1 -SinProbar  # no correr la prueba del Task (no recomendado)
 
 param(
     [switch]$DryRun,
@@ -83,7 +60,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$raiz = Split-Path -Parent $PSScriptRoot
+# infra\apify -> raiz del repositorio
+$raiz = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 # --- Credenciales ------------------------------------------------------------
 
@@ -119,7 +97,7 @@ APIFY_TOKEN no esta ni en el entorno ni en backend\.env.
 Sacalo de https://console.apify.com/settings/integrations y pasalo asi, en la
 MISMA linea que la llamada para que no quede en tu historial de sesion:
 
-    `$env:APIFY_TOKEN='apify_api_...'; `$env:APIFY_WEBHOOK_SECRET='...'; .\apify\configurar.ps1
+    `$env:APIFY_TOKEN='apify_api_...'; `$env:APIFY_WEBHOOK_SECRET='...'; .\infra\apify\configurar.ps1
 
 O ponelos en backend\.env, que esta en .gitignore.
 "@
@@ -147,7 +125,7 @@ responderia 401 a cada entrega, hasta que Apify deshabilite la integracion.
 
 Pasalo junto al token, en la misma linea:
 
-    `$env:APIFY_TOKEN='apify_api_...'; `$env:APIFY_WEBHOOK_SECRET='...'; .\apify\configurar.ps1
+    `$env:APIFY_TOKEN='apify_api_...'; `$env:APIFY_WEBHOOK_SECRET='...'; .\infra\apify\configurar.ps1
 
 Tiene que ser EL MISMO valor que la variable APIFY_WEBHOOK_SECRET de Render.
 "@
@@ -183,14 +161,9 @@ function Api([string]$metodo, [string]$ruta, $cuerpo = $null) {
 
 # --- Consumo de la cuenta -----------------------------------------------------
 #
-# El 2026-09-03 la cuenta llego a US$ 5,01 de US$ 5 y Apify dejo de iniciar
-# Actors hasta el periodo siguiente. Nadie lo vio hasta el correo: el mapa solo
-# mostro que Bomberos dejaba de entregar. Se imprime siempre, al principio.
-#
-# Lo que se gasto ese periodo (Billing, 2026-09-23):
-#   apify/instagram-scraper   1.682 resultados x US$ 0,0027 = US$ 4,54
-#   apidojo/tweet-scraper     1.120 tuits      x US$ 0,0004 = US$ 0,45
-# Instagram fue el 91 %. Por eso salio.
+# Con la cuenta al tope, Apify deja de iniciar Actors hasta el periodo
+# siguiente y lo unico que se ve es que Bomberos deja de entregar. Por eso el
+# consumo se imprime siempre, al principio.
 
 function Show-Consumo {
     try {
@@ -387,14 +360,6 @@ if ($Auditar) {
 # separa cada tuit por su autor: los de una central los lee con el diccionario
 # de claves de su Cuerpo; los de @TTIValparaiso (APIFY_X_TRANSITO_HANDLES), con
 # la tuberia del MTT, como transporte_informa.
-#
-# Los Tasks retirados, por si hubiera que volver a encenderlos (junto con
-# APIFY_PRENSA_ENABLED / APIFY_INSTAGRAM_ENABLED en Render):
-#
-#   @{ nombre = "alertav-prensa";    actor = "apidojo~tweet-scraper";
-#      archivo = "task-prensa.json";    webhook = "/api/v1/apify/webhook/prensa" }
-#   @{ nombre = "alertav-instagram"; actor = "apify~instagram-scraper";
-#      archivo = "task-instagram.json"; webhook = $null }
 
 $tasks = @(
     @{ nombre = "alertav-bomberos"; actor = "xquik~x-tweet-scraper";
