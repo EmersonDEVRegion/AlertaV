@@ -40,7 +40,7 @@ describe('NotificationPanel', () => {
     expect(screen.getByText(/incendios a menos de 5 km/)).toBeInTheDocument()
     expect(screen.getByText(/al menos 2 fuentes distintas/)).toBeInTheDocument()
     expect(screen.getByText(/magnitud 3,5 o más/)).toBeInTheDocument()
-    expect(screen.getByText(/última ubicación que la app conoce/)).toBeInTheDocument()
+    expect(screen.getByText(/«de tu última ubicación»/)).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: PUSH_TEXT.enable }))
     expect(push.enable).toHaveBeenCalledOnce()

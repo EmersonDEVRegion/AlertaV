@@ -137,6 +137,16 @@ class TestConsulta:
         assert "DISTINCT ON" in sql
         assert sql.count("ST_DWithin(") == 2
 
+    async def test_los_sismos_tambien_miden_desde_los_lugares(self) -> None:
+        session = CapturingSession()
+        repo = PushRepository(session)  # type: ignore[arg-type]
+        assert await repo.recipients_for_quake(
+            lat=-33.03, lon=-71.9, reach_m=150_000, keys=["csn:1", "usgs:x"]
+        ) == []
+        sql = str(session.statements[0].compile(dialect=postgresql.dialect()))
+        assert "push_places" in sql and "UNION ALL" in sql and "DISTINCT ON" in sql
+        assert "notify_seismic" in sql
+
 
 class TestMensaje:
     def _msg(self, **overrides: Any) -> Any:
@@ -158,18 +168,18 @@ class TestMensaje:
 
     def test_desde_un_lugar_guardado_lo_nombra(self) -> None:
         message = self._msg(place="Casa", located_at=NOW - timedelta(days=9))
-        assert message.title == "Incendio forestal a 1,2 km de Casa"
+        assert message.title == "🔥 Incendio forestal a 1,2 km de Casa"
         # La edad de la ubicación no importa si se midió desde Casa.
-        assert "ubicación" not in message.body
+        assert "Ubicación" not in message.body
 
     def test_ubicacion_vieja_se_dice(self) -> None:
         message = self._msg(located_at=NOW - timedelta(days=3, hours=2))
-        assert message.title == "Incendio forestal a 1,2 km"
-        assert message.body.endswith("Distancia desde tu ubicación de hace 3 días")
+        assert message.title == "🔥 Incendio forestal a 1,2 km de tu última ubicación"
+        assert message.body.endswith("\n📍 Ubicación de hace 3 días")
 
     def test_ubicacion_de_hoy_no_agrega_nada(self) -> None:
         message = self._msg(located_at=NOW - timedelta(hours=5))
-        assert "ubicación" not in message.body
+        assert "\n" not in message.body
 
     @pytest.mark.parametrize(
         ("age", "text"),

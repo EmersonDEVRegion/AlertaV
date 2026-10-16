@@ -30,8 +30,8 @@ Una pasada
    Para cada uno, las suscripciones a menos de su propio radio.
 2. **Sismos.** Los de las dos redes en los últimos `PUSH_SEISMIC_MAX_AGE_MINUTES`,
    agrupados (una sola vez por sismo aunque lo publiquen el CSN y el USGS). Para
-   cada uno con magnitud suficiente, las suscripciones dentro de su radio de
-   percepción.
+   cada uno con magnitud suficiente, las suscripciones cuya ubicación o algún
+   lugar guardado está dentro de su radio de percepción.
 3. **Poda** del registro de envíos más viejo que `PUSH_DELIVERY_RETENTION_DAYS`.
 
 Cada aviso se **reserva** (fila `pending`, commit) antes de enviarse. Si el
@@ -355,6 +355,9 @@ class PushNotifier:
                     lon=quake.lon,
                     place=quake.place,
                     depth_km=quake.depth_km,
+                    saved_place=recipient.place,
+                    located_at=recipient.located_at,
+                    now=now,
                 )
 
             await self._deliver(
@@ -402,6 +405,7 @@ class PushNotifier:
                     programado=corte.programado,
                     motivo=corte.motivo,
                     place=recipient.place,
+                    located_at=recipient.located_at,
                     now=now,
                 )
 

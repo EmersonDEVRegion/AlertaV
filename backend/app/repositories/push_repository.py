@@ -471,12 +471,43 @@ class PushRepository:
     ) -> list[Recipient]:
         """Suscripciones dentro del radio de percepción sin aviso de este sismo.
 
+        Se mide, como en los incidentes, desde la última ubicación del teléfono
+        Y desde cada lugar guardado (§N): quien está de viaje igual se entera de
+        que tembló fuerte en Casa. Manda el más cercano, y ése nombra el aviso.
+
         `keys` son las claves de TODAS las versiones del sismo (CSN y USGS): si
         ya se avisó con cualquiera, no se vuelve a avisar.
         """
-        sub_geog = func.cast(PushSubscription.geom, _GEOGRAPHY)
         point_geog = func.cast(func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326), _GEOGRAPHY)
-        distance = func.ST_Distance(sub_geog, point_geog)
+
+        sub_geog = func.cast(PushSubscription.geom, _GEOGRAPHY)
+        own = select(
+            PushSubscription.id.label("subscription_id"),
+            cast(null(), String(40)).label("place"),
+            func.ST_Distance(sub_geog, point_geog).label("distance_m"),
+        ).where(
+            PushSubscription.notify_seismic.is_(True),
+            func.ST_DWithin(sub_geog, point_geog, reach_m),
+        )
+        place_geog = func.cast(PushPlace.geom, _GEOGRAPHY)
+        saved = select(
+            PushPlace.subscription_id.label("subscription_id"),
+            PushPlace.name.label("place"),
+            func.ST_Distance(place_geog, point_geog).label("distance_m"),
+        ).where(func.ST_DWithin(place_geog, point_geog, reach_m))
+        candidates = union_all(own, saved).subquery("quake_candidates")
+
+        nearest = (
+            select(candidates.c.subscription_id, candidates.c.place, candidates.c.distance_m)
+            .distinct(candidates.c.subscription_id)
+            .order_by(
+                candidates.c.subscription_id,
+                candidates.c.distance_m.asc(),
+                candidates.c.place.is_(None),
+            )
+            .subquery("quake_nearest")
+        )
+
         already = exists().where(
             PushDelivery.subscription_id == PushSubscription.id,
             PushDelivery.kind == "seismic",
@@ -488,12 +519,14 @@ class PushRepository:
                 PushSubscription.endpoint,
                 PushSubscription.p256dh,
                 PushSubscription.auth,
-                distance.label("distance_m"),
+                PushSubscription.location_updated_at,
+                nearest.c.place,
+                nearest.c.distance_m,
             )
+            .join(nearest, nearest.c.subscription_id == PushSubscription.id)
             .where(PushSubscription.notify_seismic.is_(True))
-            .where(func.ST_DWithin(sub_geog, point_geog, reach_m))
             .where(~already)
-            .order_by(distance.asc())
+            .order_by(nearest.c.distance_m.asc())
             .limit(limit)
         )
         return [
@@ -503,6 +536,8 @@ class PushRepository:
                 p256dh=row.p256dh,
                 auth=row.auth,
                 distance_m=float(row.distance_m),
+                place=row.place,
+                located_at=row.location_updated_at,
             )
             for row in (await self.session.execute(stmt)).all()
         ]

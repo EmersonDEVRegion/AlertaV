@@ -208,11 +208,9 @@ def test_el_aviso_de_agua_dice_que_donde_y_hasta_cuando():
         place="Casa",
         now=NOW,
     )
-    assert mensaje.title == "Corte de agua programado a 650 m de Casa"
-    assert "1 Norte entre 3 y 5 Poniente · Viña del Mar" in mensaje.body
-    # 22:00 UTC son las 19:00 en Chile: el inicio es hoy y el fin, mañana.
-    assert "Desde 23:00 hasta 06/10 06:00 (estimado)" in mensaje.body
-    assert mensaje.body.endswith("Fuente: Esval")
+    assert mensaje.title == "💧 Corte de agua programado a 650 m de Casa"
+    # El inicio es hoy y el fin, mañana. El motivo no va.
+    assert mensaje.body == "1 Norte entre 3 y 5 Poniente · Viña del Mar · 23:00 a 06/10 06:00 · Esval"
     assert mensaje.kind == "water_cut"
     assert "corte_agua=" in mensaje.url and "lat=-33.0245" in mensaje.url
 
@@ -243,7 +241,7 @@ async def test_el_notificador_avisa_cortes_y_pasa_la_categoria_del_incidente():
     tipos = sorted(kind for kind, _, _ in repo.reserved)
     assert tipos == ["incident", "water_cut"]
     titulos = [payload["title"] for _, payload, _ in sender.sent]
-    assert "Corte de agua programado a 400 m" in titulos
+    assert "💧 Corte de agua programado a 400 m de tu última ubicación" in titulos
 
 
 def test_recipient_sigue_igual():
