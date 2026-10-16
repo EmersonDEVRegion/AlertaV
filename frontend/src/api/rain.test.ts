@@ -15,7 +15,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { EMPTY_RAIN, countFloodRisk, parseRainCollection } from './rain'
 
-/** Un feature como el que documenta `backend/docs/capa-meteorologica.md`. */
+/** Un feature como el que documenta `docs/meteorologia.md`. */
 function makeFeature(over: Record<string, unknown> = {}) {
   return {
     type: 'Feature',

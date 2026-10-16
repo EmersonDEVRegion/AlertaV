@@ -2,8 +2,7 @@
 
 Esval sólo responde a IP chilenas. Fuera de Chile sus dos hosts descartan la
 conexión en silencio, y Render no tiene regiones en Sudamérica, así que el
-collector `esval_cortes_agua` sale por este proxy. El diagnóstico está en
-`plan.md`, §S1.
+collector `esval_cortes_agua` sale por este proxy.
 
 ```
 Render (EE. UU.) ──CONNECT──▶ tinyproxy (Oracle, Chile) ──TLS──▶ ov.esval.cl

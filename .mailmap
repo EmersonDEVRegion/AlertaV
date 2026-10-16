@@ -1,0 +1,5 @@
+# Una sola identidad por persona en `git log` y `git shortlog`, sin reescribir
+# la historia.
+Emerson <emerson.alcorce.silva@gmail.com>
+Emerson <emerson.alcorce.silva@gmail.com> <emersugoi@hotmail.com>
+Emerson <emerson.alcorce.silva@gmail.com> <emersugoi3@gmail.com>
