@@ -14,6 +14,7 @@ from app.core.database import get_session
 from app.services.hazard_service import SeismicHazardService
 from app.services.incident_service import IncidentService
 from app.services.ingest_service import IngestService
+from app.services.meteo_warning_service import MeteoWarningService
 from app.services.news_feed_service import NewsFeedService
 from app.services.push.subscriptions import PushSubscriptionService
 from app.services.rain_grid_service import RainGridService
@@ -99,6 +100,10 @@ async def get_news_feed_service(session: SessionDep) -> NewsFeedService:
     return NewsFeedService(session)
 
 
+async def get_meteo_warning_service(session: SessionDep) -> MeteoWarningService:
+    return MeteoWarningService(session)
+
+
 async def get_water_cut_service(session: SessionDep) -> WaterCutService:
     return WaterCutService(session)
 
@@ -125,5 +130,6 @@ HazardServiceDep = Annotated[SeismicHazardService, Depends(get_hazard_service)]
 PushServiceDep = Annotated[PushSubscriptionService, Depends(get_push_service)]
 VehicleFeedServiceDep = Annotated[VehicleFeedService, Depends(get_vehicle_feed_service)]
 NewsFeedServiceDep = Annotated[NewsFeedService, Depends(get_news_feed_service)]
+MeteoWarningServiceDep = Annotated[MeteoWarningService, Depends(get_meteo_warning_service)]
 WaterCutServiceDep = Annotated[WaterCutService, Depends(get_water_cut_service)]
 RainGridServiceDep = Annotated[RainGridService, Depends(get_rain_grid_service)]

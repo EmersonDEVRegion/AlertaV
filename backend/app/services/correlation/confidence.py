@@ -273,6 +273,11 @@ RULES: dict[EventSource, SourceRule] = {
     # hecho, y si alguien decidiera correlacionar el agua, que lo haga a
     # propósito y fijando el peso, no heredando el 0.15–0.30 por defecto.
     EventSource.ESVAL: SourceRule(0.0, 0.0, 0.0, 0.0),
+    # Un pronóstico no corrobora un siniestro: que la DMC anuncie viento no
+    # prueba que el árbol caído que alguien reporta haya caído. No se ejecuta
+    # (`weather_warning` está fuera de CORRELATABLE_EVENT_TYPES); está escrita
+    # para que nadie herede el peso por defecto si eso cambia.
+    EventSource.DMC: SourceRule(0.0, 0.0, 0.0, 0.0),
 }
 
 DEFAULT_RULE = SourceRule(0.15, 0.30, 0.5, 0.45)

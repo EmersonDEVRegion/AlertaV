@@ -42,6 +42,9 @@ const EVENT_SOURCES = [
   // Esval: cortes de agua. Emite `water_cut`, capa de contexto fuera del motor
   // (como `road_closure`): no aparece en el desglose de fuentes de un incidente.
   'esval',
+  // DMC: avisos meteorológicos. Emite `weather_warning`, fuera del motor: sólo
+  // lo lee `/feed/avisos-meteo` (la franja de «Ahora»).
+  'dmc',
   'other',
 ] as const
 export type EventSource = (typeof EVENT_SOURCES)[number]

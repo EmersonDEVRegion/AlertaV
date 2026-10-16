@@ -18,6 +18,7 @@ en `GET /api/v1/collectors/health`.
 | `esval_cortes_agua` | Esval, cortes programados | Sitio de Esval vía proxy en Chile | 10 min |
 | `csn_sismos`, `usgs_sismos` | CSN y USGS | Catálogo HTML y GeoJSON | 5 min |
 | `openmeteo_lluvia` | Open-Meteo, por comuna | API gratuita | 30 min |
+| `dmc_avisos` | DMC, avisos, alertas y alarmas | Archivo del mapa del Sistema de Alerta Meteorológica | 10 min |
 | (grilla de lluvia) | Open-Meteo, grilla de 0,2° | API gratuita, en lotes | 3 h |
 | `prensa_local` | Portales regionales | RSS y HTML | 15 min |
 | `gbv_vehiculos` | GBV, vehículos con denuncia | Sitio de la ONG | 30 min |
@@ -152,6 +153,39 @@ No se adivinó: un desfase de 4 horas arruinaría cualquier correlación
 espaciotemporal, así que la corrección es una decisión explícita y calibrable.
 Si al contrastar con un incendio de hora conocida aparece un desfase constante,
 se corrige con `CONAF_TIME_OFFSET_MINUTES=-240` sin desplegar.
+
+## Avisos meteorológicos de la DMC — `dmc_avisos`
+
+La Dirección Meteorológica de Chile publica tres niveles: **Aviso** (severidad
+moderada), **Alerta** (fuerte) y **Alarma** (intensa). El mapa «Sistema de
+Alerta Meteorológica» de meteochile.gob.cl se alimenta de un JSON estático,
+`archivos.meteochile.gob.cl/portaldmc/AAA/datos_AAA.json` (`DMC_AAA_URL`),
+con todo lo vigente del país. No está documentado; el formato verificado está
+en `collectors/dmc/aaa_parser.py` y la captura real del 16-10-2026, en
+`tests/test_dmc_avisos.py`.
+
+- **Qué entra:** lo que toca la región continental: `05` en una lista de
+  regiones o `05_*` en una de zonas. `05m` es la Metropolitana y nunca se
+  compara por prefijo. Juan Fernández (`jf`) e Isla de Pascua (`ip`) quedan
+  fuera por decisión del proyecto.
+- **Qué es:** un pronóstico. Emite `weather_warning`, fuera del motor (no crea
+  incidentes, no mueve confianzas, no manda push). Tampoco es una alerta de
+  SENAPRED; la PWA lo nombra siempre «DMC · Aviso».
+- **Vigencia:** la DMC retira el aviso del archivo cuando deja de regir o lo
+  reemplaza por una actualización (`A552-1/2026`). Vigente = visto en la última
+  lectura (`_dmc.visto_en`), como Esval. `desde` y `hasta` vienen como texto
+  («la tarde del lunes 19»): se traducen a tramos anchos (mañana 06–12, tarde
+  12–20, noche 20–06 del día siguiente) que sólo sirven de respaldo.
+- **Tabla de valores** (km/h, mm, °C): se guarda sólo la sección de Valparaíso,
+  como filas; el HTML de la DMC no llega a la PWA.
+- **Condiciones de uso:** el `robots.txt` de `archivos.meteochile.gob.cl` dice
+  `Disallow: /`. Es un archivo cada diez minutos, con `User-Agent` propio; cada
+  aviso cita y enlaza a la DMC, y se le pidió autorización. Ante un reclamo:
+  `DMC_AVISOS_ENABLED=false` en Render (el collector sale del registro y
+  `/feed/avisos-meteo` responde 404, que la PWA lee como «no disponible»).
+- **Desde dónde sale:** directo. Si algún día el host dejara de responder a
+  Render, `DMC_PROXY_URL` lo manda por un proxy en Chile (el de
+  `infra/proxy-cl/` tendría que permitir ese host).
 
 ## Agregar una fuente nueva
 
