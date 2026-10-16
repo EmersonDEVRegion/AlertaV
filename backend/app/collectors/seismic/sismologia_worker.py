@@ -233,9 +233,11 @@ class SismologiaCollector(BaseCollector):
         for quake in records:
             if not self.bbox.contains(quake.lat, quake.lon):
                 fuera_de_caja += 1
+                self.exclude()
                 continue
             if quake.magnitude is not None and quake.magnitude < self.min_magnitude:
                 bajo_umbral += 1
+                self.exclude()
                 continue
 
             raw_data: dict[str, Any] = {

@@ -53,7 +53,7 @@ def _pg_enum(python_enum: type, name: str) -> ENUM:
     )
 
 
-# Expresión de la columna generada. Idéntica a la de sql/001_schema.sql para que
+# Expresión de la columna generada. Idéntica a la de la migración 0001 para que
 # Alembic no detecte diferencias espurias.
 _GEOM_EXPR = (
     "CASE WHEN lat IS NOT NULL AND lon IS NOT NULL "
@@ -163,11 +163,6 @@ class RawEvent(Base):
         Index("ix_raw_events_timestamp", sa_text('"timestamp" DESC')),
         Index("ix_raw_events_source_timestamp", "source", sa_text('"timestamp" DESC')),
         Index("ix_raw_events_type_timestamp", "type", sa_text('"timestamp" DESC')),
-        Index(
-            "ix_raw_events_unprocessed",
-            "timestamp",
-            postgresql_where=sa_text("processed_at IS NULL"),
-        ),
         # La ventana por hora de ingesta del motor (migración 0015).
         Index(
             "ix_raw_events_pendientes_ingesta",
@@ -184,11 +179,6 @@ class RawEvent(Base):
             "raw_data",
             postgresql_using="gin",
             postgresql_ops={"raw_data": "jsonb_path_ops"},
-        ),
-        Index(
-            "ix_raw_events_text_fts",
-            sa_text("to_tsvector('spanish', COALESCE(\"text\", ''))"),
-            postgresql_using="gin",
         ),
         {"schema": _SCHEMA},
     )

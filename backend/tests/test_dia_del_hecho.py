@@ -203,5 +203,3 @@ def test_la_prensa_descarta_la_nota_reciente_de_un_hecho_viejo() -> None:
         ahora=AHORA,
         max_age_minutes=240,
     )
-
-

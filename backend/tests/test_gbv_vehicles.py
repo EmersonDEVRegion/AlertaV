@@ -30,7 +30,6 @@ from app.collectors.vehicles.gbv_parser import (
     ABANDONADOS,
     CHILE_TZ,
     DENUNCIAS,
-    PATENTE_AUTO_CL,
     PATENTE_CL,
     RECUPERADOS,
     FichaListado,
@@ -335,7 +334,6 @@ DETALLE_GENERICO = _detalle(
 )
 def test_las_patentes_reales_del_sitio_son_validas(patente):
     assert PATENTE_CL.fullmatch(patente)
-    assert PATENTE_AUTO_CL.fullmatch(patente)
 
 
 @pytest.mark.parametrize(
@@ -391,8 +389,6 @@ def test_la_regex_floja_se_come_el_id_de_gbv_y_la_buena_no():
 def test_las_motos_se_publican_con_cero_de_relleno(patente):
     """Así aparecen en GBV: `moto-robo-desde-via-publica-rgt012-6760`."""
     assert patente_valida(patente) == patente
-    # Y no son autos: la regex mínima no las acepta.
-    assert not PATENTE_AUTO_CL.fullmatch(patente)
 
 
 def test_una_moto_sin_cero_es_la_misma_patente():

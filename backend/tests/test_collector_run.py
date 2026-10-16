@@ -128,6 +128,34 @@ class TestTrazabilidad:
         assert result.rejected == 2
         assert result.status is CollectorStatus.PARTIAL
 
+    async def test_lo_que_el_filtro_deja_fuera_no_es_partial(self) -> None:
+        """Una fuente nacional descarta en cada corrida lo que cae fuera de la
+        región. Si eso marcara `partial`, todas sus corridas lo serían y el estado
+        dejaría de avisar cuando de verdad se pierden filas."""
+
+        class _ConFiltro(_Stub):
+            def normalize(self, records: Sequence[Any]) -> list[EventCreate]:
+                self.exclude(len(records) - len(self._events))
+                return self._events
+
+        collector = _ConFiltro(records=[1, 2, 3], events=[_evento("a")])
+        result = await collector.run()
+
+        assert (result.excluded, result.rejected) == (2, 0)
+        assert result.status is CollectorStatus.SUCCESS
+
+    async def test_un_rechazo_sigue_siendo_partial_aunque_haya_exclusiones(self) -> None:
+        class _ConFiltroYRechazo(_Stub):
+            def normalize(self, records: Sequence[Any]) -> list[EventCreate]:
+                self.exclude(1)
+                return self._events
+
+        collector = _ConFiltroYRechazo(records=[1, 2, 3], events=[_evento("a")])
+        result = await collector.run()
+
+        assert (result.excluded, result.rejected) == (1, 1)
+        assert result.status is CollectorStatus.PARTIAL
+
     async def test_las_advertencias_degradan_a_partial_y_se_persisten(self) -> None:
         """Una degradación no fatal no puede quedar sólo en los logs.
 
@@ -244,3 +272,38 @@ class TestCadencia:
             assert all(runner._next_delay(4) >= 5.0 for _ in range(100))
         finally:
             settings.COLLECTOR_JITTER_RATIO = original
+
+
+class _SesionQueAnota:
+    """Sesión mínima: guarda la sentencia y simula el conteo de filas."""
+
+    def __init__(self) -> None:
+        self.sentencia: Any = None
+        self.commits = 0
+
+    async def execute(self, sentencia: Any) -> Any:
+        self.sentencia = sentencia
+        return type("Resultado", (), {"rowcount": 7})()
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+
+async def test_la_poda_borra_solo_lo_mas_viejo_que_la_retencion(monkeypatch) -> None:
+    from sqlalchemy.dialects import postgresql
+
+    from app.core.config import settings
+    from app.services.ingest_service import IngestService
+
+    monkeypatch.setattr(settings, "COLLECTOR_RUNS_RETENTION_DAYS", 30)
+    sesion = _SesionQueAnota()
+    ahora = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
+
+    borradas = await IngestService(sesion).purge_runs(now=ahora)  # type: ignore[arg-type]
+
+    sql = sesion.sentencia.compile(
+        dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+    )
+    assert borradas == 7 and sesion.commits == 1
+    assert "DELETE FROM alertav.collector_runs" in str(sql)
+    assert "started_at < '2026-09-16 12:00:00+00:00'" in str(sql)

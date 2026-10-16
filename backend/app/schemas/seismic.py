@@ -87,5 +87,3 @@ class SeismicEventRead(BaseModel):
     @classmethod
     def from_row(cls, row: Any) -> SeismicEventRead:
         return cls.model_validate(row, from_attributes=True)
-
-

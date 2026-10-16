@@ -42,6 +42,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.collectors.geoservices import as_float, parse_timestamp, request_json
+from app.collectors.weather import cuota
 from app.core.config import settings
 from app.core.exceptions import CollectorError
 from app.core.identidad import user_agent
@@ -177,6 +178,7 @@ async def fetch_grid(
     client: httpx.AsyncClient | None = None,
 ) -> list[float | None]:
     """Pide la grilla entera, lote por lote. Sube `CollectorError` si algo falla."""
+    cuota.verificar("open-meteo grilla", now=now)
     points = grid.points()
     batches = chunks(points, settings.RAIN_GRID_CHUNK_SIZE)
     values: list[float | None] = []
@@ -203,7 +205,13 @@ async def fetch_grid(
                 "cell_selection": "nearest",
                 "models": settings.OPENMETEO_MODEL,
             }
-            payload = await request_json(http, settings.OPENMETEO_URL, params, origin=origin)
+            try:
+                payload = await request_json(
+                    http, settings.OPENMETEO_URL, params, origin=origin
+                )
+            except CollectorError as exc:
+                cuota.registrar(exc, now=now)
+                raise
             values.extend(
                 parse_chunk(
                     payload,

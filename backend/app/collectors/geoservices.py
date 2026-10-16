@@ -482,13 +482,23 @@ def raise_if_service_error(payload: Mapping[str, Any], *, origin: str) -> None:
 # --- Transporte HTTP ---------------------------------------------------------
 
 
-#: Techo de la espera que un `Retry-After` puede imponernos, en segundos.
-#:
-#: Un servidor puede pedir una hora y hay que poder no dársela: la corrida vive
-#: dentro de una tarea del runner, y dormir ahí bloquea la cadencia entera de esa
-#: fuente. Cinco minutos son suficientes para respetar la intención del portal y
-#: poco para que la corrida siga cabiendo dentro de su propio ciclo.
-_MAX_RETRY_AFTER_SECONDS = 300.0
+def _motivo_del_rechazo(response: httpx.Response) -> str | None:
+    """El motivo que la fuente da para un 429, si lo da.
+
+    Open-Meteo responde `{"error": true, "reason": "Daily API request limit
+    exceeded..."}`: el motivo distingue el límite por minuto, por hora y por día,
+    que se atienden distinto (ver `collectors/weather/cuota.py`).
+    """
+    try:
+        payload = response.json()
+    except ValueError:
+        texto = response.text.strip()
+        return texto[:200] or None
+    if isinstance(payload, dict):
+        motivo = payload.get("reason") or payload.get("message") or payload.get("error")
+        if isinstance(motivo, str) and motivo.strip():
+            return motivo.strip()[:200]
+    return None
 
 
 def _retry_after_seconds(response: httpx.Response) -> float | None:
@@ -627,6 +637,7 @@ async def request_response(
                 # mensaje no ayudaba a elegir.
                 if status_code == 429:
                     espera_pedida = _retry_after_seconds(exc.response)
+                    motivo = _motivo_del_rechazo(exc.response)
                     logger.warning(
                         "la fuente pidió bajar el ritmo",
                         extra={
@@ -642,11 +653,13 @@ async def request_response(
                             f"; Retry-After: {espera_pedida:.0f}s"
                             if espera_pedida is not None
                             else " y no indicó Retry-After"
-                        ),
+                        )
+                        + (f" ({motivo})" if motivo else ""),
                         detail={
                             "url": url,
                             "status": status_code,
                             "retry_after_s": espera_pedida,
+                            "motivo": motivo,
                         },
                     ) from exc
 

@@ -804,7 +804,6 @@ class IncidentRepository:
         )
         return incidentes
 
-
     # -- Paso B: alertas sin geometría ---------------------------------------
 
     async def vigent_alerts(
@@ -1136,7 +1135,6 @@ class IncidentRepository:
         )
         return (await self.session.execute(stmt)).scalars().all()
 
-
     async def get_by_code(self, code: str) -> Incident | None:
         stmt = select(Incident).where(Incident.code == code)
         return (await self.session.execute(stmt)).scalar_one_or_none()
@@ -1144,7 +1142,6 @@ class IncidentRepository:
     async def get_by_public_id(self, public_id: UUID) -> Incident | None:
         stmt = select(Incident).where(Incident.public_id == public_id)
         return (await self.session.execute(stmt)).scalar_one_or_none()
-
 
     async def links_with_events(
         self, incident_id: int

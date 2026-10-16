@@ -2,9 +2,7 @@
 
 Se ejecuta el DDL explícito en vez de `op.create_table` porque el esquema usa
 tres cosas que el autogenerate de Alembic no reproduce fielmente: columnas
-GENERATED ... STORED, índices parciales y expresiones GiST combinadas. El SQL
-de esta migración es idéntico a `sql/001_schema.sql`, que queda como
-documentación legible del modelo.
+GENERATED ... STORED, índices parciales y expresiones GiST combinadas.
 
 Revision ID: 0001_initial_schema
 Revises:

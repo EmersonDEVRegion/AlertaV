@@ -1,8 +1,8 @@
 """Enumeraciones de dominio.
 
 La mayoría de estos valores deben coincidir exactamente con los tipos ENUM de
-PostgreSQL definidos en `sql/001_schema.sql`. Agregar un valor requiere una
-migración con `ALTER TYPE ... ADD VALUE`.
+PostgreSQL que crean las migraciones de `migrations/versions/`. Agregar un valor
+requiere una migración con `ALTER TYPE ... ADD VALUE`.
 
 Las excepciones —`ConfidenceLevel`, `SOURCE_BASE_CONFIDENCE`, `INCIDENT_FAMILY`—
 no son columnas: son vocabulario derivado. Viven acá porque `app.schemas` y

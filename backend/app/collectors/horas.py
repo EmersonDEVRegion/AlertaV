@@ -61,10 +61,6 @@ class HoraDeclarada:
     #: lectura sin volver a correr el extractor sobre el texto completo.
     fragmento: str
 
-    @property
-    def es_estimacion(self) -> bool:
-        return self.precision is not Precision.EXACTA
-
 
 def _plano(texto: str) -> str:
     """Minúsculas y sin tildes. La prensa escribe «madrugada» y «Madrugada»."""

@@ -203,7 +203,7 @@ async def list_events(
         sources=source,
         types=type,
         min_confidence=min_confidence,
-        bbox=_parse_bbox(bbox),
+        bbox=parse_bbox(bbox),
         near=_parse_near(lat, lon, radius_m),
         limit=limit,
         offset=offset,
@@ -699,11 +699,6 @@ async def get_event(public_id: UUID, service: IngestServiceDep) -> EventRead:
 
 
 # --- helpers -----------------------------------------------------------------
-
-
-#: El parseo vive en `app.api.v1.params` desde que los incidentes también
-#: aceptan bbox. Se conserva el alias para no romper importaciones existentes.
-_parse_bbox = parse_bbox
 
 
 def _parse_near(

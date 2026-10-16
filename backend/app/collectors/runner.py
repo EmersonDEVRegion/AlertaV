@@ -86,6 +86,9 @@ logger = logging.getLogger("alertav.runner")
 #: segundo tras un reinicio.
 _STARTUP_JITTER = 0.25
 
+#: Cada cuánto se podan las corridas viejas de `collector_runs`.
+_PODA_INTERVALO_S = 6 * 3600
+
 
 def _next_delay(interval: int) -> float:
     """Espera hasta el próximo ciclo, con dispersión.
@@ -303,6 +306,22 @@ async def _rain_grid_loop(intervalo: int) -> None:
     logger.info("grilla de lluvia detenida")
 
 
+async def _poda_loop(intervalo: int) -> None:
+    """Borra las corridas más viejas que `COLLECTOR_RUNS_RETENTION_DAYS`."""
+    if not await sleep_unless_stopped(random.uniform(60, 300)):
+        return
+    while not is_shutting_down():
+        try:
+            async with AsyncSessionLocal() as session:
+                borradas = await IngestService(session).purge_runs()
+            if borradas:
+                logger.info("corridas viejas podadas", extra={"borradas": borradas})
+        except Exception:
+            logger.exception("no se pudieron podar las corridas viejas")
+        if not await sleep_unless_stopped(intervalo):
+            break
+
+
 async def run_loop(
     names: Sequence[str] | None,
     interval: int | None = None,
@@ -324,6 +343,8 @@ async def run_loop(
     # Con la misma regla que el inbox: sólo al correr todos los collectors.
     if con_inbox and settings.RAIN_GRID_ENABLED:
         tareas.append(_rain_grid_loop(settings.RAIN_GRID_POLL_INTERVAL_SECONDS))
+    if con_inbox:
+        tareas.append(_poda_loop(_PODA_INTERVALO_S))
     await asyncio.gather(*tareas)
     logger.info("runner detenido")
 

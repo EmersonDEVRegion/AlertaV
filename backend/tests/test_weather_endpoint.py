@@ -507,5 +507,3 @@ def test_el_estado_tactico_ignora_las_filas_comunales(cliente):
     client, _ = cliente([fila(VALPO, [9.0, 9.0, 9.0], ahora=ahora)])
 
     assert client.get(f"{BASE}/tactical").json()["observado_en"] is None
-
-

@@ -93,11 +93,11 @@ def test_una_hora_imposible_no_pasa():
 def test_la_franja_nunca_se_presenta_como_exacta():
     """«Durante la tarde» no es un instante y el sistema no puede fingir que sí.
 
-    `es_estimacion` es lo que la ficha usa para no mostrar «14:00» a secas
-    cuando lo único que dijo la nota fue «por la tarde».
+    La precisión es lo que permite no mostrar «14:00» a secas cuando lo único
+    que dijo la nota fue «por la tarde».
     """
-    assert parse_hora_declarada("En la tarde.").es_estimacion is True
-    assert parse_hora_declarada("A las 14:30 horas.").es_estimacion is False
+    assert parse_hora_declarada("En la tarde.").precision is not Precision.EXACTA
+    assert parse_hora_declarada("A las 14:30 horas.").precision is Precision.EXACTA
 
 
 # =============================================================================
@@ -134,7 +134,7 @@ def test_en_hora_punta_la_ventana_es_mas_larga():
     punta = estimar("Av. España", local(18, 20))
 
     assert fuera is not None and punta is not None
-    assert punta.duracion > fuera.duracion
+    assert punta.duracion_min > fuera.duracion_min
     assert punta.en_punta is True and fuera.en_punta is False
 
 

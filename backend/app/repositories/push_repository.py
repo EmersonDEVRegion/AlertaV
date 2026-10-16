@@ -235,7 +235,6 @@ class PushRepository:
         )
         return result.first() is not None
 
-
     # -- Qué avisar -----------------------------------------------------------
 
     async def recent_active_incidents(self, *, since: datetime) -> Sequence[Incident]:

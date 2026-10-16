@@ -201,12 +201,6 @@ class SeismicDetail(Base):
         # USGS usa cadenas alfanuméricas, así que hoy no colisionarían — pero
         # depender de esa casualidad sería construir sobre una coincidencia.
         Index("uq_seismic_details_provider_event", "provider", "usgs_id", unique=True),
-        # El filtro real del operador: "los sismos fuertes, primero los recientes".
-        Index(
-            "ix_seismic_details_magnitude",
-            sa_text("magnitude DESC NULLS LAST"),
-        ),
-        Index("ix_seismic_details_depth_km", "depth_km"),
         {"schema": _SCHEMA},
     )
 

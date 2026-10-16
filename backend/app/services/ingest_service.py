@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -77,7 +78,6 @@ class IngestService:
             collapsed=outcome.collapsed_count,
         )
 
-
     async def ingest_citizen_report(
         self,
         report: CitizenReportCreate,
@@ -137,6 +137,17 @@ class IngestService:
         return max(pendientes) if pendientes else None
 
     # -- Trazabilidad de collectors -----------------------------------------
+
+    async def purge_runs(self, *, now: datetime | None = None) -> int:
+        """Borra las corridas más viejas que `COLLECTOR_RUNS_RETENTION_DAYS`."""
+        limite = (now or datetime.now(UTC)) - timedelta(
+            days=settings.COLLECTOR_RUNS_RETENTION_DAYS
+        )
+        resultado = await self.session.execute(
+            delete(CollectorRun).where(CollectorRun.started_at < limite)
+        )
+        await self.session.commit()
+        return int(resultado.rowcount or 0)
 
     async def start_run(
         self, *, source: EventSource, collector: str, params: dict[str, Any]

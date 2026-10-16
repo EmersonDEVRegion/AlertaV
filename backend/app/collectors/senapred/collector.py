@@ -242,6 +242,7 @@ class SenapredCollector(BaseCollector):
 
         for feature in records:
             if not matches_region(feature, mapping):
+                self.exclude()
                 continue
 
             timestamp = resolve_timestamp(

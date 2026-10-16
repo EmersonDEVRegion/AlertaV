@@ -472,8 +472,6 @@ def test_los_alias_de_los_workers_apuntan_al_modulo_central() -> None:
 
     assert prensa.es_emergencia is vocabulary.es_emergencia
     assert prensa.clasificar_noticia is vocabulary.clasificar_noticia
-    assert prensa._VERBOS_TITULAR is vocabulary.HEADLINE_VERBS
-    assert prensa._RUIDO_PRENSA is vocabulary.PRESS_NOISE_PHRASES
 
     assert bomberos.find_codes is vocabulary.find_codes
     assert bomberos.matches_key is vocabulary.matches_key

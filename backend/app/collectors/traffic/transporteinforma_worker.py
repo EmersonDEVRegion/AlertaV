@@ -294,6 +294,7 @@ def _restore_abbreviations(value: str | None) -> str | None:
     restored = value.replace(_ABBREV_SENTINEL, ".").strip(" ,")
     return restored or None
 
+
 #: Comunas de la V Región. Sirven para separar ciudad de calle cuando el aviso
 #: las mezcla en la misma frase. No pretende ser exhaustiva: es la lista de las
 #: que aparecen en los avisos de tránsito.
@@ -319,8 +320,6 @@ _KNOWN_CITIES: tuple[str, ...] = (
     "quintero",
     "puchuncavi",
 )
-
-_DEFAULT_REGION = "Región de Valparaíso"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1018,7 +1017,6 @@ async def resolver_avisos(
                 streets = {**streets, PENDIENTE_GEOCODIFICACION: True}
 
             resolved.append((notice, tipo, streets, point))
-
 
     return ResumenResolucion(
         resueltos=resolved,

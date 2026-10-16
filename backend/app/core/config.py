@@ -211,6 +211,10 @@ class Settings(BaseSettings):
     #: memoria (512 MB) y CPU (0,1 vCPU). Quien espera no pierde su turno: sólo
     #: se atrasa unos segundos, y la dispersión de arriba ya los separa.
     COLLECTOR_MAX_CONCURRENCY: int = Field(default=4, ge=1, le=20)
+    #: Días que se guardan las filas de `collector_runs`. Cada collector escribe
+    #: una por corrida (~1000 al día entre todos); `/collectors/health` sólo mira
+    #: las últimas, y un mes alcanza para diagnosticar una fuente.
+    COLLECTOR_RUNS_RETENTION_DAYS: int = Field(default=30, ge=1, le=365)
 
     # -- NASA FIRMS ----------------------------------------------------------
     FIRMS_MAP_KEY: str = ""

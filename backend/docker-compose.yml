@@ -1,8 +1,8 @@
-# PostGIS + Redis para desarrollo local.
-# Redis todavía no se usa; queda listo para la cola del correlation engine.
+# PostGIS para desarrollo local, con la misma versión mayor que producción
+# (Supabase: PostgreSQL 17). El esquema lo crea `alembic upgrade head`.
 services:
   db:
-    image: postgis/postgis:16-3.4
+    image: postgis/postgis:17-3.5
     container_name: alertav-db
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-alertav}
@@ -18,14 +18,5 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    container_name: alertav-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - alertav_redisdata:/data
-
 volumes:
   alertav_pgdata:
-  alertav_redisdata:

@@ -54,5 +54,3 @@ class SeismicService:
             offset=offset,
         )
         return [SeismicEventRead.from_row(row) for row in rows]
-
-

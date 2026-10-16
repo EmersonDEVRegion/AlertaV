@@ -63,7 +63,6 @@ class SeismicRepository:
         result = await self.session.execute(stmt)
         return len(result.fetchall())
 
-
     # -- Lectura para el mapa -------------------------------------------------
 
     async def list_seismic(

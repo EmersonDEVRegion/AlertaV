@@ -278,7 +278,6 @@ class Incident(Base):
             postgresql_where=sa_text("status IN ('active', 'controlled')"),
         ),
         Index("ix_incidents_status_last_seen", "status", sa_text("last_seen_at DESC")),
-        Index("ix_incidents_commune", "commune"),
         Index("ix_incidents_merged_into_id", "merged_into_id"),
         {"schema": _SCHEMA},
     )

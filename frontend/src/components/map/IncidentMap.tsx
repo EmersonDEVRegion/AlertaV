@@ -194,7 +194,6 @@ const TOUCH_ZOOM_ROTATE = { around: 'center' } as const
 const GEOLOCATE_OPTIONS = { enableHighAccuracy: true } as const
 const SEISMIC_ICON_COLOR = MAGNITUDE_COLOR_EXPRESSION as unknown as ExpressionSpecification
 
-
 type WithFilter = { filter?: FilterSpecification }
 
 /**

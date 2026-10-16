@@ -98,4 +98,3 @@ async def news_feed(
     limit: Annotated[int, Query(ge=1, le=200)] = 60,
 ) -> NewsFeedResponse:
     return await service.feed(horas=horas, limit=limit)
-
