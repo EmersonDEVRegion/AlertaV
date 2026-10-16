@@ -1146,11 +1146,13 @@ class Settings(BaseSettings):
     #: Con varias esquinas posibles en la comuna, la más cercana al punto de
     #: Nominatim gana sólo si está a menos de esto.
     CRUCES_DESEMPATE_M: float = Field(default=1500.0, ge=100.0, le=20_000.0)
-    #: De dónde se baja el índice: el release `osm-cruces-*` que publica el
+    #: De dónde se baja el índice: el release fijo `osm-cruces` que renueva el
     #: workflow mensual del repositorio. Ver `app.services.osm_cruces_service`.
     OSM_CRUCES_REPO: str = "EmersonDEVRegion/AlertaV"
+    OSM_CRUCES_RELEASE: str = "osm-cruces"
     OSM_CRUCES_ASSET: str = "osm_cruces.csv.gz"
-    #: Cada cuánto se revisa si hay un release nuevo. Revisar es una petición.
+    OSM_CRUCES_META: str = "osm_cruces.json"
+    #: Cada cuánto se revisa si hay un índice nuevo. Revisar es bajar 1 KB.
     OSM_CRUCES_POLL_SECONDS: int = Field(default=21_600, ge=600, le=604_800)
     #: Un índice con menos filas que esto se rechaza: un extracto roto no puede
     #: reemplazar a uno bueno.

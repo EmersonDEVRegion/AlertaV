@@ -11,7 +11,7 @@ uno (la clave de búsqueda) y las comunas a menos de ~100 m. `osm_cruces.json`:
 fecha de los datos y cantidad de filas.
 
 Lo corre cada mes `.github/workflows/osm-cruces.yml`, que publica los dos
-archivos como release `osm-cruces-AAAA-MM-DD`. Los workers de Render lo bajan y
+archivos en el release fijo `osm-cruces`. Los workers de Render lo bajan y
 lo cargan a `alertav.osm_cruces` (`app/services/osm_cruces_service.py`).
 
 Por qué así

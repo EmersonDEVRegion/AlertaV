@@ -56,7 +56,7 @@ class OsmIndice(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False, default=1)
-    #: Etiqueta del release de GitHub («osm-cruces-2026-10-16»).
+    #: `generado_en` del JSON del release: cuándo se armó el índice.
     version: Mapped[str] = mapped_column(String(80), nullable=False)
     #: Fecha de los datos de OSM (la del extracto de Geofabrik).
     datos_de: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
