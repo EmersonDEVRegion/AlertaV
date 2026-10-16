@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import gzip
 import io
 
+import httpx
 import pytest
+import respx
 
 from app.collectors.traffic import gemini
 from app.services import osm_cruces_service as svc
@@ -48,28 +51,58 @@ def test_los_alias_de_ambas_vias_dan_todas_las_combinaciones():
 # --- El release ------------------------------------------------------------------
 
 
-def test_se_elige_el_release_mas_nuevo_con_el_archivo():
-    releases = [
-        {"tag_name": "v1.0", "assets": [{"name": "osm_cruces.csv.gz", "browser_download_url": "x"}]},
-        {
-            "tag_name": "osm-cruces-2026-10-03-0717",
-            "body": "Índice…\n\ndatos_de: 2026-10-02T20:21:02Z\nfilas: 1",
-            "assets": [{"name": "osm_cruces.csv.gz", "browser_download_url": "https://a/oct"}],
-        },
-        {
-            "tag_name": "osm-cruces-2026-11-03-0717",
-            "draft": True,
-            "assets": [{"name": "osm_cruces.csv.gz", "browser_download_url": "https://a/nov"}],
-        },
-        {"tag_name": "osm-cruces-2026-09-03-0717", "assets": [{"name": "otro.txt"}]},
-    ]
-    assert svc.ultimo_release(releases) == (
-        "osm-cruces-2026-10-03-0717",
-        "https://a/oct",
-        "2026-10-02T20:21:02Z",
+def test_la_version_sale_del_json_del_release():
+    meta = {"filas": 90317, "datos_de": "2026-10-15T20:21:00Z", "generado_en": "2026-10-16T17:07:20+00:00"}
+    assert svc.version_de(meta) == ("2026-10-16T17:07:20+00:00", "2026-10-15T20:21:00Z")
+    assert svc.version_de({"filas": 1}) is None
+    assert svc.version_de(["no", "es", "un", "objeto"]) is None
+    assert svc.url_de("osm_cruces.json") == (
+        "https://github.com/EmersonDEVRegion/AlertaV/releases/download/osm-cruces/osm_cruces.json"
     )
-    assert svc.ultimo_release([]) is None
-    assert svc.ultimo_release({"message": "rate limited"}) is None
+
+
+class _SesionSinBase:
+    """Lo justo para `refrescar` cuando no llega a cargar nada."""
+
+    def __init__(self, version):
+        self.version = version
+        self.rollbacks = 0
+
+    async def execute(self, *_):
+        version = self.version
+
+        class _R:
+            def scalar_one_or_none(self):
+                return version
+
+        return _R()
+
+    async def rollback(self):
+        self.rollbacks += 1
+
+
+@respx.mock
+def test_al_dia_no_baja_el_indice():
+    respx.get(svc.url_de("osm_cruces.json")).mock(
+        return_value=httpx.Response(200, json={"generado_en": "v1", "datos_de": None})
+    )
+    csv_ruta = respx.get(svc.url_de("osm_cruces.csv.gz"))
+    assert asyncio.run(svc.refrescar(_SesionSinBase("v1"))) == svc.AL_DIA
+    assert not csv_ruta.called
+
+
+@respx.mock
+def test_sin_release_no_es_un_error():
+    respx.get(svc.url_de("osm_cruces.json")).mock(return_value=httpx.Response(404))
+    assert asyncio.run(svc.refrescar(_SesionSinBase(None))) == svc.SIN_RELEASE
+
+
+@respx.mock
+def test_un_json_roto_se_rechaza():
+    respx.get(svc.url_de("osm_cruces.json")).mock(return_value=httpx.Response(200, text="<html>"))
+    sesion = _SesionSinBase(None)
+    assert asyncio.run(svc.refrescar(sesion)) == svc.RECHAZADO
+    assert sesion.rollbacks == 1
 
 
 def comprimir(filas: list[list[str]], encabezado=svc.COLUMNAS) -> bytes:

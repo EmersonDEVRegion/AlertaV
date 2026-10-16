@@ -1,14 +1,17 @@
-"""Carga el índice de cruces de OSM desde el release mensual del repositorio.
+"""Carga el índice de cruces de OSM desde el release del repositorio.
 
 El índice lo arma `scripts/osm_cruces.py` en GitHub Actions
-(`.github/workflows/osm-cruces.yml`) y lo publica como release
-`osm-cruces-AAAA-MM-DD` con el archivo `osm_cruces.csv.gz`. Los workers
-revisan cada `OSM_CRUCES_POLL_SECONDS` si hay uno más nuevo que el cargado
-(`osm_indice.version`) y, si lo hay, lo bajan y reemplazan la tabla entera.
+(`.github/workflows/osm-cruces.yml`) y lo deja en el release fijo
+`osm-cruces`, con `osm_cruces.csv.gz` y `osm_cruces.json` (fecha de los datos
+y filas). Los workers revisan cada `OSM_CRUCES_POLL_SECONDS` el JSON —1 KB— y,
+si su `generado_en` no es el cargado (`osm_indice.version`), bajan el CSV y
+reemplazan la tabla entera.
 
-Así no hace falta darle a GitHub la contraseña de la base: el workflow sólo
-publica un archivo público, y quien escribe en la base es el backend, que ya
-tiene la conexión.
+Se baja por la URL pública de descarga del release y **no por la API de
+GitHub**: la API sin autenticar permite 60 peticiones por hora por IP, y la IP
+de salida de Render es compartida (respondía 403 «rate limit exceeded» a la
+primera). Tampoco hace falta darle a GitHub la contraseña de la base: el
+workflow sólo publica archivos, y quien escribe en la base es el backend.
 
 Reemplazar es todo o nada, dentro de una transacción: quien busca un cruce
 mientras se carga ve el índice anterior hasta el `COMMIT`. Un archivo con
@@ -35,7 +38,6 @@ from app.core.identidad import nominatim_user_agent
 
 logger = logging.getLogger(__name__)
 
-PREFIJO_RELEASE = "osm-cruces-"
 COLUMNAS = ("nodo", "lat", "lon", "nombre_a", "nombre_b", "ultima_a", "ultima_b", "comunas")
 
 #: Estados de una revisión, para el log.
@@ -49,40 +51,20 @@ class IndiceInvalidoError(ValueError):
     """El archivo del release no sirve: columnas, filas o tamaño."""
 
 
-def ultimo_release(releases: Any) -> tuple[str, str, str | None] | None:
-    """`(etiqueta, url_del_archivo, fecha_de_los_datos)` del release más nuevo."""
-    candidatos = []
-    for release in releases if isinstance(releases, list) else []:
-        etiqueta = str(release.get("tag_name") or "")
-        if not etiqueta.startswith(PREFIJO_RELEASE) or release.get("draft") or release.get(
-            "prerelease"
-        ):
-            continue
-        archivo = next(
-            (
-                a
-                for a in release.get("assets") or []
-                if a.get("name") == settings.OSM_CRUCES_ASSET and a.get("browser_download_url")
-            ),
-            None,
-        )
-        if archivo is None:
-            continue
-        candidatos.append((etiqueta, str(archivo["browser_download_url"]), release.get("body")))
-    if not candidatos:
+def url_de(archivo: str) -> str:
+    """URL pública de un archivo del release del índice."""
+    return (
+        f"https://github.com/{settings.OSM_CRUCES_REPO}/releases/download/"
+        f"{settings.OSM_CRUCES_RELEASE}/{archivo}"
+    )
+
+
+def version_de(meta: Any) -> tuple[str, str | None] | None:
+    """`(version, datos_de)` del JSON del release, o None si no sirve."""
+    if not isinstance(meta, dict) or not meta.get("generado_en"):
         return None
-    # Las etiquetas llevan la fecha ISO: el orden de texto es el cronológico.
-    etiqueta, url, cuerpo = max(candidatos, key=lambda c: c[0])
-    return etiqueta, url, _fecha_de_datos(cuerpo)
-
-
-def _fecha_de_datos(cuerpo: Any) -> str | None:
-    """La línea `datos_de: …` que el workflow escribe en la descripción."""
-    for linea in str(cuerpo or "").splitlines():
-        if linea.strip().lower().startswith("datos_de:"):
-            valor = linea.split(":", 1)[1].strip()
-            return valor or None
-    return None
+    datos_de = meta.get("datos_de")
+    return str(meta["generado_en"]), str(datos_de) if datos_de else None
 
 
 Fila = tuple[int, float, float, str, str, str, str, list[str]]
@@ -194,27 +176,27 @@ async def reemplazar(
 
 
 async def refrescar(session: AsyncSession, *, client: httpx.AsyncClient | None = None) -> str:
-    """Carga el release más nuevo si no es el que ya está. Devuelve el estado."""
+    """Carga el índice del release si no es el que ya está. Devuelve el estado."""
     propio = client is None
     client = client or httpx.AsyncClient(
-        timeout=60.0,
-        follow_redirects=True,
-        headers={"User-Agent": nominatim_user_agent(), "Accept": "application/vnd.github+json"},
+        timeout=60.0, follow_redirects=True, headers={"User-Agent": nominatim_user_agent()}
     )
     try:
-        respuesta = await client.get(
-            f"https://api.github.com/repos/{settings.OSM_CRUCES_REPO}/releases",
-            params={"per_page": 20},
-        )
-        respuesta.raise_for_status()
-        ultimo = ultimo_release(respuesta.json())
-        if ultimo is None:
+        respuesta = await client.get(url_de(settings.OSM_CRUCES_META))
+        if respuesta.status_code == 404:
             return SIN_RELEASE
-        version, url, datos_de = ultimo
+        respuesta.raise_for_status()
+        try:
+            leida = version_de(respuesta.json())
+        except ValueError:
+            leida = None
+        if leida is None:
+            raise IndiceInvalidoError("el JSON del release no trae generado_en")
+        version, datos_de = leida
         if await version_cargada(session) == version:
             return AL_DIA
 
-        archivo = await client.get(url, headers={"Accept": "application/octet-stream"})
+        archivo = await client.get(url_de(settings.OSM_CRUCES_ASSET))
         archivo.raise_for_status()
         if len(archivo.content) > settings.OSM_CRUCES_MAX_BYTES:
             raise IndiceInvalidoError(f"pesa {len(archivo.content)} bytes")
@@ -243,7 +225,6 @@ __all__ = [
     "AL_DIA",
     "CARGADO",
     "COLUMNAS",
-    "PREFIJO_RELEASE",
     "RECHAZADO",
     "SIN_RELEASE",
     "Fila",
@@ -251,6 +232,7 @@ __all__ = [
     "iterar_filas",
     "reemplazar",
     "refrescar",
-    "ultimo_release",
+    "url_de",
     "version_cargada",
+    "version_de",
 ]

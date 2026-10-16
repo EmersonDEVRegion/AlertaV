@@ -1,7 +1,7 @@
 name: osm-cruces
 
 # Arma cada mes el índice de cruces de calles de la Región de Valparaíso desde
-# el extracto de Chile de Geofabrik y lo publica como release `osm-cruces-*`.
+# el extracto de Chile de Geofabrik y lo deja en el release fijo `osm-cruces`.
 # Los workers de Render lo bajan solos (app/services/osm_cruces_service.py):
 # este workflow no necesita ni toca la base.
 
@@ -40,12 +40,14 @@ jobs:
           ls -lh "$RUNNER_TEMP/chile.osm.pbf"
       - name: Índice de cruces
         run: python -m scripts.osm_cruces --pbf "$RUNNER_TEMP/chile.osm.pbf" --salida dist
-      - name: Release
+      - name: Release fijo «osm-cruces»
+        # Un solo release que se renueva: el backend lo baja por su URL pública
+        # de descarga y no por la API de GitHub, que limita a 60 peticiones por
+        # hora por IP (y la de Render es compartida).
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          etiqueta="osm-cruces-$(date -u +%Y-%m-%d-%H%M)"
           filas=$(python -c "import json;print(json.load(open('dist/osm_cruces.json'))['filas'])")
           datos=$(python -c "import json;print(json.load(open('dist/osm_cruces.json'))['datos_de'] or '')")
           {
@@ -57,13 +59,10 @@ jobs:
             echo "Datos © OpenStreetMap contributors, bajo licencia ODbL 1.0"
             echo "(https://www.openstreetmap.org/copyright). Extracto de Geofabrik."
           } > "$RUNNER_TEMP/notas.md"
-          gh release create "$etiqueta" dist/osm_cruces.csv.gz dist/osm_cruces.json \
-            --title "Índice de cruces OSM ${etiqueta#osm-cruces-}" \
-            --notes-file "$RUNNER_TEMP/notas.md" --latest=false
-      - name: Dejar sólo los tres releases más nuevos
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release list --limit 50 --json tagName --jq '.[].tagName' \
-            | grep '^osm-cruces-' | sort -r | tail -n +4 \
-            | xargs -r -n1 gh release delete --cleanup-tag --yes
+          if gh release view osm-cruces > /dev/null 2>&1; then
+            gh release upload osm-cruces dist/osm_cruces.csv.gz dist/osm_cruces.json --clobber
+            gh release edit osm-cruces --notes-file "$RUNNER_TEMP/notas.md"
+          else
+            gh release create osm-cruces dist/osm_cruces.csv.gz dist/osm_cruces.json \
+              --title "Índice de cruces OSM" --notes-file "$RUNNER_TEMP/notas.md" --latest=false
+          fi
