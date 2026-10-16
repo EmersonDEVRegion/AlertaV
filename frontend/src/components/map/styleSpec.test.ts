@@ -93,7 +93,7 @@ function buildStyle(): StyleSpecification {
 
   // El círculo de incertidumbre interpola en base 2 sobre el zoom con una
   // expresión de datos en cada tope: la forma que el validador vigila.
-  for (const layer of [uncertaintyLayer, alertHaloLayer, casingLayer, coreLayer]) {
+  for (const layer of [uncertaintyLayer('INC-2026-00001'), alertHaloLayer, casingLayer, coreLayer]) {
     layers.push({ ...layer, source: 'incidents' } as LayerSpecification)
   }
 

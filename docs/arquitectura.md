@@ -267,9 +267,9 @@ esquina. Por eso el punto se resuelve en este orden
    (`precision = "street"`), y **el sector solo** si no hay calle.
 
 Overpass queda como respaldo apagado (`OVERPASS_ENABLED`): desde Render fallaba
-casi siempre. La PWA dibuja un círculo de incertidumbre según la precisión
-(60 m en un cruce, 300 m sobre una calle, 600 m en un sector; ninguno con
-Viper).
+casi siempre. La PWA dibuja, sólo en el incidente abierto y sin relleno, un
+círculo de incertidumbre según la precisión (60 m en un cruce, 200 m sobre una
+calle, 600 m en un sector; ninguno con Viper).
 
 ### Vínculo por sector
 

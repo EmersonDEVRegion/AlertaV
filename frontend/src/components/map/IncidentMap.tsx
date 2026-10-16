@@ -234,6 +234,16 @@ const SelectedIncidentLayer = memo(function SelectedIncidentLayer({
   return <Layer {...spec} source={source} />
 })
 
+/** El círculo de incertidumbre del incidente abierto. Ver `uncertaintyLayer`. */
+const SelectedUncertaintyLayer = memo(function SelectedUncertaintyLayer({
+  source,
+  families,
+}: SourceChild & { families: FilterSpecification }) {
+  const code = useSelectedIncidentCode()
+  const spec = useMemo(() => withFamilies(uncertaintyLayer(code), families), [code, families])
+  return <Layer {...spec} source={source} />
+})
+
 const SelectedOutageLayer = memo(function SelectedOutageLayer({
   source,
   theme,
@@ -548,7 +558,6 @@ export const IncidentMap = memo(function IncidentMap({
   // cambia esa prop, no en cada render.
   const incidentSpecs = useMemo(
     () => ({
-      uncertainty: withFamilies(uncertaintyLayer, families),
       halo: withFamilies(alertHaloLayer, families),
       casing: withFamilies(casingLayer, families),
       core: withFamilies(coreLayer, families),
@@ -752,7 +761,7 @@ export const IncidentMap = memo(function IncidentMap({
         data={data}
         promoteId="code"
       >
-        <Layer {...incidentSpecs.uncertainty} />
+        <SelectedUncertaintyLayer families={families} />
         <Layer {...incidentSpecs.halo} />
         <Layer {...incidentSpecs.casing} />
         {/*
