@@ -18,7 +18,6 @@ from app.collectors.power.cge_worker import CgeCollector
 from app.collectors.power.chilquinta_worker import ChilquintaCollector
 from app.collectors.seismic.sismologia_worker import SismologiaCollector
 from app.collectors.senapred.collector import SenapredCollector
-from app.collectors.traffic.transporteinforma_worker import TransporteInformaCollector
 from app.collectors.usgs.collector import UsgsCollector
 from app.collectors.vehicles.gbv_worker import GbvCollector
 from app.collectors.water.esval_worker import EsvalCollector
@@ -88,17 +87,11 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     # construirse y lo dice en `collector_runs`.
     EsvalCollector.name: EsvalCollector,
     # -- Accidentes viales ----------------------------------------------------
-    # Transporte Informa emite `type=accident` y queda aislado de la familia
-    # `fire` por la partición del motor. No arranca sin su URL configurada: si
-    # falta, el constructor lanza y el runner deja una corrida `failed` visible
-    # en `collector_runs` en vez de fallar en silencio.
-    #
-    # Los despachos de Bomberos NO pasan por acá: entran por
-    # `POST /api/v1/apify/webhook`, que los encola en `collector_runs` y los
-    # procesa el bucle del inbox de este mismo runner (ver `run_loop`). Su
-    # decodificación vive en las funciones libres de
-    # `app/collectors/traffic/bomberos_10_4_worker.py`.
-    TransporteInformaCollector.name: TransporteInformaCollector,
+    # Ninguno corre desde acá. Los despachos de Bomberos y los tuits de
+    # @TTIValparaiso entran por `POST /api/v1/apify/webhook`, que los encola en
+    # `collector_runs` y los procesa el bucle del inbox de este mismo runner
+    # (ver `run_loop`). El portal de Transporte Informa se retiró: nunca leyó
+    # un aviso (ver `traffic/transporteinforma_worker.py`).
     # -- Meteorología ---------------------------------------------------------
     # La única capa que habla del futuro: emite `weather_observation`, que está
     # FUERA de `CORRELATABLE_EVENT_TYPES` y pesa 0 en `confidence.py`. No crea

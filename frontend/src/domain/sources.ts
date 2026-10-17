@@ -71,8 +71,8 @@ export const SOURCE_GROUPS: readonly SourceGroup[] = [
     sources: [
       {
         name: 'Transporte Informa (MTT)',
-        url: 'https://valparaiso.transporteinforma.cl/estado-de-la-movilidad/',
-        what: 'Accidentes, desvíos y cortes de tránsito, también desde @TTIValparaiso en X.',
+        url: 'https://x.com/TTIValparaiso',
+        what: 'Accidentes, desvíos, pistas ocupadas y reaperturas, desde @TTIValparaiso en X.',
       },
       {
         name: 'Vialidad (MOP)',

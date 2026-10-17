@@ -306,3 +306,108 @@ def test_los_retuits_del_mtt_no_entran(entrega):
     respx.get(ITEMS_URL).mock(return_value=httpx.Response(200, json=[rt]))
     asyncio.run(svc.process_dataset(DATASET_ID, payload_apify()))
     assert ServicioTransito.instancias == []
+
+
+# --- Lo que @TTIValparaiso publicó del 15 al 17-10-2026 -------------------------
+#
+# 24 tuits capturados por el Task de Apify; se reconocían 2. Los textos son los
+# reales, recortados.
+
+
+@pytest.mark.parametrize(
+    ("texto", "esperado"),
+    [
+        (
+            "Precaución (08:46) Vehículo en panne en Hermanos Clark pasado Avenida Argentina, "
+            "#LosAndes, se mantiene ocupando pista izquierda en dirección al centro.",
+            EventType.ROAD_CLOSURE,
+        ),
+        (
+            "Ahora (17:06) Bus en panne en pista central de Av. España, altura Caleta Abarca, "
+            "en dirección a #ViñadelMar",
+            EventType.ROAD_CLOSURE,
+        ),
+        (
+            "Actualización (12:24) Grupo de personas avanza por Arlegui y Puente Libertad, "
+            "#ViñaDelMar, en dirección a Uno Norte. Se mantiene inhabilitada la calzada.",
+            EventType.ROAD_CLOSURE,
+        ),
+        (
+            "Actualización (12:34) Grupo de personas avanza por Av Libertad, #ViñaDelMar, en "
+            "dirección al norte. Se mantienen ocupada ambas pistas y flujo vehicular detenido.",
+            EventType.ROAD_CLOSURE,
+        ),
+        (
+            "Precaución (13:07) Trabajos en calle Limache con El Álamo, #ViñaDelMar, mantienen "
+            "ocupada pista derecha en dirección a la costa.",
+            EventType.ROAD_CLOSURE,
+        ),
+        (
+            "Precaución (11:07) Siniestro vial en Avenida España al llegar a Reloj de Flores, "
+            "#ViñaDelMar. Vehículos involucrados permanecen ocupando pista.",
+            EventType.ACCIDENT,
+        ),
+        (
+            "Ahora (07:55) Tránsito normal y fluido en Av Errázuriz, #Valparaíso, tanto en "
+            "dirección a Playa Ancha, como en dirección a Nudo Barón.",
+            None,
+        ),
+        ("Ahora (13:02) Tránsito lento en Av Alessandri, #ViñaDelMar.", None),
+        ("¡BUENOS DÍAS! #BuenViernes 16 de octubre de 2026. Recomendamos revisar…", None),
+    ],
+)
+def test_los_tuits_reales_del_mtt_se_clasifican(texto, esperado):
+    clasificados, _ = tx.clasificar(
+        [
+            tx.aviso_de_tuit(
+                texto=texto, identificador="1", publicado=None, cuenta="TTIValparaiso", url=None
+            )
+        ]
+    )
+    assert (clasificados[0][1] if clasificados else None) is esperado
+
+
+def test_la_reapertura_no_es_un_aviso_nuevo():
+    reapertura = tx.aviso_de_tuit(
+        texto="Actualización (12:59) Habilitado tránsito vehicular en Avenida Libertad, "
+        "#ViñaDelMar, en ambos sentidos. Tránsito normal y fluido.",
+        identificador="2",
+        publicado=None,
+        cuenta="TTIValparaiso",
+        url=None,
+    )
+    tras_choque = tx.aviso_de_tuit(
+        texto="Se habilita el tránsito tras accidente en Ruta 68, km 99.",
+        identificador="3",
+        publicado=None,
+        cuenta="TTIValparaiso",
+        url=None,
+    )
+    clasificados, _ = tx.clasificar([reapertura, tras_choque])
+    assert clasificados == []
+    assert tx.reaperturas([reapertura, tras_choque]) == [reapertura, tras_choque]
+
+
+def test_una_via_que_nunca_se_cerro_no_es_reapertura():
+    aviso = tx.aviso_de_tuit(
+        texto="Actualización (12:11) Grupo de personas permanece en calle Arlegui pasado "
+        "calle Quillota, #ViñaDelMar. Se mantiene habilitada para tránsito vehicular.",
+        identificador="4",
+        publicado=None,
+        cuenta="TTIValparaiso",
+        url=None,
+    )
+    assert tx.reaperturas([aviso]) == []
+
+
+@pytest.mark.parametrize(
+    ("calles", "ciudad", "otras", "otra_ciudad", "cierra"),
+    [
+        (["Avenida Libertad"], "Viña del Mar", ["Av. Libertad", "Uno Norte"], "Viña del Mar", True),
+        (["Avenida España"], "Valparaíso", ["Avenida España"], "Viña del Mar", False),
+        (["Avenida Libertad"], None, ["Libertad"], "Viña del Mar", True),
+        (["Avenida Libertad"], "Viña del Mar", ["Arlegui"], "Viña del Mar", False),
+    ],
+)
+def test_la_reapertura_cierra_la_misma_via(calles, ciudad, otras, otra_ciudad, cierra):
+    assert tx.cierra(calles, ciudad, otras, otra_ciudad) is cierra

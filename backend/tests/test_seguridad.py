@@ -86,7 +86,7 @@ def test_con_el_token_correcto_pasa(cliente, monkeypatch):
     [
         ("get", "/api/v1/collectors"),
         ("get", "/api/v1/collectors/runs"),
-        ("post", "/api/v1/collectors/transporte_informa/run"),
+        ("post", "/api/v1/collectors/conaf_incendios/run"),
         ("post", "/api/v1/collectors/backfill-geocoding"),
         ("post", "/api/v1/incidents/correlate"),
         # Moderación de comentarios ciudadanos.

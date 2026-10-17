@@ -2,12 +2,10 @@
 
 Por qué existe
 --------------
-TransporteInforma Región de Valparaíso, el canal del MTT, publica en dos
-lugares: el portal que lee `transporte_informa` y su cuenta de X. El portal
-arrastra avisos de semanas; la cuenta es el canal fresco. La cuenta viaja en el
-mismo Task de Apify que
-las centrales de Bomberos, así que sus tuits llegan mezclados en la misma
-entrega del webhook.
+TransporteInforma Región de Valparaíso, el canal del MTT, publica al día en su
+cuenta de X (su portal casi no se actualiza y dejó de leerse). La cuenta viaja
+en el mismo Task de Apify que las centrales de Bomberos, así que sus tuits
+llegan mezclados en la misma entrega del webhook.
 
 Lo que NO se hace
 -----------------
@@ -26,11 +24,20 @@ Gemini y Nominatim con sus topes) y `eventos_de_avisos`. Entran como
 propia, `transporte_informa_x`, para que su salud se lea aparte de la de
 Bomberos.
 
-El `external_id` es `mtt:x:<id del tuit>` (o `mtt:closure:x:<id>`): un espacio
-propio, que no choca con los avisos del portal. Si el MTT publica el mismo
-choque en los dos canales, el motor los junta en un incidente por cercanía, y
-el decaimiento de la regla de `transporte_informa` impide que se corroboren a
-sí mismos.
+El `external_id` es `mtt:x:<id del tuit>` (o `mtt:closure:x:<id>`). Si el MTT
+publica dos veces el mismo choque, el motor los junta por cercanía y el
+decaimiento de la regla de `transporte_informa` impide que se corroboren a sí
+mismos.
+
+Reaperturas
+-----------
+«Habilitado tránsito en Avenida Libertad» no es un aviso nuevo: es el MTT
+cerrando uno suyo. `es_reapertura` se consulta antes que el accidente (un
+«Habilitado tránsito tras accidente en …» no es un choque nuevo), no emite
+señal, y marca con `_mtt_fin` los avisos del MTT de las últimas
+`REAPERTURA_VENTANA` que nombran alguna de sus calles en la misma ciudad. La capa
+de cortes de ruta deja de mostrarlos, y el incidente de un choque conserva la
+hora en que el MTT liberó el paso.
 
 La ceguera (el Actor que deja de traer la cuenta) se mide en el canario de
 Bomberos: @TTIValparaiso está en `APIFY_X_CUENTAS_ESPERADAS`.
@@ -45,19 +52,29 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from sqlalchemy import select, update
+
+from app.collectors.geoservices import normalise_text
 from app.collectors.traffic.transporteinforma_worker import (
     TrafficNotice,
     eventos_de_avisos,
     external_id_de,
+    extract_streets_via_llm,
     resolver_avisos,
 )
-from app.collectors.vocabulary import clasificar_transito
+from app.collectors.vocabulary import clasificar_transito, es_reapertura
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
+from app.core.nombres_via import nombres_calzan
 from app.models.enums import CollectorStatus, EventSource, EventType
+from app.models.event import RawEvent
 from app.services.ingest_service import IngestService
 
 logger = logging.getLogger(__name__)
+
+#: Cuánto hacia atrás busca una reapertura el aviso que cierra. Un corte por una
+#: marcha o un choque se despeja en horas; uno de días lo publica el MOP.
+REAPERTURA_VENTANA = timedelta(hours=12)
 
 #: Nombre de la corrida en `collector_runs` (y de `raw_data._collector`).
 COLLECTOR_NAME = "transporte_informa_x"
@@ -133,13 +150,91 @@ def clasificar(
     """Accidentes primero (compiten por el mismo cupo de Gemini y Nominatim).
 
     Devuelve los clasificados y cuántos se descartaron por no ser ni accidente
-    ni intervención de la vía.
+    ni intervención de la vía. Las reaperturas no entran: ver `reaperturas`.
     """
     clasificados = [
-        (aviso, tipo) for aviso in avisos if (tipo := clasificar_transito(aviso.text)) is not None
+        (aviso, tipo)
+        for aviso in avisos
+        if not es_reapertura(aviso.text) and (tipo := clasificar_transito(aviso.text)) is not None
     ]
     clasificados.sort(key=lambda par: par[1] is not EventType.ACCIDENT)
     return clasificados, len(avisos) - len(clasificados)
+
+
+def reaperturas(avisos: Sequence[TrafficNotice]) -> list[TrafficNotice]:
+    """Los tuits que avisan que una vía volvió a abrirse."""
+    return [aviso for aviso in avisos if es_reapertura(aviso.text)]
+
+
+def calles_de(extraccion: dict[str, Any] | None) -> tuple[list[str], str | None]:
+    """Calles y ciudad de una extracción (`street_1`, `street_2`, `city`)."""
+    if not extraccion:
+        return [], None
+    calles = [
+        str(extraccion.get(campo) or "").strip()
+        for campo in ("street_1", "street_2")
+        if str(extraccion.get(campo) or "").strip()
+    ]
+    ciudad = str(extraccion.get("city") or "").strip() or None
+    return calles, ciudad
+
+
+def cierra(
+    calles: Sequence[str],
+    ciudad: str | None,
+    otras_calles: Sequence[str],
+    otra_ciudad: str | None,
+) -> bool:
+    """¿La reapertura habla de la misma vía que el aviso? Una calle en común y,
+    si las dos dicen la ciudad, la misma: «Avenida España» hay en Valparaíso y en
+    Viña del Mar."""
+    if ciudad and otra_ciudad and normalise_text(ciudad) != normalise_text(otra_ciudad):
+        return False
+    return any(nombres_calzan(a, b) or nombres_calzan(b, a) for a in calles for b in otras_calles)
+
+
+async def cerrar_reabiertos(
+    session: Any, reapertura: TrafficNotice, extraccion: dict[str, Any] | None, *, ahora: datetime
+) -> int:
+    """Marca con `_mtt_fin` los avisos del MTT que esta reapertura cierra."""
+    calles, ciudad = calles_de(extraccion)
+    if not calles:
+        return 0
+    hora = reapertura.published_at or ahora
+    filas = (
+        await session.execute(
+            select(RawEvent.id, RawEvent.raw_data)
+            .where(RawEvent.source == EventSource.TRANSPORTE_INFORMA)
+            .where(RawEvent.type.in_([EventType.ACCIDENT, EventType.ROAD_CLOSURE]))
+            .where(RawEvent.timestamp >= hora - REAPERTURA_VENTANA)
+            .where(RawEvent.timestamp <= hora)
+        )
+    ).all()
+    cerrados = []
+    for fila in filas:
+        datos = fila.raw_data or {}
+        if "_mtt_fin" in datos:
+            continue
+        otras, otra_ciudad = calles_de(datos.get("_extraction"))
+        if cierra(calles, ciudad, otras, otra_ciudad):
+            cerrados.append(fila.id)
+    for evento_id in cerrados:
+        await session.execute(
+            update(RawEvent)
+            .where(RawEvent.id == evento_id)
+            .values(
+                raw_data=RawEvent.raw_data.op("||")(
+                    {
+                        "_mtt_fin": {
+                            "hora": hora.isoformat(),
+                            "texto": reapertura.text[:300],
+                            "url": (reapertura.raw or {}).get("url"),
+                        }
+                    }
+                )
+            )
+        )
+    return len(cerrados)
 
 
 async def procesar_avisos_transito(
@@ -184,6 +279,8 @@ async def procesar_avisos_transito(
                 ]
                 viejos = len(avisos) - len(frescos)
                 clasificados, descartados = clasificar(frescos)
+                abiertas = reaperturas(frescos)
+                descartados -= len(abiertas)
 
                 claves = [external_id_de(aviso, tipo) for aviso, tipo in clasificados]
                 conocidos = await service.repo.puntos_conocidos(
@@ -210,6 +307,15 @@ async def procesar_avisos_transito(
                 resultado = await service.ingest_batch(eventos) if eventos else None
                 insertados = resultado.inserted if resultado else 0
                 duplicados = resultado.duplicated if resultado else 0
+
+                # Después de ingerir: el corte que esta misma entrega trajo
+                # también puede ser el que la reapertura cierra.
+                cerrados = 0
+                for aviso in abiertas:
+                    extraccion = await extract_streets_via_llm(aviso.text)
+                    cerrados += await cerrar_reabiertos(session, aviso, extraccion, ahora=momento)
+                if abiertas:
+                    await session.commit()
 
                 notas = list(dict.fromkeys(avisos_degradados))
                 if viejos:
@@ -240,6 +346,8 @@ async def procesar_avisos_transito(
                         "tuits": len(avisos),
                         "viejos": viejos,
                         "descartados": descartados,
+                        "reaperturas": len(abiertas),
+                        "avisos_cerrados": cerrados,
                         "accidentes": accidentes,
                         "cortes_de_via": len(resumen.resueltos) - accidentes,
                         "reutilizados": resumen.reutilizados,
@@ -273,11 +381,16 @@ async def procesar_avisos_transito(
 
 __all__ = [
     "COLLECTOR_NAME",
+    "REAPERTURA_VENTANA",
     "aviso_de_tuit",
+    "calles_de",
+    "cerrar_reabiertos",
+    "cierra",
     "clasificar",
     "cuentas_transito",
     "es_cuenta_transito",
     "es_fresco",
     "limpiar_texto",
     "procesar_avisos_transito",
+    "reaperturas",
 ]

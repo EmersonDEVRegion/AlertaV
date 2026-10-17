@@ -206,6 +206,53 @@ async def buscar(
     return agrupar(_clasificar(filas, calle_1, calle_2), settings.CRUCES_AGRUPAR_M)
 
 
+async def puntos_de_calle(
+    calle: str | None, comunas: Sequence[str | None], *, separacion_m: float, maximo: int
+) -> list[tuple[float, float]]:
+    """Esquinas de una calle en la comuna, separadas al menos `separacion_m`.
+
+    Para el despacho que nombra una sola calle («Calle La Jarilla», «Ocho de
+    Julio»): sin transversal no hay cruce que buscar, pero las esquinas de esa
+    calle la recorren entera y sirven de semillas para buscar la imagen de
+    Viper a lo largo de ella. Se toman de norte a sur y se espacian para no
+    pedir dos veces los mismos mosaicos. `[]` si la calle no está o es más
+    larga que `maximo` semillas (una ruta o una avenida que cruza la comuna:
+    buscar en toda ella gastaría el tope diario de mosaicos).
+    """
+    if not settings.CRUCES_LOCALES_ENABLED:
+        return []
+    calle = sin_numeracion(calle)
+    normalizadas = sorted({normalise_text(c) for c in comunas if c and str(c).strip()})
+    ultima = ultima_palabra(calle)
+    if not calle or not normalizadas or not ultima:
+        return []
+    try:
+        from app.core.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            resultado = await session.execute(
+                _CONSULTA, {"comunas": normalizadas, "ultimas": [ultima]}
+            )
+            filas = [(str(a), str(b), float(lat), float(lon)) for a, b, lat, lon, _ in resultado]
+    except Exception as exc:
+        logger.warning(
+            "no se pudo consultar el índice de cruces para una calle",
+            extra={"error": f"{type(exc).__name__}: {exc}"},
+        )
+        return []
+
+    puntos = sorted(
+        (lat, lon)
+        for a, b, lat, lon in filas
+        if nombres_calzan(calle, a) or nombres_calzan(calle, b)
+    )
+    semillas: list[tuple[float, float]] = []
+    for punto in sorted(puntos, reverse=True):
+        if all(distancia_m(punto, otra) >= separacion_m for otra in semillas):
+            semillas.append(punto)
+    return semillas if len(semillas) <= maximo else []
+
+
 def comuna_de(cruce: CruceLocal, pedidas: Sequence[str | None]) -> str | None:
     """La primera comuna pedida que la esquina tiene, con su nombre tal como vino."""
     for comuna in pedidas:
@@ -232,4 +279,5 @@ __all__ = [
     "buscar",
     "comuna_de",
     "mas_cercano",
+    "puntos_de_calle",
 ]

@@ -50,13 +50,14 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from app.collectors import osm_tiles
+from app.collectors import cruces_locales, osm_tiles
 from app.collectors.geoservices import normalise_text
 from app.collectors.lugares import comuna_por_nombre
 from app.collectors.nominatim import (
     PRECISION_ADDRESS,
     PRECISION_DISPATCH,
     PRECISION_INTERSECTION,
+    PRECISION_STREET,
     GeocodeResult,
     build_client,
     geocode,
@@ -366,6 +367,12 @@ async def _ubicar_uno(
             if calce is not None:
                 return replace(dispatch, point=resultado(calce, previo, url, None)), False
 
+    if previo is None:
+        # Una sola calle y sin punto: se busca a lo largo de ella.
+        a_lo_largo = await _por_la_calle(client, mapa, dispatch, url)
+        if a_lo_largo is not None:
+            return a_lo_largo, False
+
     if not leer_encabezado:
         return dispatch, False
 
@@ -388,6 +395,43 @@ async def _ubicar_uno(
     # Sin calce, al menos la comuna correcta: el punto nuevo reemplaza al de la
     # comuna equivocada.
     return replace(dispatch, point=nuevo), True
+
+
+async def _por_la_calle(
+    client: httpx.AsyncClient, mapa: Any, dispatch: Dispatch, url: str
+) -> Dispatch | None:
+    """El despacho de una sola calle, ubicado buscando su imagen a lo largo de ella.
+
+    Sin transversal, ni el índice ni Nominatim dan un punto, y sin punto no hay
+    dónde empezar a buscar: la imagen, que tiene el lugar exacto, se perdía.
+    Las esquinas de la calle en la comuna (`cruces_locales.puntos_de_calle`)
+    hacen de semillas, cada una con el radio corto.
+    """
+    calles = dict(dispatch.decoded or {})
+    calle = calles.get("street_1")
+    if not calle or calles.get("street_2"):
+        return None
+    from app.collectors.traffic.bomberos_10_4_worker import comuna_de_handle
+
+    comuna = dispatch.commune or calles.get("city") or comuna_de_handle(dispatch.cuenta)
+    semillas = await cruces_locales.puntos_de_calle(
+        calle,
+        [comuna],
+        separacion_m=settings.VIPER_RADIO_M * 1.6,
+        maximo=settings.VIPER_SEMILLAS_POR_CALLE,
+    )
+    for semilla in semillas:
+        calce = await calzar(client, mapa, semilla, settings.VIPER_RADIO_M)
+        if calce is not None:
+            base = GeocodeResult(
+                lat=semilla[0],
+                lon=semilla[1],
+                provider="osm_local",
+                precision=PRECISION_STREET,
+                comuna=comuna,
+            )
+            return replace(dispatch, point=resultado(calce, base, url, None))
+    return None
 
 
 async def ubicar_por_imagen(

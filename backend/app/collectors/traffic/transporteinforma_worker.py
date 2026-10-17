@@ -52,11 +52,11 @@ camino produjo cada señal queda en `raw_data._extraction.mode`.
 
 Dos capas, no una
 -----------------
-El portal publica dos clases de aviso y este collector emite las dos, con tipos
+El MTT publica dos clases de aviso y esta tubería emite las dos, con tipos
 distintos:
 
 * **`ACCIDENT`** — el siniestro. Correlacionable, familia `traffic`, se une con
-  Waze y con los despachos de Bomberos.
+  los despachos de Bomberos.
 * **`ROAD_CLOSURE`** — la capa táctica: desvíos, faenas, cortes y restricciones.
   **NO correlacionable.** No genera incidentes, no mueve confianzas y no se
   agrupa con nada; existe para superponerse en el mapa.
@@ -72,38 +72,21 @@ Quién decide cuál es cuál: `vocabulary.clasificar_transito`, con reglas
 deterministas y consultando el accidente primero — casi todo choque produce un
 desvío, así que el orden inverso archivaría siniestros como faenas.
 
-Cadencia y trato con la fuente
-------------------------------
-**Una tarea propia dentro del proceso de workers, cada 600 s.** No es un cronjob
-aparte y no va acoplado al ciclo de la prensa local; el porqué de las tres
-opciones está en el docstring de `app/collectors/runner.py`.
+De dónde llegan los avisos
+--------------------------
+De la cuenta de X @TTIValparaiso, por el webhook de Apify
+(`app/collectors/traffic/transito_x.py`). Este módulo es la tubería que esa
+cuenta usa: clasificar, extraer, geocodificar y emitir.
 
-Sobre el riesgo de bloqueo, que es la pregunta real detrás de la cadencia: la
-carga que este collector pone sobre el MTT es **un GET por ciclo**, 144 al día
-—menos que una persona revisando el portal en el almuerzo—, y ampliarlo a la
-capa táctica no la cambió en nada, porque lo que creció es lo que se hace con el
-HTML *después* de traerlo. Bajar la frecuencia habría pagado con lo único que
-esta fuente aporta —ser el canal oficial más rápido— a cambio de reducir un
-volumen que ya era despreciable.
+El portal `valparaiso.transporteinforma.cl` también se leyó, cada 10 minutos,
+hasta octubre de 2026. Se retiró: en 3 481 corridas (19-09 al 17-10-2026) no
+leyó ningún aviso, y el portal publicaba unos 4 en dos meses y medio. La cuenta
+de X es el canal que el MTT mantiene al día.
 
-Lo que sí expone a un bloqueo, y es donde se trabajó:
-
-* **El patrón.** Una petición cada 600 s exactos es una firma de bot más
-  reconocible que cualquier volumen. La dispersa `COLLECTOR_JITTER_RATIO` en el
-  runner, que además desalinea a este collector de la prensa local (600 y 900
-  comparten período 1800: coincidían cada media hora).
-* **El 429.** Se trataba como un 4xx cualquiera: fallaba al instante y el ciclo
-  siguiente volvía a pedir como si nada. Es el comportamiento que convierte un
-  aviso recuperable en una IP vetada. Hoy `geoservices.request_response` respeta
-  `Retry-After`.
-* **La identidad.** UA propio con el nombre del proyecto y un contacto, en vez
-  del de Nominatim que usaba antes. A un scraper identificado le piden bajar el
-  ritmo; a uno anónimo le bloquean la IP.
-
-El cuello de botella real de la corrida no es el MTT sino **Nominatim**, que es
-el servicio genuinamente limitado (1 req/s global, compartido con la prensa
+El cuello de botella de una corrida no es el MTT sino **Nominatim**, el
+servicio genuinamente limitado (1 req/s global, compartido con la prensa
 local). Por eso el presupuesto de geocodificación se gasta con los accidentes
-primero: ver el bloque de prioridad en `fetch()`.
+primero.
 
 Confianza
 ---------
@@ -124,28 +107,18 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
-from bs4 import BeautifulSoup, Tag
-
-from app.collectors.base import BaseCollector
-from app.collectors.geoservices import normalise_text, parse_timestamp, request_text
+from app.collectors.geoservices import normalise_text
 from app.collectors.nominatim import GeocodeResult, build_client, geocode
 from app.collectors.traffic import gemini
 from app.collectors.vocabulary import (
-    ACCIDENT_TERMS,
-    ROAD_OPS_TERMS,
-    clasificar_transito,
     es_accidente_vial,
     es_operacion_vial,
 )
-from app.core.config import settings
-from app.core.exceptions import CollectorError
-from app.core.identidad import user_agent_o
 from app.models.enums import EventSource, EventType
 from app.schemas.event import EventCreate
 
@@ -375,10 +348,10 @@ def texto_md5(texto: str) -> str:
 def reutilizable(previo: Any, texto: str) -> bool:
     """¿El aviso ya está guardado con el mismo texto y su extracción completa?
 
-    Es el delta que faltaba en esta fuente. Un aviso vive en el portal horas o
-    días, y en cada corrida —144 al día— volvía a pagar Gemini y Nominatim. Se
-    reutiliza lo guardado salvo que el texto haya cambiado o que la corrida que
-    lo guardó se haya quedado sin cupo para él (ver `PENDIENTE_*`).
+    El mismo tuit llega en varias entregas seguidas del webhook, y cada una
+    volvería a pagar Gemini y Nominatim. Se reutiliza lo guardado salvo que el
+    texto haya cambiado o que la corrida que lo guardó se haya quedado sin cupo
+    para él (ver `PENDIENTE_*`).
     """
     if previo is None or previo.texto_md5 != texto_md5(texto):
         return False
@@ -634,270 +607,6 @@ def _split_trailing_city(value: str) -> tuple[str | None, str | None]:
     return (value, None)
 
 
-# --- Ingesta -----------------------------------------------------------------
-
-
-def parse_notice(payload: Any) -> TrafficNotice | None:
-    """Normaliza un elemento estructurado. None si no trae texto aprovechable.
-
-    Se conserva aunque el portal se lea como HTML: si el MTT publica alguna vez
-    un JSON o un RSS, el mapeo ya está y sólo cambia de dónde salen los dicts.
-    """
-    if not isinstance(payload, Mapping):
-        return None
-
-    text = ""
-    for key in ("text", "titulo", "title", "descripcion", "description", "mensaje"):
-        value = payload.get(key)
-        if value and str(value).strip():
-            text = str(value).strip()
-            break
-    if not text:
-        return None
-
-    notice_id = ""
-    for key in ("id", "uuid", "guid", "link", "url"):
-        value = payload.get(key)
-        if value and str(value).strip():
-            notice_id = str(value).strip()
-            break
-
-    published_at = None
-    for key in ("published_at", "fecha", "date", "pubDate", "created_at"):
-        if payload.get(key) is not None:
-            published_at = parse_timestamp(payload.get(key))
-            if published_at is not None:
-                break
-
-    if not notice_id:
-        notice_id = hashlib.sha256(text.encode("utf-8")).hexdigest()[:24]
-
-    return TrafficNotice(
-        notice_id=notice_id, text=text, published_at=published_at, raw=dict(payload)
-    )
-
-
-# --- Scraping del portal -----------------------------------------------------
-#
-# transporteinforma.cl es un WordPress con Elementor. No hay API, no hay RSS y
-# no hay clases semánticas: los avisos viven en `<article>` o, más
-# frecuentemente, en `<div class="elementor-widget-container">`, que es un
-# contenedor de maquetación usado para absolutamente todo — menús, pies de
-# página, banners.
-#
-# Por eso la selección tiene dos etapas y no una:
-#
-#   1. **Estructura**: se recogen los bloques candidatos por etiqueta y clase.
-#      Es una red amplia y trae mucha basura.
-#   2. **Contenido**: sobrevive el bloque cuyo texto contiene una palabra clave
-#      de tránsito. Es lo que separa un aviso de emergencia del menú de
-#      navegación, y es mucho más estable frente a rediseños que cualquier
-#      selector CSS: Elementor renumera sus clases en cada edición de la página,
-#      pero "Accidente" seguirá diciéndose "Accidente".
-#
-# La tercera etapa —decidir si el aviso es un *siniestro*— NO es de este bloque.
-# "Restricción vehicular" y "Tránsito suspendido" son palabras clave válidas
-# porque marcan un aviso de tránsito, pero no son accidentes; esa distinción la
-# hace `extract_streets_via_llm` con `is_accident`.
-
-#: Selectores donde el portal publica sus avisos, en orden de especificidad.
-#:
-#: `div.card--state` es el del portal **actual** (rediseño de 2026) y el único
-#: que devuelve algo hoy: cada tarjeta es un aviso con ubicación, categoría
-#: —`Incidentes` o `Trabajos`—, fecha, descripción y enlace al detalle.
-#:
-#: Los dos siguientes son del portal anterior, construido con Elementor. Se
-#: conservan a propósito aunque hoy no encuentren nada: el rediseño llegó
-#: primero a Valparaíso y otras regiones pueden seguir con la maqueta vieja, y
-#: un selector que no empareja no cuesta nada. Si dentro de un año siguen sin
-#: usarse, se borran.
-_BLOCK_SELECTORS: tuple[str, ...] = (
-    "div.card--state",
-    "article",
-    "div.elementor-widget-container",
-    # Respaldo: si Elementor desaparece en un rediseño, los avisos casi siempre
-    # quedan en algún contenedor con estas clases genéricas de WordPress.
-    "div.entry-content",
-    "div.post-content",
-)
-
-#: Iconos tipográficos que **contaminan el texto** si se extrae a lo bruto.
-#:
-#: El portal usa Material Symbols, que funcionan por ligadura: el nombre del
-#: icono va como texto dentro de la etiqueta y la fuente lo dibuja. En pantalla
-#: se ve un pin; en el HTML dice `<i class="material-symbols-rounded">location_on</i>`,
-#: y un `get_text()` normal produce «location_on Av. España» en vez de
-#: «Av. España».
-#:
-#: No es cosmético. Ese texto es lo que se manda al LLM para extraer calles y lo
-#: que se guarda en `raw_data`: un nombre de icono metido en medio de una
-#: dirección empeora la geocodificación y queda archivado como si la fuente lo
-#: hubiera escrito.
-_ICON_CLASS_PREFIX = "material-"
-
-#: Marcadores propios de la MAQUETA del portal, no del idioma.
-#:
-#: El portal nuevo **etiqueta** cada tarjeta con `Categoría: Incidentes` o
-#: `Categoría: Trabajos`: es la propia fuente diciendo de qué habla, y eso vale
-#: más que adivinar por vocabulario. Entran en singular porque la comparación es
-#: por subcadena y así cubren las dos formas.
-#:
-#: Viven acá y NO en `vocabulary.py` por la regla de ese archivo: allá va lo que
-#: significan las palabras, acá lo que sabe este portal. "Categoría: Trabajos"
-#: no quiere decir nada en un titular de diario.
-_PORTAL_MARKERS: tuple[str, ...] = (
-    "incidente",
-    "trabajos",
-    "precaucion",
-)
-
-#: Palabras que delatan un aviso de tránsito. Se comparan sin tildes y en
-#: minúsculas, así que "Precaución" y "PRECAUCION" entran igual.
-#:
-#: Es la **red gruesa**: separa un aviso de tránsito del menú de navegación y del
-#: pie de página. NO decide si hay un siniestro ni si hay un corte — de eso se
-#: encarga `clasificar_transito` más adelante, y por eso acá conviene pasarse de
-#: ancho antes que quedarse corto.
-#:
-#: Se deriva del vocabulario compartido en vez de escribirse a mano: una lista
-#: propia se queda corta. Sin "desvío" ni "faena" en la red gruesa, un aviso de
-#: desvío no llega siquiera a ser un bloque candidato, y ninguna clasificación
-#: posterior puede rescatarlo.
-TRAFFIC_KEYWORDS: tuple[str, ...] = tuple(
-    sorted(set(ACCIDENT_TERMS) | set(ROAD_OPS_TERMS) | set(_PORTAL_MARKERS))
-)
-
-#: Un bloque más corto que esto es una etiqueta suelta ("Accidente") sin
-#: información; más largo, es la página entera capturada por un contenedor
-#: padre. Ninguno de los dos es un aviso.
-_MIN_BLOCK_CHARS = 25
-_MAX_BLOCK_CHARS = 1200
-
-
-def _es_icono(tag: Any) -> bool:
-    """¿Esta etiqueta es un icono tipográfico? Ver `_ICON_CLASS_PREFIX`."""
-    clases = getattr(tag, "get", lambda *_: None)("class") or ()
-    return any(str(clase).startswith(_ICON_CLASS_PREFIX) for clase in clases)
-
-
-def _block_text(node: Tag) -> str:
-    """Texto **visible** de un nodo, con los espacios normalizados.
-
-    Visible de verdad: se saltan las ligaduras de los iconos, que un
-    `get_text()` normal incluiría. Ver `_ICON_CLASS_PREFIX` para por qué eso
-    importa más de lo que parece.
-
-    Se recorren las cadenas en vez de eliminar los `<i>` del árbol porque el
-    árbol es compartido —el mismo `soup` alimenta varias pasadas— y arrancarle
-    nodos a mitad de camino haría que el resultado dependiera del orden en que
-    se llame a esta función.
-    """
-    partes = [
-        str(cadena)
-        for cadena in node.find_all(string=True)
-        if not _es_icono(cadena.parent)
-    ]
-    return " ".join(" ".join(partes).split())
-
-
-def matched_keywords(text: str) -> list[str]:
-    """Palabras clave de tránsito presentes en un texto."""
-    haystack = normalise_text(text)
-    return [word for word in TRAFFIC_KEYWORDS if word in haystack]
-
-
-def _candidate_blocks(soup: BeautifulSoup) -> Iterator[Tag]:
-    for selector in _BLOCK_SELECTORS:
-        yield from soup.select(selector)
-
-
-def _deduplicate(blocks: Sequence[str]) -> list[str]:
-    """Se queda con los bloques más específicos de cada anidamiento.
-
-    Elementor anida contenedores dentro de contenedores: el mismo aviso aparece
-    en el `<div>` que lo contiene, en su padre y en el padre de su padre. Sin
-    esto, un solo accidente entraría tres veces al sistema y el motor lo leería
-    como tres corroboraciones independientes del mismo hecho — inflando su
-    confianza con evidencia que es una sola.
-
-    Se ordena de más corto a más largo y se descarta todo bloque que contenga
-    íntegramente a otro ya aceptado: el hijo gana, el padre se va.
-    """
-    kept: list[str] = []
-    for text in sorted(set(blocks), key=len):
-        if any(inner in text for inner in kept):
-            continue
-        kept.append(text)
-    return kept
-
-
-def parse_notices(html: str) -> list[TrafficNotice]:
-    """Extrae los avisos de tránsito del HTML del portal. Función pura.
-
-    Devuelve lista vacía si la página no trae ningún bloque reconocible. Esa
-    ambigüedad —¿no hay avisos o cambió el DOM?— la resuelve `page_looks_broken`,
-    que se consulta aparte.
-    """
-    soup = BeautifulSoup(html, "lxml")
-
-    texts = [
-        text
-        for block in _candidate_blocks(soup)
-        if _MIN_BLOCK_CHARS <= len(text := _block_text(block)) <= _MAX_BLOCK_CHARS
-        and matched_keywords(text)
-    ]
-
-    notices: list[TrafficNotice] = []
-    for text in _deduplicate(texts):
-        notices.append(
-            TrafficNotice(
-                notice_id=hashlib.sha256(text.encode("utf-8")).hexdigest()[:24],
-                text=text,
-                published_at=extract_datetime(text),
-                raw={"keywords": matched_keywords(text), "origen": "html"},
-            )
-        )
-    return notices
-
-
-def page_looks_broken(html: str) -> tuple[bool, str | None]:
-    """¿La página cambió de estructura? Devuelve `(rota, motivo)`.
-
-    Distingue lo que un `len(notices) == 0` confunde: una jornada sin incidentes
-    —normal y silenciosa— de un rediseño que dejó el scraper ciego. Se mira si
-    existen los contenedores; que estén vacíos de palabras clave es información
-    legítima, que no existan es una alarma.
-    """
-    soup = BeautifulSoup(html, "lxml")
-    if not soup.find("body"):
-        return (True, "la respuesta no parece HTML")
-
-    bloques = sum(1 for _ in _candidate_blocks(soup))
-    if bloques == 0:
-        return (
-            True,
-            "no se encontró ningún bloque <article> ni .elementor-widget-container",
-        )
-    return (False, None)
-
-
-#: Fecha embebida en el texto del aviso, si la hay. El portal no expone un campo
-#: de fecha por aviso: publica la página entera y fecha algunos avisos en prosa.
-_NOTICE_DATE = re.compile(
-    r"(?P<date>\d{1,2}[-/]\d{1,2}[-/]\d{2,4})(?:[\sT]+(?P<time>\d{1,2}:\d{2}))?"
-)
-
-
-def extract_datetime(text: str) -> datetime | None:
-    match = _NOTICE_DATE.search(text)
-    if not match:
-        return None
-    raw = match.group("date")
-    if match.group("time"):
-        raw = f"{raw} {match.group('time')}"
-    return parse_timestamp(raw)
-
-
 @dataclass(slots=True)
 class ResumenResolucion:
     """Lo que `resolver_avisos` dejó: los avisos resueltos y lo que gastó."""
@@ -919,12 +628,8 @@ async def resolver_avisos(
 ) -> ResumenResolucion:
     """Avisos ya clasificados → `(aviso, tipo, extracción, punto)`.
 
-    Era el cuerpo de `TransporteInformaCollector.fetch()`. Salió a una función
-    el 2026-10-06 para que los tuits de @TTIValparaiso, que llegan por el
-    webhook de Apify y no por el portal, pasen exactamente por el mismo camino:
-    delta contra lo guardado, Gemini con su tope, Nominatim con el suyo y las
-    mismas marcas de pendiente. Dos copias de esta lógica divergirían en el
-    primer arreglo.
+    Delta contra lo guardado, Gemini con su tope, Nominatim con el suyo y las
+    marcas de pendiente.
 
     `claves` va en el mismo orden que `clasificados` (es su `external_id`).
     `avisar` recibe las degradaciones (`BaseCollector.warn` o equivalente).
@@ -1019,8 +724,7 @@ def eventos_de_avisos(
 ) -> list[EventCreate]:
     """Avisos resueltos → `EventCreate`. Pura: sin red y sin base.
 
-    Era `TransporteInformaCollector.normalize()`; la comparten el portal y los
-    tuits de @TTIValparaiso (`collector` distingue de dónde vino cada señal).
+    `collector` queda en `raw_data._collector` para saber de dónde vino.
     """
     now = ahora or datetime.now(UTC)
     events: list[EventCreate] = []
@@ -1082,225 +786,14 @@ def eventos_de_avisos(
     return events
 
 
-class TransporteInformaCollector(BaseCollector):
-    """Avisos del MTT: extracción del lugar con LLM y geocodificación con Nominatim.
-
-    Rompe una convención del proyecto y conviene decirlo en voz alta: en el resto
-    de los collectors `normalize()` es una función pura y todo el I/O vive en
-    `fetch()`. Acá la geocodificación **también ocurre en `fetch()`**, no en
-    `normalize()`, precisamente para no romperla. `fetch` devuelve avisos ya
-    resueltos a coordenadas y `normalize` sigue siendo pura y testeable sin red.
-    """
-
-    name = "transporte_informa"
-    source = EventSource.TRANSPORTE_INFORMA
-    default_interval_seconds = 600
-
-    @classmethod
-    def poll_interval_seconds(cls) -> int:
-        return settings.TRANSPORTE_INFORMA_POLL_INTERVAL_SECONDS
-
-    def __init__(self, session: Any) -> None:
-        super().__init__(session)
-        if not settings.TRANSPORTE_INFORMA_URL.strip():
-            raise CollectorError(
-                "TRANSPORTE_INFORMA_URL no está configurada; el collector no "
-                "tiene de dónde leer."
-            )
-        self.url = settings.TRANSPORTE_INFORMA_URL.strip()
-        self.max_geocodes = settings.TRANSPORTE_INFORMA_MAX_GEOCODES
-        self.max_llm_calls = settings.GEMINI_MAX_CALLS_PER_RUN
-
-        if not gemini.is_configured():
-            # No es fatal: la heurística cubre la mayoría de los avisos. Pero
-            # tiene que verse, porque la diferencia de cobertura entre ambos
-            # caminos no es despreciable y nadie debería descubrir meses después
-            # que el modelo nunca se llamó.
-            logger.warning(
-                "GEMINI_API_KEY no está configurada: la extracción de calles "
-                "usará la heurística de reglas",
-                extra={"collector": self.name},
-            )
-
-    def run_params(self) -> dict[str, Any]:
-        return {
-            "max_geocodes": self.max_geocodes,
-            "max_llm_calls": self.max_llm_calls,
-            "extraction_mode": (
-                gemini.MODE_GEMINI if gemini.is_configured() else gemini.MODE_HEURISTIC
-            ),
-            "gemini_model": settings.GEMINI_MODEL if gemini.is_configured() else None,
-            "nominatim_min_interval_s": settings.NOMINATIM_MIN_INTERVAL_SECONDS,
-        }
-
-    async def fetch(self) -> Sequence[ResolvedNotice]:
-        """Trae los avisos, los clasifica, extrae el lugar y geocodifica.
-
-        Devuelve cuádruplas `(aviso, tipo, extracción, geocodificación|None)`.
-
-        Todo fallo sale de acá como `CollectorError` y de ninguna otra forma:
-        `request_text` ya traduce timeouts, 5xx, DNS y TLS, y los `except
-        Exception` cubren lo que no anticipamos al cruzar la frontera con una
-        fuente ajena. `BaseCollector.run()` lo registra en `collector_runs` y el
-        orquestador no se entera.
-        """
-        try:
-            async with httpx.AsyncClient(
-                timeout=settings.TRANSPORTE_INFORMA_TIMEOUT_SECONDS,
-                follow_redirects=True,
-                # UA propio, no el de Nominatim. El anterior estaba a mano y era
-                # falso: le decía al portal del Ministerio que quien lo visitaba
-                # era el cliente de OpenStreetMap. Ver
-                # `TRANSPORTE_INFORMA_USER_AGENT` en `core/config.py`.
-                headers={
-                    "User-Agent": user_agent_o(
-                        settings.TRANSPORTE_INFORMA_USER_AGENT,
-                        "monitoreo de siniestros Region de Valparaiso",
-                        navegador=True,
-                    )
-                },
-            ) as client:
-                html = await request_text(
-                    client, self.url, origin="transporte_informa"
-                )
-        except CollectorError:
-            raise
-        except Exception as exc:
-            raise CollectorError(
-                f"transporte_informa: fallo inesperado al leer el portal: "
-                f"{type(exc).__name__}: {exc}",
-                detail={"url": self.url},
-            ) from exc
-
-        try:
-            broken, reason = page_looks_broken(html)
-            notices = parse_notices(html)
-        except Exception as exc:
-            raise CollectorError(
-                f"transporte_informa: el HTML no se pudo interpretar: "
-                f"{type(exc).__name__}: {exc}",
-                detail={"url": self.url, "muestra": html[:200]},
-            ) from exc
-
-        if broken:
-            # El DOM cambió. Se avisa —la corrida queda `partial` y el motivo
-            # viaja a `collector_runs`— y se sigue con lo que haya. Un rediseño
-            # necesita a una persona, no un reintento, y el aviso es la forma de
-            # convocarla antes de que pasen semanas.
-            self.warn(f"la estructura del portal cambió: {reason}")
-
-        # -- Clasificación y orden de prioridad -------------------------------
-        #
-        # El filtro va ANTES del modelo, no después. Dos razones: el portal
-        # publica bastante que no es ni siniestro ni intervención —recorridos de
-        # micros, horarios de terminal, pasos fronterizos habilitados— y cada
-        # llamada al LLM se paga. Filtrar primero evita gastar tokens en avisos
-        # que se van a descartar igual.
-        #
-        # El **orden** es la pieza nueva y la que hay que entender. Los dos
-        # presupuestos de la corrida son escasos y compartidos:
-        # `GEMINI_MAX_CALLS_PER_RUN` y `TRANSPORTE_INFORMA_MAX_GEOCODES`. Antes
-        # sólo competían accidentes entre sí; ahora los avisos tácticos
-        # compiten por los mismos cupos, y en un día de temporal —cuando más
-        # importa— hay muchos más cortes que choques.
-        #
-        # Recorrer los avisos en el orden del DOM dejaría que catorce faenas
-        # programadas se comieran el presupuesto y que el único accidente de la
-        # página quedara sin coordenadas. Sería la peor forma de gastarlo: un
-        # corte sin punto pierde una capa de contexto; un accidente sin punto no
-        # entra al Paso A del motor y deja de poder corroborarse con Waze o con
-        # Bomberos, que es la razón entera por la que esta fuente existe.
-        #
-        # `sort` estable: dentro de cada clase se conserva el orden del portal,
-        # que es cronológico descendente.
-        clasificados: list[tuple[TrafficNotice, EventType]] = [
-            (notice, tipo)
-            for notice in notices
-            if (tipo := clasificar_transito(notice.text)) is not None
-        ]
-        clasificados.sort(key=lambda par: par[1] is not EventType.ACCIDENT)
-
-        # -- Delta: lo que ya se pagó no se vuelve a pagar --------------------
-        #
-        # Una consulta por corrida. Un aviso guardado con el mismo texto y con
-        # su extracción completa se reemite con lo guardado: el upsert refresca
-        # `updated_at` y ni Gemini ni Nominatim se enteran. La conexión se
-        # suelta enseguida, porque lo que sigue es red.
-        claves = [external_id_de(notice, tipo) for notice, tipo in clasificados]
-        conocidos = await self.service.repo.puntos_conocidos(self.source, claves)
-        await self.liberar_conexion()
-
-        resumen = await resolver_avisos(
-            clasificados,
-            claves=claves,
-            conocidos=conocidos,
-            max_llm_calls=self.max_llm_calls,
-            max_geocodes=self.max_geocodes,
-            avisar=self.warn,
-        )
-        resolved = resumen.resueltos
-        llm_calls = resumen.llamadas_llm
-        geocoded = resumen.geocodificados
-        reutilizados = resumen.reutilizados
-
-        accidentes = sum(1 for _, tipo, _, _ in resolved if tipo is EventType.ACCIDENT)
-
-        # Qué descartó el pre-filtro, y no sólo cuántos.
-        #
-        # `avisos: 4 · retenidos: 0` es una línea ambigua: puede ser el MTT
-        # publicando cuatro faenas programadas —correcto, y el silencio es la
-        # respuesta correcta— o `clasificar_transito` habiéndose quedado corto de
-        # vocabulario. Las dos se ven idénticas en producción, y el portal ya se
-        # rediseñó una vez.
-        #
-        # Con una muestra del texto la pregunta se contesta leyendo el log en vez
-        # de reproduciendo el raspado. Va en INFO y no en WARNING a propósito:
-        # descartar avisos irrelevantes es el trabajo del filtro haciéndose bien,
-        # no una degradación. Lo que se busca es poder auditarlo, no que grite.
-        clasificados_ids = {id(notice) for notice, _ in clasificados}
-        descartados = [n for n in notices if id(n) not in clasificados_ids]
-
-        logger.info(
-            "avisos del MTT procesados",
-            extra={
-                "collector": self.name,
-                "avisos": len(notices),
-                "retenidos": len(resolved),
-                "accidentes": accidentes,
-                "cortes_de_via": len(resolved) - accidentes,
-                "extracciones_llm": llm_calls,
-                "geocodificados": geocoded,
-                # Avisos ya guardados con el mismo texto: cero modelo, cero
-                # Nominatim. En régimen debería ser casi todo el portal.
-                "reutilizados": reutilizados,
-                "descartados": len(descartados),
-                # Recortada dos veces: cinco avisos y 120 caracteres cada uno. Es
-                # una muestra para decidir si el filtro está bien calibrado, no
-                # un volcado del portal en el log de producción.
-                "descartados_muestra": [
-                    " ".join(n.text.split())[:120] for n in descartados[:5]
-                ],
-                "modo": gemini.MODE_GEMINI
-                if gemini.is_configured()
-                else gemini.MODE_HEURISTIC,
-            },
-        )
-        return resolved
-
-    def normalize(self, records: Sequence[ResolvedNotice]) -> list[EventCreate]:
-        return eventos_de_avisos(records, collector=self.name, avisar=self.warn)
-
-
 __all__ = [
     "PENDIENTE_EXTRACCION",
     "PENDIENTE_GEOCODIFICACION",
     "ROAD_CLOSURE_CONFIDENCE",
-    "TRAFFIC_KEYWORDS",
     "TRANSPORTE_INFORMA_CONFIDENCE",
     "ResolvedNotice",
     "ResumenResolucion",
     "TrafficNotice",
-    "TransporteInformaCollector",
     "calles_guardadas",
     "eventos_de_avisos",
     "external_id_de",
@@ -1308,9 +801,6 @@ __all__ = [
     "extract_streets_via_llm",
     "looks_like_accident",
     "looks_like_road_ops",
-    "page_looks_broken",
-    "parse_notice",
-    "parse_notices",
     "resolver_avisos",
     "reutilizable",
     "texto_md5",

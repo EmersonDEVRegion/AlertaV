@@ -98,7 +98,7 @@ def test_el_escenario_exacto_del_2_de_septiembre():
     """
     ultimas = {
         "prensa_local": corrida("prensa_local", estado=CollectorStatus.DEGRADED, hace_minutos=1),
-        "transporte_informa": corrida("transporte_informa", hace_minutos=2),
+        "transporte_informa_x": corrida("transporte_informa_x", hace_minutos=2),
     }
 
     assert familia(ultimas, "traffic") == "degraded"
@@ -111,7 +111,7 @@ def test_una_fuente_de_apoyo_sana_no_rescata_a_la_familia():
     que su salud no puede tapar la de quien sí reporta choques.
     """
     ultimas = {
-        "transporte_informa": corrida("transporte_informa"),
+        "transporte_informa_x": corrida("transporte_informa_x"),
         "prensa_local": corrida("prensa_local", estado=CollectorStatus.FAILED),
     }
 
@@ -389,3 +389,62 @@ def test_el_webhook_de_bomberos_ciego_pinta_sus_tres_familias():
     }
     for nombre in ("fire", "traffic", "otros"):
         assert familia(ultimas, nombre) == "degraded"
+
+
+# --- Ceguera sin aviso: corre bien y no lee nada --------------------------------
+
+
+def _salud(nombre: str, lecturas):
+    from app.services.collector_health import build_health
+
+    salud, _ = build_health(
+        {nombre: corrida(nombre)}, ahora=AHORA, lecturas={nombre: lecturas}
+    )
+    return next(s for s in salud if s.collector == nombre)
+
+
+def test_la_fuente_que_corre_sin_leer_nada_por_dias_esta_ciega():
+    """El lector del portal del MTT: 3 481 corridas `success`, cero avisos."""
+    from app.services.collector_health import Lecturas
+
+    item = _salud(
+        "cge_cortes", Lecturas(ultima=None, desde=AHORA - timedelta(days=6))
+    )
+    assert item.status == "degraded"
+    assert "sin leer" in (item.detail or "")
+
+
+def test_una_noche_sin_lecturas_no_es_ceguera():
+    from app.services.collector_health import Lecturas
+
+    item = _salud(
+        "cge_cortes",
+        Lecturas(ultima=AHORA - timedelta(hours=9), desde=AHORA - timedelta(days=6)),
+    )
+    assert item.status == "ok"
+
+
+def test_un_despliegue_nuevo_no_se_juzga():
+    from app.services.collector_health import Lecturas
+
+    item = _salud("cge_cortes", Lecturas(ultima=None, desde=AHORA - timedelta(hours=10)))
+    assert item.status == "ok"
+
+
+def test_firms_tiene_mas_paciencia_por_los_dias_nublados():
+    from app.services.collector_health import Lecturas
+
+    item = _salud(
+        "nasa_firms_area",
+        Lecturas(ultima=AHORA - timedelta(hours=80), desde=AHORA - timedelta(days=6)),
+    )
+    assert item.status == "ok"
+
+
+def test_la_corrida_que_solo_existe_con_datos_no_puede_estar_ciega():
+    from app.services.collector_health import Lecturas
+
+    item = _salud(
+        "transporte_informa_x", Lecturas(ultima=None, desde=AHORA - timedelta(days=6))
+    )
+    assert item.status != "degraded"

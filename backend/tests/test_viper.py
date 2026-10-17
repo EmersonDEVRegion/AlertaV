@@ -252,3 +252,59 @@ def test_el_despacho_tiene_el_mejor_rango_de_precision():
         [(-33.0, -71.0, 1.0, "despacho"), (-33.1, -71.1, 1.0, "intersection"), (-33.2, -71.2, 1.0, None)]
     )
     assert punto is not None and punto.precision == "despacho" and punto.lat == -33.0
+
+
+# --- Una sola calle: se busca a lo largo de ella --------------------------------
+
+
+def _despacho_una_calle() -> worker.Dispatch:
+    return worker.Dispatch(
+        key="1-1",
+        address=None,
+        occurred_at=None,
+        commune="Valparaíso",
+        raw_text="U-11 * CALLE LA JARILLA * CLAVE 1-1",
+        cuenta="@CGI_CBV",
+        decoded={"street_1": "CALLE LA JARILLA", "street_2": None, "city": None},
+        point=None,
+        imagen_url="https://pbs.twimg.com/media/prueba.jpg",
+    )
+
+
+@respx.mock
+def test_una_sola_calle_se_ubica_con_las_esquinas_de_esa_calle(viper_encendido, monkeypatch):
+    """Antes: sin transversal no había punto, sin punto no había semilla, y la
+    imagen —que tiene el lugar exacto— se descartaba."""
+    from app.collectors import cruces_locales
+
+    pedidas = []
+
+    async def esquinas(calle, comunas, *, separacion_m, maximo):
+        pedidas.append((calle, tuple(comunas)))
+        # La primera esquina está lejos; la segunda, a 150 m del marcador.
+        return [_desplazado(VERDAD, 1500, 0), _desplazado(VERDAD, 120, 90)]
+
+    monkeypatch.setattr(cruces_locales, "puntos_de_calle", esquinas)
+    salida, ubicados = asyncio.run(
+        viper.ubicar_por_imagen([_despacho_una_calle()], max_imagenes=5)
+    )
+    assert pedidas == [("CALLE LA JARILLA", ("Valparaíso",))]
+    assert ubicados == 1
+    punto = salida[0].point
+    assert punto is not None and punto.provider == "viper"
+    assert distancia_m(VERDAD, (punto.lat, punto.lon)) < 1.5
+
+
+@respx.mock
+def test_una_calle_sin_esquinas_en_el_indice_queda_sin_punto(viper_encendido, monkeypatch):
+    from app.collectors import cruces_locales
+
+    async def ninguna(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(cruces_locales, "puntos_de_calle", ninguna)
+    monkeypatch.setattr(settings, "VIPER_MAX_LECTURAS_POR_ENTREGA", 0)
+    salida, ubicados = asyncio.run(
+        viper.ubicar_por_imagen([_despacho_una_calle()], max_imagenes=5)
+    )
+    assert ubicados == 0 and salida[0].point is None

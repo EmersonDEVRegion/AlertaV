@@ -97,8 +97,8 @@ def test_produccion_no_arranca_sin_ningun_correo():
 
 
 def test_produccion_no_arranca_con_un_agente_con_tildes():
-    with pytest.raises(ValueError, match="TRANSPORTE_INFORMA_USER_AGENT"):
-        _produccion(TRANSPORTE_INFORMA_USER_AGENT="AlertaV (Región)")
+    with pytest.raises(ValueError, match="GBV_USER_AGENT"):
+        _produccion(GBV_USER_AGENT="AlertaV (Región)")
 
 
 def test_ya_no_queda_la_organizacion_de_github_que_no_existe():

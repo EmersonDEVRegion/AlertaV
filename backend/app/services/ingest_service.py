@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete
+from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -34,6 +34,8 @@ class IngestService:
 
     async def ingest_batch(self, events: Sequence[EventCreate]) -> IngestResult:
         """Ingesta idempotente de un lote ya validado."""
+        recibidos = len(events)
+        events, fuera = await self._solo_region(events)
         outcome = await self.repo.upsert_many(events)
         await self.session.commit()
 
@@ -72,11 +74,64 @@ class IngestService:
             )
 
         return IngestResult(
-            received=len(events),
+            received=recibidos,
             inserted=outcome.inserted,
             duplicated=outcome.duplicated,
+            rejected=fuera,
             collapsed=outcome.collapsed_count,
         )
+
+    async def _solo_region(
+        self, events: Sequence[EventCreate]
+    ) -> tuple[list[EventCreate], int]:
+        """Descarta, de las fuentes de `INGEST_SOLO_REGION_FUENTES`, lo que cae fuera.
+
+        CGE publica sus cortes de todo el país y la caja de ingesta (`REGION_*`)
+        cubre media Región Metropolitana: en 30 días, 742 de 1 136 cortes de CGE
+        eran de Santiago. El motor ya los ignoraba (`CORRELATION_SOLO_REGION`);
+        esto evita guardarlos. Se mide contra los polígonos de `comunas_region`
+        con el mismo margen de ~2 km que el motor. Sin la tabla, no filtra.
+        """
+        fuentes = {f.strip().lower() for f in settings.INGEST_SOLO_REGION_FUENTES if f.strip()}
+        candidatos = [
+            i
+            for i, e in enumerate(events)
+            if e.source.value in fuentes and e.lat is not None and e.lon is not None
+        ]
+        if not candidatos:
+            return list(events), 0
+        tabla = f"{settings.DB_SCHEMA}.comunas_region"
+        hay_tabla = (
+            await self.session.execute(text("SELECT to_regclass(:t) IS NOT NULL"), {"t": tabla})
+        ).scalar_one()
+        if not hay_tabla:
+            return list(events), 0
+        dentro = {
+            int(fila[0])
+            for fila in (
+                await self.session.execute(
+                    text(
+                        "SELECT t.i FROM unnest(CAST(:i AS int[]), CAST(:lat AS float8[]), "
+                        "CAST(:lon AS float8[])) AS t(i, lat, lon) "
+                        f"WHERE EXISTS (SELECT 1 FROM {tabla} c WHERE ST_DWithin(c.geom, "
+                        "ST_SetSRID(ST_MakePoint(t.lon, t.lat), 4326), :margen))"
+                    ),
+                    {
+                        "i": candidatos,
+                        "lat": [events[i].lat for i in candidatos],
+                        "lon": [events[i].lon for i in candidatos],
+                        "margen": 0.02,
+                    },
+                )
+            ).all()
+        }
+        fuera = {i for i in candidatos if i not in dentro}
+        if fuera:
+            logger.info(
+                "señales fuera de la región descartadas al ingerir",
+                extra={"descartadas": len(fuera), "fuentes": sorted(fuentes)},
+            )
+        return [e for i, e in enumerate(events) if i not in fuera], len(fuera)
 
     async def ingest_citizen_report(
         self,

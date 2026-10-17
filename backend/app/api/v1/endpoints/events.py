@@ -641,16 +641,39 @@ async def road_closures_geojson(
     source: Annotated[list[EventSource] | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=2000)] = 500,
 ) -> GeoJSONFeatureCollection:
+    ahora = datetime.now(UTC)
     events = await service.repo.list_events(
-        since=datetime.now(UTC) - timedelta(hours=hours),
+        since=ahora - timedelta(hours=hours),
         sources=source,
         types=[EventType.ROAD_CLOSURE],
         bbox=service.region_bbox(),
         limit=limit,
     )
     return GeoJSONFeatureCollection(
-        features=[_road_closure_feature(event) for event in events]
+        features=[_road_closure_feature(event) for event in events if _cierre_vigente(event, ahora)]
     )
+
+
+#: Un aviso del MTT no trae hora de término. Pasado esto sin que lo repita, se
+#: da por terminado: una marcha o un bus en panne no cortan una pista días.
+MTT_CIERRE_VIGENCIA = timedelta(hours=12)
+
+
+def _cierre_vigente(event: Any, ahora: datetime) -> bool:
+    """El MOP publica emergencias de semanas y las retira él; el MTT, no.
+
+    Un aviso del MTT sale del mapa cuando el propio MTT avisa que la vía se
+    habilitó (`_mtt_fin`, ver `traffic/transito_x.py`) o cuando pasa
+    `MTT_CIERRE_VIGENCIA` sin que lo vuelva a publicar.
+    """
+    if getattr(event.source, "value", event.source) != EventSource.TRANSPORTE_INFORMA.value:
+        return True
+    if "_mtt_fin" in (event.raw_data or {}):
+        return False
+    visto = getattr(event, "updated_at", None) or event.timestamp
+    if visto.tzinfo is None:
+        visto = visto.replace(tzinfo=UTC)
+    return ahora - visto <= MTT_CIERRE_VIGENCIA
 
 
 # --- Cortes de agua (Esval) ----------------------------------------------------
