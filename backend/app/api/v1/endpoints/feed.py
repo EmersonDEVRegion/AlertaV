@@ -15,7 +15,7 @@ from app.api.deps import MeteoWarningServiceDep, NewsFeedServiceDep, VehicleFeed
 from app.collectors.lugares import comuna_por_nombre
 from app.core.config import settings
 from app.models.enums import VehicleStatus
-from app.schemas.meteo_warning import MeteoWarningResponse
+from app.schemas.meteo_warning import MeteoWarningResponse, MeteoWarningZoneCollection
 from app.schemas.news_feed import NewsFeedResponse
 from app.schemas.vehicle_feed import VehicleFeedResponse
 from app.services.news_feed_service import FEED_HORAS
@@ -125,3 +125,23 @@ async def meteo_warnings(service: MeteoWarningServiceDep) -> MeteoWarningRespons
     if not settings.DMC_AVISOS_ENABLED:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="avisos de la DMC apagados")
     return await service.vigentes()
+
+
+@router.get(
+    "/avisos-meteo/zonas",
+    response_model=MeteoWarningZoneCollection,
+    summary="Zonas de pronóstico de la DMC con avisos vigentes, como GeoJSON",
+    description=(
+        "Las zonas de pronóstico de la Región de Valparaíso (Litoral, Cordillera "
+        "de la Costa, Precordillera y Cordillera, según la zonificación de la "
+        "DMC) que tocan los avisos de `GET /feed/avisos-meteo`, con la "
+        "severidad mayor de cada una. Un aviso para toda la región toca las "
+        "cuatro. Sin avisos, `features` vacío.\n\n"
+        "Es la capa de referencia «Avisos DMC» del mapa: un pronóstico por "
+        "zonas de decenas de kilómetros, no el lugar de un hecho."
+    ),
+)
+async def meteo_warning_zones(service: MeteoWarningServiceDep) -> MeteoWarningZoneCollection:
+    if not settings.DMC_AVISOS_ENABLED:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="avisos de la DMC apagados")
+    return await service.zonas()

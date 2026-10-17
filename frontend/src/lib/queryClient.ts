@@ -58,6 +58,7 @@ export const queryKeys = {
    */
   meteoWarnings: {
     all: ['meteo-warnings'] as const,
+    zones: ['meteo-warnings', 'zones'] as const,
   },
   seismic: {
     all: ['seismic'] as const,

@@ -45,7 +45,11 @@ from app.models.enums import (
     EventType,
 )
 from app.models.event import RawEvent
-from app.services.meteo_warning_service import item_de_aviso
+from app.services.meteo_warning_service import (
+    item_de_aviso,
+    poligonos_de_zonas,
+    zonas_con_avisos,
+)
 
 CHILE = ZoneInfo("America/Santiago")
 AHORA = datetime(2026, 10, 16, 18, 30, tzinfo=CHILE).astimezone(UTC)
@@ -452,3 +456,66 @@ def test_registro_conserva_el_original():
     aviso = parse_aviso(original)
     assert dict(aviso.raw) == copia
     assert aaa_parser.build_external_id(aviso) == f"dmc:aaa:{copia['id']}"
+
+
+
+# --- Zonas para el mapa ------------------------------------------------------------
+
+
+def items_reales(ahora: datetime = AHORA):
+    avisos = [parse_aviso(registro(c)) for c in ("A561/2026", "A562/2026", "A564/2026")]
+    eventos = collector().normalize([a for a in avisos if a is not None])
+    items = [item_de_aviso(fila(e), ahora=ahora) for e in eventos]
+    return [i for i in items if i is not None]
+
+
+def test_el_archivo_de_zonas_trae_las_cuatro_de_la_region():
+    zonas = poligonos_de_zonas()
+    assert set(zonas) == {"Litoral", "Cordillera_Costa", "Precordillera", "Cordillera"}
+    assert all(g["type"] in ("Polygon", "MultiPolygon") for g in zonas.values())
+
+
+def test_un_aviso_regional_pinta_las_cuatro_zonas(reloj):
+    tormenta = [i for i in items_reales() if i.codigo == "A561/2026"]
+    features = zonas_con_avisos(tormenta, poligonos_de_zonas())
+    assert {f.properties.zona for f in features} == set(poligonos_de_zonas())
+    assert all(f.properties.fenomenos == "Tormentas Eléctricas" for f in features)
+
+
+def test_cada_zona_junta_sus_avisos_y_toma_la_peor_severidad(reloj):
+    items = items_reales()
+    lluvia = next(i for i in items if i.codigo == "A562/2026")
+    alerta = lluvia.model_copy(update={"tipo": "Alerta", "severidad": 2})
+    otros = [i for i in items if i.codigo != "A562/2026"]
+    features = {
+        f.properties.zona: f.properties
+        for f in zonas_con_avisos([alerta, *otros], poligonos_de_zonas())
+    }
+    assert features["Litoral"].severidad == 2 and features["Litoral"].tipo == "Alerta"
+    assert features["Litoral"].avisos == 3
+    assert alerta.id in features["Litoral"].ids.split(",")
+    # La lluvia no toca la cordillera: ahí sólo hay tormentas y viento, de nivel Aviso.
+    assert features["Cordillera"].severidad == 1
+    assert alerta.id not in features["Cordillera"].ids.split(",")
+    assert "Precipitaciones" not in features["Cordillera"].fenomenos
+
+
+def test_la_mas_severa_va_al_final_para_quedar_arriba(reloj):
+    items = items_reales()
+    lluvia = next(i for i in items if i.codigo == "A562/2026")
+    alarma = lluvia.model_copy(update={"tipo": "Alarma", "severidad": 3})
+    features = zonas_con_avisos([alarma], poligonos_de_zonas())
+    assert [f.properties.severidad for f in features] == [3, 3, 3]
+    assert {f.properties.zona for f in features} == {"Litoral", "Cordillera_Costa", "Precordillera"}
+
+
+def test_sin_avisos_no_hay_zonas():
+    assert zonas_con_avisos([], poligonos_de_zonas()) == []
+
+
+def test_zona_desconocida_se_ignora(reloj):
+    lluvia = next(i for i in items_reales() if i.codigo == "A562/2026")
+    rara = lluvia.model_copy(
+        update={"zonas": [lluvia.zonas[0].model_copy(update={"clave": "Valle_Inexistente"})]}
+    )
+    assert zonas_con_avisos([rara], poligonos_de_zonas()) == []

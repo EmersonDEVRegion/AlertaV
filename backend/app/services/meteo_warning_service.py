@@ -15,9 +15,12 @@ en curso, después lo que empieza antes.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
@@ -33,6 +36,9 @@ from app.schemas.meteo_warning import (
     MeteoWarningResponse,
     MeteoWarningTable,
     MeteoWarningZone,
+    MeteoWarningZoneCollection,
+    MeteoWarningZoneFeature,
+    MeteoWarningZoneProperties,
 )
 from app.schemas.vehicle_feed import VehicleFeedSource
 from app.services.collector_health import estado_de_collector
@@ -52,6 +58,72 @@ MARGEN_VIGENCIA = timedelta(minutes=1)
 LIMITE = 50
 
 _LEYERON = (CollectorStatus.SUCCESS.value, CollectorStatus.PARTIAL.value)
+
+#: Las zonas de pronóstico de la región, recortadas por `scripts/dmc_zonas.py`.
+ZONAS_PATH = Path(__file__).resolve().parents[2] / "static" / "geo" / "dmc_zonas_valpo.json"
+
+
+@lru_cache(maxsize=1)
+def poligonos_de_zonas() -> dict[str, dict[str, Any]]:
+    """Geometría de cada zona por su clave (`Litoral` → Polygon). Vacío si falta el archivo.
+
+    Sin el archivo la capa queda vacía y lo dice el log: la franja de «Ahora»
+    sigue funcionando, que es lo que importa.
+    """
+    try:
+        datos = json.loads(ZONAS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        logger.warning("no se pudieron leer las zonas de la DMC", extra={"ruta": str(ZONAS_PATH)})
+        return {}
+    zonas: dict[str, dict[str, Any]] = {}
+    for feature in datos.get("features", []):
+        zona = (feature.get("properties") or {}).get("zona")
+        geometria = feature.get("geometry")
+        if isinstance(zona, str) and isinstance(geometria, dict):
+            zonas[zona] = geometria
+    return zonas
+
+
+def zonas_con_avisos(
+    items: list[MeteoWarningItem], poligonos: Mapping[str, dict[str, Any]]
+) -> list[MeteoWarningZoneFeature]:
+    """Una feature por zona tocada por algún aviso, con la severidad mayor.
+
+    Un aviso de alcance `region` toca las cuatro: juntas son la región entera.
+    `items` llega ordenado por urgencia, así que los fenómenos quedan en ese orden.
+    """
+    por_zona: dict[str, list[MeteoWarningItem]] = {}
+    for item in items:
+        claves = list(poligonos) if item.alcance == "region" else [z.clave for z in item.zonas]
+        for clave in claves:
+            if clave in poligonos:
+                por_zona.setdefault(clave, []).append(item)
+
+    features: list[MeteoWarningZoneFeature] = []
+    for clave, avisos in por_zona.items():
+        peor = max(avisos, key=lambda a: a.severidad)
+        fenomenos: list[str] = []
+        for aviso in avisos:
+            nombre = aviso.fenomeno or aviso.titulo or "Fenómeno meteorológico"
+            if nombre not in fenomenos:
+                fenomenos.append(nombre)
+        features.append(
+            MeteoWarningZoneFeature(
+                geometry=poligonos[clave],
+                properties=MeteoWarningZoneProperties(
+                    zona=clave,
+                    nombre=nombre_zona(clave),
+                    severidad=peor.severidad,
+                    tipo=peor.tipo,
+                    avisos=len(avisos),
+                    fenomenos=" · ".join(fenomenos),
+                    ids=",".join(a.id for a in avisos),
+                ),
+            )
+        )
+    # Lo más severo arriba: MapLibre dibuja en el orden de las features.
+    features.sort(key=lambda f: f.properties.severidad)
+    return features
 
 
 class MeteoWarningService:
@@ -85,6 +157,15 @@ class MeteoWarningService:
                 ultima_corrida=(ultima.finished_at or ultima.started_at) if ultima else None,
                 detalle=(ultima.error[:300] if ultima and ultima.error else None),
             ),
+        )
+
+    async def zonas(self, *, ahora: datetime | None = None) -> MeteoWarningZoneCollection:
+        """Las zonas con avisos vigentes, para la capa del mapa."""
+        momento = ahora or datetime.now(UTC)
+        vigentes = await self.vigentes(ahora=momento)
+        return MeteoWarningZoneCollection(
+            generado_en=momento,
+            features=zonas_con_avisos(vigentes.items, poligonos_de_zonas()),
         )
 
     async def _ultima_corrida(self, *, solo_lecturas: bool = False) -> CollectorRun | None:
@@ -180,6 +261,9 @@ __all__ = [
     "LIMITE",
     "MARGEN_VIGENCIA",
     "URL_OFICIAL",
+    "ZONAS_PATH",
     "MeteoWarningService",
     "item_de_aviso",
+    "poligonos_de_zonas",
+    "zonas_con_avisos",
 ]

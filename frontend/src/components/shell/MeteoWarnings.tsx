@@ -12,6 +12,8 @@ import { WEATHER_GLYPHS, weatherGlyphFor } from '@/domain/weatherGlyphs'
 import { useMeteoWarnings, type MeteoWarningsState } from '@/hooks/useMeteoWarnings'
 import { useNow } from '@/hooks/useNow'
 import { cn } from '@/lib/cn'
+import { showWarningOnMap } from '@/lib/meteoZonesStore'
+import { setSheetSnap } from '@/lib/sheetStore'
 import { useSectionOpen } from '@/lib/sectionStore'
 
 /**
@@ -24,7 +26,15 @@ import { useSectionOpen } from '@/lib/sectionStore'
  *
  * Sin avisos no se dibuja nada: la calma no necesita una tarjeta. Con la
  * fuente caída y sin avisos, sí se dice, porque esa lista vacía no es calma.
+ *
+ * «Ver en el mapa» enciende la capa «Avisos DMC», resalta las zonas del aviso
+ * y las encuadra; en el teléfono baja la hoja para que se vean.
  */
+
+function verEnElMapa(id: string): void {
+  showWarningOnMap(id)
+  setSheetSnap('peek')
+}
 
 /** Una vez por minuto basta: la vigencia de la DMC se mide en tramos del día. */
 const TICK_MS = 60_000
@@ -111,6 +121,13 @@ const WarningCard = memo(function WarningCard({ warning }: { warning: MeteoWarni
               </table>
             </div>
           )}
+          <button
+            type="button"
+            onClick={() => verEnElMapa(warning.id)}
+            className="rounded-full px-2.5 py-1 text-[10.5px] font-semibold ring-1 ring-current/30 hover:bg-current/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            Ver en el mapa
+          </button>
           <p className="text-[10px] opacity-80">
             Pronóstico de la Dirección Meteorológica de Chile
             {warning.codigo ? ` (${warning.codigo})` : ''}. No es una alerta de SENAPRED.{' '}
