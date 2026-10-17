@@ -1389,6 +1389,12 @@ class Settings(BaseSettings):
     #: Avisos de cortes de agua de Esval. Sólo cortes que empezaron hace menos
     #: de esto: uno que lleva días no es novedad.
     PUSH_WATER_CUT_MAX_AGE_HOURS: int = Field(default=12, ge=1, le=72)
+    #: Horas tras las cuales la última ubicación del teléfono deja de usarse
+    #: para medir distancias; desde ahí se avisa sólo por los lugares guardados.
+    #: Con la app cerrada el navegador no informa la ubicación, y en un día casi
+    #: todos se mueven: un aviso «a 800 m» de donde uno estuvo ayer engaña más
+    #: de lo que ayuda. La PWA la renueva cada vez que se abre. `0` = no vence.
+    PUSH_LOCATION_MAX_AGE_HOURS: int = Field(default=24, ge=0, le=720)
     #: Confianza mínima para avisar de un incidente. 0.30 es el borde del tramo
     #: `possible`: una señal aislada (tramo `unsafe`) no despierta a nadie. Los
     #: incidentes confirmados por CONAF o Bomberos y los cortes de luz se avisan

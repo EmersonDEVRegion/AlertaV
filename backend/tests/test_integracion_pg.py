@@ -606,6 +606,57 @@ def test_los_lugares_guardados_cuentan_para_el_radio_y_se_avisa_una_vez():
     assert abs((mine[0].located_at - hace_tres_dias).total_seconds()) < 5
 
 
+def test_la_ubicacion_vencida_no_avisa_pero_los_lugares_si():
+    """Tres teléfonos junto al mismo incendio: ubicación de hace 23 h (avisa),
+    de hace 25 h sin lugares (no avisa) y de hace 25 h con Casa cerca (avisa,
+    medido desde Casa)."""
+    from app.core.database import AsyncSessionLocal
+    from app.models.push import PushSubscription
+    from app.repositories.push_repository import PushRepository
+
+    base = "https://fcm.googleapis.com/fcm/send/integracion-vence-"
+    endpoints = [base + sufijo for sufijo in ("fresca", "vencida", "vencida-casa")]
+
+    async def caso():
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                delete(PushSubscription).where(PushSubscription.endpoint.in_(endpoints))
+            )
+            repo = PushRepository(session)
+            ahora = datetime.now(UTC)
+            edades = (timedelta(hours=23), timedelta(hours=25), timedelta(hours=25))
+            for endpoint, edad in zip(endpoints, edades, strict=True):
+                sub = await repo.upsert_subscription(
+                    endpoint=endpoint,
+                    p256dh="B" * 87,
+                    auth="A" * 22,
+                    lat=-33.045,
+                    lon=-71.620,
+                    accuracy_m=None,
+                    radius_m=5000.0,
+                    notify_incidents=True,
+                    notify_seismic=False,
+                    located_at=ahora - edad,
+                )
+                if endpoint.endswith("casa"):
+                    await repo.replace_places(sub.id, [("Casa", -33.046, -71.621)])
+            await session.flush()
+            recipients = await repo.recipients_for_incident(
+                incident_id=-1, code="INC-INTEGRACION-VENCE", lat=-33.047, lon=-71.619
+            )
+            await session.execute(
+                delete(PushSubscription).where(PushSubscription.endpoint.in_(endpoints))
+            )
+            await session.commit()
+            return recipients
+
+    recipients = correr(caso)
+    mios = {r.endpoint.removeprefix(base): r for r in recipients if r.endpoint in endpoints}
+    assert set(mios) == {"fresca", "vencida-casa"}
+    assert mios["fresca"].place is None
+    assert mios["vencida-casa"].place == "Casa"
+
+
 # --- Reportes ciudadanos: quórum, cupo y moderación -----------------------
 
 MARCA_CIUDADANA = "integracion-ciudadana"

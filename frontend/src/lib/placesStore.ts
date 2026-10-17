@@ -139,8 +139,47 @@ export function usePicking(): string | null {
   )
 }
 
+// ---------------------------------------------------------------------------
+// Pedido de agregar un lugar desde fuera de «Mis lugares»
+// ---------------------------------------------------------------------------
+
+/*
+ * El panel de avisos sugiere guardar «Casa», pero «Mis lugares» vive en otra
+ * parte (la pestaña «Ahora») y puede ni estar montado. El pedido queda
+ * pendiente hasta que «Mis lugares» lo toma, una sola vez: volver a la
+ * pestaña después no reabre el formulario.
+ */
+let addPending = false
+const addListeners = new Set<() => void>()
+
+export function requestAddPlace(): void {
+  addPending = true
+  for (const listener of addListeners) listener()
+}
+
+/** ¿Hay un pedido sin atender? No lo consume. */
+export function hasAddPlaceRequest(): boolean {
+  return addPending
+}
+
+/** Devuelve `true` si había un pedido, y lo da por atendido. */
+export function takeAddPlaceRequest(): boolean {
+  const pending = addPending
+  addPending = false
+  return pending
+}
+
+/** Avisa cuando llega un pedido con «Mis lugares» ya montado. */
+export function onAddPlaceRequest(listener: () => void): () => void {
+  addListeners.add(listener)
+  return () => {
+    addListeners.delete(listener)
+  }
+}
+
 /** Sólo para los tests. */
 export function resetPlaces(): void {
   places = load()
   picking = null
+  addPending = false
 }

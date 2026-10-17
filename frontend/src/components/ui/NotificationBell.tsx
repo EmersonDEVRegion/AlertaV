@@ -7,13 +7,20 @@ import {
 } from '@/hooks/usePushNotifications'
 import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { formatRelative } from '@/lib/format'
-import { dismissInvite, inviteDismissed } from '@/lib/push'
+import {
+  dismissInvite,
+  dismissPlaceHint,
+  inviteDismissed,
+  locationExpired,
+  placeHintDismissed,
+} from '@/lib/push'
 import { radiosEfectivos } from '@/lib/radios'
 import { RadiosPorCategoria, ResumenRadios } from './RadiosPorCategoria'
 import { isHandheld, thisDevice } from '@/lib/device'
-import { usePlaces } from '@/lib/placesStore'
+import { requestAddPlace, usePlaces } from '@/lib/placesStore'
 import { cn } from '@/lib/cn'
-import { useLowerSheetWhile } from '@/lib/sheetStore'
+import { setExploreTab } from '@/lib/exploreStore'
+import { setSheetSnap, useLowerSheetWhile } from '@/lib/sheetStore'
 
 /**
  * Avisos push: la campana de la barra superior y su panel.
@@ -55,16 +62,21 @@ export const PUSH_TEXT = {
   seismicCaveat:
     'Los temblores llegan unos minutos después del movimiento: no es una alerta temprana. Si estás en la costa y el sismo te impide mantenerte en pie, evacúa a una zona segura sin esperar ningún aviso.',
   locationNote:
-    'Cada aviso dice desde dónde se midió: «de tu última ubicación» (la última que la app conoce; se actualiza cada vez que la abres) o el nombre de tu lugar guardado, como «de Casa». La ubicación se guarda redondeada (unos 100 m) y se borra si desactivas los avisos.',
+    'Cada aviso dice desde dónde se midió: «de tu última ubicación» (se pone al día cada vez que abres la app y deja de usarse si pasa un día sin abrirla) o el nombre de tu lugar guardado, como «de Casa». La ubicación se guarda redondeada (unos 100 m) y se borra si desactivas los avisos.',
   desktopNote:
     'En un computador la ubicación es aproximada (sale de la red) y los avisos llegan mientras el navegador esté abierto. Para tu casa, guárdala en «Mis lugares».',
   noPlaces:
-    'Guarda tu casa o tu trabajo en «Mis lugares» (pestaña Historial) para recibir avisos de ahí, también de temblores, aunque estés en otra parte.',
-  staleLocation: 'Si ya no estás ahí, actualízala: los avisos se miden desde ese punto.',
+    'Guarda tu casa o tu trabajo en «Mis lugares» (pestaña Ahora) para recibir avisos de ahí, también de temblores, aunque estés en otra parte.',
+  autoLocation:
+    'Se pone al día sola cada vez que abres AlertaV. Si pasa un día sin abrirla, deja de usarse.',
+  expiredWithPlaces: 'y ya no se usa: sólo te avisamos cerca de',
+  expiredNoPlaces: 'y ya no se usa: no te llegarán avisos de emergencias cercanas hasta que la actualices.',
+  placeHintTitle: 'Guarda Casa para recibir avisos aunque no abras AlertaV',
+  placeHintBody:
+    'Tu ubicación sólo se pone al día cuando abres la app. Tus lugares guardados no vencen.',
+  placeHintAction: 'Guardar Casa',
+  placeHintLater: 'Ahora no',
 } as const
-
-/** Más de un día: la ubicación puede ser de otra ciudad. */
-const STALE_LOCATION_MS = 24 * 60 * 60 * 1000
 
 /** «Casa», «Casa y Trabajo», «Casa, Trabajo y Colegio». */
 function joinNames(names: readonly string[]): string {
@@ -177,7 +189,14 @@ function PrimaryButton({
   )
 }
 
-export function NotificationPanel({ push }: { push: PushNotificationsState }) {
+export function NotificationPanel({
+  push,
+  onAddPlace,
+}: {
+  push: PushNotificationsState
+  /** Abre «Mis lugares» con el formulario para guardar uno. */
+  onAddPlace?: () => void
+}) {
   const { phase } = push
   const now = useNow(RELATIVE_TIME_TICK_MS)
   const places = usePlaces()
@@ -185,7 +204,7 @@ export function NotificationPanel({ push }: { push: PushNotificationsState }) {
   // «Avisos en este teléfono» se leía raro desde un computador: el aparato
   // va en la línea de estado, y dice cuál es.
   const device = thisDevice()
-  const staleLocation = push.locatedAt !== null && now - push.locatedAt > STALE_LOCATION_MS
+  const expired = locationExpired(push.locatedAt, now)
 
   return (
     // Sin ancho propio: lo pone el contenedor (`NotificationBell`). Con un
@@ -256,7 +275,15 @@ export function NotificationPanel({ push }: { push: PushNotificationsState }) {
         </>
       )}
 
-      {phase === 'on' && <OnSection push={push} now={now} staleLocation={staleLocation} placeNames={places.map((p) => p.name)} />}
+      {phase === 'on' && (
+        <OnSection
+          push={push}
+          now={now}
+          expired={expired}
+          placeNames={places.map((p) => p.name)}
+          onAddPlace={onAddPlace}
+        />
+      )}
 
       {paused && phase !== 'unavailable' && (
         <p className="mt-2 text-[10.5px] leading-snug text-warn-ink">
@@ -292,16 +319,29 @@ export function NotificationPanel({ push }: { push: PushNotificationsState }) {
 function OnSection({
   push,
   now,
-  staleLocation,
+  expired,
   placeNames,
+  onAddPlace,
 }: {
   push: PushNotificationsState
   now: number
-  staleLocation: boolean
+  /** La ubicación tiene un día o más: el servidor ya no la usa. */
+  expired: boolean
   placeNames: string[]
+  onAddPlace?: () => void
 }) {
   const [editing, setEditing] = useState(false)
+  const [hintDismissed, setHintDismissed] = useState(placeHintDismissed)
   const busy = push.step !== null
+  // Sin lugares, la sugerencia de «Casa» aparece al activar los avisos; si se
+  // descartó, vuelve cuando la ubicación vence, que es cuando no llega nada.
+  const showPlaceHint = placeNames.length === 0 && (!hintDismissed || expired)
+  const age =
+    push.locatedAt === null
+      ? null
+      : now - push.locatedAt < 60_000
+        ? 'de recién'
+        : `de ${formatRelative(push.locatedAt, now)}`
   return (
     <>
       <div className="mt-2.5 space-y-2.5 border-t border-line pt-2.5">
@@ -362,13 +402,18 @@ function OnSection({
       </div>
 
       <div className="mt-2.5 space-y-1 border-t border-line pt-2 text-[10.5px] leading-snug">
-        <p className={staleLocation ? 'text-warn-ink' : 'text-ink-muted'}>
-          {push.locatedAt === null
+        <p className={expired ? 'text-warn-ink' : 'text-ink-muted'}>
+          {age === null
             ? 'Ubicación informada.'
-            : now - push.locatedAt < 60_000
-              ? 'Tu ubicación está al día.'
-              : `Tu ubicación es de ${formatRelative(push.locatedAt, now)}.`}{' '}
-          {staleLocation && `${PUSH_TEXT.staleLocation} `}
+            : expired
+              ? `Tu ubicación es ${age} ${
+                  placeNames.length > 0
+                    ? `${PUSH_TEXT.expiredWithPlaces} ${joinNames(placeNames)}.`
+                    : PUSH_TEXT.expiredNoPlaces
+                }`
+              : age === 'de recién'
+                ? 'Tu ubicación está al día.'
+                : `Tu ubicación es ${age}.`}{' '}
           <button
             type="button"
             onClick={() => void push.refreshLocation()}
@@ -378,11 +423,40 @@ function OnSection({
             {push.step === 'location' ? 'Ubicando…' : PUSH_TEXT.refresh}
           </button>
         </p>
-        <p className="text-ink-muted">
-          {placeNames.length > 0
-            ? `También te avisamos cerca de ${joinNames(placeNames)}.`
-            : PUSH_TEXT.noPlaces}
-        </p>
+        {!expired && <p className="text-ink-faint">{PUSH_TEXT.autoLocation}</p>}
+        {placeNames.length > 0 ? (
+          !expired && (
+            <p className="text-ink-muted">
+              También te avisamos cerca de {joinNames(placeNames)}.
+            </p>
+          )
+        ) : showPlaceHint && onAddPlace ? (
+          <div className="mt-1.5 rounded-control bg-accent-soft p-2">
+            <p className="text-[11px] font-semibold leading-snug text-ink">
+              {PUSH_TEXT.placeHintTitle}
+            </p>
+            <p className="mt-0.5 text-ink-muted">{PUSH_TEXT.placeHintBody}</p>
+            <div className="mt-1.5 flex items-center gap-1.5">
+              <Button variant="subtle" size="sm" onClick={onAddPlace}>
+                {PUSH_TEXT.placeHintAction}
+              </Button>
+              {!expired && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    dismissPlaceHint()
+                    setHintDismissed(true)
+                  }}
+                >
+                  {PUSH_TEXT.placeHintLater}
+                </Button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <p className="text-ink-muted">{PUSH_TEXT.noPlaces}</p>
+        )}
       </div>
 
       <div className="mt-2 flex items-center gap-1.5">
@@ -534,7 +608,17 @@ export function NotificationBell() {
             'rounded-surface bg-raised shadow-[var(--shadow-raised)] ring-1 ring-line',
           )}
         >
-          <NotificationPanel push={push} />
+          <NotificationPanel
+            push={push}
+            onAddPlace={() => {
+              // «Mis lugares» vive en «Ahora»; en el teléfono la hoja sube a
+              // media altura para que el formulario quede a la vista.
+              setExploreTab('now')
+              setSheetSnap('half')
+              requestAddPlace()
+              setOpen(false)
+            }}
+          />
         </div>
       )}
 

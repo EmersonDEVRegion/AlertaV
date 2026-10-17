@@ -130,6 +130,7 @@ export function placesKey(places: readonly { name: string; lat: number; lon: num
 
 const MEMO_KEY = 'alertav:push'
 const INVITE_KEY = 'alertav:push-invite-dismissed'
+const PLACE_HINT_KEY = 'alertav:push-place-hint-dismissed'
 
 /**
  * `localStorage` puede no existir o lanzar (navegación privada, almacenamiento
@@ -216,6 +217,23 @@ export function dismissInvite(): void {
   }
 }
 
+/** ¿La persona descartó la sugerencia de guardar «Casa» en el panel de avisos? */
+export function placeHintDismissed(): boolean {
+  try {
+    return storage()?.getItem(PLACE_HINT_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function dismissPlaceHint(): void {
+  try {
+    storage()?.setItem(PLACE_HINT_KEY, '1')
+  } catch {
+    /* ídem */
+  }
+}
+
 // ---------------------------------------------------------------------------
 // ¿Hay que volver a informar la ubicación?
 // ---------------------------------------------------------------------------
@@ -228,9 +246,38 @@ const RESYNC_DISTANCE_KM = 0.25
  * mantiene al día las claves si el navegador las rotó.
  */
 export const RESYNC_MAX_AGE_MS = 12 * 60 * 60 * 1000
-/** Pedir el GPS más seguido que esto al abrir la app sólo gasta batería. */
+/** Enviar la ubicación más seguido que esto sólo gasta batería y datos. */
 export const RESYNC_MIN_INTERVAL_MS = 10 * 60 * 1000
 
+/**
+ * Edad a la que el servidor deja de usar la última ubicación y avisa sólo por
+ * los lugares guardados. Espejo de `PUSH_LOCATION_MAX_AGE_HOURS` (backend).
+ */
+export const LOCATION_MAX_AGE_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Una lectura más imprecisa que esto no se envía sola: en un computador o con
+ * la red móvil caída, la ubicación «por red» puede salir de la IP y caer en
+ * otra comuna. Al tocar «Actualizar ubicación» se acepta igual.
+ */
+export const MAX_AUTO_ACCURACY_M = 3000
+
+export function locationExpired(locatedAt: number | null, now: number): boolean {
+  return locatedAt !== null && now - locatedAt >= LOCATION_MAX_AGE_MS
+}
+
+/** ¿Sirve esta lectura para actualizar la ubicación sin que nadie lo pida? */
+export function usableForResync(accuracyM: number | null): boolean {
+  return accuracyM === null || accuracyM <= MAX_AUTO_ACCURACY_M
+}
+
+/**
+ * ¿Hay que volver a informar la ubicación?
+ *
+ * Se llama al abrir la app, al volver a ella y con cada lectura mientras está
+ * a la vista. `next` es la lectura nueva, o `null` si no hay (sin permiso de
+ * ubicación): en ese caso sólo se renueva la suscripción cada 12 horas.
+ */
 export function shouldResync(
   memo: PushMemo | null,
   next: { lat: number; lon: number } | null,
@@ -240,6 +287,10 @@ export function shouldResync(
   const age = now - memo.syncedAt
   if (age >= RESYNC_MAX_AGE_MS) return true
   if (next === null) return false
+  // Cambiar un lugar guardado reenvía la suscripción con la ubicación vieja:
+  // `syncedAt` es reciente, pero la ubicación no. Si ya pasó medio día, la
+  // lectura nueva se manda aunque no se haya movido, antes de que venza.
+  if (now - memo.locatedAt >= RESYNC_MAX_AGE_MS) return true
   if (age < RESYNC_MIN_INTERVAL_MS) return false
   return distanceKm(memo.lat, memo.lon, next.lat, next.lon) >= RESYNC_DISTANCE_KM
 }

@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from geoalchemy2 import Geography
@@ -130,6 +130,20 @@ def radio_de_categoria_sql(radios: Any, categoria: str) -> Any:
         cast(radios[categoria].astext, Float),
         literal(defecto, Float),
     )
+
+
+def ubicacion_vigente() -> Any:
+    """Condición SQL: la última ubicación de la suscripción todavía sirve.
+
+    Una ubicación vencida no se usa para medir (ver
+    `PUSH_LOCATION_MAX_AGE_HOURS`); los lugares guardados no vencen. Con `0`
+    la condición es siempre verdadera.
+    """
+    horas = settings.PUSH_LOCATION_MAX_AGE_HOURS
+    if horas <= 0:
+        return literal(True)
+    limite = datetime.now(UTC) - timedelta(hours=horas)
+    return PushSubscription.location_updated_at >= limite
 
 
 class PushRepository:
@@ -392,8 +406,8 @@ class PushRepository:
         """Suscripciones con avisos de emergencias dentro del radio de `categoria`."""
         point_geog = func.cast(func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326), _GEOGRAPHY)
 
-        # Candidatos: la ubicación de cada suscripción y cada lugar guardado.
-        # El prefiltro con radio constante es el que usa los índices GiST.
+        # Candidatos: la ubicación de cada suscripción (si no venció) y cada
+        # lugar guardado. El prefiltro con radio constante es el que usa los índices GiST.
         sub_geog = func.cast(PushSubscription.geom, _GEOGRAPHY)
         own = select(
             PushSubscription.id.label("subscription_id"),
@@ -401,6 +415,7 @@ class PushRepository:
             func.ST_Distance(sub_geog, point_geog).label("distance_m"),
         ).where(
             PushSubscription.notify_incidents.is_(True),
+            ubicacion_vigente(),
             func.ST_DWithin(sub_geog, point_geog, MAX_SUBSCRIPTION_RADIUS_M),
         )
         place_geog = func.cast(PushPlace.geom, _GEOGRAPHY)
@@ -471,7 +486,7 @@ class PushRepository:
         """Suscripciones dentro del radio de percepción sin aviso de este sismo.
 
         Se mide, como en los incidentes, desde la última ubicación del teléfono
-        Y desde cada lugar guardado: quien está de viaje igual se entera de
+        (si no venció) Y desde cada lugar guardado: quien está de viaje igual se entera de
         que tembló fuerte en Casa. Manda el más cercano, y ése nombra el aviso.
 
         `keys` son las claves de TODAS las versiones del sismo (CSN y USGS): si
@@ -486,6 +501,7 @@ class PushRepository:
             func.ST_Distance(sub_geog, point_geog).label("distance_m"),
         ).where(
             PushSubscription.notify_seismic.is_(True),
+            ubicacion_vigente(),
             func.ST_DWithin(sub_geog, point_geog, reach_m),
         )
         place_geog = func.cast(PushPlace.geom, _GEOGRAPHY)

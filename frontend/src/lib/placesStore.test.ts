@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { MAX_PLACES, addPlace, getPlaces, removePlace, resetPlaces } from './placesStore'
+import {
+  MAX_PLACES,
+  addPlace,
+  getPlaces,
+  removePlace,
+  requestAddPlace,
+  resetPlaces,
+  takeAddPlaceRequest,
+} from './placesStore'
 
 afterEach(() => {
   localStorage.removeItem('alertav:lugares')
@@ -38,5 +46,14 @@ describe('lugares guardados', () => {
     localStorage.setItem('alertav:lugares', 'no-es-json')
     resetPlaces()
     expect(getPlaces()).toEqual([])
+  })
+})
+
+describe('pedido de agregar un lugar', () => {
+  it('queda pendiente hasta que alguien lo toma, y se toma una vez', () => {
+    expect(takeAddPlaceRequest()).toBe(false)
+    requestAddPlace()
+    expect(takeAddPlaceRequest()).toBe(true)
+    expect(takeAddPlaceRequest()).toBe(false)
   })
 })

@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  LOCATION_MAX_AGE_MS,
+  MAX_AUTO_ACCURACY_M,
   RESYNC_MAX_AGE_MS,
   RESYNC_MIN_INTERVAL_MS,
   clearPushMemo,
   detectPushSupport,
+  dismissPlaceHint,
+  locationExpired,
+  placeHintDismissed,
+  usableForResync,
   loadPushMemo,
   placesKey,
   parseDeepLink,
@@ -127,6 +133,39 @@ describe('shouldResync', () => {
 
   it('cada 12 horas aunque no haya ubicación nueva', () => {
     expect(shouldResync({ ...memo, syncedAt: NOW - RESYNC_MAX_AGE_MS }, null, NOW)).toBe(true)
+  })
+
+  it('con una lectura nueva, si la ubicación tiene medio día aunque recién se hayan enviado los lugares', () => {
+    const recienSincronizada = { ...memo, syncedAt: NOW - 60_000, locatedAt: NOW - RESYNC_MAX_AGE_MS }
+    expect(shouldResync(recienSincronizada, { lat: -33.025, lon: -71.551 }, NOW)).toBe(true)
+    // Sin lectura nueva no hay nada mejor que mandar.
+    expect(shouldResync(recienSincronizada, null, NOW)).toBe(false)
+  })
+})
+
+describe('vencimiento de la ubicación', () => {
+  const NOW = 1_790_000_000_000
+
+  it('vence a las 24 horas, como en el servidor', () => {
+    expect(locationExpired(NOW - LOCATION_MAX_AGE_MS + 1, NOW)).toBe(false)
+    expect(locationExpired(NOW - LOCATION_MAX_AGE_MS, NOW)).toBe(true)
+    expect(locationExpired(null, NOW)).toBe(false)
+  })
+
+  it('una lectura muy imprecisa no se manda sola', () => {
+    expect(usableForResync(null)).toBe(true)
+    expect(usableForResync(MAX_AUTO_ACCURACY_M)).toBe(true)
+    expect(usableForResync(MAX_AUTO_ACCURACY_M + 1)).toBe(false)
+  })
+})
+
+describe('sugerencia de guardar Casa', () => {
+  afterEach(() => localStorage.clear())
+
+  it('se recuerda al descartarla', () => {
+    expect(placeHintDismissed()).toBe(false)
+    dismissPlaceHint()
+    expect(placeHintDismissed()).toBe(true)
   })
 })
 

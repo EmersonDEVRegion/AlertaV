@@ -11,6 +11,7 @@ import {
 } from 'react-map-gl/maplibre'
 import type {
   ErrorEvent,
+  GeolocateResultEvent,
   MapEvent,
   LayerProps,
   MapLayerMouseEvent,
@@ -20,6 +21,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 // Debe ejecutarse antes de que se instancie el mapa: sin esto el worker queda
 // apuntando a una URL inexistente en produccion y el lienzo sale en blanco.
 import '@/lib/maplibreWorker'
+import { reportPosition } from '@/lib/positionStore'
 import { SavedPlaceMarkers } from './SavedPlaceMarkers'
 
 import type { FeatureCollection, Point } from 'geojson'
@@ -193,6 +195,18 @@ interface IncidentMapProps {
 const MAP_STYLE_BOX = { position: 'absolute', inset: 0 } as const
 const TOUCH_ZOOM_ROTATE = { around: 'center' } as const
 const GEOLOCATE_OPTIONS = { enableHighAccuracy: true } as const
+/**
+ * Cada lectura del punto azul también pone al día la ubicación de los avisos
+ * (`positionStore` → `usePushNotifications`): el GPS ya está encendido.
+ */
+function onGeolocate(event: GeolocateResultEvent): void {
+  reportPosition({
+    lat: event.coords.latitude,
+    lon: event.coords.longitude,
+    accuracyM: Number.isFinite(event.coords.accuracy) ? event.coords.accuracy : null,
+    at: event.timestamp || Date.now(),
+  })
+}
 const SEISMIC_ICON_COLOR = MAGNITUDE_COLOR_EXPRESSION as unknown as ExpressionSpecification
 
 type WithFilter = { filter?: FilterSpecification }
@@ -624,6 +638,7 @@ export const IncidentMap = memo(function IncidentMap({
         position="top-right"
         trackUserLocation
         positionOptions={GEOLOCATE_OPTIONS}
+        onGeolocate={onGeolocate}
       />
       <ScaleControl position="bottom-left" unit="metric" />
 
