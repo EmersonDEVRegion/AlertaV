@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
-from app.models.enums import DEFAULT_FAMILY
+from app.models.enums import DEFAULT_FAMILY, EventType, IncidentType
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +58,34 @@ PERFILES: dict[str, Perfil] = {
     # Rescates y despachos sin familia propia.
     DEFAULT_FAMILY: Perfil(1000.0, timedelta(hours=3), timedelta(hours=6)),
 }
+
+#: Un incendio estructural no es un incendio forestal: no se desplaza ni dura
+#: días, y en una ciudad dos casas que se queman a un kilómetro y con horas de
+#: diferencia son dos incendios. Con el perfil `fire` (1500 m, 8 h) un 1-1 de las
+#: 22:23 y un 2-1 de las 03:49 a 437 m terminaban juntos. Entre dos despachos no
+#: decide este perfil sino la dirección (`despachos.py`); éste rige para lo
+#: demás: un vecino, un píxel de FIRMS, la prensa.
+PERFIL_ESTRUCTURAL = Perfil(500.0, timedelta(hours=3), timedelta(hours=6))
+
+_ESTRUCTURALES = frozenset({EventType.STRUCTURAL_FIRE.value, IncidentType.STRUCTURAL_FIRE.value})
+_FORESTALES = frozenset({EventType.WILDFIRE.value, IncidentType.WILDFIRE.value})
+
+
+def perfil_para(familia: str | None, tipos: Iterable[object]) -> Perfil:
+    """El perfil de la familia, salvo un incendio que sólo es estructural.
+
+    `tipos` mezcla tipos de señal y de incidente (los dos enums comparten los
+    valores que importan). Si aparece algo forestal, manda el perfil `fire`: un
+    2-3 que pasa a 1-1 en la misma dirección es el mismo incendio.
+    """
+    base = perfil(familia)
+    if familia != "fire":
+        return base
+    valores = {getattr(t, "value", t) for t in tipos}
+    if valores & _ESTRUCTURALES and not valores & _FORESTALES:
+        return PERFIL_ESTRUCTURAL
+    return base
+
 
 #: Holgura de radio según la precisión del punto (`raw_data._geocoding.precision`).
 #: Un punto `street` puede estar en cualquier parte de una avenida de dos
@@ -114,8 +142,10 @@ __all__ = [
     "EDAD_MAX_GLOBAL",
     "HOLGURA_M",
     "PERFILES",
+    "PERFIL_ESTRUCTURAL",
     "Perfil",
     "holgura",
     "partir_por_brecha",
     "perfil",
+    "perfil_para",
 ]

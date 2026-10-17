@@ -19,6 +19,7 @@ Dos primitivas geométricas, cada una para lo suyo:
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -166,6 +167,21 @@ def sector_clave_sql() -> ColumnElement[Any]:
     return RawEvent.raw_data["_extraction"]["sector_clave"].astext
 
 
+def calle_sql(campo: str) -> ColumnElement[Any]:
+    """`raw_data._extraction.<campo>`: una calle que nombró la fuente, como texto."""
+    return RawEvent.raw_data["_extraction"][campo].astext
+
+
+def calles_de(*valores: str | None) -> tuple[str, ...]:
+    """Las calles no vacías, en orden y sin repetir."""
+    vistas: list[str] = []
+    for valor in valores:
+        texto = " ".join(str(valor or "").split())
+        if texto and texto not in vistas:
+            vistas.append(texto)
+    return tuple(vistas)
+
+
 #: Precisión del punto de un incidente, de mejor a peor. `despacho` es el
 #: marcador de la imagen de Viper: el punto con que despachó la central.
 #: `exacta` es una señal con coordenadas propias (CONAF, FIRMS, un GPS
@@ -240,6 +256,10 @@ class ClusteredEvent:
     #: Precisión del punto geocodificado (`street`, `sector`…). None = el punto
     #: vino de la fuente (FIRMS, CONAF, GPS) y cuenta como exacto.
     precision: str | None = None
+    #: Calles que nombró la fuente (`_extraction.street_1/2`). Las usa la regla
+    #: de despachos (`correlation/despachos.py`) para saber si dos despachos son
+    #: el mismo llamado.
+    calles: tuple[str, ...] = ()
 
     @property
     def cluster_key(self) -> tuple[str, int | None]:
@@ -259,6 +279,18 @@ class ClusteredEvent:
 class NearbyIncident:
     incident: Incident
     distance_m: float
+
+
+@dataclass(frozen=True, slots=True)
+class SenalUbicada:
+    """Una señal ya vinculada a un incidente, con lo que la regla de despachos mira."""
+
+    lat: float
+    lon: float
+    timestamp: datetime
+    source: EventSource
+    type: EventType
+    calles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -408,6 +440,8 @@ class IncidentRepository:
                 familia_evento.label("family"),
                 sector_clave_sql().label("sector_clave"),
                 geocoding_precision_sql().label("precision"),
+                calle_sql("street_1").label("street_1"),
+                calle_sql("street_2").label("street_2"),
             )
             .where(RawEvent.geom.isnot(None))
             .where(RawEvent.incident_id.is_(None))
@@ -442,6 +476,8 @@ class IncidentRepository:
             candidates.c.family,
             candidates.c.sector_clave,
             candidates.c.precision,
+            candidates.c.street_1,
+            candidates.c.street_2,
             cluster_id.label("cluster_id"),
         )
 
@@ -459,6 +495,7 @@ class IncidentRepository:
                 family=str(row.family),
                 sector_clave=row.sector_clave or None,
                 precision=row.precision or None,
+                calles=calles_de(row.street_1, row.street_2),
             )
             for row in rows
         ]
@@ -572,6 +609,31 @@ class IncidentRepository:
         desde: datetime | None = None,
         hasta: datetime | None = None,
     ) -> NearbyIncident | None:
+        """El más cercano de `find_open_incidents_near`. Ver ahí."""
+        cercanos = await self.find_open_incidents_near(
+            lat=lat,
+            lon=lon,
+            radius_m=radius_m,
+            since=since,
+            family=family,
+            desde=desde,
+            hasta=hasta,
+            limit=1,
+        )
+        return cercanos[0] if cercanos else None
+
+    async def find_open_incidents_near(
+        self,
+        *,
+        lat: float,
+        lon: float,
+        radius_m: float,
+        since: datetime,
+        family: str | None = None,
+        desde: datetime | None = None,
+        hasta: datetime | None = None,
+        limit: int = 5,
+    ) -> list[NearbyIncident]:
         """Incidente abierto más cercano dentro del radio y aún vivo.
 
         Con `desde`/`hasta`, además, el incidente tuvo que estar vivo CERCA DEL
@@ -586,6 +648,9 @@ class IncidentRepository:
         ya tiene folio, confianza y quizá una alerta de SENAPRED colgando—.
         Se deja opcional para no romper a quien busque el incidente más cercano
         sin importar su tipo.
+
+        Devuelve hasta `limit`, del más cercano al más lejano: el motor descarta
+        los que la regla de despachos no admite y se queda con el primero que sí.
         """
         point = func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326)
         distance = func.ST_Distance(
@@ -604,7 +669,7 @@ class IncidentRepository:
                 )
             )
             .order_by(distance.asc())
-            .limit(1)
+            .limit(limit)
             # El motor actualiza incidentes con sentencias Core dentro de la
             # misma pasada. Sin `populate_existing`, SQLAlchemy devolvería la
             # instancia que ya tiene en el mapa de identidad con sus valores
@@ -617,10 +682,64 @@ class IncidentRepository:
             stmt = stmt.where(Incident.last_seen_at >= desde)
         if hasta is not None:
             stmt = stmt.where(Incident.first_seen_at <= hasta)
-        row = (await self.session.execute(stmt)).first()
-        if row is None:
-            return None
-        return NearbyIncident(incident=row[0], distance_m=float(row.distance_m))
+        rows = (await self.session.execute(stmt)).all()
+        return [NearbyIncident(incident=row[0], distance_m=float(row.distance_m)) for row in rows]
+
+    async def senales_de_incidentes(
+        self, incident_ids: Sequence[int]
+    ) -> dict[int, list[SenalUbicada]]:
+        """Las señales con punto de cada incidente, para la regla de despachos."""
+        if not incident_ids:
+            return {}
+        stmt = (
+            select(
+                RawEvent.incident_id,
+                RawEvent.lat,
+                RawEvent.lon,
+                RawEvent.timestamp,
+                RawEvent.source,
+                RawEvent.type,
+                calle_sql("street_1").label("street_1"),
+                calle_sql("street_2").label("street_2"),
+            )
+            .where(RawEvent.incident_id.in_(sorted(set(incident_ids))))
+            .where(RawEvent.lat.isnot(None))
+            .where(RawEvent.lon.isnot(None))
+        )
+        resultado: dict[int, list[SenalUbicada]] = defaultdict(list)
+        for row in (await self.session.execute(stmt)).all():
+            resultado[int(row.incident_id)].append(
+                SenalUbicada(
+                    lat=float(row.lat),
+                    lon=float(row.lon),
+                    timestamp=row.timestamp,
+                    source=EventSource(getattr(row.source, "value", row.source)),
+                    type=EventType(getattr(row.type, "value", row.type)),
+                    calles=calles_de(row.street_1, row.street_2),
+                )
+            )
+        return dict(resultado)
+
+    async def dias_con_anomalia(
+        self, *, lat: float, lon: float, radio_m: float, desde: datetime, antes_de: datetime
+    ) -> int:
+        """Días distintos (hora de Chile) con anomalías de FIRMS a `radio_m` del punto.
+
+        Para la regla de recurrencia de `correlation/fuentes_fijas.py`. Cuenta
+        desde `desde` hasta antes de `antes_de`: el día de la anomalía que se
+        evalúa no cuenta a su favor.
+        """
+        punto = func.cast(func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326), _GEOGRAPHY)
+        dia = func.date(func.timezone("America/Santiago", RawEvent.timestamp))
+        stmt = (
+            select(func.count(func.distinct(dia)))
+            .where(RawEvent.source == EventSource.NASA_FIRMS)
+            .where(RawEvent.timestamp >= desde)
+            .where(RawEvent.timestamp < antes_de)
+            .where(RawEvent.geom.isnot(None))
+            .where(func.ST_DWithin(func.cast(RawEvent.geom, _GEOGRAPHY), punto, radio_m))
+        )
+        return int((await self.session.execute(stmt)).scalar_one() or 0)
 
     async def get_by_id(self, incident_id: int) -> Incident | None:
         stmt = (

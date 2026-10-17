@@ -1248,6 +1248,24 @@ class Settings(BaseSettings):
     #: el motor además desvincula la prensa de los incidentes abiertos y
     #: descarta los que sólo tenían prensa. En `true`, la prensa vuelve al motor.
     CORRELATION_PRENSA: bool = False
+    #: Dos despachos de Bomberos van al mismo incidente sólo si son el mismo
+    #: llamado: comparten una calle y están a `CORRELATION_DESPACHO_RADIO_M` y
+    #: `CORRELATION_DESPACHO_BRECHA_HORAS` o menos
+    #: (`app/services/correlation/despachos.py`). En `false`, dos despachos se
+    #: juntan como cualquier par de señales: por distancia y tiempo.
+    CORRELATION_DESPACHOS_POR_CALLE: bool = True
+    CORRELATION_DESPACHO_RADIO_M: float = Field(default=500.0, ge=50.0, le=5_000.0)
+    CORRELATION_DESPACHO_BRECHA_HORAS: float = Field(default=3.0, ge=0.25, le=24.0)
+    #: Fuentes de calor fijas (fundiciones, refinerías): una anomalía de FIRMS
+    #: dentro de un foco de `static/geo/fuentes_termicas.json`, o en un punto que
+    #: tuvo anomalías `FIRMS_FIJA_DIAS` días distintos de los últimos
+    #: `FIRMS_FIJA_VENTANA_DIAS`, no abre incidente por sí sola. Se guarda y se
+    #: suma a un incidente que abra otra fuente. Ver
+    #: `app/services/correlation/fuentes_fijas.py`.
+    FIRMS_FUENTES_FIJAS: bool = True
+    FIRMS_FIJA_RADIO_M: float = Field(default=400.0, ge=50.0, le=5_000.0)
+    FIRMS_FIJA_DIAS: int = Field(default=3, ge=2, le=30)
+    FIRMS_FIJA_VENTANA_DIAS: int = Field(default=7, ge=2, le=60)
     #: Ventana hacia atrás de señales que el motor considera en cada pasada.
     CORRELATION_WINDOW_HOURS: int = Field(default=4, ge=1, le=168)
     #: Antigüedad máxima de un incidente para que una señal nueva se le adhiera.

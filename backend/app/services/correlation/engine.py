@@ -89,6 +89,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -107,7 +108,9 @@ from app.repositories.incident_repository import (
     ClusteredEvent,
     EventLink,
     IncidentRepository,
+    NearbyIncident,
     SectorSignal,
+    SenalUbicada,
 )
 from app.services.ciudadanos import es_publico, seleccionar_independientes
 from app.services.correlation.communes import (
@@ -126,11 +129,20 @@ from app.services.correlation.confidence import (
     rule_for,
     score,
 )
+from app.services.correlation.despachos import (
+    ESQUINA_RADIO_M,
+    compatibles,
+    es_despacho,
+    partir_por_llamado,
+)
+from app.services.correlation.fuentes_fijas import fuente_conocida, solo_firms
 from app.services.correlation.perfiles import (
     PERFILES,
+    Perfil,
     holgura,
     partir_por_brecha,
     perfil,
+    perfil_para,
 )
 
 logger = logging.getLogger(__name__)
@@ -143,6 +155,13 @@ _MUTABLE_STATUSES = frozenset(
 )
 
 _EARTH_RADIUS_M = 6_371_008.8
+
+#: Los días de la regla de recurrencia de FIRMS se cuentan en hora de Chile.
+_ZONA_CHILE = ZoneInfo("America/Santiago")
+
+#: Incidentes cercanos que se miran al adherir un racimo: el más cercano puede
+#: ser otro llamado (regla de despachos) y el siguiente, el correcto.
+_CANDIDATOS_ADHESION = 5
 
 #: `link_confidence` de un vínculo por sector. Por debajo del 1.0 espacial y del
 #: 0.70 de una comuna exacta en el Paso B, aunque un sector sea mucho más fino
@@ -191,6 +210,16 @@ class CorrelationPass:
     prensa_desvinculada: int = 0
     #: De ésos, los que sólo tenían prensa y se descartaron.
     solo_prensa_descartados: int = 0
+    #: Tramos extra que salieron de separar despachos que no son el mismo
+    #: llamado (`correlation/despachos.py`).
+    llamados_separados: int = 0
+    #: Incidentes cercanos a los que un racimo NO se adhirió por ser otro
+    #: llamado o por quedar fuera del perfil estructural.
+    adhesiones_rechazadas: int = 0
+    #: Pares que `find_mergeable` propuso y la regla de despachos rechazó.
+    fusiones_rechazadas: int = 0
+    #: Racimos sólo de FIRMS en una fuente de calor fija: no abrieron incidente.
+    firms_fuente_fija: int = 0
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -223,6 +252,10 @@ class CorrelationPass:
             "clusters_split": self.clusters_split,
             "prensa_desvinculada": self.prensa_desvinculada,
             "solo_prensa_descartados": self.solo_prensa_descartados,
+            "llamados_separados": self.llamados_separados,
+            "adhesiones_rechazadas": self.adhesiones_rechazadas,
+            "fusiones_rechazadas": self.fusiones_rechazadas,
+            "firms_fuente_fija": self.firms_fuente_fija,
             "warnings": list(self.warnings),
         }
 
@@ -272,6 +305,8 @@ class CorrelationEngine:
         perfiles: bool | None = None,
         solo_region: bool | None = None,
         prensa: bool | None = None,
+        despachos_por_calle: bool | None = None,
+        fuentes_fijas: bool | None = None,
     ) -> None:
         self.session = session
         self.repo = IncidentRepository(session)
@@ -304,6 +339,18 @@ class CorrelationEngine:
         )
         #: ¿La prensa entra al motor? Ver `CORRELATION_PRENSA`.
         self.prensa = settings.CORRELATION_PRENSA if prensa is None else prensa
+        #: Regla de despachos. Ver `CORRELATION_DESPACHOS_POR_CALLE`.
+        self.despachos_por_calle = (
+            settings.CORRELATION_DESPACHOS_POR_CALLE
+            if despachos_por_calle is None
+            else despachos_por_calle
+        )
+        self.despacho_radio_m = settings.CORRELATION_DESPACHO_RADIO_M
+        self.despacho_brecha_max = timedelta(hours=settings.CORRELATION_DESPACHO_BRECHA_HORAS)
+        #: Fuentes de calor fijas. Ver `FIRMS_FUENTES_FIJAS`.
+        self.fuentes_fijas = (
+            settings.FIRMS_FUENTES_FIJAS if fuentes_fijas is None else fuentes_fijas
+        )
         #: ¿Existe `comunas_region`? Se pregunta una vez por pasada.
         self._hay_comunas: bool | None = None
         self._comunas_por_poligono = 0
@@ -446,10 +493,28 @@ class CorrelationEngine:
             # un racimo aunque A y C estén a 4 km y a tres horas. Se corta donde
             # se abre el tiempo; sin perfiles, el racimo va entero como antes.
             tramos = (
-                partir_por_brecha(racimo, perfil(family).brecha) if self.perfiles else [racimo]
+                partir_por_brecha(racimo, self._perfil(family, racimo).brecha)
+                if self.perfiles
+                else [racimo]
             )
             result.clusters_split += len(tramos) - 1
-            for members in tramos:
+            if self.despachos_por_calle:
+                # Dos despachos cercanos que nombran otras calles son dos
+                # llamados, aunque DBSCAN los haya puesto en el mismo racimo.
+                por_llamado: list[list[ClusteredEvent]] = []
+                for tramo in tramos:
+                    partes = partir_por_llamado(
+                        tramo,
+                        radio_m=self.despacho_radio_m,
+                        brecha=self._brecha_despachos(family),
+                        radio_ajenas_m=self._perfil(family, tramo).radio_m,
+                    )
+                    result.llamados_separados += len(partes) - 1
+                    por_llamado.extend(partes)
+                tramos = por_llamado
+            # Del más antiguo al más nuevo: el refuerzo encuentra el incidente
+            # que abrió su primer despacho aunque DBSCAN los separara.
+            for members in sorted(tramos, key=lambda t: min(m.timestamp for m in t)):
                 await self._absorb_cluster(
                     members, family=family, result=result, now=now, match_since=match_since
                 )
@@ -466,35 +531,47 @@ class CorrelationEngine:
         """Un racimo (o tramo) → al incidente cercano, al de su sector, o a uno nuevo."""
         lat, lon = weighted_centroid(members)
 
+        # Con despachos se busca más lejos: la misma esquina repetida puede
+        # caer a dos kilómetros por error de geocodificación, y la que decide
+        # ahí es la dirección (`_primer_admisible`), no el radio.
+        con_despachos = self.despachos_por_calle and any(es_despacho(m) for m in members)
         if self.perfiles:
             p = perfil(family)
             horas = [member.timestamp for member in members]
-            nearby = await self.repo.find_nearest_open_incident(
+            brecha = p.brecha
+            # Un punto `street` puede estar en cualquier parte de una avenida
+            # de dos kilómetros: el radio crece con la imprecisión del peor.
+            radio = p.radio_m + holgura(member.precision for member in members)
+            candidatos = await self.repo.find_open_incidents_near(
                 lat=lat,
                 lon=lon,
-                # Un punto `street` puede estar en cualquier parte de una avenida
-                # de dos kilómetros: el radio crece con la imprecisión del peor.
-                radius_m=p.radio_m + holgura(member.precision for member in members),
+                radius_m=max(radio, ESQUINA_RADIO_M) if con_despachos else radio,
                 since=match_since,
                 family=family,
                 # El incidente tuvo que estar vivo cerca de la hora de la señal.
-                desde=min(horas) - p.brecha,
-                hasta=max(horas) + p.brecha,
+                desde=min(horas) - brecha,
+                hasta=max(horas) + brecha,
+                limit=_CANDIDATOS_ADHESION,
             )
         else:
-            nearby = await self.repo.find_nearest_open_incident(
+            candidatos = await self.repo.find_open_incidents_near(
                 lat=lat,
                 lon=lon,
-                radius_m=self.radius_m,
+                radius_m=max(self.radius_m, ESQUINA_RADIO_M) if con_despachos else self.radius_m,
                 since=match_since,
                 family=family,
+                limit=_CANDIDATOS_ADHESION,
             )
+        nearby = await self._primer_admisible(candidatos, members, family=family, result=result)
 
         method = LinkMethod.SPATIAL
         by_sector: Incident | None = None
         if nearby is None:
             by_sector = await self._incident_by_sector(
-                [member.sector_clave for member in members], family=family, now=now
+                [member.sector_clave for member in members],
+                family=family,
+                now=now,
+                members=members,
             )
 
         if nearby is not None:
@@ -508,6 +585,11 @@ class CorrelationEngine:
             method = LinkMethod.SECTOR_TEXT
             result.clusters_joined_by_sector += 1
         else:
+            if self.fuentes_fijas and await self._en_fuente_fija(members):
+                # Una fundición o una refinería, no un incendio. Las señales
+                # quedan sin incidente: si otra fuente abre uno ahí, se suman.
+                result.firms_fuente_fija += 1
+                return
             if not self._should_open_incident(members):
                 # Señal aislada de una fuente no confirmatoria: se deja sin
                 # incidente. No se pierde —sigue siendo una `raw_event`
@@ -552,6 +634,107 @@ class CorrelationEngine:
         )
         await self._refresh(incident, now=now)
         result.incidents_updated += 1
+
+    def _brecha_despachos(self, family: str) -> timedelta:
+        """Brecha de la regla de despachos: nunca más larga que la de la familia.
+
+        La regla separa llamados; no puede juntar lo que el perfil ya separaba
+        por tiempo (dos choques a 2 h y media en la misma ruta son dos choques).
+        """
+        if not self.perfiles:
+            return self.despacho_brecha_max
+        return min(self.despacho_brecha_max, perfil(family).brecha)
+
+    @staticmethod
+    def _perfil(family: str, senales: Sequence[ClusteredEvent | SenalUbicada]) -> Perfil:
+        """Perfil de la familia, o el estructural si el grupo es sólo estructural."""
+        return perfil_para(family, [senal.type for senal in senales])
+
+    async def _primer_admisible(
+        self,
+        candidatos: Sequence[NearbyIncident],
+        members: Sequence[ClusteredEvent],
+        *,
+        family: str,
+        result: CorrelationPass,
+    ) -> NearbyIncident | None:
+        """El incidente más cercano al que este racimo se puede adherir.
+
+        * **Si los dos lados tienen despachos, decide la dirección**: uno de cada
+          lado tiene que ser el mismo llamado (`correlation/despachos.py`), y
+          con eso basta aunque los puntos estén lejos.
+        * **Si no, decide la geometría** con el perfil que corresponde: un
+          incendio estructural acepta señales a 500 m y 3 h, no a 1500 m y 8 h
+          como uno forestal.
+        """
+        if not candidatos:
+            return None
+        senales = await self.repo.senales_de_incidentes([c.incident.id for c in candidatos])
+        horas = [member.timestamp for member in members]
+        margen = holgura(member.precision for member in members)
+        hay_despachos = any(es_despacho(m) for m in members)
+        for candidato in candidatos:
+            existentes = senales.get(candidato.incident.id, [])
+            if (
+                self.despachos_por_calle
+                and hay_despachos
+                and any(es_despacho(e) for e in existentes)
+            ):
+                if compatibles(
+                    members,
+                    existentes,
+                    radio_m=self.despacho_radio_m,
+                    brecha=self._brecha_despachos(family),
+                ):
+                    return candidato
+                result.adhesiones_rechazadas += 1
+                continue
+            if self.perfiles:
+                p = perfil_para(
+                    family,
+                    [
+                        candidato.incident.type,
+                        *(m.type for m in members),
+                        *(e.type for e in existentes),
+                    ],
+                )
+                fuera = (
+                    candidato.distance_m > p.radio_m + margen
+                    or candidato.incident.last_seen_at < min(horas) - p.brecha
+                    or candidato.incident.first_seen_at > max(horas) + p.brecha
+                )
+            else:
+                fuera = candidato.distance_m > self.radius_m
+            if fuera:
+                result.adhesiones_rechazadas += 1
+                continue
+            return candidato
+        return None
+
+    async def _en_fuente_fija(self, members: Sequence[ClusteredEvent]) -> bool:
+        """¿Todo el racimo es FIRMS sobre una fuente de calor fija?
+
+        Basta una señal de otra fuente, o un píxel fuera de los focos, para que
+        el racimo se trate como siempre. Ver `correlation/fuentes_fijas.py`.
+        """
+        if not solo_firms([member.source for member in members]):
+            return False
+        ventana = timedelta(days=settings.FIRMS_FIJA_VENTANA_DIAS)
+        for member in members:
+            if fuente_conocida(member.lat, member.lon) is not None:
+                continue
+            local = member.timestamp.astimezone(_ZONA_CHILE)
+            inicio_del_dia = local.replace(hour=0, minute=0, second=0, microsecond=0)
+            dias = await self.repo.dias_con_anomalia(
+                lat=member.lat,
+                lon=member.lon,
+                radio_m=settings.FIRMS_FIJA_RADIO_M,
+                desde=inicio_del_dia - ventana,
+                antes_de=inicio_del_dia,
+            )
+            if dias < settings.FIRMS_FIJA_DIAS:
+                return False
+        return True
 
     def _should_open_incident(self, members: Sequence[ClusteredEvent]) -> bool:
         """¿Este racimo merece un incidente propio?
@@ -609,7 +792,12 @@ class CorrelationEngine:
     # -- Vínculo por sector ---------------------------------------------------
 
     async def _incident_by_sector(
-        self, claves: Sequence[str | None], *, family: str, now: datetime
+        self,
+        claves: Sequence[str | None],
+        *,
+        family: str,
+        now: datetime,
+        members: Sequence[ClusteredEvent] = (),
     ) -> Incident | None:
         """Incidente abierto de `family` que nombra alguno de estos sectores.
 
@@ -634,8 +822,19 @@ class CorrelationEngine:
             incident = await self.repo.find_open_incident_by_sector(
                 sector_clave=clave, family=family, since=since
             )
-            if incident is not None:
-                return incident
+            if incident is None:
+                continue
+            if members and self.despachos_por_calle:
+                # Mismo sector no hace a dos despachos el mismo llamado.
+                senales = await self.repo.senales_de_incidentes([incident.id])
+                if not compatibles(
+                    members,
+                    senales.get(incident.id, []),
+                    radio_m=self.despacho_radio_m,
+                    brecha=self._brecha_despachos(family),
+                ):
+                    continue
+            return incident
         return None
 
     async def _step_a_sector(self, result: CorrelationPass, *, now: datetime) -> None:
@@ -711,6 +910,8 @@ class CorrelationEngine:
             pairs = await self.repo.find_mergeable(radius_m=self.radius_m, since=since)
         if not pairs:
             return
+        if self.despachos_por_calle or self.perfiles:
+            pairs = await self._fusiones_admisibles(pairs, result)
 
         redirect: dict[int, int] = {}
         for keep_id, drop_id in pairs:
@@ -728,6 +929,44 @@ class CorrelationEngine:
             incident = await self.repo.get_by_id(survivor)
             if incident is not None:
                 await self._refresh(incident, now=now)
+
+    async def _fusiones_admisibles(
+        self, pairs: Sequence[tuple[int, int]], result: CorrelationPass
+    ) -> list[tuple[int, int]]:
+        """Los pares que pueden fundirse: misma regla que al adherir un racimo."""
+        ids = sorted({i for pair in pairs for i in pair})
+        senales = await self.repo.senales_de_incidentes(ids)
+        incidentes = {i: await self.repo.get_by_id(i) for i in ids}
+        admisibles: list[tuple[int, int]] = []
+        for keep_id, drop_id in pairs:
+            a, b = incidentes.get(keep_id), incidentes.get(drop_id)
+            if a is None or b is None:
+                continue
+            sa, sb = senales.get(keep_id, []), senales.get(drop_id, [])
+            if (
+                self.despachos_por_calle
+                and any(es_despacho(x) for x in sa)
+                and any(es_despacho(x) for x in sb)
+            ):
+                brecha = self._brecha_despachos(family_of_incident(a.type))
+                if compatibles(sa, sb, radio_m=self.despacho_radio_m, brecha=brecha):
+                    admisibles.append((keep_id, drop_id))
+                else:
+                    result.fusiones_rechazadas += 1
+                continue
+            if self.perfiles:
+                p = perfil_para(
+                    family_of_incident(a.type),
+                    [a.type, b.type, *(s.type for s in sa), *(s.type for s in sb)],
+                )
+                if haversine_m(a.lat, a.lon, b.lat, b.lon) > p.radio_m or (
+                    a.last_seen_at < b.first_seen_at - p.brecha
+                    or b.last_seen_at < a.first_seen_at - p.brecha
+                ):
+                    result.fusiones_rechazadas += 1
+                    continue
+            admisibles.append((keep_id, drop_id))
+        return admisibles
 
     @staticmethod
     def _resolve_redirect(redirect: dict[int, int], incident_id: int) -> int:

@@ -1,0 +1,21 @@
+{
+  "descripcion": "Fuentes de calor fijas de la Región de Valparaíso que FIRMS detecta como anomalías térmicas sin que haya un incendio. Una anomalía dentro del radio no abre incidente por sí sola; se guarda y se suma a un incidente que abra otra fuente (Bomberos, CONAF, vecinos).",
+  "fuentes": [
+    {
+      "nombre": "Fundición Chagres",
+      "comuna": "Catemu",
+      "lat": -32.8030,
+      "lon": -70.9535,
+      "radio_m": 700,
+      "procedencia": "Centroide de 129 anomalías de FIRMS en al menos 29 días distintos entre el 18-08 y el 16-10-2026 (VIIRS y MODIS), dentro de la comuna donde opera la fundición."
+    },
+    {
+      "nombre": "Refinería Aconcagua (ENAP)",
+      "comuna": "Concón",
+      "lat": -32.9292,
+      "lon": -71.5061,
+      "radio_m": 600,
+      "procedencia": "Centroide de 6 anomalías de FIRMS en 4 días distintos entre el 19-08 y el 09-09-2026, sobre la refinería."
+    }
+  ]
+}

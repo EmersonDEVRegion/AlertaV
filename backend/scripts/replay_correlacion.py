@@ -14,7 +14,10 @@ Dos pasos, en dos bases distintas:
 `reproducir` inserta las señales en el orden en que llegaron (`ingested_at`) y
 corre una pasada del motor cada `--paso-min` minutos con el reloj simulado
 (`CorrelationEngine.run(now=…)`). Con `--modo comparar` lo hace dos veces —motor
-anterior (`CORRELATION_PERFILES=false`) y calibrado— y compara:
+anterior (`CORRELATION_PERFILES=false`) y calibrado— y compara. Con `--modo
+reglas` compara el calibrado sin y con la regla de despachos y las fuentes de
+calor fijas (`CORRELATION_DESPACHOS_POR_CALLE`, `FIRMS_FUENTES_FIJAS`). En los
+dos casos:
 
 * incidentes por familia, sin comuna, fundidos, descartados;
 * pares de señales que un modo junta y el otro separa, con ejemplos de prensa
@@ -195,7 +198,7 @@ async def _insertar(lote: Iterable[dict[str, Any]]) -> None:
 
 
 async def _una_corrida(
-    senales: list[dict[str, Any]], *, perfiles: bool, paso: timedelta
+    senales: list[dict[str, Any]], *, perfiles: bool, paso: timedelta, **opciones: Any
 ) -> dict[str, Any]:
     from sqlalchemy import select
 
@@ -219,9 +222,12 @@ async def _una_corrida(
             siguiente += 1
         await _insertar(lote)
         async with AsyncSessionLocal() as session:
-            pasada = await CorrelationEngine(session, perfiles=perfiles).run(now=reloj)
+            pasada = await CorrelationEngine(session, perfiles=perfiles, **opciones).run(
+                now=reloj
+            )
         for clave in ("incidents_created", "incidents_merged", "incidents_dismissed",
-                      "clusters_split", "communes_by_polygon"):
+                      "clusters_split", "communes_by_polygon", "llamados_separados",
+                      "firms_fuente_fija"):
             totales[clave] += int(getattr(pasada, clave))
         pasadas += 1
         reloj += paso
@@ -248,6 +254,11 @@ async def _una_corrida(
         "descartados": totales["incidents_dismissed"],
         "racimos_cortados": totales["clusters_split"],
         "comuna_por_poligono": totales["communes_by_polygon"],
+        "llamados_separados": totales["llamados_separados"],
+        "firms_fuente_fija": totales["firms_fuente_fija"],
+        "solo_firms": sum(
+            1 for i in vivos if list(getattr(i, "sources", None) or []) == ["nasa_firms"]
+        ),
         "incidente_de": {fila.id: fila.incident_id for fila in asignadas},
         "fuente_de": {fila.id: getattr(fila.source, "value", fila.source) for fila in asignadas},
     }
@@ -275,6 +286,9 @@ def _informe(nombre: str, r: dict[str, Any]) -> None:
     print(f"  fundidos             {r['fundidos']}")
     print(f"  descartados          {r['descartados']}")
     print(f"  racimos cortados     {r['racimos_cortados']}")
+    print(f"  llamados separados   {r['llamados_separados']}")
+    print(f"  sólo FIRMS           {r['solo_firms']}")
+    print(f"  FIRMS en fuente fija {r['firms_fuente_fija']} racimos sin incidente")
 
 
 def _comparar(a: dict[str, Any], b: dict[str, Any], senales: list[dict[str, Any]]) -> None:
@@ -288,19 +302,21 @@ def _comparar(a: dict[str, Any], b: dict[str, Any], senales: list[dict[str, Any]
         s["id"]: (s["source"], s["type"], f"{s['timestamp']:%d-%m %H:%M}", (s.get("text") or "")[:80])
         for s in senales
     }
-    prensa = {"media", "social_media"}
+    a_mano = {"media", "social_media", "bomberos"}
     casos = [
         par for par in sorted(solo_a | solo_b)
-        if texto.get(par[0], ("",))[0] in prensa or texto.get(par[1], ("",))[0] in prensa
-    ][:20]
+        if texto.get(par[0], ("",))[0] in a_mano or texto.get(par[1], ("",))[0] in a_mano
+    ][:40]
     if casos:
-        print("\n  Para revisar a mano (prensa y redes; «A» = sólo el anterior los junta):")
+        print("\n  Para revisar a mano (prensa, redes y despachos; «A» = sólo el primero los junta):")
     for x, y in casos:
         quien = "A" if (x, y) in solo_a else "B"
         print(f"  [{quien}] {x}: {texto.get(x)}\n       {y}: {texto.get(y)}")
 
 
-async def reproducir(ruta: Path, modo: str, paso_min: int) -> int:
+async def reproducir(
+    ruta: Path, modo: str, paso_min: int, salida_json: Path | None = None
+) -> int:
     from app.core.database import dispose_engine
 
     host = _base_desechable()
@@ -321,6 +337,24 @@ async def reproducir(ruta: Path, modo: str, paso_min: int) -> int:
             _informe("motor calibrado", resultados["calibrado"])
         if modo == "comparar":
             _comparar(resultados["anterior"], resultados["calibrado"], senales)
+        if modo == "reglas":
+            resultados["sin_reglas"] = await _una_corrida(
+                senales, perfiles=True, paso=paso, despachos_por_calle=False, fuentes_fijas=False
+            )
+            _informe("calibrado, sin reglas de despachos ni fuentes fijas", resultados["sin_reglas"])
+            resultados["con_reglas"] = await _una_corrida(
+                senales, perfiles=True, paso=paso, despachos_por_calle=True, fuentes_fijas=True
+            )
+            _informe("calibrado, con las reglas", resultados["con_reglas"])
+            _comparar(resultados["sin_reglas"], resultados["con_reglas"], senales)
+        if salida_json is not None:
+            salida_json.write_text(
+                json.dumps(
+                    {k: {"incidente_de": v["incidente_de"]} for k, v in resultados.items()},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
     finally:
         await dispose_engine()
     return 0
@@ -336,8 +370,11 @@ def main(argv: list[str] | None = None) -> int:
 
     rep = sub.add_parser("reproducir", help="JSONL → motor en una base desechable")
     rep.add_argument("archivo", type=Path)
-    rep.add_argument("--modo", choices=("anterior", "calibrado", "comparar"), default="comparar")
+    rep.add_argument(
+        "--modo", choices=("anterior", "calibrado", "comparar", "reglas"), default="comparar"
+    )
     rep.add_argument("--paso-min", type=int, default=10)
+    rep.add_argument("--json", type=Path, default=None, help="asignaciones señal → incidente")
     rep.add_argument("--confirmo-base-desechable", action="store_true")
 
     args = parser.parse_args(argv)
@@ -345,7 +382,7 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(exportar(args.dias, args.salida))
     if not args.confirmo_base_desechable:
         parser.error("reproducir BORRA incidentes y señales de la base: agregar --confirmo-base-desechable")
-    return asyncio.run(reproducir(args.archivo, args.modo, args.paso_min))
+    return asyncio.run(reproducir(args.archivo, args.modo, args.paso_min, args.json))
 
 
 if __name__ == "__main__":

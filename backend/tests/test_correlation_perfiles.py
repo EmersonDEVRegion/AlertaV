@@ -126,9 +126,12 @@ class RepoFalso:
     async def comunas_disponibles(self) -> bool:
         return self.hay_comunas if hasattr(self, "hay_comunas") else False
 
-    async def find_nearest_open_incident(self, **kwargs: Any) -> None:
+    async def find_open_incidents_near(self, **kwargs: Any) -> list[Any]:
         self.busquedas.append(kwargs)
-        return None
+        return []
+
+    async def senales_de_incidentes(self, _ids: Any) -> dict[int, list[Any]]:
+        return {}
 
     async def find_open_incident_by_sector(self, **_: Any) -> None:
         return None

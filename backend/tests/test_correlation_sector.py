@@ -85,6 +85,12 @@ class RepoFalso:
     async def comunas_disponibles(self) -> bool:
         return self.hay_comunas if hasattr(self, "hay_comunas") else False
 
+    async def find_open_incidents_near(self, **_: Any) -> list[Any]:
+        return []
+
+    async def senales_de_incidentes(self, _ids: Any) -> dict[int, list[Any]]:
+        return {}
+
     async def find_nearest_open_incident(self, **_: Any) -> None:
         return None  # nada a menos del radio: es el caso de Miraflores Alto
 
