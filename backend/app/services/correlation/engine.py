@@ -115,6 +115,7 @@ from app.repositories.incident_repository import (
     SenalUbicada,
 )
 from app.services.ciudadanos import es_publico, seleccionar_independientes
+from app.services.correlation import relaciones as rel
 from app.services.correlation.communes import (
     AlertView,
     IncidentView,
@@ -137,7 +138,6 @@ from app.services.correlation.despachos import (
     es_despacho,
     partir_por_llamado,
 )
-from app.services.correlation import relaciones as rel
 from app.services.correlation.fuentes_fijas import fuente_conocida, solo_firms
 from app.services.correlation.perfiles import (
     PERFILES,
@@ -464,7 +464,9 @@ class CorrelationEngine:
         if tipos_evento:
             filas_eventos = (
                 await self.session.execute(
-                    select(RawEvent.id, RawEvent.type, RawEvent.lat, RawEvent.lon, RawEvent.timestamp)
+                    select(
+                        RawEvent.id, RawEvent.type, RawEvent.lat, RawEvent.lon, RawEvent.timestamp
+                    )
                     .where(RawEvent.type.in_(tipos_evento))
                     .where(RawEvent.lat.isnot(None))
                     .where(RawEvent.lon.isnot(None))
