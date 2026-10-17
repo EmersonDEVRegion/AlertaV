@@ -1264,3 +1264,96 @@ def test_un_punto_con_anomalias_tres_dias_seguidos_es_fuente_fija(fijas, esperad
 
     _, incidentes = correr(caso)
     assert len(incidentes) == esperados
+
+
+# --- CGE fuera de la región no se guarda ----------------------------------------
+
+
+def test_cge_de_santiago_no_se_guarda_y_lo_de_la_region_si():
+    from datetime import timedelta as td
+
+    from app.core.database import AsyncSessionLocal
+    from app.services.ingest_service import IngestService
+
+    puente_alto = (-33.6117, -70.5758)
+
+    async def caso():
+        await _vaciar_motor()
+        async with AsyncSessionLocal() as session:
+            return await IngestService(session).ingest_batch(
+                [
+                    _evento("cge-stgo", puente_alto, hace=td(minutes=5), fuente="cge", tipo="power_outage"),
+                    _evento("cge-quilpue", QUILPUE, hace=td(minutes=5), fuente="cge", tipo="power_outage"),
+                    _evento("csn-stgo", puente_alto, hace=td(minutes=5), fuente="csn", tipo="earthquake"),
+                ]
+            )
+
+    resultado = correr(caso)
+    assert resultado.received == 3
+    assert resultado.rejected == 1
+    assert resultado.inserted == 2
+
+
+# --- Reapertura del MTT -------------------------------------------------------
+
+
+def test_la_reapertura_del_mtt_saca_el_corte_del_mapa_y_sobrevive_al_reingreso():
+    from datetime import timedelta as td
+
+    from app.api.v1.endpoints.events import _cierre_vigente
+    from app.collectors.traffic import transito_x as tx
+    from app.core.database import AsyncSessionLocal
+    from app.models.event import RawEvent
+
+    corte = _evento(
+        "mtt-libertad",
+        (-33.0150, -71.5510),
+        hace=td(hours=1),
+        tipo="road_closure",
+        raw={"_extraction": {"street_1": "Avenida Libertad", "city": "Viña del Mar"}},
+    )
+    otro = _evento(
+        "mtt-arlegui",
+        (-33.0240, -71.5520),
+        hace=td(hours=1),
+        tipo="road_closure",
+        raw={"_extraction": {"street_1": "Arlegui", "city": "Viña del Mar"}},
+    )
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(corte, otro)
+        reapertura = tx.aviso_de_tuit(
+            texto="Habilitado tránsito vehicular en Avenida Libertad, #ViñaDelMar.",
+            identificador="99",
+            publicado=datetime.now(UTC),
+            cuenta="TTIValparaiso",
+            url="https://x.com/TTIValparaiso/status/99",
+        )
+        async with AsyncSessionLocal() as session:
+            cerrados = await tx.cerrar_reabiertos(
+                session,
+                reapertura,
+                {"street_1": "Avenida Libertad", "city": "Viña del Mar"},
+                ahora=datetime.now(UTC),
+            )
+            await session.commit()
+        # El mismo tuit del corte vuelve en otra entrega del webhook.
+        await _ingerir(corte)
+        async with AsyncSessionLocal() as session:
+            filas = (
+                (await session.execute(select(RawEvent).order_by(RawEvent.external_id)))
+                .scalars()
+                .all()
+            )
+        return cerrados, filas
+
+    cerrados, filas = correr(caso)
+    assert cerrados == 1
+    por_id = {f.external_id: f for f in filas}
+    assert "_mtt_fin" in por_id["integracion:mtt-libertad"].raw_data
+    assert "_mtt_fin" not in por_id["integracion:mtt-arlegui"].raw_data
+    ahora = datetime.now(UTC)
+    assert not _cierre_vigente(por_id["integracion:mtt-libertad"], ahora)
+    assert _cierre_vigente(por_id["integracion:mtt-arlegui"], ahora)
+    assert not _cierre_vigente(por_id["integracion:mtt-arlegui"], ahora + timedelta(hours=13))

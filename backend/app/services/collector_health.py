@@ -14,7 +14,7 @@ Este módulo traduce lo que la base ya sabía a lo que la interfaz necesita.
 Por qué agrega por familia y no por collector
 ---------------------------------------------
 Porque el contador es por familia. Nadie mira «Accidentes viales» y se pregunta
-por `transporte_informa`: se pregunta si puede confiar en el número. Una familia
+por `transporte_informa_x`: se pregunta si puede confiar en el número. Una familia
 la alimentan varias fuentes, así que su salud es la del conjunto — y la regla es
 deliberadamente conservadora, ver `_peor`.
 
@@ -28,13 +28,24 @@ vez?» lo declararía sano justo mientras está ciego.
 De ahí que `DEGRADED` exista y que este módulo lo mire primero: es el collector
 declarando que lo que leyó no describe el presente, y eso ninguna cifra de
 recencia lo puede deducir desde afuera.
+
+Ceguera sin aviso: corridas sanas que no leen nada
+--------------------------------------------------
+Hay una ceguera que el collector no puede declarar porque no la ve: corre, el
+sitio responde, y no encuentra nada que leer. El lector del portal de
+Transporte Informa corrió 3 481 veces entre el 19-09 y el 17-10-2026 con cero
+avisos leídos y estado `success` en todas. Por eso, además, una fuente que lleva
+`CEGUERA_HORAS` sin leer ni una fila (`events_fetched`) pasa a `degraded`
+aunque cada corrida diga que anduvo bien. El umbral sale de la brecha más
+larga sin lecturas observada en dos semanas: 46 h de FIRMS, 28 h de Esval, 25 h
+de la prensa; el resto, menos de 9 h.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from app.collectors.registry import COLLECTORS, collector_class
 from app.core.config import settings
@@ -52,10 +63,10 @@ from app.models.event import CollectorRun
 #: tratar a todas por igual daría `traffic: ok` con la fuente principal ciega y
 #: una de apoyo sana.
 #:
-#: `transporte_informa` es apoyo porque **no sustituye a nadie en accidentes**:
-#: emite sobre todo `road_closure`, que está fuera de `CORRELATABLE_EVENT_TYPES`
-#: y no crea incidentes, y su rendimiento real en siniestros es cero. Que el MTT
-#: publique con normalidad no significa que un choque se vaya a ver.
+#: El MTT (`transporte_informa_x`) es apoyo porque **no sustituye a nadie en
+#: accidentes**: emite sobre todo `road_closure`, que está fuera de
+#: `CORRELATABLE_EVENT_TYPES` y no crea incidentes. Que el MTT publique con
+#: normalidad no significa que un choque se vaya a ver.
 #:
 #: FIRMS es apoyo por lo mismo en su terreno: emite `thermal_anomaly` con
 #: confianza baja y no confirma nada. CONAF sí.
@@ -65,10 +76,8 @@ COLLECTOR_ROLES: dict[str, dict[str, str]] = {
     "senapred_alertas": {"otros": "principal"},
     "chilquinta_cortes": {"power": "principal"},
     "cge_cortes": {"power": "principal"},
-    "transporte_informa": {"traffic": "apoyo"},
     #: Los tuits de @TTIValparaiso, que llegan en las entregas del webhook de
-    #: X. Apoyo por lo mismo que el portal. Su corrida
-    #: sólo existe cuando la entrega trae tuits de la cuenta.
+    #: X. Su corrida sólo existe cuando la entrega trae tuits de la cuenta.
     "transporte_informa_x": {"traffic": "apoyo"},
     "prensa_local": {"fire": "apoyo", "traffic": "principal", "otros": "apoyo"},
     #: Fuera de `COLLECTORS` —entra por webhook— pero escribe en `collector_runs`
@@ -118,6 +127,47 @@ STALE_INTERVALS = 3
 #: Piso para fuentes de cadencia larga. El MOP corre cada hora y se actualiza los
 #: lunes: tres horas de silencio suyo no son noticia, pero doce sí.
 MIN_STALE_SECONDS = 900
+
+#: Horas sin leer ni una fila tras las que una fuente que corre bien se declara
+#: ciega. Ver el docstring del módulo.
+CEGUERA_HORAS = 72
+#: Las que pueden pasar más tiempo sin nada que leer sin estar ciegas. FIRMS no
+#: ve anomalías con días nublados seguidos.
+CEGUERA_HORAS_POR_COLLECTOR: dict[str, int] = {"nasa_firms_area": 120}
+#: Las que no corren si no hay nada: su corrida sólo existe cuando la entrega
+#: del webhook trae algo, así que «corre y no lee» no puede pasar.
+_SIN_CEGUERA = frozenset({"transporte_informa_x"})
+
+
+@dataclass(frozen=True, slots=True)
+class Lecturas:
+    """Cuándo leyó filas por última vez y desde cuándo hay corridas guardadas."""
+
+    ultima: datetime | None
+    desde: datetime | None
+
+
+def ceguera(
+    nombre: str, lecturas: Lecturas | None, *, ahora: datetime
+) -> timedelta | None:
+    """El tiempo sin lecturas si ya pasó el umbral de la fuente; si no, None.
+
+    Sin historial suficiente (corridas guardadas desde hace menos que el
+    umbral) no se juzga: un despliegue nuevo no es una fuente ciega.
+    """
+    if lecturas is None or nombre in _SIN_CEGUERA or lecturas.desde is None:
+        return None
+    umbral = timedelta(hours=CEGUERA_HORAS_POR_COLLECTOR.get(nombre, CEGUERA_HORAS))
+    desde = _con_zona(lecturas.desde)
+    if ahora - desde < umbral:
+        return None
+    referencia = _con_zona(lecturas.ultima) if lecturas.ultima else desde
+    sin_leer = ahora - referencia
+    return sin_leer if sin_leer >= umbral else None
+
+
+def _con_zona(momento: datetime) -> datetime:
+    return momento if momento.tzinfo else momento.replace(tzinfo=UTC)
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,13 +322,17 @@ def _estado_de_familia(estados: Sequence[str]) -> str:
 
 
 def build_health(
-    ultimas: dict[str, CollectorRun], *, ahora: datetime | None = None
+    ultimas: dict[str, CollectorRun],
+    *,
+    ahora: datetime | None = None,
+    lecturas: Mapping[str, Lecturas] | None = None,
 ) -> tuple[list[CollectorHealth], dict[str, str]]:
     """Salud por collector y su agregado por familia.
 
-    `ultimas` es `nombre → última corrida`. Se recibe ya resuelto en vez de
-    consultarse acá para que toda la regla sea pura y testeable sin base: es
-    aritmética de fechas y precedencias, no SQL.
+    `ultimas` es `nombre → última corrida`, y `lecturas`, `nombre → cuándo leyó
+    filas por última vez`. Se reciben ya resueltos en vez de consultarse acá
+    para que toda la regla sea pura y testeable sin base: es aritmética de
+    fechas y precedencias, no SQL.
     """
     momento = ahora or datetime.now(UTC)
     roles_activos = active_roles()
@@ -289,6 +343,19 @@ def build_health(
         run = ultimas.get(nombre)
         intervalo = _intervalo(nombre)
         estado = _clasificar(run, intervalo, ahora=momento)
+        detalle = (
+            INBOX_ATASCADO_DETALLE
+            if inbox_atascado(run, ahora=momento)
+            else ((run.error or None) if run else None)
+        )
+        sin_leer = ceguera(nombre, (lecturas or {}).get(nombre), ahora=momento)
+        if estado == "ok" and sin_leer is not None:
+            # Corre y responde, pero no lee nada: lo que no dice ninguna corrida.
+            estado = "degraded"
+            detalle = (
+                f"sin leer ni una fila en {int(sin_leer.total_seconds() // 3600)} h, "
+                "aunque cada corrida termina bien: ¿cambió la fuente?"
+            )
 
         referencia = (run.finished_at or run.started_at) if run else None
         if referencia is not None and referencia.tzinfo is None:
@@ -306,11 +373,7 @@ def build_health(
                     else None
                 ),
                 expected_interval_seconds=intervalo,
-                detail=(
-                    INBOX_ATASCADO_DETALLE
-                    if inbox_atascado(run, ahora=momento)
-                    else ((run.error or None) if run else None)
-                ),
+                detail=detalle,
             )
         )
 

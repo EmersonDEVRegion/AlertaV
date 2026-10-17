@@ -63,7 +63,7 @@ def _set_del_upsert(excluded: Any) -> dict[str, Any]:
     }
     set_["lat"] = func.coalesce(excluded.lat, RawEvent.lat)
     set_["lon"] = func.coalesce(excluded.lon, RawEvent.lon)
-    set_["raw_data"] = case(
+    nuevo = case(
         (
             and_(excluded.lat.is_(None), RawEvent.lat.isnot(None)),
             excluded.raw_data.op("||")(
@@ -76,6 +76,11 @@ def _set_del_upsert(excluded: Any) -> dict[str, Any]:
             ),
         ),
         else_=excluded.raw_data,
+    )
+    # El fin que marcó una reapertura del MTT (`traffic/transito_x.py`) no lo
+    # trae la fuente: si el mismo tuit vuelve en otra entrega, se conserva.
+    set_["raw_data"] = nuevo.op("||")(
+        func.jsonb_strip_nulls(func.jsonb_build_object("_mtt_fin", RawEvent.raw_data["_mtt_fin"]))
     )
     return set_
 

@@ -369,6 +369,49 @@ ROAD_OPS_TERMS: frozenset[str] = frozenset(
         "restriccion de circulacion",
         "prohibido el estacionamiento",
         "solo transito local",
+        # -- Pistas ocupadas: cómo escribe @TTIValparaiso lo que no es un choque
+        # ni una faena pero corta una pista: un bus en panne, una marcha, una
+        # obra en una calle. En sus tuits del 15 al 17-10-2026 eran la mitad de
+        # lo útil y no se reconocía ninguno.
+        "ocupando pista",
+        "ocupando la pista",
+        "ocupando ambas pistas",
+        "ocupada pista",
+        "ocupada la pista",
+        "ocupadas ambas pistas",
+        "ocupada ambas pistas",
+        "pista ocupada",
+        "pistas ocupadas",
+        "panne en pista",
+        "inhabilitada para el transito",
+        "inhabilitado para el transito",
+        "se mantiene inhabilitad",
+        "trabajos en calle",
+        "trabajos en avenida",
+    }
+)
+
+#: El MTT avisando que la vía volvió a abrirse: lo que cierra un corte o un
+#: choque que él mismo informó. «Se mantiene habilitada» NO está: describe una
+#: vía que nunca se cerró.
+REAPERTURA_TERMS: frozenset[str] = frozenset(
+    {
+        "habilitado transito",
+        "habilitado el transito",
+        "se habilita el transito",
+        "se habilita transito",
+        "transito habilitado",
+        "paso habilitado",
+        "se restablece el transito",
+        "transito restablecido",
+        "se normaliza el transito",
+        "transito normalizado",
+        "via despejada",
+        "pista liberada",
+        "pistas liberadas",
+        "se reabre",
+        "reabierta al transito",
+        "reabierto al transito",
     }
 )
 
@@ -1969,6 +2012,15 @@ def es_operacion_vial(texto: str) -> bool:
     return any(term in texto_limpio for term in ROAD_OPS_TERMS)
 
 
+def es_reapertura(texto: str) -> bool:
+    """¿El MTT avisa que una vía volvió a abrirse? Se consulta ANTES que el
+    accidente: «Habilitado tránsito tras accidente en …» no es un choque nuevo."""
+    texto_limpio = haystack(texto)
+    if not texto_limpio:
+        return False
+    return any(term in texto_limpio for term in REAPERTURA_TERMS)
+
+
 def es_accidente_vial(texto: str) -> bool:
     """¿El texto describe un siniestro vial? Síncrono, sin red.
 
@@ -2174,6 +2226,7 @@ __all__ = [
     "NON_INCIDENT_CODES",
     "OPERATIONAL_TERMS",
     "PRESS_NOISE_PHRASES",
+    "REAPERTURA_TERMS",
     "RESCUE_TERMS",
     "ROAD_OPS_TERMS",
     "SECUELA_TERMS",
@@ -2191,6 +2244,7 @@ __all__ = [
     "es_cobertura_de_secuelas",
     "es_emergencia",
     "es_operacion_vial",
+    "es_reapertura",
     "find_claves",
     "find_codes",
     "haystack",

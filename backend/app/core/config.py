@@ -44,7 +44,6 @@ _CORREO = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 #: Anulaciones de User-Agent: cualquiera con tildes rompe httpx al construirse.
 _AGENTES: tuple[str, ...] = (
     "NOMINATIM_USER_AGENT",
-    "TRANSPORTE_INFORMA_USER_AGENT",
     "GBV_USER_AGENT",
     "ESVAL_USER_AGENT",
     "DMC_USER_AGENT",
@@ -183,6 +182,10 @@ class Settings(BaseSettings):
     # como fuera de región y se decide después. Ponerlo en True sólo cuando el
     # dataset esté calibrado.
     REJECT_OUTSIDE_REGION: bool = False
+    #: Fuentes cuyas señales fuera de la V Región (polígonos de `comunas_region`,
+    #: con ~2 km de margen) no se guardan. CGE publica todo el país. Vacía = no
+    #: se filtra nada por polígono.
+    INGEST_SOLO_REGION_FUENTES: CsvList = Field(default_factory=lambda: ["cge"])
 
     # -- Cadencia de los collectors ------------------------------------------
     #: Dispersión aleatoria aplicada a CADA espera del bucle, como fracción del
@@ -376,7 +379,8 @@ class Settings(BaseSettings):
     ESVAL_EMPRESA_ID: int = 1
     #: Parámetro `region` del KML. La V Región es la 5.
     ESVAL_REGION_KML: int = 5
-    #: Navegador + identificación, el criterio de `TRANSPORTE_INFORMA_USER_AGENT`.
+    #: Navegador + identificación: un WAF trata a un UA sin navegador como bot,
+    #: y quien opera el sitio tiene que saber quién le pega y a quién escribirle.
     #: Sin tildes: las cabeceras HTTP van en latin-1.
     #: Vacío = navegador + identidad de `app.core.identidad` (repo y correo de
     #: contacto). Con valor, se manda tal cual: ASCII, sin tildes.
@@ -551,8 +555,7 @@ class Settings(BaseSettings):
     )
     #: Tope de consultas a Nominatim por entrega del webhook.
     #:
-    #: Mismo mecanismo y mismo motivo que `TRANSPORTE_INFORMA_MAX_GEOCODES`: el
-    #: geocodificador respeta 1 req/s, así que un lote grande podría tener la
+    #: El geocodificador respeta 1 req/s, así que un lote grande podría tener la
     #: entrega del inbox ocupada durante minutos. Lo que exceda el tope entra sin
     #: coordenadas, que es el estado en el que entraban todos los despachos
     #: antes de que este paso existiera.
@@ -572,66 +575,6 @@ class Settings(BaseSettings):
     #: llamadas facturadas. Lo que exceda el tope cae a las reglas, que no
     #: cuestan nada, y queda anotado en `raw_data._extraction.mode`.
     BOMBEROS_MAX_LLM_CALLS: int = Field(default=25, ge=0, le=500)
-
-    # -- Accidentes viales: Transporte Informa -------------------------------
-    #: Portal del MTT para la Región de Valparaíso. Es HTML (WordPress), no una
-    #: API: se raspa. Vacío = apagado.
-    #:
-    #: Ojo con dos cosas que cambiaron en el rediseño de 2026 y que dejaron este
-    #: collector devolviendo cero avisos:
-    #:
-    #: * la región pasó de **ruta a subdominio**. `www…/valparaiso/` da 404;
-    #: * apunta a `/estado-de-la-movilidad/` y no a la portada. Es la sección que
-    #:   lista los avisos de tránsito; la portada sólo muestra los destacados.
-    #:
-    #: Se buscaron salidas mejores que raspar y las dos están cerradas: la REST
-    #: API de WordPress responde `401 Rest API disabled` y el feed RSS da error.
-    TRANSPORTE_INFORMA_URL: str = "https://valparaiso.transporteinforma.cl/estado-de-la-movilidad/"
-    #: 15 s, más corto que los 30 del resto de las fuentes. No es una
-    #: preferencia: es el único collector cuyo ciclo completo tiene un techo
-    #: duro. Tras el GET vienen hasta `MAX_GEOCODES` llamadas a Nominatim a 1 s
-    #: cada una, y con el intervalo en 600 s la corrida tiene que caber holgada
-    #: dentro de su propia cadencia. Un portal que tarda 30 s en responder no
-    #: está lento, está caído; esperarlo el doble no mejora el resultado y sí
-    #: retrasa las geocodificaciones que vienen detrás.
-    TRANSPORTE_INFORMA_TIMEOUT_SECONDS: float = 15.0
-    #: 10 min. **Se mantiene, y la decisión está razonada en el docstring de
-    #: `app/collectors/traffic/transporteinforma_worker.py`.**
-    #:
-    #: En resumen: la carga sobre el MTT es de UN GET por ciclo —144 al día— y
-    #: ampliar la capa táctica no la cambió en absoluto, porque lo que creció es
-    #: lo que se hace con el HTML después de traerlo. Lo que expone a un bloqueo
-    #: no es ese volumen sino el PATRÓN: una petición cada 600 s exactos desde
-    #: una IP de datacenter. Eso se ataca con `COLLECTOR_JITTER_RATIO` y con el
-    #: respeto al 429, no bajando una frecuencia que es justamente el valor de
-    #: esta fuente.
-    TRANSPORTE_INFORMA_POLL_INTERVAL_SECONDS: int = 600  # 10 min
-    #: User-Agent propio del scraper del MTT.
-    #:
-    #: No reutiliza `NOMINATIM_USER_AGENT`: le diría al portal del Ministerio que
-    #: quien lo visita es el cliente de OpenStreetMap, y un operador del MTT
-    #: mirando su log no sabría quién le pega ni a quién escribirle.
-    #:
-    #: Lleva navegador y plataforma porque un WordPress detrás de un WAF trata
-    #: un UA sin ellos como bot y devuelve 403, y lleva **el nombre del proyecto
-    #: y una URL de contacto** porque esa es la parte que importa: la diferencia
-    #: entre un scraper que se identifica y uno que se esconde es que al primero
-    #: le piden bajar la frecuencia y al segundo le bloquean la IP.
-    #:
-    #: **Sin tildes, y no por estilo.** Las cabeceras HTTP se codifican en
-    #: latin-1 y httpx rechaza de plano un valor con caracteres fuera de ASCII:
-    #: la primera versión decía "V Región" y hacía que `AsyncClient` lanzara
-    #: `UnicodeEncodeError` antes de abrir la conexión. El collector no habría
-    #: fallado al raspar sino al construirse — cada corrida, sin llegar nunca a
-    #: la red, con un mensaje que no menciona la cabecera por ninguna parte.
-    #: Vacío = navegador + identidad de `app.core.identidad` (repo y correo de
-    #: contacto). Con valor, se manda tal cual: ASCII, sin tildes.
-    TRANSPORTE_INFORMA_USER_AGENT: str = ""
-    #: Tope de geocodificaciones por corrida. A 1 s por llamada (ver
-    #: NOMINATIM_MIN_INTERVAL_SECONDS), 20 avisos son 20 segundos de corrida.
-    #: Sin tope, un día de temporal con 300 avisos dejaría al worker cinco
-    #: minutos colgado del rate limit ajeno.
-    TRANSPORTE_INFORMA_MAX_GEOCODES: int = Field(default=20, ge=1, le=200)
 
     # -- Infraestructura vial dañada: MOP / Dirección de Vialidad ------------
     #: Capa **0** del MapServer de emergencias viales. Es la que trae todas las
@@ -667,10 +610,9 @@ class Settings(BaseSettings):
     #: resuelve los enlaces relativos de cada tarjeta contra la página donde
     #: aparecieron (`../denuncias/…` en una, `./denuncias/…` en otra).
     GBV_BASE_URL: str = "https://gbvspa.cl"
-    #: Navegador + identificación, el mismo criterio que
-    #: `TRANSPORTE_INFORMA_USER_AGENT`: un WAF trata a un UA sin navegador como
-    #: bot, y quien opera el sitio —una ONG— tiene derecho a saber quién le pega
-    #: y a quién escribirle. Sin tildes: las cabeceras HTTP van en latin-1.
+    #: Navegador + identificación: un WAF trata a un UA sin navegador como bot,
+    #: y quien opera el sitio —una ONG— tiene derecho a saber quién le pega y a
+    #: quién escribirle. Sin tildes: las cabeceras HTTP van en latin-1.
     #: Vacío = navegador + identidad de `app.core.identidad` (repo y correo de
     #: contacto). Con valor, se manda tal cual: ASCII, sin tildes.
     GBV_USER_AGENT: str = ""
@@ -790,8 +732,7 @@ class Settings(BaseSettings):
     #: centrales de Bomberos.
     #:
     #: Hoy una: @TTIValparaiso, TransporteInforma Región de Valparaíso, el canal
-    #: del MTT en X. Es la misma fuente que `transporte_informa` lee en la web,
-    #: pero fresca: la web arrastra avisos de semanas. Sus tuits NO se leen con
+    #: del MTT en X, la única vía por la que entra el MTT. Sus tuits NO se leen con
     #: una tabla de claves —no tienen— sino con la tubería del MTT
     #: (`clasificar_transito` → Gemini → Nominatim) y entran como
     #: `transporte_informa`, confianza 0,80, en la corrida
@@ -1191,6 +1132,10 @@ class Settings(BaseSettings):
     #: una semilla menos fina (o cuando el radio corto no alcanzó).
     VIPER_RADIO_M: float = Field(default=250.0, ge=50.0, le=2_000.0)
     VIPER_RADIO_AMPLIO_M: float = Field(default=800.0, ge=100.0, le=3_000.0)
+    #: Despacho de una sola calle y sin punto: se busca la imagen en las esquinas
+    #: de esa calle, hasta este número de semillas (~80 mosaicos cada una con el
+    #: radio corto). Una calle más larga no se recorre: gastaría el tope diario.
+    VIPER_SEMILLAS_POR_CALLE: int = Field(default=6, ge=0, le=20)
     #: Correlación mínima del calce fino (0 a 1) y ventaja mínima del mejor
     #: calce sobre el segundo. Las imágenes reales calzan con ≥ 0,99.
     VIPER_NCC_MIN: float = Field(default=0.9, ge=0.5, le=1.0)
@@ -1483,6 +1428,7 @@ class Settings(BaseSettings):
         "APIFY_X_TRANSITO_HANDLES",
         "PUSH_ALLOWED_ENDPOINT_HOSTS",
         "OVERPASS_URLS",
+        "INGEST_SOLO_REGION_FUENTES",
         mode="before",
     )
     @classmethod

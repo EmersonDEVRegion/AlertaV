@@ -11,8 +11,7 @@ en `GET /api/v1/collectors/health`.
 | `senapred_alertas` | SENAPRED, alertas vigentes | Servicios ArcGIS públicos | 10 min |
 | `bomberos_apify_webhook` | Centrales de Bomberos en X | Apify raspa y avisa a `POST /apify/webhook` | 30 min |
 | `bomberos_apify_canario` | Las mismas cuentas, sin ventana | Task diario de Apify: mide la ceguera | 24 h |
-| `transporte_informa` | Portal del MTT (Transporte Informa) | Página pública | 10 min |
-| `transporte_informa_x` | @TTIValparaiso | Llega en la entrega del webhook de Apify | 30 min |
+| `transporte_informa_x` | @TTIValparaiso (MTT) | Llega en la entrega del webhook de Apify | 30 min |
 | `mop_vialidad` | MOP, Dirección de Vialidad | Servicio ArcGIS público | 60 min |
 | `chilquinta_cortes`, `cge_cortes` | Mapas de interrupciones | Archivos públicos (JS y KMZ) | 5 min |
 | `esval_cortes_agua` | Esval, cortes programados | Sitio de Esval vía proxy en Chile | 10 min |
@@ -28,6 +27,25 @@ Los despachos de Bomberos se ubican con la imagen de Viper que adjuntan
 de `tile.openstreetmap.org`) y, si no hay o no calza, con el índice de esquinas
 de OSM que arma cada mes el workflow `osm-cruces` desde Geofabrik
 (`scripts/osm_cruces.py`). Ver `arquitectura.md`, «Geocodificación».
+Un despacho que nombra una sola calle se ubica buscando la imagen en las
+esquinas de esa calle (`cruces_locales.puntos_de_calle`, hasta
+`VIPER_SEMILLAS_POR_CALLE`).
+
+**El MTT, sólo por X.** El portal `valparaiso.transporteinforma.cl` se leyó cada
+10 minutos hasta octubre de 2026 y se retiró: en 3 481 corridas no leyó ningún
+aviso, y publicaba unos 4 en dos meses y medio. @TTIValparaiso publica a diario.
+Sus tuits de pista ocupada (un bus en panne, una marcha, una obra) entran como
+`road_closure`; los de reapertura («Habilitado tránsito en …») no crean señal:
+cierran los avisos del MTT de las últimas 12 h que nombran la misma vía
+(`_mtt_fin`). Un aviso del MTT sale de la capa de cortes al cerrarse o a las 12 h
+sin repetirse; los del MOP siguen hasta que el MOP los retira.
+
+**Ceguera sin aviso.** Una fuente que corre bien pero no lee ni una fila en 72 h
+(120 h FIRMS) pasa a `degraded` en `/collectors/health`
+(`services/collector_health.py`).
+
+**CGE sólo de la región.** CGE publica todo el país; lo que cae fuera de las
+comunas de la V Región no se guarda (`INGEST_SOLO_REGION_FUENTES`).
 
 Los cuarteles de Bomberos (`scripts/sig_bomberos.py`) y la amenaza sísmica
 (`scripts/fetch_seismic_hazard.py`) son archivos estáticos en

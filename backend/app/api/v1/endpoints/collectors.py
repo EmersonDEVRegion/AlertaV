@@ -7,12 +7,12 @@ completo de cada corrida. `/health` queda pública porque la lee el mapa.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 
 from app.api.deps import IngestServiceDep, OperatorDep, SessionDep
 from app.collectors.registry import available_collectors, get_collector
@@ -21,7 +21,7 @@ from app.models.event import CollectorRun
 from app.services.apify_webhook_service import COLLECTOR_NAME as WEBHOOK_COLLECTOR
 from app.services.apify_webhook_service import INBOX_PENDIENTE
 from app.services.backfill import backfill_geocoding
-from app.services.collector_health import build_health, inbox_atascado
+from app.services.collector_health import Lecturas, build_health, inbox_atascado
 
 router = APIRouter(prefix="/collectors", tags=["collectors"])
 
@@ -157,7 +157,25 @@ async def collectors_health(session: SessionDep) -> HealthRead:
     if pendiente is not None and inbox_atascado(pendiente, ahora=datetime.now(UTC)):
         ultimas[pendiente.collector] = pendiente
 
-    salud, por_familia = build_health(ultimas)
+    # Cuándo leyó filas cada fuente por última vez: una corrida sana que no lee
+    # nada durante días es ceguera aunque ninguna corrida lo diga.
+    filas = (
+        await session.execute(
+            select(
+                CollectorRun.collector,
+                func.max(CollectorRun.started_at)
+                .filter(CollectorRun.events_fetched > 0)
+                .label("ultima"),
+                func.min(CollectorRun.started_at).label("desde"),
+            )
+            # El umbral más largo es de 5 días: con 6 alcanza para juzgar.
+            .where(CollectorRun.started_at >= datetime.now(UTC) - timedelta(days=6))
+            .group_by(CollectorRun.collector)
+        )
+    ).all()
+    lecturas = {f.collector: Lecturas(ultima=f.ultima, desde=f.desde) for f in filas}
+
+    salud, por_familia = build_health(ultimas, lecturas=lecturas)
     return HealthRead(
         generated_at=datetime.now(UTC),
         by_family=por_familia,

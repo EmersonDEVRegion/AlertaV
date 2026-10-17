@@ -1316,8 +1316,8 @@ def test_el_runner_solo_levanta_el_inbox_con_todos_los_collectors(monkeypatch):
     monkeypatch.setattr(runner, "_rain_grid_loop", grilla)
     monkeypatch.setattr(runner, "_poda_loop", poda)
 
-    asyncio.run(runner.run_loop(["transporte_informa"]))
-    assert levantados == ["transporte_informa"]
+    asyncio.run(runner.run_loop(["conaf_incendios"]))
+    assert levantados == ["conaf_incendios"]
 
     levantados.clear()
     asyncio.run(runner.run_loop(None))

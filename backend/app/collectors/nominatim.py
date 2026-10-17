@@ -23,7 +23,7 @@ rompe y habrá que mover el limitador a Redis o a la base.
 vez de rechazarlo. Un aviso de accidente sin geocodificar es un aviso perdido, y
 el trabajo es de fondo: nadie está esperando la respuesta. Lo que sí se acota es
 cuántas geocodificaciones intenta una corrida
-(`TRANSPORTE_INFORMA_MAX_GEOCODES`), para que un día de temporal no deje al
+(`BOMBEROS_MAX_GEOCODES` y sus pares), para que un día de temporal no deje al
 worker cinco minutos colgado.
 """
 
