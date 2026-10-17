@@ -195,6 +195,9 @@ en segundos, y por eso los tests del motor corren sin levantar nada.
 |---|---|---|
 | `correlation/confidence.py` | Confidence Engine: confianza, tipo, estado y derivación | No |
 | `correlation/communes.py` | Paso B: extracción y coincidencia de comunas | No |
+| `correlation/perfiles.py` | Radio y tiempo por familia; perfil estructural | No |
+| `correlation/despachos.py` | ¿Dos despachos son el mismo llamado? | No |
+| `correlation/fuentes_fijas.py` | Focos de calor fijos que FIRMS ve todas las noches | No |
 | `correlation/engine.py` | Orquesta los pasos y persiste | Sí, sólo él |
 
 ### El descubrimiento que obliga a dos pasos
@@ -234,6 +237,56 @@ GiST sigue haciendo el prefiltrado por caja envolvente.
 | Una señal aislada no confirmatoria puede **esperar** (`CORRELATION_MIN_SIGNALS_FOR_INCIDENT`) | En `1` el mapa muestra todo, con su confianza a la vista; en `2` sólo lo corroborado. La señal no se pierde: sigue siendo una `raw_event` y la pasada siguiente la reevalúa junto a lo que haya llegado. |
 | Fusión de incidentes convergentes | Un incendio que avanza produce racimos sucesivos que terminan tocándose. Sobrevive el más antiguo —es el que tiene folio circulando por radio— y el absorbido queda en `merged` apuntando a su sucesor, de modo que un folio ya comunicado sigue resolviendo a algo. |
 | `stale` ≠ `extinguished` | Que dejen de llegar detecciones satelitales no significa que el fuego se apagó: significa que no pasó un satélite. Sólo una fuente confirmatoria cierra una emergencia. |
+
+### Dos despachos: decide la dirección, no la distancia
+
+Para el resto del motor una señal es un punto con hora. Para los despachos de
+Bomberos eso no alcanza: la central ya dijo con la dirección si es el mismo
+llamado. Un refuerzo repite la esquina o al menos una calle; un llamado nuevo
+nombra otras. En los 30 días al 17-10-2026, de 23 incidentes con varios
+despachos, los refuerzos repetían siempre una calle y los mal fundidos nunca (un
+1-1 en Urriola / Álvaro Besa junto a un 2-1 en Serrano / Almirante Goñi cinco
+horas después; cuatro llamados distintos de Los Andes en un solo incidente).
+
+`correlation/despachos.py` (puro) decide si dos despachos son el mismo llamado,
+siempre dentro de `CORRELATION_DESPACHO_BRECHA_HORAS` (3 h) o de la brecha de
+la familia si es más corta (2 h en choques): la regla separa llamados, nunca
+junta lo que el perfil ya separaba por tiempo.
+
+| Calles | Distancia máxima | Por qué |
+|---|---|---|
+| Las dos iguales (misma esquina) | 2 km | La diferencia es error de geocodificación: «RUTA 68 / PASARELA PLACILLA KM 99» repetido a los 7 min cayó a 927 m |
+| Una compartida | `CORRELATION_DESPACHO_RADIO_M` (500 m); el doble si el segundo sale en 30 min | En Quilpué el CJ-3 salió a los 22 min a otra esquina de la misma calle, a 870 m. Dos choques en kilómetros distintos de la Ruta 68, a 96 min, son dos choques |
+| Ninguna | — | Otro llamado, aunque esté en la manzana del lado |
+| Kilómetros distintos de la misma ruta (más de 1 km) | — | Otro llamado aunque caigan en el mismo punto: sin Viper, «RUTA LAS PALMAS / KILOMETRO 4» y «/ KILOMETRO 7» se geocodifican igual |
+
+Se aplica en las tres puertas: al agrupar (`partir_por_llamado` corta el racimo
+de DBSCAN por llamado; cada señal de otra fuente va con el despacho más cercano
+si está dentro del radio de su perfil), al adherir un racimo a un incidente (si
+los dos lados tienen despachos, decide la dirección; si no, la geometría) y al
+fundir incidentes. Entre un despacho y una señal de otra fuente sigue mandando
+la geometría.
+
+**Incendio estructural ≠ forestal.** Dentro de `fire`, un grupo que sólo es
+estructural usa su propio perfil (`PERFIL_ESTRUCTURAL`: 500 m, 3 h) en vez del
+forestal (1500 m, 8 h). Si aparece algo forestal, manda el forestal: un 2-3 que
+pasa a 1-1 en la misma dirección es el mismo incendio.
+
+### Fuentes de calor fijas
+
+La Fundición Chagres (Catemu) aparece en FIRMS casi todas las noches y abría un
+«posible incendio» público cada vez. `correlation/fuentes_fijas.py`:
+
+- **Lista** (`static/geo/fuentes_termicas.json`): focos conocidos con su radio y
+  de dónde salió el punto (Chagres, refinería de ENAP en Concón).
+- **Recurrencia**: un punto con anomalías `FIRMS_FIJA_DIAS` (3) días distintos de
+  los últimos `FIRMS_FIJA_VENTANA_DIAS` (7), a `FIRMS_FIJA_RADIO_M` (400 m).
+
+Un racimo **sólo de FIRMS** cuyas señales caen todas en una fuente fija no abre
+incidente. No se borra nada: la anomalía queda como señal y se suma a un
+incidente que abra otra fuente (Bomberos, CONAF, un vecino). Un incendio que se
+extiende más allá del foco produce píxeles fuera del radio, y esos abren
+incidente como siempre. Interruptor: `FIRMS_FUENTES_FIJAS`.
 
 ### Geocodificación: de la esquina escrita al punto
 

@@ -294,14 +294,14 @@ def _evento(
     )
 
 
-async def _pasada(*, perfiles: bool, window_hours: int = 4, prensa: bool | None = None):
+async def _pasada(*, perfiles: bool, window_hours: int = 4, prensa: bool | None = None, **opciones):
     from app.core.database import AsyncSessionLocal
     from app.models.incident import Incident
     from app.services.correlation.engine import CorrelationEngine
 
     async with AsyncSessionLocal() as session:
         resultado = await CorrelationEngine(
-            session, perfiles=perfiles, window_hours=window_hours, prensa=prensa
+            session, perfiles=perfiles, window_hours=window_hours, prensa=prensa, **opciones
         ).run()
     async with AsyncSessionLocal() as session:
         incidentes = (await session.execute(select(Incident).order_by(Incident.id))).scalars().all()
@@ -1098,3 +1098,169 @@ def test_el_feed_de_noticias_lee_la_prensa_de_la_base():
     respuesta = correr(caso)
     assert [i.titular for i in respuesta.items] == ["Incendio en Reñaca"]
     assert respuesta.items[0].hora_aproximada is True
+
+
+# --- Regla de despachos y fuentes de calor fijas -------------------------------
+
+#: INC 1366 (Valparaíso, 16/17-10-2026): un 1-1 y un 2-1 a 437 m, otras calles.
+URRIOLA = (-33.0409796, -71.6284078)
+SERRANO = (-33.037337, -71.6302049)
+#: INC 1365 (Quilpué): el refuerzo sale a los 22 min a otra esquina de la misma calle, a 870 m.
+MATEO_GOMEZ = (-33.0361048, -71.4056021)
+MATEO_CALLE3 = (-33.0363881, -71.4149094)
+#: Dentro del foco de la Fundición Chagres (`static/geo/fuentes_termicas.json`).
+CHAGRES = (-32.8026, -70.9527)
+
+
+def _despacho(external_id, punto, *, hace, calles, tipo="structural_fire"):
+    return _evento(
+        external_id,
+        punto,
+        hace=hace,
+        fuente="bomberos",
+        tipo=tipo,
+        raw={
+            "_extraction": {"street_1": calles[0], "street_2": calles[1]},
+            "_geocoding": {"precision": "despacho", "provider": "viper"},
+        },
+    )
+
+
+@pytest.mark.parametrize(("regla", "esperados"), [(True, 2), (False, 1)])
+def test_dos_llamados_cercanos_con_otras_calles_son_dos_incidentes(regla, esperados):
+    """Con el perfil `fire`, un 1-1 y un 2-1 a 437 m terminaban en un incidente."""
+    from datetime import timedelta as td
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(
+            _despacho("urriola", URRIOLA, hace=td(hours=2), calles=("URRIOLA", "ALVARO BESA"))
+        )
+        await _pasada(perfiles=True, despachos_por_calle=regla)
+        await _ingerir(
+            _despacho(
+                "serrano",
+                SERRANO,
+                hace=td(minutes=20),
+                calles=("SERRANO", "ALMIRANTE GOÑI"),
+                tipo="wildfire",
+            )
+        )
+        return await _pasada(perfiles=True, despachos_por_calle=regla)
+
+    _, incidentes = correr(caso)
+    assert len(incidentes) == esperados
+
+
+def test_en_la_misma_pasada_tambien_se_separan():
+    from datetime import timedelta as td
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(
+            _despacho("urriola", URRIOLA, hace=td(minutes=50), calles=("URRIOLA", "ALVARO BESA")),
+            _despacho("serrano", SERRANO, hace=td(minutes=20), calles=("SERRANO", "COCHRANE")),
+        )
+        return await _pasada(perfiles=True)
+
+    resultado, incidentes = correr(caso)
+    assert len(incidentes) == 2
+    assert resultado.llamados_separados == 1
+
+
+def test_el_refuerzo_que_repite_una_calle_se_suma_al_incidente():
+    from datetime import timedelta as td
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(
+            _despacho(
+                "m1",
+                MATEO_GOMEZ,
+                hace=td(minutes=40),
+                calles=("MATEO DE TORO Y ZAMBRANO", "ALMIRANTE GOMEZ CARRENO"),
+            )
+        )
+        await _pasada(perfiles=True)
+        await _ingerir(
+            _despacho(
+                "m2",
+                MATEO_CALLE3,
+                hace=td(minutes=18),
+                calles=("CALLE 3", "MATEO DE TORO Y ZAMBRANO"),
+            )
+        )
+        return await _pasada(perfiles=True)
+
+    _, incidentes = correr(caso)
+    assert len(incidentes) == 1
+    assert incidentes[0].event_count == 2
+
+
+@pytest.mark.parametrize(("fijas", "esperados"), [(True, 0), (False, 1)])
+def test_la_fundicion_no_abre_un_posible_incendio(fijas, esperados):
+    from datetime import timedelta as td
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(
+            _evento(
+                "chagres", CHAGRES, hace=td(minutes=30), fuente="nasa_firms", tipo="thermal_anomaly"
+            )
+        )
+        return await _pasada(perfiles=True, fuentes_fijas=fijas)
+
+    resultado, incidentes = correr(caso)
+    assert len(incidentes) == esperados
+    assert (resultado.firms_fuente_fija == 1) is fijas
+
+
+def test_si_bomberos_despacha_en_la_fundicion_el_satelite_se_suma():
+    from datetime import timedelta as td
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(
+            _evento(
+                "chagres", CHAGRES, hace=td(minutes=30), fuente="nasa_firms", tipo="thermal_anomaly"
+            ),
+            _despacho(
+                "fundicion",
+                (CHAGRES[0] + 0.001, CHAGRES[1]),
+                hace=td(minutes=25),
+                calles=("CAMINO INTERNACIONAL", "CHAGRES"),
+                tipo="wildfire",
+            ),
+        )
+        return await _pasada(perfiles=True)
+
+    _, incidentes = correr(caso)
+    assert len(incidentes) == 1
+    assert incidentes[0].event_count == 2
+
+
+@pytest.mark.parametrize(("fijas", "esperados"), [(True, 0), (False, 1)])
+def test_un_punto_con_anomalias_tres_dias_seguidos_es_fuente_fija(fijas, esperados):
+    from datetime import timedelta as td
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(
+            *(
+                _evento(
+                    f"previa-{n}",
+                    QUILPUE,
+                    hace=td(hours=26 + 24 * n),
+                    fuente="nasa_firms",
+                    tipo="thermal_anomaly",
+                )
+                for n in range(3)
+            ),
+            _evento(
+                "hoy", QUILPUE, hace=td(minutes=30), fuente="nasa_firms", tipo="thermal_anomaly"
+            ),
+        )
+        return await _pasada(perfiles=True, fuentes_fijas=fijas)
+
+    _, incidentes = correr(caso)
+    assert len(incidentes) == esperados
