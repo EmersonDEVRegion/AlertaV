@@ -1,3 +1,4 @@
+import { InstallInvite } from '@/components/ui/InstallInvite'
 import { memo, useMemo } from 'react'
 import type { HTMLAttributes, ReactNode } from 'react'
 import { HistoryFeed, type HistoryFeedProps } from '@/components/feed/HistoryFeed'
@@ -221,6 +222,8 @@ export const ExplorePanel = memo(function ExplorePanel({
           >
             {tab === 'now' && (
               <div className="space-y-2">
+                {/* Una vez, desde la segunda visita; «✕» la retira (§Q). */}
+                <InstallInvite />
                 {/* Lo que puede venir, antes de lo que está pasando: el viento
                     de mañana explica los cortes de mañana. */}
                 <MeteoWarnings />

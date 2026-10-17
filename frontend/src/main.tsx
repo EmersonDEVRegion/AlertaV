@@ -5,6 +5,8 @@ import App from './App'
 import { queryClient } from './lib/queryClient'
 // Pone el nivel de cristal en <html> antes del primer pintado (§D).
 import './lib/glassStore'
+// Guarda el aviso de instalación de Chrome aunque llegue antes que React (§Q).
+import './lib/install'
 import './index.css'
 
 const container = document.getElementById('root')
