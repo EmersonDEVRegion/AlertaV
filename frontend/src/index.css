@@ -121,6 +121,8 @@
      terreno lo justo para que el panel flote en vez de tapar. */
   --surface-panel: rgb(255 255 255 / 0.82);
   --surface-raised: #ffffff;
+  /* Borde de los marcadores del mapa y sus muestras: `PIN_EDGE` en pinTheme.ts. */
+  --pin-edge: #ffffff;
   --surface-sunken: #f4f4f5;
   --surface-hover: rgb(9 9 11 / 0.045);
 
@@ -237,6 +239,7 @@ html.dark {
   --surface-app: #09090b;
   --surface-panel: rgb(19 19 22 / 0.82);
   --surface-raised: #1c1c20;
+  --pin-edge: #0f172a;
   --surface-sunken: rgb(255 255 255 / 0.045);
   --surface-hover: rgb(255 255 255 / 0.07);
 

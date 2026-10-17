@@ -35,7 +35,15 @@ import {
 } from './rainLayers'
 import { closureBodyLayer, roadClosureSpecs } from './roadClosureLayers'
 import { coneFillLayer, coneLineLayer, reachFillLayer, reachLineLayer } from './overlayLayers'
-import { alertHaloLayer, casingLayer, coreLayer, uncertaintyLayer } from './incidentLayers'
+import {
+  alertHaloLayer,
+  casingLayer,
+  closedRingLayer,
+  coreLayer,
+  selectedLayer,
+  uncertaintyLayer,
+  unverifiedLayer,
+} from './incidentLayers'
 
 const THEMES = ['light', 'dark'] as const
 
@@ -93,8 +101,24 @@ function buildStyle(): StyleSpecification {
 
   // El círculo de incertidumbre interpola en base 2 sobre el zoom con una
   // expresión de datos en cada tope: la forma que el validador vigila.
-  for (const layer of [uncertaintyLayer('INC-2026-00001'), alertHaloLayer, casingLayer, coreLayer]) {
+  for (const layer of [uncertaintyLayer('INC-2026-00001'), alertHaloLayer, coreLayer]) {
     layers.push({ ...layer, source: 'incidents' } as LayerSpecification)
+  }
+  // Las capas del marcador se arman por tema: placa, cerrado, sin verificar y
+  // selección. Una por tema, con `id` propio.
+  for (const theme of THEMES) {
+    for (const layer of [
+      casingLayer(theme),
+      closedRingLayer(theme),
+      unverifiedLayer(theme),
+      selectedLayer('INC-2026-00001', theme),
+    ]) {
+      layers.push({
+        ...layer,
+        id: `${layer.id}-${theme}`,
+        source: 'incidents',
+      } as LayerSpecification)
+    }
   }
 
   return {

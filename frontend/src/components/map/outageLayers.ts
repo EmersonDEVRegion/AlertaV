@@ -33,8 +33,8 @@ import type {
 } from 'maplibre-gl'
 import { OUTAGE_ICON } from '@/domain/emergencyIcons'
 import { OUTAGE_CLUSTER, PROVIDER, UNKNOWN_PROVIDER } from '@/domain/powerSymbology'
-
-type Theme = 'light' | 'dark'
+import type { Theme } from '@/hooks/useTheme'
+import { PIN_EDGE, PIN_INK } from './pinTheme'
 type CircleLayer = Omit<CircleLayerSpecification, 'source'>
 type SymbolLayer = Omit<SymbolLayerSpecification, 'source'>
 
@@ -73,10 +73,6 @@ const PROVIDER_COLOR = [
 const BY_CLIENTS: ExpressionSpecification = ['coalesce', ['get', 'affected_clients'], 0]
 const BY_CLUSTER_CLIENTS: ExpressionSpecification = ['coalesce', ['get', 'clientes'], 0]
 
-/** Borde del disco: el fondo de la app, para recortarlo contra el terreno. */
-export const PIN_EDGE: Record<Theme, string> = { light: '#ffffff', dark: '#0f172a' }
-/** Anillo de selección: el color de máximo contraste del tema. */
-export const PIN_INK: Record<Theme, string> = { light: '#0f172a', dark: '#f8fafc' }
 
 /**
  * Radio del disco según el zoom, más un margen fijo.

@@ -5,18 +5,24 @@
  *
  *   0. `uncertainty`  — círculo en metros: dónde puede estar el hecho.
  *   1. `alert-halo`   — anillo exterior. Eje SENAPRED.
- *   2. `casing`       — aro blanco. Separa el relleno del anillo de alerta.
+ *   2. `casing`       — placa del tema con aro de severidad. Bajo el icono.
  *   3. `core`         — disco relleno. Tramo de `confidence_level`.
  *   4. `closed-ring`  — anillo punteado sobre los incidentes ya cerrados.
  *   5. `unverified`   — punto central hueco: `confirmed` sin verificación.
  *   6. `selected`     — realce del incidente abierto en la ficha.
  *   7. `hit`          — círculo invisible y generoso. Sólo existe para el dedo.
  *
- * El `casing` blanco no es decorativo. Desde la v2.0.0 el relleno puede ser rojo
+ * El `casing` no es decorativo. Desde la v2.0.0 el color puede ser rojo
  * (#dc2626) o amarillo (#eab308), y el anillo de alerta de SENAPRED también es
- * rojo (#e11d48) o amarillo (#f59e0b). Sin un aro neutro en medio, un incidente
- * `unsafe` con alerta roja sería una mancha roja uniforme y los dos ejes se
- * volverían ilegibles justo cuando más importan.
+ * rojo (#e11d48) o amarillo (#f59e0b). Sin una placa neutra en medio, un
+ * incidente `unsafe` con alerta roja sería una mancha roja uniforme y los dos
+ * ejes se volverían ilegibles justo cuando más importan.
+ *
+ * La placa toma el fondo del tema (`PIN_EDGE`): blanca en claro, pizarra casi
+ * negra en oscuro. Fue blanca fija mientras debajo había un disco de color; desde
+ * que el icono reemplazó al disco quedó sola, y en el mapa oscuro era un manchón
+ * blanco bajo cada glifo. El aro fino del color de severidad es lo que dibuja
+ * la silueta del marcador cuando la placa se confunde con el terreno.
  *
  * Ningún color se escribe acá: salen de `domain/palette`, que resuelve cuál de
  * las tres paletas —incendios, tráfico u otras emergencias— aplica según la
@@ -31,6 +37,8 @@
 import type { CircleLayerSpecification, ExpressionSpecification } from 'maplibre-gl'
 import { LEVEL_COLOR_EXPRESSION } from '@/domain/palette'
 import { ALERT_COLOR_EXPRESSION } from '@/domain/symbology'
+import type { Theme } from '@/hooks/useTheme'
+import { PIN_EDGE, PIN_INK } from './pinTheme'
 
 export type IncidentLayer = Omit<CircleLayerSpecification, 'source'>
 
@@ -202,16 +210,27 @@ export const alertHaloLayer: IncidentLayer = {
   },
 }
 
-/** Aro neutro entre el relleno y el anillo de alerta. Ver nota de arriba. */
-export const casingLayer: IncidentLayer = {
-  id: 'incidents-casing',
-  type: 'circle',
-  layout: { 'circle-sort-key': BY_EVIDENCE },
-  paint: {
-    'circle-radius': circleRadius({ pad: 2.5 }),
-    'circle-color': '#ffffff',
-    'circle-opacity': 0.95,
-  },
+/** Opacidad de los cerrados: color atenuado y menos presencia. */
+const CLOSED_OPACITY: ExpressionSpecification = ['case', ['get', 'is_closed'], 0.55, 0.95]
+
+/**
+ * Placa bajo el icono: fondo del tema y aro del color de severidad. Separa el
+ * glifo del anillo de alerta y del terreno. Ver nota de arriba.
+ */
+export function casingLayer(theme: Theme): IncidentLayer {
+  return {
+    id: 'incidents-casing',
+    type: 'circle',
+    layout: { 'circle-sort-key': BY_EVIDENCE },
+    paint: {
+      'circle-radius': circleRadius({ pad: 2.5 }),
+      'circle-color': PIN_EDGE[theme],
+      'circle-opacity': 0.95,
+      'circle-stroke-color': LEVEL_COLOR_EXPRESSION as unknown as ExpressionSpecification,
+      'circle-stroke-width': 1.5,
+      'circle-stroke-opacity': CLOSED_OPACITY,
+    },
+  }
 }
 
 export const coreLayer: IncidentLayer = {
@@ -221,8 +240,7 @@ export const coreLayer: IncidentLayer = {
   paint: {
     'circle-radius': CORE_RADIUS,
     'circle-color': LEVEL_COLOR_EXPRESSION as unknown as ExpressionSpecification,
-    // Los cerrados además pierden opacidad: color atenuado y menos presencia.
-    'circle-opacity': ['case', ['get', 'is_closed'], 0.6, 0.95],
+    'circle-opacity': CLOSED_OPACITY,
   },
 }
 
@@ -233,35 +251,42 @@ export const coreLayer: IncidentLayer = {
  * consigue con un anillo fino de color apagado — suficiente para leer "esto ya
  * no está activo" sin robarle el canal del color al tramo de confianza.
  */
-export const closedRingLayer: IncidentLayer = {
-  id: 'incidents-closed-ring',
-  type: 'circle',
-  filter: ['get', 'is_closed'],
-  paint: {
-    'circle-radius': circleRadius({ pad: 1 }),
-    'circle-color': 'transparent',
-    'circle-stroke-color': '#475569',
-    'circle-stroke-width': 1.5,
-    'circle-stroke-opacity': 0.85,
-  },
+const CLOSED_RING: Record<Theme, string> = { light: '#475569', dark: '#94a3b8' }
+
+export function closedRingLayer(theme: Theme): IncidentLayer {
+  return {
+    id: 'incidents-closed-ring',
+    type: 'circle',
+    filter: ['get', 'is_closed'],
+    paint: {
+      'circle-radius': circleRadius({ pad: 1 }),
+      'circle-color': 'transparent',
+      'circle-stroke-color': CLOSED_RING[theme],
+      'circle-stroke-width': 1.5,
+      'circle-stroke-opacity': 0.85,
+    },
+  }
 }
 
 /**
  * Punto central hueco para los `confirmed` que ninguna fuente verificó en
  * terreno. Es la marca que impide que el naranja se lea como "CONAF confirmó".
+ * Va del color de la placa: un agujero en el glifo, no un punto blanco encima.
  */
-export const unverifiedLayer: IncidentLayer = {
-  id: 'incidents-unverified',
-  type: 'circle',
-  filter: ['get', 'unverified_confirmed'],
-  paint: {
-    'circle-radius': circleRadius({ scale: 0.34 }),
-    'circle-color': '#ffffff',
-    'circle-opacity': 0.92,
-  },
+export function unverifiedLayer(theme: Theme): IncidentLayer {
+  return {
+    id: 'incidents-unverified',
+    type: 'circle',
+    filter: ['get', 'unverified_confirmed'],
+    paint: {
+      'circle-radius': circleRadius({ scale: 0.34 }),
+      'circle-color': PIN_EDGE[theme],
+      'circle-opacity': 0.92,
+    },
+  }
 }
 
-export function selectedLayer(code: string | null): IncidentLayer {
+export function selectedLayer(code: string | null, theme: Theme): IncidentLayer {
   return {
     id: 'incidents-selected',
     type: 'circle',
@@ -269,7 +294,7 @@ export function selectedLayer(code: string | null): IncidentLayer {
     paint: {
       'circle-radius': circleRadius({ pad: 7 }),
       'circle-color': 'transparent',
-      'circle-stroke-color': '#0f172a',
+      'circle-stroke-color': PIN_INK[theme],
       'circle-stroke-width': 3,
     },
   }

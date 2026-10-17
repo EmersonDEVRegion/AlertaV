@@ -24,7 +24,8 @@ import type {
 import { WATER_ICON } from '@/domain/emergencyIcons'
 import { WATER } from '@/domain/waterSymbology'
 import type { Theme } from '@/hooks/useTheme'
-import { PIN_EDGE, PIN_INK, pinRadius } from './outageLayers'
+import { pinRadius } from './outageLayers'
+import { PIN_EDGE, PIN_INK } from './pinTheme'
 
 type CircleLayer = Omit<CircleLayerSpecification, 'source'>
 type SymbolLayer = Omit<SymbolLayerSpecification, 'source'>
