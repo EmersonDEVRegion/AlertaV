@@ -362,10 +362,38 @@ class CongestionRead(BaseModel):
     )
 
 
+class IncidentRelacion(BaseModel):
+    """Otro hecho, de otra familia, cerca y con poco tiempo de diferencia.
+
+    No dice que uno causó al otro: sólo que ocurrieron cerca y seguidos. Ver
+    `app/services/correlation/relaciones.py`.
+    """
+
+    regla: str
+    tipo: str = Field(..., description="`IncidentType` o, para una señal, `EventType`.")
+    nombre: str = Field(..., description="Cómo se nombra en la ficha («Corte de luz»).")
+    code: str | None = Field(
+        default=None,
+        description="Código del otro incidente; `null` si es una señal (un corte de ruta).",
+    )
+    distancia_m: float
+    desfase_min: int = Field(
+        ...,
+        description="Minutos del otro respecto de éste: positivo si empezó después.",
+    )
+
+
 class IncidentDetail(IncidentRead):
     """Incidente con todas sus señales y la trazabilidad de cada vínculo."""
 
     events: list[IncidentEventLink] = Field(default_factory=list)
+    relacionados: list[IncidentRelacion] = Field(
+        default_factory=list,
+        description=(
+            "Hechos de otras familias cerca y poco antes o después. Vacío salvo "
+            "con `CORRELATION_RELACIONES=visible`."
+        ),
+    )
     congestion: CongestionRead | None = Field(
         default=None,
         description=(

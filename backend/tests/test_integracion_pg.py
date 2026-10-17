@@ -1357,3 +1357,84 @@ def test_la_reapertura_del_mtt_saca_el_corte_del_mapa_y_sobrevive_al_reingreso()
     assert not _cierre_vigente(por_id["integracion:mtt-libertad"], ahora)
     assert _cierre_vigente(por_id["integracion:mtt-arlegui"], ahora)
     assert not _cierre_vigente(por_id["integracion:mtt-arlegui"], ahora + timedelta(hours=13))
+
+# --- Vínculos entre familias ----------------------------------------------------
+
+#: ~150 m al norte de LIBERTAD_5_NORTE.
+LIBERTAD_150_M = (-33.01565, -71.55320)
+
+
+async def _relaciones():
+    from app.core.database import AsyncSessionLocal
+    from app.models.incident import IncidentRelation
+
+    async with AsyncSessionLocal() as session:
+        return (await session.execute(select(IncidentRelation))).scalars().all()
+
+
+async def _detalle(code: str):
+    from app.core.database import AsyncSessionLocal
+    from app.services.incident_service import IncidentService
+
+    async with AsyncSessionLocal() as session:
+        return await IncidentService(session).get_detail(code=code)
+
+
+@pytest.mark.parametrize(("modo", "esperadas"), [("sombra", 1), ("off", 0)])
+def test_choque_y_corte_de_luz_quedan_vinculados_sin_fundirse(modo, esperadas):
+    from datetime import timedelta as td
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(
+            _evento("choque", LIBERTAD_5_NORTE, hace=td(minutes=30)),
+            _evento("corte", LIBERTAD_150_M, hace=td(minutes=18), fuente="cge", tipo="power_outage"),
+        )
+        primera, incidentes = await _pasada(perfiles=True, relaciones=modo)
+        segunda, _ = await _pasada(perfiles=True, relaciones=modo)
+        return primera, segunda, incidentes, await _relaciones()
+
+    primera, segunda, incidentes, relaciones = correr(caso)
+    assert sorted(i.type.value for i in incidentes) == ["accident", "power_outage"]
+    assert len(relaciones) == esperadas
+    assert primera.relaciones_nuevas == esperadas
+    assert segunda.relaciones_nuevas == 0
+    if esperadas:
+        [vinculo] = relaciones
+        choque = next(i for i in incidentes if i.type.value == "accident")
+        assert vinculo.incident_id == choque.id
+        assert vinculo.regla == "choque_corte_luz"
+        assert 11 * 60 <= vinculo.desfase_s <= 13 * 60
+
+
+@pytest.mark.parametrize("modo", ["sombra", "visible"])
+def test_la_ficha_muestra_el_vinculo_solo_en_modo_visible(monkeypatch, modo):
+    from datetime import timedelta as td
+
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "CORRELATION_RELACIONES", modo)
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(
+            _evento("choque", LIBERTAD_5_NORTE, hace=td(minutes=30)),
+            _evento("corte", LIBERTAD_150_M, hace=td(minutes=18), fuente="cge", tipo="power_outage"),
+        )
+        _, incidentes = await _pasada(perfiles=True)
+        choque = next(i for i in incidentes if i.type.value == "accident")
+        corte = next(i for i in incidentes if i.type.value == "power_outage")
+        return await _detalle(choque.code), await _detalle(corte.code)
+
+    del_choque, del_corte = correr(caso)
+    if modo == "sombra":
+        assert del_choque.relacionados == []
+        assert del_corte.relacionados == []
+        return
+    [visto_desde_choque] = del_choque.relacionados
+    assert visto_desde_choque.nombre == "Corte de luz"
+    assert visto_desde_choque.desfase_min == 12
+    [visto_desde_corte] = del_corte.relacionados
+    assert visto_desde_corte.nombre == "Accidente"
+    assert visto_desde_corte.desfase_min == -12
+    assert visto_desde_corte.code == del_choque.code

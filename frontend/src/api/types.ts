@@ -313,9 +313,26 @@ export interface Congestion {
   source_time: 'exacta' | 'aproximada' | 'franja' | 'publicacion'
 }
 
+/**
+ * `IncidentRelacion`: otro hecho, de otra familia, cerca y poco antes o después.
+ * No dice que uno causó al otro. `code` es `null` cuando el otro es una señal
+ * sin ficha (un corte de ruta).
+ */
+export interface IncidentRelacion {
+  regla: string
+  tipo: string
+  nombre: string
+  code: string | null
+  distancia_m: number
+  /** Minutos del otro respecto de éste: positivo si empezó después. */
+  desfase_min: number
+}
+
 /** `IncidentDetail` — `GET /api/v1/incidents/{code}`. */
 export interface IncidentDetail extends Incident {
   events: IncidentEventLink[]
+  /** Vacío salvo con `CORRELATION_RELACIONES=visible` en el servidor. */
+  relacionados?: IncidentRelacion[]
   /** `null` si no es accidente o la vía no está en la tabla de arterias. */
   congestion: Congestion | null
 }

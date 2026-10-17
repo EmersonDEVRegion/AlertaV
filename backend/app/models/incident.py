@@ -376,3 +376,45 @@ class IncidentCounter(Base):
     last_value: Mapped[int] = mapped_column(
         BigInteger, nullable=False, server_default=sa_text("0")
     )
+
+
+class IncidentRelation(Base):
+    """Dos hechos de familias distintas, cerca y con poco tiempo de diferencia.
+
+    No es un vínculo de evidencia (eso es `IncidentEvent`): no funde ni suma
+    confianza. Lo escribe `services/correlation/relaciones.py` y la ficha lo
+    muestra sólo con `CORRELATION_RELACIONES=visible`. Exactamente uno de
+    `otro_incident_id` y `otro_event_id` tiene valor (migración 0023).
+    """
+
+    __tablename__ = "incident_relations"
+    __table_args__ = (
+        CheckConstraint(
+            "(otro_incident_id IS NULL) <> (otro_event_id IS NULL)",
+            name="ck_incident_relations_un_destino",
+        ),
+        CheckConstraint(
+            "otro_incident_id IS NULL OR otro_incident_id <> incident_id",
+            name="ck_incident_relations_no_consigo",
+        ),
+        Index("ix_incident_relations_otro", "otro_incident_id"),
+        {"schema": _SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    incident_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey(f"{_SCHEMA}.incidents.id", ondelete="CASCADE"), nullable=False
+    )
+    otro_incident_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey(f"{_SCHEMA}.incidents.id", ondelete="CASCADE"), nullable=True
+    )
+    otro_event_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey(f"{_SCHEMA}.raw_events.id", ondelete="CASCADE"), nullable=True
+    )
+    regla: Mapped[str] = mapped_column(String(60), nullable=False)
+    distancia_m: Mapped[float] = mapped_column(Float, nullable=False)
+    #: Hora del otro menos hora de éste, en segundos (positivo: el otro vino después).
+    desfase_s: Mapped[int] = mapped_column(Integer, nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

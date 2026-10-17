@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.collectors.horas import parse_hora_declarada
@@ -27,7 +28,8 @@ from app.models.enums import (
     label_for,
     level_for,
 )
-from app.models.incident import Incident
+from app.models.event import RawEvent
+from app.models.incident import Incident, IncidentRelation
 from app.repositories.incident_repository import IncidentRepository
 from app.schemas.event import GeoJSONFeature, GeoJSONFeatureCollection
 from app.schemas.incident import (
@@ -35,12 +37,14 @@ from app.schemas.incident import (
     IncidentDetail,
     IncidentEventLink,
     IncidentRead,
+    IncidentRelacion,
     OutageDetail,
     confidence_label,
 )
 from app.services.ciudadanos import texto_publico
 from app.services.congestion import CHILE_TZ, arteria_de, estimar
 from app.services.correlation.engine import CorrelationEngine, CorrelationPass
+from app.services.correlation.relaciones import NOMBRE_DESTINO
 from app.services.source_links import source_label_for, source_url_for, unidades_for
 
 logger = logging.getLogger(__name__)
@@ -172,7 +176,78 @@ class IncidentService:
             for link, event in pairs
         ]
         detail.congestion = _congestion_for(incident, [event for _, event in pairs])
+        if settings.CORRELATION_RELACIONES == "visible":
+            detail.relacionados = await self._relacionados(incident.id)
         return detail
+
+    async def _relacionados(self, incident_id: int) -> list[IncidentRelacion]:
+        """Los vínculos entre familias de un incidente, mirados desde él.
+
+        Un vínculo se guarda una vez, desde el origen (el choque); desde el
+        corte se lee al revés, con el desfase cambiado de signo.
+        """
+        filas = (
+            await self.session.execute(
+                select(IncidentRelation).where(
+                    or_(
+                        IncidentRelation.incident_id == incident_id,
+                        IncidentRelation.otro_incident_id == incident_id,
+                    )
+                )
+            )
+        ).scalars().all()
+        if not filas:
+            return []
+        otros_incidentes = {
+            f.incident_id if f.incident_id != incident_id else f.otro_incident_id
+            for f in filas
+        } - {None}
+        otros_eventos = {f.otro_event_id for f in filas if f.otro_event_id is not None}
+        incidentes = {
+            i.id: i
+            for i in (
+                await self.session.execute(
+                    select(Incident).where(Incident.id.in_(otros_incidentes or {0}))
+                )
+            ).scalars()
+        }
+        eventos = {
+            e.id: e
+            for e in (
+                await self.session.execute(
+                    select(RawEvent).where(RawEvent.id.in_(otros_eventos or {0}))
+                )
+            ).scalars()
+        }
+        salida: list[IncidentRelacion] = []
+        for fila in filas:
+            desde_origen = fila.incident_id == incident_id
+            signo = 1 if desde_origen else -1
+            if desde_origen and fila.otro_event_id is not None:
+                evento = eventos.get(fila.otro_event_id)
+                if evento is None:
+                    continue
+                tipo, code = evento.type.value, None
+            else:
+                otro = incidentes.get(fila.otro_incident_id if desde_origen else fila.incident_id)
+                if otro is None or not otro.publico or otro.status in (
+                    IncidentStatus.MERGED,
+                    IncidentStatus.DISMISSED,
+                ):
+                    continue
+                tipo, code = otro.type.value, otro.code
+            salida.append(
+                IncidentRelacion(
+                    regla=fila.regla,
+                    tipo=tipo,
+                    nombre=NOMBRE_DESTINO.get(tipo, tipo),
+                    code=code,
+                    distancia_m=round(fila.distancia_m),
+                    desfase_min=round(signo * fila.desfase_s / 60),
+                )
+            )
+        salida.sort(key=lambda r: (r.distancia_m, abs(r.desfase_min)))
+        return salida
 
     async def stats(self, *, hours: int | None = None) -> dict[str, Any]:
         since = (

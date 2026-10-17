@@ -288,6 +288,29 @@ incidente que abra otra fuente (Bomberos, CONAF, un vecino). Un incendio que se
 extiende más allá del foco produce píxeles fuera del radio, y esos abren
 incidente como siempre. Interruptor: `FIRMS_FUENTES_FIJAS`.
 
+### Vínculos entre familias: «cerca y poco después»
+
+Las familias no se funden (un choque y un corte de luz en la misma cuadra son
+dos hechos), pero uno puede explicar al otro. `correlation/relaciones.py` anota
+esos pares en `incident_relations` (migración 0023) sin fundir nada ni mover la
+confianza:
+
+| Regla | Origen | Otro | Radio | Desfase del otro |
+|---|---|---|---|---|
+| `choque_corte_luz` | accidente | corte de luz | 300 m | −10 a +90 min |
+| `incendio_corte_luz` | incendio estructural | corte de luz | 300 m | −10 a +120 min |
+| `deslizamiento_corte_ruta` | deslizamiento o anegamiento | corte de ruta (señal) | 500 m | ±3 h |
+
+Corre en cada pasada (`_relacionar`) sobre los orígenes de las últimas
+`CORRELATION_RELACIONES_VENTANA_HORAS` (6): el corte suele aparecer después del
+choque, y la pasada siguiente lo encuentra. Un índice único hace que repetir un
+par no escriba nada.
+
+`CORRELATION_RELACIONES`: `sombra` (por defecto) calcula y guarda sin mostrar;
+`visible` los entrega en la ficha (`relacionados`, «Cerca, a la misma hora»,
+sin afirmar causa); `off` no los calcula. La semana en sombra se revisa con
+`python -m scripts.revisar_relaciones --dias 7`.
+
 ### Geocodificación: de la esquina escrita al punto
 
 Las centrales de Bomberos escriben la esquina («ARLEGUI / TRASLAVIÑA») en el

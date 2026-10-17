@@ -27,6 +27,7 @@ import { ConfidenceAudit } from './ConfidenceAudit'
 import { ConfidenceBar } from './ConfidenceBar'
 import { CongestionNotice } from './CongestionNotice'
 import { OutageDetails } from './OutageDetails'
+import { RelatedNearby } from './RelatedNearby'
 import { SourceChips } from './SourceChips'
 import { DetailSurface, useDetailEmbedded } from './DetailSurface'
 import { ShareButton } from './ShareButton'
@@ -256,6 +257,9 @@ export const IncidentSheet = memo(function IncidentSheet({
         <div className="mt-5">
           <ConfidenceAudit breakdown={incident.confidence_breakdown} />
         </div>
+
+        {/* --- Otros hechos cerca, de otra familia --------------------------- */}
+        <RelatedNearby items={detail?.relacionados ?? []} />
 
         {/* --- Señales que lo componen --------------------------------------- */}
         <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-ink-muted">
