@@ -120,6 +120,25 @@ export default defineConfig(({ mode }) => {
             { src: '/icons/pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
             { src: '/icons/maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
           ],
+          // Para el instalador «enriquecido» de Chrome en Android (§Q): sin
+          // capturas muestra sólo el ícono y el nombre. `sizes` tiene que ser
+          // el tamaño real de cada imagen o Chrome las descarta.
+          screenshots: [
+            {
+              src: '/screenshots/mapa.png',
+              sizes: '383x832',
+              type: 'image/png',
+              form_factor: 'narrow',
+              label: 'Emergencias en curso y avisos meteorológicos de la Región de Valparaíso',
+            },
+            {
+              src: '/screenshots/ficha.png',
+              sizes: '383x832',
+              type: 'image/png',
+              form_factor: 'narrow',
+              label: 'Ficha de una emergencia con su confianza y sus fuentes',
+            },
+          ],
         },
 
         workbox: {
@@ -134,9 +153,10 @@ export default defineConfig(({ mode }) => {
           // mapa sin señal, que es justamente el caso de uso en terreno.
           globPatterns: ['**/*.{js,mjs,css,html,svg,png,ico,woff2}'],
           // Las imágenes de la vista previa al compartir (`public/og/`) sólo las
-          // piden WhatsApp y compañía: no tienen por qué viajar al teléfono.
+          // piden WhatsApp y compañía, y las capturas del manifiesto sólo el
+          // instalador: no tienen por qué viajar al teléfono.
           // Se repiten los valores por defecto de workbox: este campo los reemplaza.
-          globIgnores: ['**/node_modules/**', 'sw.js', 'workbox-*.js', 'og/**'],
+          globIgnores: ['**/node_modules/**', 'sw.js', 'workbox-*.js', 'og/**', 'screenshots/**'],
           maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
           cleanupOutdatedCaches: true,
           clientsClaim: true,

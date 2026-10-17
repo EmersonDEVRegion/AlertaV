@@ -7,6 +7,8 @@ import { setExploreTab, type ExploreTab } from '@/lib/exploreStore'
 import { setSheetSnap, useLowerSheetWhile } from '@/lib/sheetStore'
 import { cn } from '@/lib/cn'
 import type { AboutTab } from '@/components/ui/AboutSheet'
+import { InstallSheetHost } from '@/components/ui/InstallSheet'
+import { startInstall, useInstallPlatform } from '@/lib/install'
 
 const AboutSheet = lazy(() =>
   import('@/components/ui/AboutSheet').then((m) => ({ default: m.AboutSheet })),
@@ -40,6 +42,8 @@ export function AppMenu({ theme, onToggleTheme }: AppMenuProps) {
   const [open, setOpen] = useState(false)
   const [about, setAbout] = useState<AboutTab | null>(null)
   const root = useRef<HTMLDivElement>(null)
+  // «Instalar AlertaV» sólo mientras no esté instalada (§Q).
+  const installed = useInstallPlatform() === 'installed'
   // En el teléfono la hoja baja mientras el menú está abierto. «Ver
   // leyenda» la sube a media altura, y eso manda: no se le devuelve la de antes.
   useLowerSheetWhile(open, 'menu')
@@ -110,6 +114,16 @@ export function AppMenu({ theme, onToggleTheme }: AppMenuProps) {
           <GlassPicker />
           <div className="my-1 h-px bg-line" />
           <Item onClick={() => show('layers')}>Capas, filtros y leyenda</Item>
+          {!installed && (
+            <Item
+              onClick={() => {
+                setOpen(false)
+                void startInstall()
+              }}
+            >
+              Instalar AlertaV
+            </Item>
+          )}
           <div className="my-1 h-px bg-line" />
           <Item onClick={() => showAbout('about')}>Acerca de AlertaV</Item>
           <Item onClick={() => showAbout('sources')}>Fuentes de datos</Item>
@@ -120,6 +134,9 @@ export function AppMenu({ theme, onToggleTheme }: AppMenuProps) {
           </p>
         </div>
       )}
+
+      {/* La hoja de instalación: la abren este menú y la invitación de «Ahora». */}
+      <InstallSheetHost />
 
       {about && (
         <Suspense fallback={null}>
