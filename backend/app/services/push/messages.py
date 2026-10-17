@@ -135,7 +135,10 @@ def format_distance(meters: float) -> str:
 
 
 #: Desde cuándo vale la pena decir que la ubicación es vieja. Menos de un día
-#: suele ser la casa o el trabajo de hoy; más, puede ser otra ciudad.
+#: suele ser la casa o el trabajo de hoy; más, puede ser otra ciudad. Con el
+#: vencimiento por defecto (`PUSH_LOCATION_MAX_AGE_HOURS` = 24) una ubicación
+#: así ya no se usa y la nota no aparece; queda para cuando el vencimiento se
+#: alarga o se apaga.
 STALE_LOCATION = timedelta(hours=24)
 
 

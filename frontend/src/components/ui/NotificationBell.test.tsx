@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PushNotificationsState } from '@/hooks/usePushNotifications'
 import { resetPlaces } from '@/lib/placesStore'
 import { NotificationPanel, PUSH_TEXT } from './NotificationBell'
@@ -124,7 +124,7 @@ describe('NotificationPanel', () => {
     expect(screen.getByRole('switch', { name: PUSH_TEXT.seismic })).toBeEnabled()
   })
 
-  it('una ubicación de hace días se nota, y los lugares guardados se nombran', () => {
+  it('una ubicación vencida se dice, y se avisa sólo por los lugares guardados', () => {
     localStorage.setItem(
       'alertav:lugares',
       JSON.stringify([
@@ -137,11 +137,62 @@ describe('NotificationPanel', () => {
       <NotificationPanel push={state({ phase: 'on', locatedAt: Date.now() - 3 * 86_400_000 })} />,
     )
     expect(screen.getByText(/Tu ubicación es de hace 3 días/)).toHaveTextContent(
-      /Si ya no estás ahí/,
+      'y ya no se usa: sólo te avisamos cerca de Casa y Trabajo.',
     )
-    expect(screen.getByText('También te avisamos cerca de Casa y Trabajo.')).toBeInTheDocument()
+    expect(screen.queryByText(PUSH_TEXT.placeHintTitle)).toBeNull()
     localStorage.removeItem('alertav:lugares')
     resetPlaces()
+  })
+
+  it('con la ubicación al día, los lugares se nombran', () => {
+    localStorage.setItem(
+      'alertav:lugares',
+      JSON.stringify([{ id: 'a', name: 'Casa', lat: -33.04, lon: -71.44 }]),
+    )
+    resetPlaces()
+    render(<NotificationPanel push={state({ phase: 'on', locatedAt: Date.now() - 3_600_000 })} />)
+    expect(screen.getByText('También te avisamos cerca de Casa.')).toBeInTheDocument()
+    expect(screen.getByText(PUSH_TEXT.autoLocation)).toBeInTheDocument()
+    localStorage.removeItem('alertav:lugares')
+    resetPlaces()
+  })
+
+  describe('sugerencia de guardar Casa', () => {
+    afterEach(() => localStorage.removeItem('alertav:push-place-hint-dismissed'))
+
+    it('sin lugares aparece, abre «Mis lugares» y se puede descartar', async () => {
+      const onAddPlace = vi.fn()
+      const push = state({ phase: 'on', locatedAt: Date.now() - 60 * 60_000 })
+      const { unmount } = render(<NotificationPanel push={push} onAddPlace={onAddPlace} />)
+      expect(screen.getByText(PUSH_TEXT.placeHintTitle)).toBeInTheDocument()
+      await userEvent.click(screen.getByRole('button', { name: PUSH_TEXT.placeHintAction }))
+      expect(onAddPlace).toHaveBeenCalledTimes(1)
+
+      await userEvent.click(screen.getByRole('button', { name: PUSH_TEXT.placeHintLater }))
+      expect(screen.queryByText(PUSH_TEXT.placeHintTitle)).toBeNull()
+      expect(screen.getByText(PUSH_TEXT.noPlaces)).toBeInTheDocument()
+      unmount()
+
+      // Descartada, no vuelve mientras la ubicación siga al día.
+      render(<NotificationPanel push={push} onAddPlace={onAddPlace} />)
+      expect(screen.queryByText(PUSH_TEXT.placeHintTitle)).toBeNull()
+    })
+
+    it('vuelve cuando la ubicación vence sin lugares, sin «Ahora no»', () => {
+      localStorage.setItem('alertav:push-place-hint-dismissed', '1')
+      render(
+        <NotificationPanel
+          push={state({ phase: 'on', locatedAt: Date.now() - 25 * 3_600_000 })}
+          onAddPlace={vi.fn()}
+        />,
+      )
+      // 25 h: «de ayer».
+      expect(screen.getByText(/Tu ubicación es de/)).toHaveTextContent(
+        PUSH_TEXT.expiredNoPlaces,
+      )
+      expect(screen.getByText(PUSH_TEXT.placeHintTitle)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: PUSH_TEXT.placeHintLater })).toBeNull()
+    })
   })
 
   it('en un computador explica que la ubicación es aproximada', () => {

@@ -16,8 +16,9 @@ import pytest
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.dialects import postgresql
 
+from app.core.config import settings
 from app.models.enums import IncidentType
-from app.repositories.push_repository import PushRepository, Recipient
+from app.repositories.push_repository import PushRepository, Recipient, ubicacion_vigente
 from app.schemas.push import PushSubscribeRequest
 from app.services.push.messages import format_location_age, incident_message
 from app.services.push.subscriptions import PushSubscriptionService
@@ -146,6 +147,43 @@ class TestConsulta:
         sql = str(session.statements[0].compile(dialect=postgresql.dialect()))
         assert "push_places" in sql and "UNION ALL" in sql and "DISTINCT ON" in sql
         assert "notify_seismic" in sql
+
+
+class TestVencimientoDeLaUbicacion:
+    """La última ubicación vence; los lugares guardados, no."""
+
+    async def _sql(self, metodo: str) -> str:
+        session = CapturingSession()
+        repo = PushRepository(session)  # type: ignore[arg-type]
+        if metodo == "incidente":
+            await repo.recipients_for_incident(
+                incident_id=1, code="INC-2026-00001", lat=-33.03, lon=-71.55
+            )
+        elif metodo == "agua":
+            await repo.recipients_for_water_cut(subject_key="esval:1", lat=-33.03, lon=-71.55)
+        else:
+            await repo.recipients_for_quake(lat=-33.03, lon=-71.9, reach_m=150_000, keys=["csn:1"])
+        return str(session.statements[0].compile(dialect=postgresql.dialect()))
+
+    @pytest.mark.parametrize("metodo", ["incidente", "agua", "sismo"])
+    async def test_la_ubicacion_vieja_no_cuenta(self, metodo: str) -> None:
+        sql = await self._sql(metodo)
+        assert sql.count("push_subscriptions.location_updated_at >=") == 1
+        # Los lugares guardados no tienen vencimiento.
+        assert "push_places.created_at" not in sql
+
+    @pytest.mark.parametrize("metodo", ["incidente", "sismo"])
+    async def test_con_cero_no_vence(self, metodo: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "PUSH_LOCATION_MAX_AGE_HOURS", 0)
+        sql = await self._sql(metodo)
+        assert "location_updated_at >=" not in sql
+
+    def test_el_limite_es_el_configurado(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "PUSH_LOCATION_MAX_AGE_HOURS", 24)
+        antes = datetime.now(UTC)
+        condicion = ubicacion_vigente()
+        limite = condicion.right.value
+        assert timedelta(hours=23, minutes=59) < antes - limite <= timedelta(hours=24)
 
 
 class TestMensaje:

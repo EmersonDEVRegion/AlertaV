@@ -18,10 +18,12 @@ import {
   savePushMemo,
   shouldResync,
   urlBase64ToUint8Array,
+  usableForResync,
   type PushMemo,
   type PushSupport,
 } from '@/lib/push'
 import { getPlaces, usePlaces } from '@/lib/placesStore'
+import { getLastPosition, reportPosition, subscribePosition } from '@/lib/positionStore'
 
 /**
  * Estado de los avisos en este teléfono.
@@ -112,6 +114,24 @@ interface Position {
   at: number
 }
 
+function toPosition(position: GeolocationPosition): Position {
+  return {
+    lat: position.coords.latitude,
+    lon: position.coords.longitude,
+    accuracyM: Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null,
+    // Con `maximumAge` el navegador puede devolver una lectura de hace unos
+    // minutos: su hora es la que vale, no la de ahora.
+    at: position.timestamp || Date.now(),
+  }
+}
+
+/**
+ * Seguimiento mientras la app está a la vista: la misma precisión baja que
+ * `locate`. Sin `timeout`: si la red no responde, se espera la próxima lectura
+ * en vez de reintentar.
+ */
+const WATCH_OPTIONS: PositionOptions = { enableHighAccuracy: false, maximumAge: 60_000 }
+
 /**
  * Ubicación para los avisos: precisión baja a propósito. Un radio de 5 km no
  * necesita GPS fino, y la ubicación por red responde en un segundo en interior,
@@ -124,17 +144,11 @@ function locate(): Promise<Position> {
       return
     }
     navigator.geolocation.getCurrentPosition(
-      (position) =>
-        resolve({
-          lat: position.coords.latitude,
-          lon: position.coords.longitude,
-          accuracyM: Number.isFinite(position.coords.accuracy)
-            ? position.coords.accuracy
-            : null,
-          // Con `maximumAge` el navegador puede devolver una lectura de hace
-          // unos minutos: su hora es la que vale, no la de ahora.
-          at: position.timestamp || Date.now(),
-        }),
+      (position) => {
+        const read = toPosition(position)
+        reportPosition(read)
+        resolve(read)
+      },
       (error) =>
         reject(
           new PushFlowError(
@@ -186,11 +200,19 @@ function readable(error: unknown): string {
  *
  * # La ubicación
  *
- * Con la app cerrada el navegador no entrega la ubicación, así que el servidor
- * calcula las distancias contra la última que recibió. Por eso este hook la
- * reenvía cada vez que la app se abre —si ya hay permiso y el teléfono se movió
- * más de 250 m, o si pasaron 12 horas— y sin volver a preguntar nada: al abrir
- * la app sólo se consulta el GPS si el permiso ya estaba concedido.
+ * Con la app cerrada o en segundo plano el navegador no entrega la ubicación
+ * (no hay geolocalización en el service worker), así que el servidor calcula
+ * las distancias contra la última que recibió, y la deja de usar a las 24 h
+ * (`LOCATION_MAX_AGE_MS`). Por eso este hook la reenvía cada vez que puede:
+ *
+ * - al abrir la app y **al volver a ella** desde segundo plano, que es lo
+ *   común: el sistema no la cierra, así que no se vuelve a montar nada;
+ * - mientras está a la vista, con cada lectura de `watchPosition`;
+ * - cuando el mapa obtiene la posición («mi ubicación», `positionStore`).
+ *
+ * Se envía si el teléfono se movió más de 250 m (y pasaron 10 min desde el
+ * último envío) o si pasaron 12 horas (`shouldResync`). Nada de esto vuelve a
+ * preguntar: sólo se consulta el GPS si el permiso ya estaba concedido.
  *
  * # Por qué no se pide permiso al cargar
  *
@@ -255,7 +277,7 @@ export function usePushNotifications(): PushNotificationsState {
     [],
   )
 
-  // --- Estado inicial y resincronización silenciosa al abrir -----------------
+  // --- Estado inicial ------------------------------------------------------------
   useEffect(() => {
     if (support === 'ios-install') {
       setPhase('ios-install')
@@ -309,28 +331,118 @@ export function usePushNotifications(): PushNotificationsState {
           setMessage('Los avisos se reiniciaron en el servidor. Actívalos de nuevo.')
           return
         }
+        // La ubicación se pone al día en el efecto de abajo, que corre
+        // también al volver a la app.
         setPhase('on')
-
-        const current = loadPushMemo()
-        const preferences = current ?? DEFAULT_PREFERENCES
-        let position: Position | null = null
-        if (await geolocationGranted()) {
-          position = await locate().catch(() => null)
-        }
-        if (cancelled || !shouldResync(current, position, Date.now())) return
-        const target =
-          position ?? (current ? { ...current, accuracyM: null, at: current.locatedAt } : null)
-        if (target) await sync(existing, target, preferences)
       } catch {
-        // La resincronización es un extra: si falla, los avisos siguen
-        // llegando a la última ubicación conocida.
         if (!cancelled) setPhase((previous) => (previous === 'checking' ? 'off' : previous))
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [support, server, publicKey, status.isError, sync])
+  }, [support, server, publicKey, status.isError])
+
+  // --- Ubicación al día mientras los avisos están activos ----------------------
+  /*
+   * Todo envío automático pasa por `autoSync`: uno a la vez (una lectura que
+   * llega mientras otro envío está en curso espera su turno, y sólo la última),
+   * nunca encima de una acción de la persona (`busy`), y con las preferencias
+   * leídas justo
+   * antes de enviar, para no pisar un cambio que ocurrió mientras se esperaba
+   * al service worker. Si falla, los avisos siguen con la ubicación que tenía
+   * el servidor y se reintenta con la próxima lectura.
+   */
+  const syncing = useRef(false)
+  useEffect(() => {
+    if (phase !== 'on') return
+    let disposed = false
+    let watchId: number | null = null
+    let waiting: { reading: Position | null } | null = null
+
+    const autoSync = async (reading: Position | null): Promise<void> => {
+      if (busy.current || disposed) return
+      if (syncing.current) {
+        waiting = { reading }
+        return
+      }
+      const position = reading && usableForResync(reading.accuracyM) ? reading : null
+      if (!shouldResync(loadPushMemo(), position, Date.now())) return
+      syncing.current = true
+      try {
+        const registration = await serviceWorkerReady()
+        const subscription = await registration.pushManager.getSubscription()
+        const current = loadPushMemo()
+        if (disposed || busy.current || !subscription) return
+        if (!shouldResync(current, position, Date.now())) return
+        const target =
+          position ?? (current ? { ...current, accuracyM: null, at: current.locatedAt } : null)
+        if (target) await sync(subscription, target, current ?? DEFAULT_PREFERENCES)
+      } catch {
+        // Ver arriba: se reintenta.
+      } finally {
+        syncing.current = false
+        const next = waiting
+        waiting = null
+        if (next) void autoSync(next.reading)
+      }
+    }
+
+    const stopWatch = () => {
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId)
+      watchId = null
+    }
+
+    const refresh = async () => {
+      if (disposed || document.visibilityState !== 'visible') return
+      if (!('geolocation' in navigator) || !(await geolocationGranted())) {
+        // Sin permiso no hay lectura nueva; igual se renueva la suscripción
+        // cada 12 horas con la ubicación que había.
+        await autoSync(null)
+        return
+      }
+      if (disposed || document.visibilityState !== 'visible') return
+      // Lo que ya se sabía (del mapa, o de antes de pasar a segundo plano):
+      // cubre la renovación de 12 horas aunque el GPS no entregue nada nuevo.
+      void autoSync(getLastPosition())
+      if (watchId !== null) return
+      // La primera lectura del seguimiento llega enseguida (o desde la caché
+      // del navegador): es la que pone al día la ubicación al volver.
+      watchId = navigator.geolocation.watchPosition(
+        (position) => {
+          const read = toPosition(position)
+          reportPosition(read)
+        },
+        () => undefined,
+        WATCH_OPTIONS,
+      )
+    }
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') void refresh()
+      else stopWatch()
+    }
+    // Safari puede devolver la página desde su caché sin `visibilitychange`.
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) void refresh()
+    }
+    // El seguimiento, el mapa y `locate` informan acá; una sola puerta.
+    const unsubscribe = subscribePosition(() => {
+      const known = getLastPosition()
+      if (known) void autoSync(known)
+    })
+
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('pageshow', onPageShow)
+    void refresh()
+    return () => {
+      disposed = true
+      stopWatch()
+      unsubscribe()
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('pageshow', onPageShow)
+    }
+  }, [phase, sync])
 
   // --- Lugares guardados --------------------------------------------------------
   /*

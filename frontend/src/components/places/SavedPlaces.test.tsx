@@ -4,7 +4,7 @@ import { render as renderBase, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { makeIncident } from '@/test/fixtures'
-import { getPlaces, resetPlaces, usePicking } from '@/lib/placesStore'
+import { getPlaces, requestAddPlace, resetPlaces, usePicking } from '@/lib/placesStore'
 import { getSheetSnap, resetSheet } from '@/lib/sheetStore'
 import { SavedPlaces } from './SavedPlaces'
 
@@ -53,6 +53,18 @@ afterEach(() => {
 })
 
 describe('Mis lugares', () => {
+  it('el pedido del panel de avisos abre el formulario con Casa, una sola vez', () => {
+    requestAddPlace()
+    const { unmount } = render(
+      <SavedPlaces history={[]} onMapCodes={new Set()} onFocusArea={vi.fn()} onFocusCuartel={vi.fn()} />,
+    )
+    expect(screen.getByRole('radio', { name: 'Casa' })).toBeChecked()
+    unmount()
+    // Volver a la pestaña no lo reabre.
+    render(<SavedPlaces history={[]} onMapCodes={new Set()} onFocusArea={vi.fn()} onFocusCuartel={vi.fn()} />)
+    expect(screen.queryByRole('radio', { name: 'Casa' })).toBeNull()
+  })
+
   it('sin lugares invita a guardar la casa', async () => {
     render(<SavedPlaces history={[]} onMapCodes={new Set()} onFocusArea={vi.fn()} onFocusCuartel={vi.fn()} />)
     await userEvent.click(screen.getByRole('button', { name: /Guarda tu casa/ }))

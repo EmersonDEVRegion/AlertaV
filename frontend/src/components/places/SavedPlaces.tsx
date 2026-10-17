@@ -14,6 +14,10 @@ import {
   addPlace,
   removePlace,
   startPicking,
+  getPlaces,
+  hasAddPlaceRequest,
+  onAddPlaceRequest,
+  takeAddPlaceRequest,
   usePlaces,
   type SavedPlace,
 } from '@/lib/placesStore'
@@ -420,7 +424,26 @@ export const SavedPlaces = memo(function SavedPlaces({
   onFocusCuartel,
 }: SavedPlacesProps) {
   const places = usePlaces()
-  const [adding, setAdding] = useState(false)
+  /*
+   * El panel de avisos puede pedir guardar «Casa» (`requestAddPlace`): si
+   * «Mis lugares» no estaba montado, el pedido se toma al montar; si ya lo
+   * estaba, llega por la suscripción. En los dos casos el formulario queda a
+   * la vista.
+   */
+  // El inicializador sólo mira (React puede llamarlo dos veces); el pedido se
+  // da por atendido en el efecto.
+  const [adding, setAdding] = useState(
+    () => hasAddPlaceRequest() && getPlaces().length < MAX_PLACES,
+  )
+  const section = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (takeAddPlaceRequest()) section.current?.scrollIntoView?.({ block: 'nearest' })
+    return onAddPlaceRequest(() => {
+      if (!takeAddPlaceRequest() || getPlaces().length >= MAX_PLACES) return
+      setAdding(true)
+      section.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+    })
+  }, [])
   /*
    * Los cuarteles se piden sólo si hay un lugar guardado: sin lugares no hay
    * nada que medir (y «cerca de mí» los pide al tocarlo, vía `pedirCuarteles`).
@@ -438,7 +461,7 @@ export const SavedPlaces = memo(function SavedPlaces({
   const done = () => setAdding(false)
 
   return (
-    <section aria-label="Mis lugares" className="rounded-control">
+    <section ref={section} aria-label="Mis lugares" className="rounded-control">
       <div className="flex items-center gap-2 px-1.5 pb-0.5 pt-1">
         <h3 className="flex-1 text-[9.5px] font-semibold uppercase tracking-[0.08em] text-ink-faint">
           Mis lugares

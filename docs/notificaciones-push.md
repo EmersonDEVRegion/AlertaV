@@ -11,7 +11,7 @@ Avisos al teléfono, aunque la app esté cerrada:
 
 | Aviso | A quién | Cuándo |
 |---|---|---|
-| **Emergencia cercana** (incendio, accidente, corte de luz, inundación…) | Suscripciones dentro del radio de su categoría, medido desde la última ubicación o desde un lugar guardado | El incidente está `active`, apareció hace menos de 3 h, y además: lo confirmó CONAF/Bomberos, **o** es un corte de luz, **o** tiene confianza ≥ 30 % con al menos 2 fuentes distintas |
+| **Emergencia cercana** (incendio, accidente, corte de luz, inundación…) | Suscripciones dentro del radio de su categoría, medido desde la última ubicación (si tiene menos de 24 h) o desde un lugar guardado | El incidente está `active`, apareció hace menos de 3 h, y además: lo confirmó CONAF/Bomberos, **o** es un corte de luz, **o** tiene confianza ≥ 30 % con al menos 2 fuentes distintas |
 | **Corte de agua programado** (Esval) | Suscripciones dentro del radio de cortes de agua | Empezó hace menos de 12 h |
 | **Temblor** | Suscripciones dentro del radio de percepción del sismo, desde su ubicación o sus lugares | Magnitud ≥ 3,5 (según la versión del CSN si existe) y ocurrido hace menos de 30 min |
 
@@ -19,8 +19,9 @@ Cada persona elige un radio por categoría en la PWA (`0` la apaga). Por defecto
 🔥 5 km · 🚗 2 km · ⚡ 1 km · 🌊 3 km · 🆘 2 km · 💧 1 km. Gana el lugar más cercano.
 
 Cada aviso tiene un emoji por tipo, la distancia y **desde dónde se midió** en el título, y una
-línea de cuerpo. La alerta de SENAPRED, si hay, va primero. Si la ubicación tiene más de 24 h, una
-segunda línea lo dice. Tocar el aviso abre la app en el incidente.
+línea de cuerpo. La alerta de SENAPRED, si hay, va primero. Una ubicación de más de 24 h ya no se
+usa (ver §2); si se alarga ese plazo, una segunda línea dice su edad. Tocar el aviso abre la app en
+el incidente.
 
 ```text
 🔥 Incendio forestal a 1,2 km de tu última ubicación
@@ -62,9 +63,21 @@ collectors CSN/USGS ─► raw_events ──┼─► notificador (cada 60 s) �
 * **Web Push estándar, sin Firebase.** Funciona en Chrome/Android, Firefox, Edge y en Safari de
   iPhone **sólo si AlertaV está instalada en la pantalla de inicio** (iOS 16.4+). La PWA lo
   explica en el panel cuando detecta un iPhone sin instalar.
-* **La ubicación es la última conocida.** Con la app cerrada el navegador no la entrega. La PWA
-  la reenvía cada vez que se abre (si se movió más de 250 m o pasaron 12 h), sin volver a pedir
-  permiso. Se guarda redondeada a 3 decimales (~110 m) y se borra al desactivar.
+* **La ubicación es la última conocida, y vence.** Con la app cerrada o en segundo plano ningún
+  navegador la entrega: no hay geolocalización en el service worker, Periodic Background Sync no
+  existe en iPhone (y en Android tampoco da ubicación), y todo push debe mostrar una notificación.
+  Por eso la PWA la reenvía cada vez que puede, sin volver a pedir permiso (sólo si ya estaba
+  concedido):
+  * al abrir la app y **al volver a ella** desde segundo plano (`visibilitychange`, `pageshow`);
+  * mientras está a la vista, con `watchPosition` de baja precisión (se detiene al ocultarla);
+  * cuando el mapa obtiene la posición («mi ubicación», vía `lib/positionStore.ts`).
+
+  Se envía si se movió 250 m o más (con 10 min entre envíos), si pasaron 12 h, o si la ubicación
+  del servidor tiene 12 h y hay una lectura nueva (`shouldResync`). Una lectura con más de 3 km de
+  incertidumbre no se envía sola. **A las 24 h el notificador deja de medir desde ella**
+  (`PUSH_LOCATION_MAX_AGE_HOURS`) y avisa sólo por los lugares guardados, que no vencen; el panel
+  lo dice y, sin lugares, sugiere guardar «Casa». Se guarda redondeada a 3 decimales (~110 m), sin
+  historial, y se borra al desactivar.
 * **El notificador es un tercer motor** dentro de `app.workers`, al lado de la recolección y la
   correlación. No se engancha a la correlación porque esa pasada es una transacción atómica y
   porque el umbral suele cruzarse pasadas después de que nace el incidente.
@@ -125,6 +138,7 @@ campana lo muestra, y el notificador se queda dormido sin tumbar a los otros mot
 | `PUSH_RADIO_FIRE_M` … `PUSH_RADIO_WATER_M` | 5000, 2000, 1000, 3000, 2000, 1000 | Radio por categoría para quien no eligió el suyo. |
 | `PUSH_INCIDENT_RADIUS_M` | `5000` | Radio para lo que no cae en ninguna categoría. |
 | `PUSH_WATER_CUT_MAX_AGE_HOURS` | `12` | Un corte de agua más viejo ya no se avisa. |
+| `PUSH_LOCATION_MAX_AGE_HOURS` | `24` | La última ubicación deja de usarse (quedan los lugares). `0` = no vence. |
 | `PUSH_INCIDENT_MIN_CONFIDENCE` | `0.30` | Umbral de confianza. |
 | `PUSH_INCIDENT_MIN_SOURCES` | `2` | Fuentes distintas exigidas si no hay confirmación oficial. |
 | `PUSH_INCIDENT_MAX_AGE_MINUTES` | `180` | Un incidente más viejo ya no se avisa. |

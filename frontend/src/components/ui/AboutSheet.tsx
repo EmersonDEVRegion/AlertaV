@@ -131,7 +131,9 @@ function Privacy() {
       <P>
         Guardamos la dirección de avisos que entrega tu navegador, tu ubicación
         aproximada, los radios que elegiste y tus lugares guardados (nombre y punto),
-        para saber qué avisarte. Al desactivar los avisos se borra todo. Si tu
+        para saber qué avisarte. La ubicación se pone al día mientras usas la app,
+        reemplaza a la anterior (no hay historial) y deja de usarse si pasa un día
+        sin abrirla. Al desactivar los avisos se borra todo. Si tu
         navegador deja de recibirlos, se borran solos. El registro de avisos enviados
         se guarda 30 días.
       </P>
