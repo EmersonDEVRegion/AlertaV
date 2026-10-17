@@ -98,3 +98,16 @@ export function zonasLabel(w: MeteoWarning): string {
 export function phenomenonLabel(w: MeteoWarning): string {
   return w.fenomeno ?? w.titulo ?? 'Fenómeno meteorológico'
 }
+
+/**
+ * Colores de las zonas en el mapa, por severidad y tema. El mismo violeta que
+ * los tokens `--dmc-*` de la franja, en hex porque MapLibre no lee variables
+ * CSS. En oscuro se aclaran: un violeta oscuro sobre Dark Matter no se ve.
+ */
+export const METEO_ZONE_PALETTE: Record<'light' | 'dark', Record<1 | 2 | 3, string>> = {
+  light: { 1: '#8b5cf6', 2: '#6d28d9', 3: '#4c1d95' },
+  dark: { 1: '#a78bfa', 2: '#c4b5fd', 3: '#ede9fe' },
+}
+
+/** Opacidad del relleno: baja, porque la zona es contexto y no debe tapar el mapa. */
+export const METEO_ZONE_FILL_OPACITY: Record<1 | 2 | 3, number> = { 1: 0.08, 2: 0.14, 3: 0.22 }

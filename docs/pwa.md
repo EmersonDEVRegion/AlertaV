@@ -170,6 +170,27 @@ vigentes para la región, de lo más severo a lo menos.
   lo dice. Con la ruta en 404 (fuente apagada), nada.
 - Lo vencido se descarta con el reloj del teléfono: sin red, la respuesta
   guardada puede tener horas.
+- **«Ver en el mapa»** (en la tarjeta abierta) enciende la capa «Avisos DMC»,
+  resalta con un contorno grueso las zonas de ese aviso y las encuadra; en el
+  teléfono baja la hoja. La región mide ~220 km de norte a sur y con la hoja
+  abierta no cabe sobre el zoom mínimo (7): en ese caso se centra al zoom
+  mínimo en vez de dejar que `fitBounds` la descentre.
+
+### Capa «Avisos DMC»
+
+Cuarto azulejo de «Referencia» en «Capas» (la grilla pasa a 2 × 2). Dibuja las
+zonas de pronóstico de la DMC que tocan los avisos vigentes
+(`GET /feed/avisos-meteo/zonas`): relleno muy tenue, contorno punteado para un
+Aviso y continuo y más grueso para Alerta y Alarma, en el mismo violeta de la
+franja (`METEO_ZONE_PALETTE`). Un aviso para toda la región pinta las cuatro.
+
+- **Estado propio** (`lib/meteoZonesStore.ts`): la capa, el azulejo y el botón
+  de la franja lo comparten sin pasar por props del mapa. `App` sólo le pasa
+  al azulejo el estado y el conteo.
+- Como las otras capas de referencia: apagada al abrir, no pide nada hasta el
+  primer encendido y después sólo alterna `visibility`. No abre ficha ni entra
+  en `interactiveLayerIds`: una zona mide decenas de kilómetros y no es el
+  lugar de un hecho.
 
 ## Amenaza sísmica: capa de referencia, no de emergencia
 

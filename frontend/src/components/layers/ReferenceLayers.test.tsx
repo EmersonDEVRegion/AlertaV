@@ -184,3 +184,76 @@ describe('Cuarteles de Bomberos', () => {
     expect(screen.getByText(/llama al 132/)).toBeInTheDocument()
   })
 })
+
+
+describe('avisos de la DMC', () => {
+  it('sin las props de la DMC no hay cuarto azulejo', () => {
+    renderLayers()
+    expect(screen.queryByRole('button', { name: /avisos dmc/i })).not.toBeInTheDocument()
+  })
+
+  it('con ellas aparece apagado y encenderlo llama al toggle', async () => {
+    const onMeteoToggle = vi.fn()
+    render(
+      <ReferenceLayers
+        hazardEnabled={false}
+        hazardStatus="idle"
+        hazardError={null}
+        onHazardToggle={vi.fn()}
+        onHazardRetry={vi.fn()}
+        closureEnabled={false}
+        closureStatus="idle"
+        closureCount={0}
+        closureCutCount={0}
+        onClosureToggle={vi.fn()}
+        onClosureRetry={vi.fn()}
+        cuartelesEnabled={false}
+        cuartelesStatus="idle"
+        cuartelesCount={0}
+        cuartelesError={null}
+        onCuartelesToggle={vi.fn()}
+        onCuartelesRetry={vi.fn()}
+        meteoEnabled={false}
+        meteoStatus="idle"
+        meteoZoneCount={0}
+        onMeteoToggle={onMeteoToggle}
+        theme="light"
+      />,
+    )
+    const tile = screen.getByRole('button', { name: /avisos dmc/i })
+    expect(tile).toHaveAttribute('aria-pressed', 'false')
+    await userEvent.click(tile)
+    expect(onMeteoToggle).toHaveBeenCalledOnce()
+  })
+
+  it('encendida y sin avisos lo dice como calma, no como falla', () => {
+    render(
+      <ReferenceLayers
+        hazardEnabled={false}
+        hazardStatus="idle"
+        hazardError={null}
+        onHazardToggle={vi.fn()}
+        onHazardRetry={vi.fn()}
+        closureEnabled={false}
+        closureStatus="idle"
+        closureCount={0}
+        closureCutCount={0}
+        onClosureToggle={vi.fn()}
+        onClosureRetry={vi.fn()}
+        cuartelesEnabled={false}
+        cuartelesStatus="idle"
+        cuartelesCount={0}
+        cuartelesError={null}
+        onCuartelesToggle={vi.fn()}
+        onCuartelesRetry={vi.fn()}
+        meteoEnabled
+        meteoStatus="empty"
+        meteoZoneCount={0}
+        onMeteoToggle={vi.fn()}
+        theme="dark"
+      />,
+    )
+    expect(screen.getByText('Sin avisos vigentes para la región')).toBeInTheDocument()
+    expect(screen.getByText(/no una alerta de SENAPRED/)).toBeInTheDocument()
+  })
+})

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Button } from '@/components/ui/primitives'
 import { CUARTEL_PALETTE } from '@/domain/cuarteles'
 import { HAZARD_LEGEND, HAZARD_RAMP } from '@/domain/hazardSymbology'
+import { METEO_ZONE_FILL_OPACITY, METEO_ZONE_PALETTE } from '@/domain/meteoWarnings'
 import {
   ROAD_CLOSURE_LEGEND,
   ROAD_CLOSURE_LEGEND_TEXT,
@@ -9,13 +10,15 @@ import {
 } from '@/domain/roadClosureSymbology'
 import type { CuartelesStatus } from '@/hooks/useCuarteles'
 import type { RoadClosureStatus } from '@/hooks/useRoadClosures'
+import type { MeteoZonesStatus } from '@/hooks/useMeteoZones'
 import type { HazardStatus } from '@/hooks/useSeismicHazard'
 import type { Theme } from '@/hooks/useTheme'
 import { cn } from '@/lib/cn'
 import { LayerGroupHeading, LayerTile } from './LayerTile'
 
 /**
- * Las capas de referencia: amenaza sísmica, cortes de ruta y cuarteles.
+ * Las capas de referencia: amenaza sísmica, cortes de ruta, cuarteles y las
+ * zonas de la DMC con avisos vigentes.
  *
  * # Por qué van en su propio grupo
  *
@@ -49,6 +52,14 @@ export interface ReferenceLayersProps {
   cuartelesError: string | null
   onCuartelesToggle: () => void
   onCuartelesRetry: () => void
+  /**
+   * Zonas de la DMC con avisos. Opcionales: sin ellas no hay azulejo (la capa
+   * se apaga entera con `DMC_AVISOS_ENABLED=false` y el backend responde 404).
+   */
+  meteoEnabled?: boolean
+  meteoStatus?: MeteoZonesStatus
+  meteoZoneCount?: number
+  onMeteoToggle?: () => void
   theme: Theme
 }
 
@@ -88,6 +99,14 @@ const RoadIcon = () => (
     <path d="M12 5v2" />
     <path d="M12 11v2" />
     <path d="M12 17v2" />
+  </StrokeIcon>
+)
+
+/** Una nube con un rayo: el pronóstico de la DMC. */
+const CloudIcon = () => (
+  <StrokeIcon>
+    <path d="M7 17a4 4 0 1 1 .9-7.9A5.5 5.5 0 0 1 18.5 11 3 3 0 0 1 18 17" />
+    <path d="m12.5 13-2 4h3l-2 4" />
   </StrokeIcon>
 )
 
@@ -155,6 +174,36 @@ function cuartelesDescription(status: CuartelesStatus, count: number, error: str
       return 'Cuerpos y compañías de la región'
   }
 }
+
+function meteoDescription(status: MeteoZonesStatus, zones: number): string {
+  switch (status) {
+    case 'loading':
+      return 'Consultando a la DMC…'
+    case 'error':
+      return 'No se pudo cargar'
+    case 'unavailable':
+      return 'Fuente apagada'
+    case 'empty':
+      return 'Sin avisos vigentes para la región'
+    case 'ready':
+      return zones === 4 ? 'Toda la región con avisos' : plural(zones, 'zona con avisos', 'zonas con avisos')
+    default:
+      return 'Avisos, alertas y alarmas por zona de pronóstico'
+  }
+}
+
+function meteoShort(status: MeteoZonesStatus, zones: number): string | null {
+  if (status === 'empty') return 'Sin avisos'
+  if (status === 'unavailable') return 'Apagada'
+  if (status === 'ready') return plural(zones, 'zona', 'zonas')
+  return shortStatus(status)
+}
+
+const METEO_LEGEND: readonly { severidad: 1 | 2 | 3; label: string; meaning: string }[] = [
+  { severidad: 1, label: 'Aviso', meaning: 'Severidad moderada, potencialmente riesgosa.' },
+  { severidad: 2, label: 'Alerta', meaning: 'Severidad fuerte, con riesgo para las personas.' },
+  { severidad: 3, label: 'Alarma', meaning: 'Severidad intensa, con muy alto riesgo.' },
+]
 
 function hazardDescription(status: HazardStatus, error: string | null): string {
   switch (status) {
@@ -229,6 +278,10 @@ export function ReferenceLayers({
   cuartelesError,
   onCuartelesToggle,
   onCuartelesRetry,
+  meteoEnabled = false,
+  meteoStatus = 'idle',
+  meteoZoneCount = 0,
+  onMeteoToggle,
   theme,
 }: ReferenceLayersProps) {
   const hazardAccent = HAZARD_RAMP[theme].stops[2]![1]
@@ -241,13 +294,19 @@ export function ReferenceLayers({
   // Pizarra: un cuartel es referencia, no una emergencia (ver `CUARTEL_PALETTE`).
   const cuartelAccent = CUARTEL_PALETTE[theme].stroke
 
-  const anyOn = hazardEnabled || closureEnabled || cuartelesEnabled
+  // El violeta de la DMC, el mismo de la franja de «Ahora» y de las zonas.
+  const meteoAccent = METEO_ZONE_PALETTE[theme][1]
+  const withMeteo = onMeteoToggle !== undefined
+  const meteoOn = withMeteo && meteoEnabled
+
+  const anyOn = hazardEnabled || closureEnabled || cuartelesEnabled || meteoOn
 
   return (
     <section aria-labelledby="capas-referencia">
       <LayerGroupHeading id="capas-referencia">Referencia</LayerGroupHeading>
 
-      <div className="grid grid-cols-3 gap-1.5">
+      {/* Con las zonas de la DMC son cuatro: dos por fila, como las de emergencia. */}
+      <div className={cn('grid gap-1.5', withMeteo ? 'grid-cols-2' : 'grid-cols-3')}>
         <LayerTile
           label="Amenaza sísmica"
           icon={<WaveIcon />}
@@ -283,6 +342,18 @@ export function ReferenceLayers({
               : null
           }
         />
+        {withMeteo && (
+          <LayerTile
+            label="Avisos DMC"
+            icon={<CloudIcon />}
+            color={meteoAccent}
+            on={meteoEnabled}
+            onToggle={onMeteoToggle}
+            busy={meteoStatus === 'loading'}
+            failed={meteoStatus === 'error'}
+            detail={meteoEnabled ? meteoShort(meteoStatus, meteoZoneCount) : null}
+          />
+        )}
       </div>
 
       {anyOn && (
@@ -400,6 +471,45 @@ export function ReferenceLayers({
               <p className={NOTE}>
                 En una emergencia llama al 132: la central despacha la compañía que corresponde.
               </p>
+            </LayerDetail>
+          )}
+
+          {meteoOn && (
+            <LayerDetail
+              label="Avisos meteorológicos de la DMC"
+              description={meteoDescription(meteoStatus, meteoZoneCount)}
+              failed={meteoStatus === 'error'}
+            >
+              <ul className="space-y-1">
+                {METEO_LEGEND.map((row) => (
+                  <li key={row.severidad} className="flex items-start gap-1.5">
+                    <span
+                      aria-hidden
+                      className="mt-[2px] size-3 shrink-0 rounded-[3px] border-2"
+                      style={{
+                        borderColor: METEO_ZONE_PALETTE[theme][row.severidad],
+                        borderStyle: row.severidad === 1 ? 'dashed' : 'solid',
+                        backgroundColor: `color-mix(in srgb, ${METEO_ZONE_PALETTE[theme][row.severidad]} ${Math.round(METEO_ZONE_FILL_OPACITY[row.severidad] * 100 * 2)}%, transparent)`,
+                      }}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[9.5px] font-medium leading-tight text-ink-muted">
+                        {row.label}
+                      </span>
+                      <span className="block text-[9px] leading-tight text-ink-faint">
+                        {row.meaning}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className={NOTE}>
+                Zonas de pronóstico de la Dirección Meteorológica de Chile: Litoral, Cordillera de
+                la Costa, Precordillera y Cordillera. Son de decenas de kilómetros, no el lugar de
+                un hecho. El detalle de cada aviso está en «Ahora».
+              </p>
+              {/* Mismo cuidado que en la franja: no es protección civil. */}
+              <p className={NOTE}>Es un pronóstico, no una alerta de SENAPRED.</p>
             </LayerDetail>
           )}
         </div>

@@ -5,6 +5,9 @@ import type { MeteoWarning } from '@/api/meteoWarningTypes'
 import { shortMoment, vigenciaLabel, zonasLabel } from '@/domain/meteoWarnings'
 import { weatherGlyphFor } from '@/domain/weatherGlyphs'
 import { resetSections } from '@/lib/sectionStore'
+import { resetMeteoZones, useMeteoZonesState } from '@/lib/meteoZonesStore'
+import { getSheetSnap, resetSheet, setSheetSnap } from '@/lib/sheetStore'
+import { renderHook } from '@testing-library/react'
 import { MeteoWarningsView } from './MeteoWarnings'
 
 function aviso(overrides: Partial<MeteoWarning> = {}): MeteoWarning {
@@ -30,7 +33,11 @@ function aviso(overrides: Partial<MeteoWarning> = {}): MeteoWarning {
   }
 }
 
-afterEach(() => resetSections())
+afterEach(() => {
+  resetSections()
+  resetMeteoZones()
+  resetSheet()
+})
 
 describe('textos', () => {
   it('acorta el tramo sin inventar horas', () => {
@@ -127,5 +134,29 @@ describe('MeteoWarningsView', () => {
     const cards = screen.getAllByRole('listitem')
     expect(cards[0]!.className).toContain('bg-dmc-3-bg')
     expect(cards[1]!.className).toContain('bg-dmc-1-bg')
+  })
+})
+
+
+describe('ver en el mapa', () => {
+  it('enciende la capa, enfoca el aviso y baja la hoja', async () => {
+    setSheetSnap('half')
+    const { result } = renderHook(() => useMeteoZonesState())
+    render(<MeteoWarningsView status="ready" items={[aviso()]} />)
+    await userEvent.click(screen.getByRole('button', { name: /Tormentas Eléctricas/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Ver en el mapa' }))
+    expect(result.current.enabled).toBe(true)
+    expect(result.current.focus?.id).toBe('5852')
+    expect(getSheetSnap()).toBe('peek')
+  })
+
+  it('dos toques sobre el mismo aviso piden encuadrar dos veces', async () => {
+    const { result } = renderHook(() => useMeteoZonesState())
+    render(<MeteoWarningsView status="ready" items={[aviso()]} />)
+    await userEvent.click(screen.getByRole('button', { name: /Tormentas Eléctricas/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Ver en el mapa' }))
+    const first = result.current.focus?.nonce
+    await userEvent.click(screen.getByRole('button', { name: 'Ver en el mapa' }))
+    expect(result.current.focus?.nonce).not.toBe(first)
   })
 })

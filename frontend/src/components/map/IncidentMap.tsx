@@ -66,6 +66,7 @@ import type {
   Map as MapLibreMap,
 } from 'maplibre-gl'
 import { RainLayer } from './RainLayer'
+import { MeteoZonesLayer } from './MeteoZonesLayer'
 import { RoadClosureLayer } from './RoadClosureLayer'
 import { CuartelesLayer } from './CuartelesLayer'
 import type { CuartelesState } from '@/hooks/useCuarteles'
@@ -684,6 +685,13 @@ export const IncidentMap = memo(function IncidentMap({
           theme={theme}
         />
       )}
+
+      {/*
+        Zonas de la DMC con avisos vigentes. Después de la lluvia y con la misma
+        ancla: es pronóstico como ella, pero por zonas, y su contorno tiene que
+        verse sobre el degradado. Se enciende sola (store propio), sin props.
+      */}
+      <MeteoZonesLayer theme={theme} />
 
       {/*
         Cortes de ruta. Después del cono y por el mismo motivo que la lluvia:

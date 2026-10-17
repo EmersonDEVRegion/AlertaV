@@ -186,6 +186,12 @@ en `collectors/dmc/aaa_parser.py` y la captura real del 16-10-2026, en
 - **Desde dónde sale:** directo. Si algún día el host dejara de responder a
   Render, `DMC_PROXY_URL` lo manda por un proxy en Chile (el de
   `infra/proxy-cl/` tendría que permitir ese host).
+- **Zonas:** los polígonos de las cuatro zonas de pronóstico de la región
+  (Litoral, Cordillera de la Costa, Precordillera, Cordillera) están
+  versionados en `backend/static/geo/dmc_zonas_valpo.json`, recortados de
+  `coordenadas_zonas_DMC_v3.geojson` con `python -m scripts.dmc_zonas`. Juntas
+  cubren la región continental. Si la DMC publica otra versión (`v4`), se
+  vuelve a correr el script con la URL nueva.
 
 ## Agregar una fuente nueva
 

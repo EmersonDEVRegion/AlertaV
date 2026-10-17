@@ -31,6 +31,8 @@ import { useIsCompact } from '@/hooks/useMediaQuery'
 import { useTheme } from '@/hooks/useTheme'
 import { useRainLayer } from '@/hooks/useRainLayer'
 import { useRoadClosures } from '@/hooks/useRoadClosures'
+import { useMeteoZones } from '@/hooks/useMeteoZones'
+import { toggleMeteoZones } from '@/lib/meteoZonesStore'
 import { useSeismicHazard } from '@/hooks/useSeismicHazard'
 import { mostrarCuarteles, useCuarteles } from '@/hooks/useCuarteles'
 import { AppMenu } from '@/components/ui/AppMenu'
@@ -129,6 +131,8 @@ export default function App() {
   const rain = useRainLayer()
   const closures = useRoadClosures()
   const cuarteles = useCuarteles()
+  // Zonas de la DMC: el mapa las lee de su propio store; acá sólo el azulejo.
+  const meteoZones = useMeteoZones()
   // Sin `enabled`: su valor aparece justamente cuando el mapa está vacío, que
   // es cuando nadie está tocando nada y nadie iría a buscarlo.
   const health = useCollectorHealth()
@@ -520,9 +524,13 @@ export default function App() {
       cuartelesError: cuarteles.errorMessage,
       onCuartelesToggle: cuarteles.toggle,
       onCuartelesRetry: cuarteles.retry,
+      meteoEnabled: meteoZones.enabled,
+      meteoStatus: meteoZones.status,
+      meteoZoneCount: meteoZones.data.features.length,
+      onMeteoToggle: toggleMeteoZones,
       theme,
     }),
-    [hazard, closures, cuarteles, theme],
+    [hazard, closures, cuarteles, meteoZones.enabled, meteoZones.status, meteoZones.data, theme],
   )
 
   /*
