@@ -208,7 +208,9 @@ describe('NotificationPanel', () => {
 
   it('iPhone sin instalar: explica cómo instalarla', () => {
     render(<NotificationPanel push={state({ phase: 'ios-install' })} />)
-    expect(screen.getByText(PUSH_TEXT.iosInstall)).toBeInTheDocument()
+    expect(screen.getByText(PUSH_TEXT.iosInstall, { exact: false })).toBeInTheDocument()
+    // §Q: enlace a la hoja de instalación.
+    expect(screen.getByRole('button', { name: 'Ver cómo' })).toBeInTheDocument()
   })
 
   it('sin configuración en el servidor: muestra el motivo', () => {

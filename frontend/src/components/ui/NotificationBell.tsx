@@ -19,6 +19,7 @@ import { RadiosPorCategoria, ResumenRadios } from './RadiosPorCategoria'
 import { isHandheld, thisDevice } from '@/lib/device'
 import { requestAddPlace, usePlaces } from '@/lib/placesStore'
 import { cn } from '@/lib/cn'
+import { setInstallSheetOpen } from '@/lib/install'
 import { setExploreTab } from '@/lib/exploreStore'
 import { setSheetSnap, useLowerSheetWhile } from '@/lib/sheetStore'
 
@@ -58,7 +59,7 @@ export const PUSH_TEXT = {
   denied:
     'Bloqueaste las notificaciones de AlertaV. Para activarlas, habilítalas en el candado de la barra de direcciones (o en Ajustes → Notificaciones del teléfono) y vuelve a esta pantalla.',
   iosInstall:
-    'En iPhone los avisos sólo funcionan con AlertaV instalada: toca Compartir → «Agregar a pantalla de inicio» y abre la app desde el ícono.',
+    'En iPhone los avisos sólo funcionan con AlertaV instalada en la pantalla de inicio; después, ábrela desde el ícono.',
   seismicCaveat:
     'Los temblores llegan unos minutos después del movimiento: no es una alerta temprana. Si estás en la costa y el sismo te impide mantenerte en pie, evacúa a una zona segura sin esperar ningún aviso.',
   locationNote:
@@ -247,7 +248,16 @@ export function NotificationPanel({
         <>
           <WhatWeSend push={push} />
           <p className="mt-2.5 rounded-control bg-info-bg p-2 text-[11px] leading-snug text-info-ink">
-            {PUSH_TEXT.iosInstall}
+            {PUSH_TEXT.iosInstall}{' '}
+            {/* Los pasos de iOS 26/27 son cuatro y cambian de lugar: la hoja de
+                instalación los muestra con dibujos (§Q). */}
+            <button
+              type="button"
+              onClick={() => setInstallSheetOpen(true)}
+              className="font-semibold underline underline-offset-2"
+            >
+              Ver cómo
+            </button>
           </p>
         </>
       )}
