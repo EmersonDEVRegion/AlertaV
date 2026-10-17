@@ -96,7 +96,7 @@ export function LegendBody() {
                     key={level}
                     aria-hidden
                     title={`${palette[level].label} (${LEVEL[level].range})`}
-                    className="size-3 rounded-full ring-2 ring-white"
+                    className="size-3 rounded-full ring-2 ring-(--pin-edge)"
                     style={{ backgroundColor: palette[level].color }}
                   />
                 ))}
@@ -133,7 +133,7 @@ export function LegendBody() {
             <li className="flex gap-2">
               <span
                 aria-hidden
-                className="relative mt-0.5 grid size-3.5 shrink-0 place-items-center rounded-full ring-2 ring-white"
+                className="relative mt-0.5 grid size-3.5 shrink-0 place-items-center rounded-full ring-2 ring-(--pin-edge)"
                 style={{ backgroundColor: LEVEL.confirmed.color }}
               >
                 <span className="size-1.5 rounded-full bg-raised" />
@@ -177,7 +177,7 @@ export function LegendBody() {
               <li key={provider} className="flex items-center gap-2">
                 <span
                   aria-hidden
-                  className="grid size-4 shrink-0 place-items-center rounded-full ring-2 ring-white"
+                  className="grid size-4 shrink-0 place-items-center rounded-full ring-2 ring-(--pin-edge)"
                   style={{ backgroundColor: PROVIDER[provider].color }}
                 >
                   <GlyphIcon id={OUTAGE_ICON} className="size-2.5" color="#ffffff" />
@@ -188,7 +188,7 @@ export function LegendBody() {
             <li className="flex items-center gap-2">
               <span
                 aria-hidden
-                className="grid size-4 shrink-0 place-items-center rounded-full text-[9px] font-semibold ring-2 ring-white"
+                className="grid size-4 shrink-0 place-items-center rounded-full text-[9px] font-semibold ring-2 ring-(--pin-edge)"
                 style={{ backgroundColor: OUTAGE_CLUSTER.color, color: OUTAGE_CLUSTER.onColor }}
               >
                 12
@@ -198,7 +198,7 @@ export function LegendBody() {
             <li className="flex items-center gap-2">
               <span
                 aria-hidden
-                className="grid size-4 shrink-0 place-items-center rounded-full ring-2 ring-white"
+                className="grid size-4 shrink-0 place-items-center rounded-full ring-2 ring-(--pin-edge)"
                 style={{ backgroundColor: WATER.color }}
               >
                 <GlyphIcon id={WATER_ICON} className="size-2.5" color={WATER.onColor} />

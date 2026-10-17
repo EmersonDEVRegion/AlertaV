@@ -23,6 +23,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import '@/lib/maplibreWorker'
 import { reportPosition } from '@/lib/positionStore'
 import { SavedPlaceMarkers } from './SavedPlaceMarkers'
+import { PIN_EDGE } from './pinTheme'
 
 import type { FeatureCollection, Point } from 'geojson'
 import type { SeismicEvent } from '@/api/seismicTypes'
@@ -243,9 +244,13 @@ interface SourceChild {
 const SelectedIncidentLayer = memo(function SelectedIncidentLayer({
   source,
   families,
-}: SourceChild & { families: FilterSpecification }) {
+  theme,
+}: SourceChild & { families: FilterSpecification; theme: Theme }) {
   const code = useSelectedIncidentCode()
-  const spec = useMemo(() => withFamilies(selectedLayer(code), families), [code, families])
+  const spec = useMemo(
+    () => withFamilies(selectedLayer(code, theme), families),
+    [code, families, theme],
+  )
   return <Layer {...spec} source={source} />
 })
 
@@ -278,9 +283,12 @@ const SelectedWaterLayer = memo(function SelectedWaterLayer({
   return <Layer {...spec} source={source} />
 })
 
-const SelectedQuakeLayer = memo(function SelectedQuakeLayer({ source }: SourceChild) {
+const SelectedQuakeLayer = memo(function SelectedQuakeLayer({
+  source,
+  theme,
+}: SourceChild & { theme: Theme }) {
   const usgsId = useSelectedSeismicId()
-  const spec = useMemo(() => seismicSelectedLayer(usgsId), [usgsId])
+  const spec = useMemo(() => seismicSelectedLayer(usgsId, theme), [usgsId, theme])
   return <Layer {...spec} source={source} />
 })
 
@@ -289,28 +297,38 @@ const EMPTY_GHOST: FeatureCollection<Point> = {
   features: [],
 }
 
-const GHOST_RING = {
-  id: 'incident-ghost-ring',
-  type: 'circle',
-  paint: {
-    'circle-radius': ['interpolate', ['linear'], ['zoom'], 7, 9, 14, 14],
-    'circle-color': '#a1a1aa',
-    'circle-opacity': 0.22,
-    'circle-stroke-color': '#e4e4e7',
-    'circle-stroke-width': 2.5,
-    'circle-stroke-opacity': 0.95,
-  },
-} as const satisfies LayerProps
-const GHOST_DOT = {
-  id: 'incident-ghost-dot',
-  type: 'circle',
-  paint: {
-    'circle-radius': 3.5,
-    'circle-color': '#52525b',
-    'circle-stroke-color': '#ffffff',
-    'circle-stroke-width': 1.5,
-  },
-} as const satisfies LayerProps
+/** Aro y punto del pin fantasma: gris neutro que contrasta con cada tema. */
+const GHOST_COLORS = {
+  light: { ring: '#71717a', dot: '#52525b' },
+  dark: { ring: '#a1a1aa', dot: '#d4d4d8' },
+} as const satisfies Record<Theme, { ring: string; dot: string }>
+
+function ghostLayers(theme: Theme) {
+  const colors = GHOST_COLORS[theme]
+  const ring = {
+    id: 'incident-ghost-ring',
+    type: 'circle',
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 7, 9, 14, 14],
+      'circle-color': colors.ring,
+      'circle-opacity': 0.18,
+      'circle-stroke-color': colors.ring,
+      'circle-stroke-width': 2,
+      'circle-stroke-opacity': 0.9,
+    },
+  } as const satisfies LayerProps
+  const dot = {
+    id: 'incident-ghost-dot',
+    type: 'circle',
+    paint: {
+      'circle-radius': 3.5,
+      'circle-color': colors.dot,
+      'circle-stroke-color': PIN_EDGE[theme],
+      'circle-stroke-width': 1.5,
+    },
+  } as const satisfies LayerProps
+  return { ring, dot }
+}
 
 /**
  * Pin fantasma: el incidente abierto desde el historial que ya no está en el
@@ -322,10 +340,13 @@ const GHOST_DOT = {
  */
 const GhostSelection = memo(function GhostSelection({
   offMap,
+  theme,
 }: {
   offMap: readonly Incident[]
+  theme: Theme
 }) {
   const code = useSelectedIncidentCode()
+  const ghostSpec = useMemo(() => ghostLayers(theme), [theme])
   const data = useMemo(() => {
     const ghost = code === null ? undefined : offMap.find((i) => i.code === code)
     if (!ghost) return EMPTY_GHOST
@@ -342,8 +363,8 @@ const GhostSelection = memo(function GhostSelection({
   }, [code, offMap])
   return (
     <Source id="incident-ghost" type="geojson" data={data}>
-      <Layer {...GHOST_RING} />
-      <Layer {...GHOST_DOT} />
+      <Layer {...ghostSpec.ring} />
+      <Layer {...ghostSpec.dot} />
     </Source>
   )
 })
@@ -574,11 +595,11 @@ export const IncidentMap = memo(function IncidentMap({
   const incidentSpecs = useMemo(
     () => ({
       halo: withFamilies(alertHaloLayer, families),
-      casing: withFamilies(casingLayer, families),
+      casing: withFamilies(casingLayer(theme), families),
       core: withFamilies(coreLayer, families),
       icon: withFamilies(incidentIconLayer(theme), families),
-      closed: withFamilies(closedRingLayer, families),
-      unverified: withFamilies(unverifiedLayer, families),
+      closed: withFamilies(closedRingLayer(theme), families),
+      unverified: withFamilies(unverifiedLayer(theme), families),
       hit: withFamilies(hitLayer, families),
     }),
     [families, theme],
@@ -726,7 +747,7 @@ export const IncidentMap = memo(function IncidentMap({
           <Layer {...seismicRingLayer} />
           <Layer {...seismicCoreLayer} />
           {iconsReady && <Layer {...seismicIcons} />}
-          <SelectedQuakeLayer />
+          <SelectedQuakeLayer theme={theme} />
           <Layer {...seismicHitLayer} />
         </Source>
       )}
@@ -797,11 +818,11 @@ export const IncidentMap = memo(function IncidentMap({
         {iconsReady && <Layer {...incidentSpecs.icon} />}
         <Layer {...incidentSpecs.closed} />
         <Layer {...incidentSpecs.unverified} />
-        <SelectedIncidentLayer families={families} />
+        <SelectedIncidentLayer families={families} theme={theme} />
         <Layer {...incidentSpecs.hit} />
       </Source>
 
-      <GhostSelection offMap={offMap} />
+      <GhostSelection offMap={offMap} theme={theme} />
 
       {/* Casa, Trabajo: encima de todo, pero sin capturar toques. */}
       <SavedPlaceMarkers />

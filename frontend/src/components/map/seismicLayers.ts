@@ -13,6 +13,8 @@
  */
 
 import type { CircleLayerSpecification, ExpressionSpecification } from 'maplibre-gl'
+import type { Theme } from '@/hooks/useTheme'
+import { PIN_INK } from './pinTheme'
 import {
   MAGNITUDE_COLOR_EXPRESSION,
   MAX_SIZED_MAGNITUDE,
@@ -118,7 +120,7 @@ export const seismicCoreLayer: SeismicLayer = {
   },
 }
 
-export function seismicSelectedLayer(usgsId: string | null): SeismicLayer {
+export function seismicSelectedLayer(usgsId: string | null, theme: Theme): SeismicLayer {
   return {
     id: 'seismic-selected',
     type: 'circle',
@@ -126,7 +128,7 @@ export function seismicSelectedLayer(usgsId: string | null): SeismicLayer {
     paint: {
       'circle-radius': seismicRadius({ pad: 4 }),
       'circle-color': 'transparent',
-      'circle-stroke-color': '#0f172a',
+      'circle-stroke-color': PIN_INK[theme],
       'circle-stroke-width': 2.5,
     },
   }

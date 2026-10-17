@@ -100,7 +100,7 @@ export const IncidentSheet = memo(function IncidentSheet({
       <header className="flex items-start gap-3 px-4 pb-3 pt-3">
         <span
           aria-hidden
-          className="mt-1 size-3.5 shrink-0 rounded-full ring-2 ring-white"
+          className="mt-1 size-3.5 shrink-0 rounded-full ring-2 ring-(--pin-edge)"
           style={{ backgroundColor: levelColor }}
         />
         <div className="min-w-0 flex-1">
