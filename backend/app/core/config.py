@@ -1208,6 +1208,13 @@ class Settings(BaseSettings):
     #: suma a un incidente que abra otra fuente. Ver
     #: `app/services/correlation/fuentes_fijas.py`.
     FIRMS_FUENTES_FIJAS: bool = True
+    #: Vínculos entre familias («cerca y poco después»: un choque y un corte de
+    #: luz a 150 m). `sombra` los calcula y guarda sin mostrarlos, para revisarlos
+    #: a mano antes (`scripts/revisar_relaciones.py`); `visible` los entrega en la
+    #: ficha; `off` no los calcula. Ver `app/services/correlation/relaciones.py`.
+    CORRELATION_RELACIONES: Literal["off", "sombra", "visible"] = "sombra"
+    #: Cuánto hacia atrás se miran los incidentes de origen en cada pasada.
+    CORRELATION_RELACIONES_VENTANA_HORAS: int = Field(default=6, ge=1, le=48)
     FIRMS_FIJA_RADIO_M: float = Field(default=400.0, ge=50.0, le=5_000.0)
     FIRMS_FIJA_DIAS: int = Field(default=3, ge=2, le=30)
     FIRMS_FIJA_VENTANA_DIAS: int = Field(default=7, ge=2, le=60)

@@ -91,6 +91,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import select
+from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -135,6 +137,7 @@ from app.services.correlation.despachos import (
     es_despacho,
     partir_por_llamado,
 )
+from app.services.correlation import relaciones as rel
 from app.services.correlation.fuentes_fijas import fuente_conocida, solo_firms
 from app.services.correlation.perfiles import (
     PERFILES,
@@ -220,6 +223,8 @@ class CorrelationPass:
     fusiones_rechazadas: int = 0
     #: Racimos sólo de FIRMS en una fuente de calor fija: no abrieron incidente.
     firms_fuente_fija: int = 0
+    #: Vínculos entre familias escritos en la pasada (`correlation/relaciones.py`).
+    relaciones_nuevas: int = 0
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -256,8 +261,13 @@ class CorrelationPass:
             "adhesiones_rechazadas": self.adhesiones_rechazadas,
             "fusiones_rechazadas": self.fusiones_rechazadas,
             "firms_fuente_fija": self.firms_fuente_fija,
+            "relaciones_nuevas": self.relaciones_nuevas,
             "warnings": list(self.warnings),
         }
+
+
+def _aware(momento: datetime) -> datetime:
+    return momento if momento.tzinfo else momento.replace(tzinfo=UTC)
 
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -307,6 +317,7 @@ class CorrelationEngine:
         prensa: bool | None = None,
         despachos_por_calle: bool | None = None,
         fuentes_fijas: bool | None = None,
+        relaciones: str | None = None,
     ) -> None:
         self.session = session
         self.repo = IncidentRepository(session)
@@ -351,6 +362,9 @@ class CorrelationEngine:
         self.fuentes_fijas = (
             settings.FIRMS_FUENTES_FIJAS if fuentes_fijas is None else fuentes_fijas
         )
+        #: Vínculos entre familias: `off`, `sombra` o `visible`. Ver
+        #: `CORRELATION_RELACIONES`; el motor calcula igual en `sombra` y `visible`.
+        self.relaciones = relaciones or settings.CORRELATION_RELACIONES
         #: ¿Existe `comunas_region`? Se pregunta una vez por pasada.
         self._hay_comunas: bool | None = None
         self._comunas_por_poligono = 0
@@ -392,6 +406,7 @@ class CorrelationEngine:
             await self._step_a_sector(result, now=now)
             await self._merge_converged(result, now=now)
             await self._step_b_commune(result, now=now)
+            await self._relacionar(result, now=now)
             await self._expire(result, now=now)
             result.communes_by_polygon = self._comunas_por_poligono
             await self.session.commit()
@@ -403,6 +418,85 @@ class CorrelationEngine:
         result.finished_at = datetime.now(UTC)
         logger.info("pasada de correlación", extra=result.as_dict())
         return result
+
+    # -- Vínculos entre familias ---------------------------------------------
+
+    async def _relacionar(self, result: CorrelationPass, *, now: datetime) -> None:
+        """Deja anotado qué hechos de familias distintas ocurrieron cerca.
+
+        No toca incidentes ni señales: sólo escribe en `incident_relations`.
+        Mira los incidentes de origen de las últimas
+        `CORRELATION_RELACIONES_VENTANA_HORAS`, y como el destino puede llegar
+        más tarde (el corte de luz aparece después del choque), cada pasada
+        vuelve a mirarlos hasta que salen de la ventana. El índice único hace
+        que repetir un par no escriba nada.
+        """
+        if self.relaciones == "off":
+            return
+        await self.session.flush()
+        desde = now - timedelta(hours=settings.CORRELATION_RELACIONES_VENTANA_HORAS)
+        margen = rel.margen()
+        tipos_origen = rel.tipos_de_origen()
+        tipos_incidente, tipos_evento = rel.tipos_de_destino()
+        vivos = [
+            s for s in IncidentStatus if s not in (IncidentStatus.MERGED, IncidentStatus.DISMISSED)
+        ]
+        filas = (
+            await self.session.execute(
+                select(
+                    Incident.id, Incident.type, Incident.lat, Incident.lon, Incident.first_seen_at
+                )
+                .where(Incident.type.in_(tipos_origen | tipos_incidente))
+                .where(Incident.status.in_(vivos))
+                .where(Incident.publico.is_(True))
+                .where(Incident.first_seen_at >= desde - margen)
+                .where(Incident.first_seen_at <= now + margen)
+            )
+        ).all()
+        incidentes = [
+            rel.Punto(f.id, f.type.value, f.lat, f.lon, _aware(f.first_seen_at)) for f in filas
+        ]
+        valores_origen = {t.value for t in tipos_origen}
+        origenes = [p for p in incidentes if p.tipo in valores_origen and desde <= p.hora <= now]
+        if not origenes:
+            return
+        eventos: list[rel.Punto] = []
+        if tipos_evento:
+            filas_eventos = (
+                await self.session.execute(
+                    select(RawEvent.id, RawEvent.type, RawEvent.lat, RawEvent.lon, RawEvent.timestamp)
+                    .where(RawEvent.type.in_(tipos_evento))
+                    .where(RawEvent.lat.isnot(None))
+                    .where(RawEvent.lon.isnot(None))
+                    .where(RawEvent.timestamp >= desde - margen)
+                    .where(RawEvent.timestamp <= now + margen)
+                )
+            ).all()
+            eventos = [
+                rel.Punto(e.id, e.type.value, e.lat, e.lon, _aware(e.timestamp))
+                for e in filas_eventos
+            ]
+        pares = rel.emparejar(origenes, incidentes, eventos, distancia=haversine_m)
+        insertar = sa_text(
+            f"INSERT INTO {settings.DB_SCHEMA}.incident_relations "
+            "(incident_id, otro_incident_id, otro_event_id, regla, distancia_m, desfase_s) "
+            "VALUES (:origen, :otro_incidente, :otro_evento, :regla, :distancia, :desfase) "
+            "ON CONFLICT (incident_id, regla, (COALESCE(otro_incident_id, 0)), "
+            "(COALESCE(otro_event_id, 0))) DO NOTHING"
+        )
+        for par in pares:
+            escrito = await self.session.execute(
+                insertar,
+                {
+                    "origen": par.origen_id,
+                    "otro_incidente": par.otro_id if par.otro_es_incidente else None,
+                    "otro_evento": None if par.otro_es_incidente else par.otro_id,
+                    "regla": par.regla,
+                    "distancia": par.distancia_m,
+                    "desfase": par.desfase_s,
+                },
+            )
+            result.relaciones_nuevas += max(escrito.rowcount or 0, 0)
 
     # -- Fuentes fuera del motor ---------------------------------------------
 
