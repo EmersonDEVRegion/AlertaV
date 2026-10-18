@@ -1,6 +1,13 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { REGION, REGION_BBOX, SEISMIC_BBOX, nearRegion, regionMask, signedArea } from './region'
+import {
+  REGION,
+  REGION_BBOX,
+  REGION_VIGNETTE,
+  SEISMIC_BBOX,
+  nearRegion,
+  signedArea,
+} from './region'
 
 /** Punto en anillo (rayo hacia el este). */
 function inside(ring: readonly number[][], lon: number, lat: number): boolean {
@@ -47,38 +54,68 @@ describe('contorno de la región', () => {
   })
 })
 
-describe('máscara', () => {
-  it('el exterior gira al revés que el agujero (así MapLibre lo trata como agujero)', () => {
-    const [outer = [], ...holes] = regionMask().geometry.coordinates
-    expect(signedArea(outer)).toBeGreaterThan(0)
-    expect(holes.length).toBeGreaterThan(0)
-    for (const hole of holes) expect(signedArea(hole)).toBeLessThan(0)
+/** Las capas de la viñeta cuyo agujero NO contiene el punto: las que lo cubren. */
+function coveringLayers(lon: number, lat: number) {
+  return REGION_VIGNETTE.features.filter((f) => {
+    const [, ...holes] = f.geometry.coordinates
+    return !holes.some((hole) => inside(hole, lon, lat))
+  })
+}
+
+describe('viñeta', () => {
+  const layers = REGION_VIGNETTE.features
+
+  it('de 3 en 3 km hasta 40, cada capa encadenada con la anterior', () => {
+    expect(layers.length).toBeGreaterThanOrEqual(10)
+    expect(layers.at(-1)?.properties.km).toBe(40)
+    expect(layers.at(-1)?.properties.f).toBe(1)
+    layers.forEach((layer, i) => {
+      const prev = i === 0 ? 0 : layers[i - 1]!.properties.f
+      expect(layer.properties.fp).toBe(prev)
+      expect(layer.properties.f).toBeGreaterThan(prev)
+      expect(layer.properties.f - prev).toBeLessThan(0.15) // escalones que no se ven
+    })
   })
 
-  it('el agujero es la región y su mar, no la tierra de otra región', () => {
-    const [outer = [], hole = []] = regionMask().geometry.coordinates
-    expect(inside(outer, -71.62, -33.05)).toBe(true)
-    expect(inside(hole, -71.62, -33.05)).toBe(true) // Valparaíso
-    expect(inside(hole, -71.75, -33.03)).toBe(true) // el mar frente a Valparaíso
-    expect(inside(hole, -71.95, -33.4)).toBe(true) // la franja de mar
-    expect(inside(hole, -72.6, -33.4)).toBe(false) // mar adentro: tapado
-    expect(inside(hole, -71.16, -31.63)).toBe(false) // Illapel
-    expect(inside(hole, -70.65, -33.45)).toBe(false) // Santiago
-    expect(inside(hole, -72.0, -34.4)).toBe(false) // mar de O'Higgins
-    expect(inside(hole, -71.6, -31.9)).toBe(false) // mar de Coquimbo
-  })
-
-  it('el exterior cubre todo lo que el mapa deja mirar', () => {
-    const [outer = []] = regionMask().geometry.coordinates
-    for (const [lon = 0, lat = 0] of [
-      [SEISMIC_BBOX[0] - 2, SEISMIC_BBOX[1] - 2],
-      [SEISMIC_BBOX[2] + 2, SEISMIC_BBOX[3] + 2],
-    ]) {
-      expect(inside(outer, lon, lat)).toBe(true)
+  it('el exterior gira al revés que los agujeros (así MapLibre los trata como agujeros)', () => {
+    for (const layer of layers) {
+      const [outer = [], ...holes] = layer.geometry.coordinates
+      expect(signedArea(outer)).toBeGreaterThan(0)
+      expect(holes.length).toBeGreaterThan(0)
+      for (const hole of holes) expect(signedArea(hole)).toBeLessThan(0)
     }
   })
 
-  it('signedArea: antihorario positivo', () => {
+  it('el exterior cubre todo lo que el mapa deja mirar', () => {
+    for (const layer of layers) {
+      const [outer = []] = layer.geometry.coordinates
+      expect(inside(outer, SEISMIC_BBOX[0] - 2, SEISMIC_BBOX[1] - 2)).toBe(true)
+      expect(inside(outer, SEISMIC_BBOX[2] + 2, SEISMIC_BBOX[3] + 2)).toBe(true)
+    }
+  })
+
+  it('dentro de la región nada; lo vecino a medias; lo lejano al tope', () => {
+    const darkness = (lon: number, lat: number) =>
+      coveringLayers(lon, lat).at(-1)?.properties.f ?? 0
+    expect(darkness(-71.62, -33.05)).toBe(0) // Valparaíso
+    expect(darkness(-70.6, -32.83)).toBe(0) // Los Andes
+    const colina = darkness(-70.67, -33.2) // ~15 km del borde
+    expect(colina).toBeGreaterThan(0.1)
+    expect(colina).toBeLessThan(0.7)
+    expect(darkness(-71.75, -33.05)).toBeLessThan(0.15) // el mar frente a Valparaíso
+    expect(darkness(-71.16, -31.63)).toBe(1) // Illapel
+    expect(darkness(-70.99, -34.58)).toBe(1) // San Fernando
+    expect(darkness(-68.84, -32.89)).toBe(1) // Mendoza
+  })
+
+  it('las capas que cubren un punto son siempre las primeras (se apilan en orden)', () => {
+    const covering = coveringLayers(-70.67, -33.2)
+    expect(covering).toEqual(layers.slice(0, covering.length))
+  })
+})
+
+describe('signedArea', () => {
+  it('antihorario positivo', () => {
     const ccw = [
       [0, 0],
       [1, 0],

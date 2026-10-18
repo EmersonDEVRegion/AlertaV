@@ -24,9 +24,14 @@
 import { REGION_BBOX, SEISMIC_BBOX, type Bbox } from '@/domain/region'
 import { headerHeight, mapInsets, type Insets } from './cameraOffset'
 
-/** Margen alrededor de la región en el zoom mínimo, en grados (~12 km): deja
- * entero el rótulo de las ciudades de la costa, que va a la izquierda del punto. */
+/** Margen alrededor de la región en el zoom mínimo, en grados (~12 km). */
 const REGION_MARGIN_DEG = 0.12
+/**
+ * Al oeste, más (~30 km): el mapa base escribe el nombre de las ciudades de la
+ * costa (Valparaíso, San Antonio) a la izquierda del punto, sobre el mar, y
+ * con el margen parejo quedaba cortado contra el borde de la pantalla.
+ */
+const WEST_MARGIN_DEG = 0.32
 /** Tamaño del mundo en píxeles a zoom 0 (teselas de 512 de MapLibre). */
 const WORLD_PX = 512
 
@@ -75,7 +80,7 @@ export function regionCamera(
   const top = Math.min(insets.top, height - usableH)
 
   const [west, south, east, north] = region
-  const x0 = mercX(west - REGION_MARGIN_DEG)
+  const x0 = mercX(west - WEST_MARGIN_DEG)
   const x1 = mercX(east + REGION_MARGIN_DEG)
   const y0 = mercY(north + REGION_MARGIN_DEG)
   const y1 = mercY(south - REGION_MARGIN_DEG)
