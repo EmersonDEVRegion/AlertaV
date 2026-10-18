@@ -30,6 +30,7 @@ import type { SeismicEvent } from '@/api/seismicTypes'
 import type { Incident } from '@/api/types'
 import type { WaterCut } from '@/api/waterCutTypes'
 import {
+  FOCUS_ZOOM,
   MAP_LOCALE,
   INITIAL_VIEW_STATE,
   MAP_ATTRIBUTION,
@@ -42,6 +43,7 @@ import { toConeCollection, type ReachCollection } from '@/lib/overlayGeojson'
 import {
   toFeatureCollection,
   toOutageFeatureCollection,
+  serviceAreaBounds,
   toServiceAreaFeatureCollection,
   toWaterCutFeatureCollection,
   waterAreaId,
@@ -79,7 +81,7 @@ import type { RoadClosureState } from '@/hooks/useRoadClosures'
 import type { SeismicHazardState } from '@/hooks/useSeismicHazard'
 import { toSeismicFeatureCollection } from '@/lib/seismicGeojson'
 import { attachMapDiagnostics } from '@/lib/mapDiagnostics'
-import { focusOffset } from '@/lib/cameraOffset'
+import { areaFitOptions, focusOffset } from '@/lib/cameraOffset'
 import {
   INCIDENT_HIT_LAYER_ID,
   INCIDENT_SOURCE_ID,
@@ -476,6 +478,14 @@ export const IncidentMap = memo(function IncidentMap({
     () => toServiceAreaFeatureCollection(outages, showWater ? waterCuts : []),
     [outages, waterCuts, showWater],
   )
+  /*
+   * Caja de cada área, para encuadrar el corte al tocarlo. En un ref porque
+   * `handleClick` es estable y no debe rearmarse con cada sondeo.
+   */
+  const areaBoundsRef = useRef(serviceAreaBounds([], []))
+  useEffect(() => {
+    areaBoundsRef.current = serviceAreaBounds(outages, showWater ? waterCuts : [])
+  }, [outages, waterCuts, showWater])
   const areaSpecs = useMemo(
     () => ({ fill: serviceAreaFillLayer(), line: serviceAreaLineLayer(theme) }),
     [theme],
@@ -515,8 +525,12 @@ export const IncidentMap = memo(function IncidentMap({
       const map = event.target
 
       if (incident) {
-        selectIncident(String(incident.properties!['code']))
-        map.easeTo({ center: event.lngLat, offset: focusOffset(), duration: 450 })
+        const code = String(incident.properties!['code'])
+        selectIncident(code)
+        // Un corte con área se encuadra entero: su pin puede estar en el borde.
+        const bounds = areaBoundsRef.current.get(code)
+        if (bounds) map.fitBounds(bounds, areaFitOptions(Math.max(map.getZoom(), FOCUS_ZOOM), 450))
+        else map.easeTo({ center: event.lngLat, offset: focusOffset(), duration: 450 })
         return
       }
 
@@ -546,8 +560,11 @@ export const IncidentMap = memo(function IncidentMap({
       }
 
       if (water) {
-        selectWaterCut(String(water.properties!['water_id']))
-        map.easeTo({ center: event.lngLat, offset: focusOffset(), duration: 450 })
+        const id = String(water.properties!['water_id'])
+        selectWaterCut(id)
+        const bounds = areaBoundsRef.current.get(waterAreaId(id))
+        if (bounds) map.fitBounds(bounds, areaFitOptions(Math.max(map.getZoom(), FOCUS_ZOOM), 450))
+        else map.easeTo({ center: event.lngLat, offset: focusOffset(), duration: 450 })
         return
       }
 

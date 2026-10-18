@@ -21,7 +21,12 @@ import type { WaterCut } from '@/api/waterCutTypes'
 import { type IncidentLayerKey, layerOf } from '@/domain/families'
 import { providerOf } from '@/domain/powerSymbology'
 import { incertidumbreDe } from '@/domain/locationPrecision'
-import { type AreaGeometry, asAreaGeometry } from '@/domain/serviceArea'
+import {
+  type AreaBounds,
+  type AreaGeometry,
+  areaBounds,
+  asAreaGeometry,
+} from '@/domain/serviceArea'
 import { isClosed, levelOf, needsVerificationCaveat } from '@/domain/symbology'
 
 interface IncidentFeatureProps {
@@ -198,4 +203,24 @@ export function toServiceAreaFeatureCollection(
     })
   }
   return { type: 'FeatureCollection', features }
+}
+
+/**
+ * Caja de cada área (con su pin), con la misma clave que `area_id`: el `code`
+ * del incidente o `water:<id>`. La usa la cámara al abrir un corte.
+ */
+export function serviceAreaBounds(
+  outages: readonly Incident[],
+  waterCuts: readonly WaterCut[],
+): Map<string, AreaBounds> {
+  const index = new Map<string, AreaBounds>()
+  for (const incident of outages) {
+    const bounds = areaBounds(asAreaGeometry(incident.outage?.area), [incident.lon, incident.lat])
+    if (bounds) index.set(incident.code, bounds)
+  }
+  for (const cut of waterCuts) {
+    const bounds = areaBounds(cut.area, cut.coordinates)
+    if (bounds) index.set(waterAreaId(cut.id), bounds)
+  }
+  return index
 }

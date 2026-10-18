@@ -60,6 +60,45 @@ export function asAreaGeometry(value: unknown): AreaGeometry | null {
   return null
 }
 
+/** `[[oeste, sur], [este, norte]]`, el formato de `fitBounds`. */
+export type AreaBounds = [[number, number], [number, number]]
+
+/**
+ * Caja del área y del pin juntos, para encuadrar el corte al abrirlo. `null`
+ * sin área: entonces la cámara se centra en el pin, como con cualquier otro.
+ *
+ * El pin entra en la caja porque la empresa lo pone donde ubica la falla, que
+ * puede quedar en el borde del área o fuera de ella (Rodelillo, 17-10: en el
+ * borde suroeste, con el área 1–2 km al noreste). Centrar sólo el pin dejaba
+ * casi toda el área fuera de la pantalla.
+ */
+export function areaBounds(
+  area: AreaGeometry | null,
+  pin: readonly [number, number] | null = null,
+): AreaBounds | null {
+  if (!area) return null
+  const polygons = area.type === 'Polygon' ? [area.coordinates] : area.coordinates
+  let west = Infinity
+  let south = Infinity
+  let east = -Infinity
+  let north = -Infinity
+  const add = (lon: number, lat: number) => {
+    west = Math.min(west, lon)
+    east = Math.max(east, lon)
+    south = Math.min(south, lat)
+    north = Math.max(north, lat)
+  }
+  for (const polygon of polygons) {
+    for (const [lon, lat] of polygon[0] ?? []) add(lon!, lat!)
+  }
+  if (!Number.isFinite(west)) return null
+  if (pin) add(pin[0], pin[1])
+  return [
+    [west, south],
+    [east, north],
+  ]
+}
+
 /**
  * Contorno del área según el tema. El relleno usa el color de la capa (el de
  * la empresa o el cian del agua); en oscuro el contorno se aclara, porque el

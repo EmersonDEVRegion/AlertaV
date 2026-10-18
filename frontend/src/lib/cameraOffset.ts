@@ -36,3 +36,12 @@ export function fitPadding(): { top: number; right: number; bottom: number; left
   const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
   return { top: 48, right: 48, bottom: 48, left: Math.round((COLUMN_WIDTH_REM + 0.75) * rem) + 32 }
 }
+
+/**
+ * Opciones para encuadrar el área de un corte al abrirlo. Nunca más cerca que
+ * `maxZoom` (el zoom con que se enfoca cualquier incidente): un corte de una
+ * cuadra no tiene por qué llenar la pantalla.
+ */
+export function areaFitOptions(maxZoom: number, duration: number) {
+  return { padding: fitPadding(), maxZoom, duration, essential: true }
+}
