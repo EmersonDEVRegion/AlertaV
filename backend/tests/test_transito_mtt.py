@@ -319,7 +319,7 @@ def test_las_vias_se_unen_por_nombre_y_comuna():
     filas = list(script.vias(nombres, trazos, lambda lon, lat: ["vina del mar"]))
     viana = [f for f in filas if f[0] == "Viana"]
     assert len(viana) == 1, "las dos piezas son una sola vía"
-    nombre, ultima, comuna, wkt = viana[0]
+    _, ultima, comuna, wkt = viana[0]
     assert (ultima, comuna) == ("viana", "vina del mar")
     assert wkt.startswith("MULTILINESTRING")
     assert {f[0] for f in filas} == {"Viana", "Avenida Libertad"}, (
