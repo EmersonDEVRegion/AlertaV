@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.collectors.water.esval_parser import ESVAL_KEY, motivo_legible
 from app.collectors.water.esval_worker import EsvalCollector
+from app.core.areas import multipoligono
 from app.core.config import settings
 from app.models.enums import CollectorStatus
 from app.models.event import CollectorRun, RawEvent
@@ -95,9 +96,10 @@ def _con_zona(momento: datetime) -> datetime:
 def feature_de_corte(fila: RawEvent) -> GeoJSONFeature | None:
     """Fila `water_cut` → feature con propiedades planas. None si no se entiende.
 
-    Sólo lo que muestra el mapa: ni `_source_record` ni los polígonos (~5 KB
-    por corte). Tolerante: una fila escrita por otra versión del collector no
-    puede tumbar la capa entera; se omite y queda en el log.
+    Sólo lo que muestra el mapa: sin `_source_record`. Los polígonos de los
+    sectores van en `area`, simplificados a `AREA_TOLERANCIA_M` (de ~5 KB a
+    ~1 KB por corte). Tolerante: una fila escrita por otra versión del
+    collector no puede tumbar la capa entera; se omite y queda en el log.
     """
     raw: Mapping[str, Any] = fila.raw_data if isinstance(fila.raw_data, dict) else {}
     esval = raw.get(ESVAL_KEY)
@@ -125,6 +127,7 @@ def feature_de_corte(fila: RawEvent) -> GeoJSONFeature | None:
         "suministro_alternativo": _si_no(visor.get("suministro_alternativo")),
         "url_mapa": _https(_texto(esval.get("url_mapa"))),
         "visto_en": _texto(esval.get("visto_en")),
+        "area": area_de_sectores(esval.get("sectores")),
     }
     geometry = (
         {"type": "Point", "coordinates": [fila.lon, fila.lat]}
@@ -132,6 +135,23 @@ def feature_de_corte(fila: RawEvent) -> GeoJSONFeature | None:
         else None
     )
     return GeoJSONFeature(geometry=geometry, properties=properties)
+
+
+#: Simplificación de los polígonos de Esval para el mapa. El visor los dibuja
+#: con vértices cada pocos metros; 5 m no cambia lo que se ve.
+AREA_TOLERANCIA_M = 5.0
+
+
+def area_de_sectores(sectores: Any) -> dict[str, Any] | None:
+    """Los anillos de `_esval.sectores[].anillo` como un MultiPolygon GeoJSON."""
+    if not isinstance(sectores, list):
+        return None
+    anillos = [
+        sector.get("anillo")
+        for sector in sectores
+        if isinstance(sector, Mapping) and isinstance(sector.get("anillo"), list)
+    ]
+    return multipoligono(anillos, tolerancia_m=AREA_TOLERANCIA_M)
 
 
 def _texto(valor: Any) -> str | None:

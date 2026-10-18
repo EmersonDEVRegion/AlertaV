@@ -126,6 +126,36 @@ emergencias no puede esconder un fuego detrás de un número.
 Antes eran `<Marker>` del DOM con un tope de 150: pasado el tope, el resto
 desaparecía del mapa sin aviso mientras el panel los seguía contando.
 
+### El área del corte
+
+El pin es el punto que publica la empresa (donde ubica la falla); el **área**
+dice dónde está la gente sin servicio (`components/map/serviceAreaLayers.ts`,
+una fuente para luz y agua, debajo de todos los pines):
+
+- **Chilquinta**: la mancha de los clientes y transformadores que lista la
+  orden, con 60 m de margen (`backend/app/core/areas.py`). Su visor dibuja la
+  envolvente convexa de esos puntos, que exagera: en la orden de Rodelillo del
+  17-10-2026, 2,4 km² contra 1,3 de la mancha.
+- **CGE**: el polígono del sector que trae su KMZ.
+- **Esval**: los polígonos de los sectores de su visor.
+
+El área del corte abierto se ve a cualquier zoom (relleno 22 %, borde de 2 px).
+Las demás aparecen tenues desde zoom 13, el de barrio; más lejos serían manchas
+sobre los racimos. Un corte cerrado no muestra área si no está abierto. Un área
+mal formada se descarta y el corte queda como pin (`domain/serviceArea.ts`).
+
+La ficha nombra los **sectores**: barrios de OpenStreetMap con al menos 5
+clientes (o el 3 % del corte) a 300 m, o dentro del polígono en CGE
+(`backend/app/collectors/sectores_osm.py`, lista en
+`backend/static/geo/osm_sectores_valpo.json` de `scripts/osm_sectores.py`). La
+ficha dice que son nombres de OSM: la empresa puede llamarlos distinto.
+
+Los **programados** de Chilquinta (`tipo: dx`) se muestran como «Corte
+programado», con «Termina» en vez de «Reposición estimada». Chilquinta los
+publica días antes y sólo con la hora de término: entran el día en que terminan,
+desde las 06:00, y siguen mientras la empresa los liste (hasta 6 h después del
+fin).
+
 ## Cortes de agua (Esval): información de servicio
 
 Una fila más del panel de emergencias, junto a la luz, pero **no es un

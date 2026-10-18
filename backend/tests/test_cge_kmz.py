@@ -199,15 +199,21 @@ def test_las_coordenadas_kml_son_lon_lat_y_no_al_reves():
     assert -72 < registros[0]["lon"] < -71
 
 
-def test_un_poligono_se_reduce_a_su_centroide():
-    """Un sector afectado es un polígono; el mapa necesita un punto."""
+def test_un_poligono_sin_punto_se_reduce_a_su_centroide():
+    """Sin `<Point>`, el pin es el centroide del sector; el polígono es el área."""
     anillo = (
         "-71.6,-33.1,0 -71.4,-33.1,0 -71.4,-32.9,0 -71.6,-32.9,0 -71.6,-33.1,0"
     )
-    registros = parse_kmz(build_kmz(build_kml(placemark(coordinates=anillo))))
+    kml = build_kml(
+        "<Placemark><name>Sector</name><Polygon><outerBoundaryIs><LinearRing>"
+        f"<coordinates>{anillo}</coordinates>"
+        "</LinearRing></outerBoundaryIs></Polygon></Placemark>"
+    )
+    registros = parse_kmz(build_kmz(kml))
 
     assert registros[0]["lat"] == pytest.approx(-33.02, abs=0.05)
     assert registros[0]["lon"] == pytest.approx(-71.52, abs=0.05)
+    assert registros[0]["_area"][0][0] == [-71.6, -33.1]
 
 
 def test_un_placemark_sin_coordenadas_se_omite_sin_tumbar_el_resto():

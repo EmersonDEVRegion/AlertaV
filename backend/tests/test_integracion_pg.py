@@ -1438,3 +1438,66 @@ def test_la_ficha_muestra_el_vinculo_solo_en_modo_visible(monkeypatch, modo):
     assert visto_desde_corte.nombre == "Accidente"
     assert visto_desde_corte.desfase_min == -12
     assert visto_desde_corte.code == del_choque.code
+
+
+# --- Área de los cortes y programados -----------------------------------------
+
+
+def test_el_corte_lleva_su_area_sus_barrios_y_si_es_programado():
+    """`outage_details` une las áreas, junta los barrios y sólo marca programado
+    si lo son todas; el motor lo titula «Corte programado». Y no trae los miles
+    de vértices de `_source_record` para armar la ficha."""
+    from datetime import timedelta as td
+
+    def anillo(dx: float) -> list:
+        return [
+            [-71.552 + dx, -33.025],
+            [-71.551 + dx, -33.025],
+            [-71.551 + dx, -33.024],
+            [-71.552 + dx, -33.025],
+        ]
+
+    def raw(sector: str, dx: float) -> dict:
+        return {
+            "company": "chilquinta",
+            "_collector": "chilquinta_cortes",
+            "comuna": "Viña del Mar",
+            "affected_clients": 10,
+            "area": {"type": "MultiPolygon", "coordinates": [[anillo(dx)]]},
+            "sectores": [sector, "Recreo"],
+            "programado": True,
+            "_source_record": {"segmentos": [[{"latitud_min": "-33.0245"}] * 500]},
+        }
+
+    async def caso():
+        await _vaciar_motor()
+        await _ingerir(
+            _evento(
+                "prog-1",
+                (-33.0245, -71.5518),
+                hace=td(minutes=20),
+                fuente="chilquinta",
+                tipo="power_outage",
+                raw=raw("Recreo", 0.0),
+            ),
+            _evento(
+                "prog-2",
+                (-33.0247, -71.5520),
+                hace=td(minutes=10),
+                fuente="chilquinta",
+                tipo="power_outage",
+                raw=raw("Agua Santa", 0.001),
+            ),
+        )
+        _, incidentes = await _pasada(perfiles=True)
+        return incidentes, [await _detalle(i.code) for i in incidentes]
+
+    incidentes, detalles = correr(caso)
+    [incidente] = incidentes
+    [detalle] = detalles
+    assert incidente.title.startswith("Corte programado")
+    assert detalle.outage.programado is True
+    assert detalle.outage.sectores == ["Recreo", "Agua Santa"]
+    assert detalle.outage.area["type"] == "MultiPolygon"
+    assert len(detalle.outage.area["coordinates"]) == 2
+    assert detalle.outage.affected_clients == 20

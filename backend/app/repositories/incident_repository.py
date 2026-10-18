@@ -44,9 +44,11 @@ from sqlalchemy import (
 from sqlalchemy import (
     true as sa_true,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.areas import unir as unir_areas
 from app.core.config import settings
 from app.models.comuna import ComunaRegion
 from app.models.enums import (
@@ -1329,7 +1331,10 @@ class IncidentRepository:
                     IncidentEvent.incident_id,
                     RawEvent.source,
                     RawEvent.timestamp,
-                    RawEvent.raw_data,
+                    # Sin `_source_record`: en Chilquinta trae los miles de
+                    # vértices de la orden (hasta ~150 KB por señal), que ya
+                    # están resumidos en `area`.
+                    RawEvent.raw_data.op("-", return_type=JSONB)(literal("_source_record", Text)),
                     RawEvent.updated_at,
                 )
                 .join(RawEvent, RawEvent.id == IncidentEvent.raw_event_id)
@@ -1355,6 +1360,9 @@ class IncidentRepository:
                     "outage_count": 0,
                     "visto_en": None,
                     "collector": None,
+                    "areas": [],
+                    "sectores": [],
+                    "programados": 0,
                 },
             )
             if isinstance(updated_at, datetime) and (
@@ -1385,6 +1393,22 @@ class IncidentRepository:
             if isinstance(outage, dict) and outage.get("sector"):
                 entry["sector"] = outage["sector"]
 
+            if isinstance(data.get("area"), dict):
+                entry["areas"].append(data["area"])
+            for nombre in data.get("sectores") or []:
+                if isinstance(nombre, str) and nombre not in entry["sectores"]:
+                    entry["sectores"].append(nombre)
+            if data.get("programado") is True:
+                entry["programados"] += 1
+
+        # * **área: la unión de las de cada corte**; `null` si ninguno la trae.
+        # * **sectores: todos, en el orden en que llegaron**, sin repetir.
+        # * **programado: sólo si lo son todos.** Un programado que coincide con
+        #   una falla en el mismo lugar ya no es «lo anunciado».
+        for entry in details.values():
+            entry["area"] = unir_areas(entry.pop("areas"))
+            programados = entry.pop("programados")
+            entry["programado"] = 0 < entry["outage_count"] == programados
         return details
 
     async def ultimas_lecturas(self, collectors: Sequence[str]) -> dict[str, datetime]:

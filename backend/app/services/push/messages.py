@@ -210,6 +210,8 @@ class OutageFacts:
     provider: str | None = None
     affected_clients: int | None = None
     estimated_restoration: datetime | None = None
+    #: Corte anunciado por la empresa: el aviso dice hasta cuándo, no desde.
+    programado: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,6 +299,11 @@ def incident_message(
     """
     origin = origin_of(place=place, located_at=located_at, now=now)
     noun = _NOUN.get(incident_type, "Emergencia")
+    programado = (
+        incident_type is IncidentType.POWER_OUTAGE and outage is not None and outage.programado
+    )
+    if programado:
+        noun = "Corte de luz programado"
     emoji = _EMOJI.get(incident_type, "⚠️")
     title = f"{emoji} {noun} a {format_distance(distance_m)} {origin.suffix}"
 
@@ -310,15 +317,21 @@ def incident_message(
         if outage.affected_clients:
             n = outage.affected_clients
             clientes = "1 cliente" if n == 1 else f"{_thousands(n)} clientes"
-        vuelve = (
-            f"vuelve ~{format_clock(outage.estimated_restoration)}"
-            if outage.estimated_restoration is not None
-            else None
-        )
+        fin = outage.estimated_restoration
+        if fin is None:
+            vuelve = None
+        elif outage.programado:
+            vuelve = f"hasta ~{format_clock(fin)}"
+        else:
+            vuelve = f"vuelve ~{format_clock(fin)}"
         proveedor = (
             _VERIFIERS.get(outage.provider.lower(), outage.provider) if outage.provider else None
         )
-        lines.append(_join([commune, desde, clientes, vuelve, proveedor]))
+        # Un programado no empezó «desde» la hora en que lo vimos: la empresa
+        # sólo publica cuándo termina.
+        lines.append(
+            _join([commune, None if outage.programado else desde, clientes, vuelve, proveedor])
+        )
     else:
         lines.append(
             _join(

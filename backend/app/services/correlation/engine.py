@@ -1285,7 +1285,11 @@ class CorrelationEngine:
 
         values["commune"] = commune
         values["province"] = province
-        values["title"] = build_title(incident_type, commune)
+        # Sólo si todas sus señales son programadas: ver `outage_details`.
+        programado = incident_type is IncidentType.POWER_OUTAGE and all(
+            (view.raw_data or {}).get("programado") is True for view in views
+        )
+        values["title"] = build_title(incident_type, commune, programado=programado)
 
         if incident.status in _MUTABLE_STATUSES:
             status, resolved_at = resolve_status(views)

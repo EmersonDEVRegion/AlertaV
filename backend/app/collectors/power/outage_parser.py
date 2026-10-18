@@ -44,6 +44,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.collectors.geoservices import as_float, detect_service_error, parse_timestamp
+from app.core.areas import multipoligono, vertices_de_segmentos
 from app.core.exceptions import CollectorError
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,11 @@ _LIST_KEYS: tuple[str, ...] = (
     "outages",
     "eventos",
 )
+
+#: Claves propias (con guion bajo: no son de la fuente) que dejan los lectores
+#: de cada empresa en el registro antes de `parse_outage`.
+AREA_KEY = "_area"
+PROGRAMADO_KEY = "_programado"
 
 #: Alias por campo, en orden de preferencia.
 _LAT_KEYS: tuple[str, ...] = ("lat", "latitud", "latitude", "y", "coord_y")
@@ -138,6 +144,13 @@ class PowerOutage:
     sector: str | None
     #: El registro original, para poder reprocesar sin volver a consultar.
     raw: Mapping[str, Any]
+    #: Área afectada (MultiPolygon GeoJSON) cuando la empresa publica el
+    #: polígono (CGE). La de Chilquinta se calcula después, de `vertices`.
+    area: Mapping[str, Any] | None = None
+    #: Clientes y transformadores de la orden (Chilquinta), `(lat, lon)`.
+    vertices: tuple[tuple[float, float], ...] = ()
+    #: Corte programado por la empresa (desconexión anunciada), no una falla.
+    programado: bool = False
 
 
 def _first(payload: Mapping[str, Any], keys: Sequence[str]) -> Any:
@@ -219,6 +232,11 @@ def _as_local_datetime(value: Any) -> datetime | None:
     return resuelto.replace(tzinfo=CHILE_TZ).astimezone(UTC)
 
 
+#: Nombre público de la conversión: los lectores de cada empresa la necesitan
+#: para fechas que no pasan por `parse_outage` (el fin de un programado).
+as_local_datetime = _as_local_datetime
+
+
 def _coordinates(record: Mapping[str, Any]) -> tuple[float, float] | None:
     """Coordenadas del registro, sea plano o GeoJSON.
 
@@ -286,6 +304,10 @@ def parse_outage(payload: Any) -> PowerOutage | None:
         commune=_clean_text(_first(plano, _COMMUNE_KEYS)),
         sector=_clean_text(_first(plano, _SECTOR_KEYS)),
         raw=plano,
+        # `_area`: anillos `[[lon, lat], …]` que dejó el lector del KMZ de CGE.
+        area=multipoligono(plano.get(AREA_KEY) or ()),
+        vertices=tuple(vertices_de_segmentos(plano.get("segmentos"))),
+        programado=plano.get(PROGRAMADO_KEY) is True,
     )
 
 
@@ -424,8 +446,11 @@ def build_external_id(company: str, outage: PowerOutage) -> str:
 
 
 __all__ = [
+    "AREA_KEY",
     "CHILE_TZ",
+    "PROGRAMADO_KEY",
     "PowerOutage",
+    "as_local_datetime",
     "build_external_id",
     "describe_shape",
     "extract_records",

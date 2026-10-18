@@ -21,6 +21,7 @@ import type { WaterCut } from '@/api/waterCutTypes'
 import { type IncidentLayerKey, layerOf } from '@/domain/families'
 import { providerOf } from '@/domain/powerSymbology'
 import { incertidumbreDe } from '@/domain/locationPrecision'
+import { type AreaGeometry, asAreaGeometry } from '@/domain/serviceArea'
 import { isClosed, levelOf, needsVerificationCaveat } from '@/domain/symbology'
 
 interface IncidentFeatureProps {
@@ -144,6 +145,56 @@ export function toWaterCutFeatureCollection(
       type: 'Feature',
       geometry: { type: 'Point', coordinates: cut.coordinates },
       properties: { water_id: cut.id, emergencia: cut.programado === false ? 1 : 0 },
+    })
+  }
+  return { type: 'FeatureCollection', features }
+}
+
+/**
+ * Áreas afectadas de los cortes de luz y de agua, en una sola fuente.
+ *
+ * `area_id` es el mismo identificador que usa cada capa para seleccionar: el
+ * `code` del incidente para la luz y `water:<id>` para el agua (los dos
+ * espacios no se pisan). `kind` decide el color: la empresa eléctrica o el
+ * agua. Se revalida cada geometría: un área rota se omite y el corte queda
+ * como pin.
+ */
+interface ServiceAreaFeatureProps {
+  area_id: string
+  kind: 'chilquinta' | 'cge' | 'unknown' | 'water'
+  is_closed: boolean
+}
+
+export type ServiceAreaFeatureCollection = FeatureCollection<AreaGeometry, ServiceAreaFeatureProps>
+
+export function waterAreaId(id: string): string {
+  return `water:${id}`
+}
+
+export function toServiceAreaFeatureCollection(
+  outages: readonly Incident[],
+  waterCuts: readonly WaterCut[],
+): ServiceAreaFeatureCollection {
+  const features: ServiceAreaFeatureCollection['features'] = []
+  for (const incident of outages) {
+    const area = asAreaGeometry(incident.outage?.area)
+    if (!area) continue
+    features.push({
+      type: 'Feature',
+      geometry: area,
+      properties: {
+        area_id: incident.code,
+        kind: providerOf(incident) ?? 'unknown',
+        is_closed: isClosed(incident.status),
+      },
+    })
+  }
+  for (const cut of waterCuts) {
+    if (!cut.area) continue
+    features.push({
+      type: 'Feature',
+      geometry: cut.area,
+      properties: { area_id: waterAreaId(cut.id), kind: 'water', is_closed: false },
     })
   }
   return { type: 'FeatureCollection', features }

@@ -91,7 +91,8 @@ def registro(**overrides) -> dict:
 #: Una orden tal como la publica el archivo, con los nombres y los tipos reales:
 #: los conteos vienen como **string**, las coordenadas de la orden vienen
 #: **vacías** y los puntos están en `segmentos`. Copiado de la captura del
-#: 2026-08-25, no inventado.
+#: 2026-08-25, salvo el `tipo`: esa orden era un programado (`dx`), que ahora
+#: sólo entra el día en que termina (ver `test_areas_cortes.py`).
 def orden(**overrides) -> dict:
     base = {
         "orden": "10209025",
@@ -99,7 +100,7 @@ def orden(**overrides) -> dict:
         "latitud": "",
         "longitud": "",
         "cant_clientes": "68",
-        "tipo": "dx",
+        "tipo": "inter",
         "cant_seg": 3,
         "cant_trafos": 1,
         "comuna": "VIÑA DEL MAR",
@@ -1043,13 +1044,11 @@ def test_el_etr_se_interpreta_como_hora_chilena():
 
 
 @respx.mock
-def test_el_tipo_se_conserva_pero_no_se_filtra():
-    """`dx` e `inter` no están documentados, así que no se les inventa semántica.
+def test_un_programado_de_otro_dia_no_entra_y_la_interrupcion_si():
+    """`dx` es una desconexión programada: sólo entra el día en que termina.
 
-    Si `inter` resultara ser «interrupción programada», habría que decidir si un
-    corte anunciado con días de antelación debe emitirse como incidente activo.
-    Hasta saberlo, se guarda y se emite todo: descartar por una corazonada pierde
-    cortes reales sin dejar rastro.
+    La de la fixture termina el 27-08-2026, que ya pasó. El detalle (hora,
+    comunas repetidas) está en `test_areas_cortes.py`.
     """
     ruta = responde(CHILQUINTA_URL, orden(tipo="dx"), orden(orden="999", tipo="inter"))
 
@@ -1058,8 +1057,8 @@ def test_el_tipo_se_conserva_pero_no_se_filtra():
     eventos = instancia.normalize(asyncio.run(instancia.fetch()))
 
     assert ruta.called
-    assert len(eventos) == 2
-    assert {e.raw_data["_source_record"]["tipo"] for e in eventos} == {"dx", "inter"}
+    assert [e.raw_data["_source_record"]["tipo"] for e in eventos] == ["inter"]
+    assert eventos[0].raw_data["programado"] is False
 
 
 # --- El rompe-cachés ---------------------------------------------------------

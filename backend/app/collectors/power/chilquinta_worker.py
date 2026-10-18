@@ -63,13 +63,27 @@ Qué sigue sin verificarse
 * **Cada cuánto se regenera el archivo.** La cadencia de 5 minutos es la de la
   familia; si Chilquinta lo reescribe cada hora, sobran consultas. Se resuelve
   comparando `Last-Modified` entre dos corridas.
-* **Qué significan `tipo: "dx"` e `"inter"`.** Se conservan en `raw_data` y no se
-  filtra por ellos: inventarles semántica sería peor que ignorarlos. Si `inter`
-  resultara ser "interrupción programada", habría que decidir si un corte
-  anunciado con días de antelación debe emitirse como incidente activo.
 * **Si hay un `results_XXX.js` por filial.** El mismo collector las cubriría
   cambiando el número en `CHILQUINTA_API_URL`.
 
+Interrupciones y programados
+----------------------------
+`tipo: "inter"` es una interrupción (una falla); `tipo: "dx"` es una
+**desconexión programada** (verificado el 17-10-2026: la orden `10212907` es
+«Programada para hoy, 08:30–14:00, El Rocío y Belloto Sur» en `chilquinta.cl`).
+El visor de Chilquinta no dibuja los `dx` en su mapa por zonas; nosotros los
+mostramos como **corte programado**, porque dejan a la gente sin luz igual.
+
+El archivo los publica días antes y sólo trae el **fin** (`etr`), no el inicio.
+Por eso un `dx` entra el día en que termina, desde `PROGRAMADO_DESDE_HORA`
+(nadie quiere un aviso a medianoche por un corte de las 08:30), y sigue
+mientras la empresa lo liste, hasta `PROGRAMADO_GRACIA` después del fin. Antes
+de ese día no existe para AlertaV: abrirlo como corte en curso una semana
+antes era el error que esto corrige (66 incidentes en 30 días).
+
+Una misma orden programada puede venir dos veces, una por comuna (`10212907`:
+Quilpué y Villa Alemana, con sus clientes cada una). Su identificador lleva la
+comuna para que las dos entren.
 Cortesía con un servidor ajeno
 ------------------------------
 Una petición cada cinco minutos a un archivo estático, con el `User-Agent` del
@@ -83,6 +97,7 @@ import json
 import logging
 import time
 from collections.abc import Iterable, Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -93,7 +108,12 @@ from app.collectors.geoservices import (
     request_response,
 )
 from app.collectors.power.base_worker import BasePowerOutageCollector
-from app.collectors.power.outage_parser import records_or_raise
+from app.collectors.power.outage_parser import (
+    CHILE_TZ,
+    PROGRAMADO_KEY,
+    as_local_datetime,
+    records_or_raise,
+)
 from app.core.config import settings
 from app.core.exceptions import CollectorError
 from app.models.enums import EventSource
@@ -166,6 +186,13 @@ RUTA_MUERTA = "obtieneImage"
 #: timeouts, así que el coste real es la espera y no el tiempo de conexión.
 PRIMING_RETRIES = 4
 PRIMING_BACKOFF_SECONDS = 2.0
+
+#: `tipo` de una desconexión programada. Las interrupciones son `inter`.
+TIPO_PROGRAMADO = "dx"
+#: Hora de Chile desde la que se muestra un programado, el día en que termina.
+PROGRAMADO_DESDE_HORA = 6
+#: Cuánto sigue a la vista un programado que la empresa aún lista pasado su fin.
+PROGRAMADO_GRACIA = timedelta(hours=6)
 
 #: Parámetro rompe-cachés que añade el visor. Se replica porque el archivo es
 #: estático y servido con las cabeceras de caché de un estático: sin él, una CDN
@@ -289,6 +316,25 @@ def centroide_de_segmentos(segmentos: Any) -> tuple[float, float] | None:
     return sum(lats) / len(lats), sum(lons) / len(lons)
 
 
+def es_programado(orden: Mapping[str, Any]) -> bool:
+    return str(orden.get("tipo") or "").strip().lower() == TIPO_PROGRAMADO
+
+
+def programado_a_la_vista(fin: datetime | None, ahora: datetime) -> bool:
+    """¿Se muestra hoy un programado que termina en `fin`?
+
+    Desde las `PROGRAMADO_DESDE_HORA` del día en que termina (o desde las 00:00
+    si termina antes de esa hora) hasta `PROGRAMADO_GRACIA` después del fin.
+    Sin fin no hay cómo ubicarlo en el tiempo: no se muestra.
+    """
+    if fin is None:
+        return False
+    fin_local = fin.astimezone(CHILE_TZ)
+    hora = PROGRAMADO_DESDE_HORA if fin_local.hour >= PROGRAMADO_DESDE_HORA else 0
+    desde = fin_local.replace(hour=hora, minute=0, second=0, microsecond=0)
+    return desde <= ahora.astimezone(CHILE_TZ) <= fin_local + PROGRAMADO_GRACIA
+
+
 def con_rompe_caches(url: str) -> str:
     """`url` con un `?v=<epoch_ms>` fresco, como el que añade el visor.
 
@@ -357,8 +403,8 @@ class ChilquintaCollector(BasePowerOutageCollector):
         Cada registro sale con su punto ya resuelto en `latitud`/`longitud`, para
         que `parse_outage` —que es genérico y no sabe nada de `segmentos`— lo
         encuentre donde lo busca. El resto del registro viaja intacto, así que
-        `segmentos` sigue estando en `raw_data` y una orden se puede reprocesar
-        el día que se quiera dibujar el polígono en vez del punto.
+        `segmentos` sigue estando en `raw_data`: de ahí sale el área del corte
+        (`core/areas.py`).
         """
         destino = self.request_url()
         try:
@@ -425,7 +471,40 @@ class ChilquintaCollector(BasePowerOutageCollector):
         # con su consejo de `_LIST_KEYS`, que ahí sí es el correcto.
         registros = records_or_raise(interior, company=self.company, url=destino)
 
-        return [self.con_punto(orden) for orden in registros]
+        return self.solo_programados_de_hoy([self.con_punto(orden) for orden in registros])
+
+    def solo_programados_de_hoy(
+        self, ordenes: Sequence[Any], *, ahora: datetime | None = None
+    ) -> list[Any]:
+        """Las interrupciones, más los programados que se ven hoy, marcados.
+
+        Ver «Interrupciones y programados» en el encabezado del módulo.
+        """
+        momento = ahora or datetime.now(UTC)
+        salida: list[Any] = []
+        futuros = 0
+        for orden in ordenes:
+            if not isinstance(orden, Mapping) or not es_programado(orden):
+                salida.append(orden)
+                continue
+            if not programado_a_la_vista(as_local_datetime(orden.get("etr")), momento):
+                futuros += 1
+                continue
+            comuna = str(orden.get("comuna") or "").strip().upper()
+            salida.append(
+                {
+                    **orden,
+                    PROGRAMADO_KEY: True,
+                    # `id` gana sobre `orden` en `parse_outage` (ver `_ID_KEYS`).
+                    "id": f"{orden.get('orden')}:{comuna}" if comuna else orden.get("orden"),
+                }
+            )
+        if futuros:
+            logger.info(
+                "programados de Chilquinta fuera de su día",
+                extra={"collector": self.name, "omitidos": futuros},
+            )
+        return salida
 
     def _error_del_servidor(
         self, error: ServiceErrorEnvelope, destino: str
@@ -510,13 +589,18 @@ __all__ = [
     "JSONP_CALLBACK",
     "PRIMING_BACKOFF_SECONDS",
     "PRIMING_RETRIES",
+    "PROGRAMADO_DESDE_HORA",
+    "PROGRAMADO_GRACIA",
     "RUTA_MUERTA",
     "SEGMENTS_KEY",
     "SEGMENT_LAT",
     "SEGMENT_LON",
+    "TIPO_PROGRAMADO",
     "ChilquintaCollector",
     "centroide_de_segmentos",
     "con_rompe_caches",
+    "es_programado",
+    "programado_a_la_vista",
     "punto_de_la_orden",
     "punto_propio",
     "quitar_jsonp",

@@ -123,6 +123,25 @@ class TestIncidente:
         assert message.title == "⚡ Corte de luz a 800 m de tu última ubicación"
         assert message.body == "Quilpué · desde 14:32 · 1.250 clientes · vuelve ~18:30 · Chilquinta"
 
+    def test_corte_programado_dice_hasta_cuando_y_no_desde(self) -> None:
+        message = _incident(
+            incident_type=IncidentType.POWER_OUTAGE,
+            distance_m=800,
+            commune="Quilpué",
+            confidence=1.0,
+            source_count=1,
+            sources=["chilquinta"],
+            is_official_confirmed=True,
+            outage=OutageFacts(
+                provider="chilquinta",
+                affected_clients=120,
+                estimated_restoration=datetime(2026, 9, 23, 21, 30, tzinfo=UTC),
+                programado=True,
+            ),
+        )
+        assert message.title == "⚡ Corte de luz programado a 800 m de tu última ubicación"
+        assert message.body == "Quilpué · 120 clientes · hasta ~18:30 · Chilquinta"
+
     def test_accidente(self) -> None:
         assert _incident(incident_type=IncidentType.ACCIDENT).title.startswith(
             "🚗 Accidente de tránsito"
