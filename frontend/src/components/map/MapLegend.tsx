@@ -207,6 +207,19 @@ export function LegendBody() {
                 Agua (Esval): información de servicio, va debajo de todo.
               </span>
             </li>
+            <li className="flex items-center gap-2">
+              <span
+                aria-hidden
+                className="size-4 shrink-0 rounded-[3px] border-2"
+                style={{
+                  borderColor: PROVIDER.chilquinta.color,
+                  backgroundColor: `${PROVIDER.chilquinta.color}38`,
+                }}
+              />
+              <span className="text-ink-muted">
+                Zona sin servicio: la del corte abierto siempre; las demás al acercarte.
+              </span>
+            </li>
           </ul>
           <p className="mt-1.5 text-[10.5px] leading-snug text-ink-muted">
             Un corte de luz sale del mapa cuando la empresa deja de listarlo.

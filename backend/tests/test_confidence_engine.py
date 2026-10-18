@@ -399,3 +399,12 @@ class TestTitulo:
 
     def test_no_inventa_ubicacion(self) -> None:
         assert build_title(IncidentType.POSSIBLE_FIRE, None) == "Posible incendio"
+
+    def test_un_corte_programado_se_titula_como_tal(self) -> None:
+        assert (
+            build_title(IncidentType.POWER_OUTAGE, "Quilpué", programado=True)
+            == "Corte programado — Quilpué"
+        )
+        assert build_title(IncidentType.POWER_OUTAGE, "Quilpué") == "Corte de suministro — Quilpué"
+        # Fuera de los cortes la marca no significa nada.
+        assert build_title(IncidentType.ACCIDENT, None, programado=True) == "Accidente"

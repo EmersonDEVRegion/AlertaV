@@ -139,7 +139,7 @@ const HistoryItem = memo(function HistoryItem({
                 : // Los cortes de luz se rotulan con la comuna limpia: su título
                   // trae la zona de la distribuidora tal cual.
                   incident.type === 'power_outage' || !incident.title
-                  ? `${TYPE_LABEL[incident.type]} — ${where}`
+                  ? `${incident.outage?.programado ? 'Corte programado' : TYPE_LABEL[incident.type]} — ${where}`
                   : incident.title}
             </span>
             <time

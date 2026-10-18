@@ -64,7 +64,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from app.collectors.geoservices import as_float, normalise_text
-from app.collectors.power.outage_parser import CHILE_TZ
+from app.collectors.power.outage_parser import AREA_KEY, CHILE_TZ
 
 logger = logging.getLogger(__name__)
 
@@ -188,47 +188,81 @@ def _text_of(node: ET.Element) -> str:
     return "".join(node.itertext()).strip()
 
 
-def _coordinates_of(placemark: ET.Element) -> tuple[float, float] | None:
-    """Punto representativo del Placemark: el centroide de sus vértices.
+def _tuplas(texto: str) -> list[tuple[float, float]]:
+    """`lon,lat[,alt] lon,lat …` → `[(lat, lon), …]`, saltando lo ilegible.
 
-    Un `<Placemark>` de CGE puede ser un `<Point>` (un corte puntual), un
-    `<Polygon>` (el sector afectado) o un `<MultiGeometry>` con varios. En vez de
-    bifurcar por tipo de geometría se recogen **todos** los `<coordinates>` que
-    cuelguen del Placemark y se promedia: para un Point el centroide es el punto
-    mismo, así que el caso simple no paga nada por soportar los otros.
-
-    El anillo de un polígono repite el primer vértice al final y eso sesga el
-    promedio una fracción de metro. Es irrelevante para posicionar un marcador y
-    corregirlo costaría distinguir anillos de líneas, que es precisamente la
-    bifurcación que este enfoque evita.
+    KML separa las tuplas con espacios, tabuladores o saltos de línea, y los
+    exportadores los mezclan. `.split()` sin argumento cubre los tres. El orden
+    es lon,lat: invertirlo no falla, sólo manda todo al océano Índico.
     """
     puntos: list[tuple[float, float]] = []
-
-    for nodo in placemark.iter():
-        if _local(nodo.tag) != "coordinates" or not nodo.text:
+    for tupla in texto.split():
+        partes = tupla.split(",")
+        if len(partes) < 2:
             continue
-        # KML separa las tuplas con espacios, tabuladores o saltos de línea, y
-        # los exportadores los mezclan. `.split()` sin argumento cubre los tres.
-        for tupla in nodo.text.split():
-            partes = tupla.split(",")
-            if len(partes) < 2:
-                continue
-            # lon,lat[,alt] — el orden de la especificación KML. Ver el docstring
-            # del módulo: invertirlo no falla, sólo manda todo al océano Índico.
-            lon = as_float(partes[0])
-            lat = as_float(partes[1])
-            if lat is None or lon is None:
-                continue
-            puntos.append((lat, lon))
+        lon = as_float(partes[0])
+        lat = as_float(partes[1])
+        if lat is None or lon is None:
+            continue
+        puntos.append((lat, lon))
+    return puntos
 
+
+def _coordinates_of(placemark: ET.Element) -> tuple[float, float] | None:
+    """Punto del Placemark: el `<Point>` que publica CGE, o el centroide.
+
+    Cada corte de CGE es un `<MultiGeometry>` con un `<Point>` (donde CGE
+    ubica el corte) y un `<Polygon>` (el sector). El punto publicado manda:
+    promediarlo con los vértices del polígono lo corría a un lugar que CGE no
+    marcó, y como el id de un corte de CGE es un hash del punto, cada vez que
+    CGE redibujaba el sector el mismo corte entraba como nuevo.
+
+    Sin `<Point>` (un Placemark sólo con polígono o línea) se usa el centroide
+    de todos sus vértices, como antes.
+    """
+    for nodo in placemark.iter():
+        if _local(nodo.tag) != "Point":
+            continue
+        for hijo in nodo.iter():
+            if _local(hijo.tag) == "coordinates" and hijo.text:
+                puntos = _tuplas(hijo.text)
+                if puntos:
+                    return puntos[0]
+
+    puntos = [
+        punto
+        for nodo in placemark.iter()
+        if _local(nodo.tag) == "coordinates" and nodo.text
+        for punto in _tuplas(nodo.text)
+    ]
     if not puntos:
         return None
-
     total = len(puntos)
     return (
         sum(lat for lat, _ in puntos) / total,
         sum(lon for _, lon in puntos) / total,
     )
+
+
+def _anillos_of(placemark: ET.Element) -> list[list[list[float]]]:
+    """Anillo exterior de cada `<Polygon>`, como `[[lon, lat], …]`.
+
+    Es el área afectada que publica CGE. Los agujeros (`innerBoundaryIs`) no se
+    han visto en su archivo y se ignoran.
+    """
+    anillos: list[list[list[float]]] = []
+    for poligono in placemark.iter():
+        if _local(poligono.tag) != "Polygon":
+            continue
+        for borde in poligono.iter():
+            if _local(borde.tag) != "outerBoundaryIs":
+                continue
+            for nodo in borde.iter():
+                if _local(nodo.tag) == "coordinates" and nodo.text:
+                    puntos = _tuplas(nodo.text)
+                    if len(puntos) >= 3:
+                        anillos.append([[lon, lat] for lat, lon in puntos])
+    return anillos
 
 
 def _extended_data_of(placemark: ET.Element) -> dict[str, str]:
@@ -306,6 +340,10 @@ _RESTORE_PATTERNS: tuple[re.Pattern[str], ...] = (
         re.IGNORECASE,
     ),
     re.compile(r"reposici[oó]n\s*(?:estimada)?\s*[:=\-–]*\s*([^\n]+)", re.IGNORECASE),
+    # CGE escribe «Restauración estimada: 17/10/2026 22:30 hrs».
+    re.compile(
+        r"restauraci[oó]n\s*(?:estimada)?\s*[:=\-–]*\s*([^\n]+)", re.IGNORECASE
+    ),
     re.compile(r"(?:hora\s*)?estimada?\s*de\s*normalizaci[oó]n\s*[:=\-–]*\s*([^\n]+)",
                re.IGNORECASE),
 )
@@ -554,6 +592,16 @@ def parse_placemarks(kml: bytes, *, now: datetime | None = None) -> list[dict[st
 
         registro["lat"] = lat
         registro["lon"] = lon
+        anillos = _anillos_of(nodo)
+        if anillos:
+            registro[AREA_KEY] = anillos
+        estilo = next(
+            (_text_of(hijo) for hijo in nodo if _local(hijo.tag) == "styleUrl"), ""
+        )
+        if estilo:
+            # `#dext.confirmed-outage` / `#cge.public.unconfirmed-outage`: se
+            # guarda para reprocesar; todavía no se usa.
+            registro["_kml_style"] = estilo
 
         # El id de CGE, en orden de preferencia. Sin uno estable,
         # `build_external_id` cae al hash de ubicación + inicio, que también

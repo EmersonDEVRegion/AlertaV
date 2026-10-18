@@ -1,5 +1,6 @@
 import type { OutageDetail } from '@/api/types'
 import { providerStyle } from '@/domain/powerSymbology'
+import { areaOrigin, asAreaGeometry } from '@/domain/serviceArea'
 import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { formatDateTime, formatRelative } from '@/lib/format'
 
@@ -34,6 +35,9 @@ export function OutageDetails({ outage }: { outage: OutageDetail }) {
 
   const clients = outage.affected_clients
   const restoration = outage.estimated_restoration
+  const programado = outage.programado === true
+  const hasArea = asAreaGeometry(outage.area) !== null
+  const sectores = (outage.sectores ?? []).filter((s) => typeof s === 'string' && s.trim())
   // Una fecha inválida es tan inútil como una ausente, y `formatDateTime`
   // devolvería "Invalid Date" en pantalla.
   const restorationValid =
@@ -44,7 +48,7 @@ export function OutageDetails({ outage }: { outage: OutageDetail }) {
   return (
     <>
       <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-ink-muted">
-        Corte de suministro
+        {programado ? 'Corte programado' : 'Corte de suministro'}
       </h3>
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -74,7 +78,8 @@ export function OutageDetails({ outage }: { outage: OutageDetail }) {
         {/* Reposición estimada: se oculta si falta o si no es una fecha real. */}
         {restorationValid && (
           <div className="flex justify-between gap-3">
-            <dt className="text-ink-muted">Reposición estimada</dt>
+            {/* De un programado la empresa sólo publica cuándo termina. */}
+            <dt className="text-ink-muted">{programado ? 'Termina' : 'Reposición estimada'}</dt>
             <dd className="text-right text-ink">
               {formatDateTime(restoration)}
               <span
@@ -101,10 +106,38 @@ export function OutageDetails({ outage }: { outage: OutageDetail }) {
         )}
       </dl>
 
+      {sectores.length > 0 && (
+        <div className="mt-3">
+          <p className="text-sm text-ink-muted">Sectores</p>
+          <ul className="mt-1.5 flex flex-wrap gap-1.5" aria-label="Sectores afectados">
+            {sectores.map((nombre) => (
+              <li
+                key={nombre}
+                className="rounded-full bg-sunken px-2.5 py-1 text-xs font-medium text-ink ring-1 ring-line"
+              >
+                {nombre}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-[11px] leading-snug text-ink-muted">
+            Barrios de OpenStreetMap dentro del área; {style.label} puede llamarlos
+            distinto.
+          </p>
+        </div>
+      )}
+
+      {hasArea && (
+        <p className="mt-2 text-[11px] leading-snug text-ink-muted">
+          {areaOrigin(outage.provider)} El ícono marca donde la empresa ubica el
+          corte.
+        </p>
+      )}
+
       {restorationValid && isOverdue(restoration, now) && (
         <p className="mt-2 callout callout-warn">
-          La hora comprometida por {style.label} ya pasó y el corte sigue
-          publicado. La estimación puede haberse actualizado en su sistema.
+          {programado
+            ? `La hora de término informada por ${style.label} ya pasó y el corte sigue publicado.`
+            : `La hora comprometida por ${style.label} ya pasó y el corte sigue publicado. La estimación puede haberse actualizado en su sistema.`}
         </p>
       )}
 

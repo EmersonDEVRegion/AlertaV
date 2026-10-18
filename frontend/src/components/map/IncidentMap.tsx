@@ -42,7 +42,9 @@ import { toConeCollection, type ReachCollection } from '@/lib/overlayGeojson'
 import {
   toFeatureCollection,
   toOutageFeatureCollection,
+  toServiceAreaFeatureCollection,
   toWaterCutFeatureCollection,
+  waterAreaId,
 } from '@/lib/geojson'
 import {
   clearSelection,
@@ -114,6 +116,13 @@ import {
   waterPinLayer,
   waterSelectedLayer,
 } from './waterCutLayers'
+import {
+  SERVICE_AREA_SOURCE_ID,
+  serviceAreaFillLayer,
+  serviceAreaLineLayer,
+  serviceAreaSelectedFillLayer,
+  serviceAreaSelectedLineLayer,
+} from './serviceAreaLayers'
 import {
   SEISMIC_HIT_LAYER_ID,
   SEISMIC_SOURCE_ID,
@@ -283,6 +292,27 @@ const SelectedWaterLayer = memo(function SelectedWaterLayer({
   return <Layer {...spec} source={source} />
 })
 
+/** Área del corte abierto, de luz o de agua. Ver `serviceAreaLayers.ts`. */
+const SelectedServiceAreaLayers = memo(function SelectedServiceAreaLayers({
+  source,
+  theme,
+}: SourceChild & { theme: Theme }) {
+  const code = useSelectedIncidentCode()
+  const waterId = useSelectedWaterCutId()
+  const ids = useMemo(
+    () => [code, waterId ? waterAreaId(waterId) : null].filter((v): v is string => !!v),
+    [code, waterId],
+  )
+  const fill = useMemo(() => serviceAreaSelectedFillLayer(ids), [ids])
+  const line = useMemo(() => serviceAreaSelectedLineLayer(theme, ids), [theme, ids])
+  return (
+    <>
+      <Layer {...fill} source={source} />
+      <Layer {...line} source={source} />
+    </>
+  )
+})
+
 const SelectedQuakeLayer = memo(function SelectedQuakeLayer({
   source,
   theme,
@@ -441,6 +471,15 @@ export const IncidentMap = memo(function IncidentMap({
   const outageData = useMemo(() => toOutageFeatureCollection(outages), [outages])
   const seismicData = useMemo(() => toSeismicFeatureCollection(seismic), [seismic])
   const waterData = useMemo(() => toWaterCutFeatureCollection(waterCuts), [waterCuts])
+  // El agua apagada no deja su área: se arma sin ella en vez de filtrar la capa.
+  const areaData = useMemo(
+    () => toServiceAreaFeatureCollection(outages, showWater ? waterCuts : []),
+    [outages, waterCuts, showWater],
+  )
+  const areaSpecs = useMemo(
+    () => ({ fill: serviceAreaFillLayer(), line: serviceAreaLineLayer(theme) }),
+    [theme],
+  )
 
   const showIncidents = visibleFamilies.length > 0
   const showOutages = outages.length > 0
@@ -751,6 +790,16 @@ export const IncidentMap = memo(function IncidentMap({
           <Layer {...seismicHitLayer} />
         </Source>
       )}
+
+      {/*
+        Áreas afectadas de los cortes de luz y de agua: debajo de todos los
+        pines, que siguen siendo lo que se toca. Ver `serviceAreaLayers.ts`.
+      */}
+      <Source id={SERVICE_AREA_SOURCE_ID} type="geojson" data={areaData}>
+        <Layer {...areaSpecs.fill} />
+        <Layer {...areaSpecs.line} />
+        <SelectedServiceAreaLayers theme={theme} />
+      </Source>
 
       {/*
         Cortes de agua (Esval): contexto, así que por debajo de los cortes de

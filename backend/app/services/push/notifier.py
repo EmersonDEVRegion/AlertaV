@@ -280,6 +280,7 @@ class PushNotifier:
                     estimated_restoration=_parse_restoration(
                         outage_payload.get("estimated_restoration")
                     ),
+                    programado=outage_payload.get("programado") is True,
                 )
                 if outage_payload
                 else None

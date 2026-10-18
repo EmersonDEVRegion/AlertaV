@@ -65,8 +65,11 @@ que cambie la caja regional se arreglaría una sola.
 
 from __future__ import annotations
 
+import hashlib
 import logging
-from collections.abc import Sequence
+from collections import OrderedDict
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -81,6 +84,8 @@ from app.collectors.power.outage_parser import (
     parse_outage,
     records_or_raise,
 )
+from app.collectors.sectores_osm import sectores as sectores_osm
+from app.core.areas import mancha
 from app.core.config import settings
 from app.core.exceptions import CollectorError
 from app.core.identidad import user_agent
@@ -95,6 +100,31 @@ POWER_OUTAGE_CONFIDENCE = 1.0
 
 #: Clave namespaced con el detalle del corte.
 OUTAGE_KEY = "_outage"
+
+#: Manchas ya calculadas, por orden y puntos. La empresa vuelve a listar el
+#: mismo corte cada cinco minutos con los mismos clientes: recalcular sería
+#: trabajo tirado. Si cambian los puntos, cambia la clave.
+_MANCHAS: OrderedDict[str, dict[str, Any] | None] = OrderedDict()
+_MANCHAS_MAX = 512
+
+
+def area_de_vertices(vertices: Sequence[tuple[float, float]]) -> dict[str, Any] | None:
+    """La mancha de los clientes del corte, con caché. Ver `core/areas.py`."""
+    if not vertices:
+        return None
+    huella = hashlib.sha1(repr(tuple(vertices)).encode()).hexdigest()
+    if huella in _MANCHAS:
+        _MANCHAS.move_to_end(huella)
+        return _MANCHAS[huella]
+    try:
+        area = mancha(vertices)
+    except Exception:  # una geometría rara no puede tumbar la capa de cortes
+        logger.warning("no se pudo calcular la mancha de un corte", exc_info=True)
+        area = None
+    _MANCHAS[huella] = area
+    if len(_MANCHAS) > _MANCHAS_MAX:
+        _MANCHAS.popitem(last=False)
+    return area
 
 
 class BasePowerOutageCollector(BaseCollector):
@@ -310,6 +340,8 @@ class BasePowerOutageCollector(BaseCollector):
             if not self.bbox.contains(corte.lat, corte.lon):
                 fuera_de_region += 1
                 continue
+            if corte.area is None and corte.vertices:
+                corte = replace(corte, area=area_de_vertices(corte.vertices))
             cortes.append(corte)
 
         if ilegibles:
@@ -382,7 +414,19 @@ class BasePowerOutageCollector(BaseCollector):
                 ),
                 "outage_id": outage.outage_id,
                 "sector": outage.sector,
+                "programado": outage.programado,
             }
+            # Barrios de OSM: con los clientes si la empresa los publica
+            # (Chilquinta), si no, los que caen dentro de su polígono (CGE).
+            sectores = (
+                sectores_osm(
+                    area=outage.area,
+                    clientes=outage.vertices,
+                    pin=(outage.lat, outage.lon),
+                )
+                if outage.area is not None or outage.vertices
+                else []
+            )
 
             try:
                 events.append(
@@ -405,6 +449,11 @@ class BasePowerOutageCollector(BaseCollector):
                             "affected_clients": outage.affected_clients,
                             "restoration_at": detalle["restoration_at"],
                             "company": self.company,
+                            # Área afectada (MultiPolygon) y sus barrios de OSM,
+                            # planos por lo mismo: los lee `outage_details`.
+                            "area": dict(outage.area) if isinstance(outage.area, Mapping) else None,
+                            "sectores": sectores,
+                            "programado": outage.programado,
                             OUTAGE_KEY: detalle,
                             # El registro original, para reprocesar sin volver a
                             # consultar el día que se entienda mejor el esquema.
@@ -442,7 +491,8 @@ class BasePowerOutageCollector(BaseCollector):
 
 def build_text(company: str, outage: PowerOutage) -> str:
     """Descripción legible. El feed no entrega una armada."""
-    partes = [f"Corte de suministro eléctrico ({company.upper()})"]
+    tipo = "Corte programado" if outage.programado else "Corte de suministro eléctrico"
+    partes = [f"{tipo} ({company.upper()})"]
 
     if outage.affected_clients is not None:
         plural = "clientes afectados" if outage.affected_clients != 1 else "cliente afectado"
@@ -456,7 +506,8 @@ def build_text(company: str, outage: PowerOutage) -> str:
 
     if outage.restoration_at is not None:
         local = outage.restoration_at.astimezone(_chile())
-        partes.append(f"reposición estimada {local:%d-%m %H:%M} h")
+        verbo = "termina" if outage.programado else "reposición estimada"
+        partes.append(f"{verbo} {local:%d-%m %H:%M} h")
 
     return " — ".join(partes)
 
@@ -471,5 +522,6 @@ __all__ = [
     "OUTAGE_KEY",
     "POWER_OUTAGE_CONFIDENCE",
     "BasePowerOutageCollector",
+    "area_de_vertices",
     "build_text",
 ]

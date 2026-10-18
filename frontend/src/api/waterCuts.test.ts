@@ -69,6 +69,7 @@ describe('parseWaterCuts', () => {
         url_mapa: 'https://tupuntodeagua.esval.cl/?sisda=2916567',
         visto_en: '2026-09-23T18:30:00+00:00',
         coordinates: [-71.5412, -33.0213],
+        area: null,
       },
     ])
     expect(fuente.estado).toBe('ok')
@@ -111,6 +112,28 @@ describe('parseWaterCuts', () => {
   it('una geometría absurda no llega al mapa', () => {
     const lejos = { ...VINA, geometry: { type: 'Point', coordinates: [-71.5, -133] } }
     expect(parseWaterCuts(body([lejos])).cuts[0]!.coordinates).toBeNull()
+  })
+
+  it('trae el área de los sectores y descarta una rota', () => {
+    const anillo = [
+      [-71.54, -33.02],
+      [-71.53, -33.02],
+      [-71.53, -33.01],
+      [-71.54, -33.02],
+    ]
+    const conArea = {
+      ...VINA,
+      properties: { ...VINA.properties, area: { type: 'MultiPolygon', coordinates: [[anillo]] } },
+    }
+    expect(parseWaterCuts(body([conArea])).cuts[0]!.area).toEqual({
+      type: 'MultiPolygon',
+      coordinates: [[anillo]],
+    })
+    const rota = {
+      ...VINA,
+      properties: { ...VINA.properties, area: { type: 'MultiPolygon', coordinates: [[[[1, 2]]]] } },
+    }
+    expect(parseWaterCuts(body([rota])).cuts[0]!.area).toBeNull()
   })
 
   it('sin lectura de Esval, `ultima_lectura` queda nula', () => {

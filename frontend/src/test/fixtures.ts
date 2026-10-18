@@ -87,6 +87,7 @@ export function makeWaterCut(over: Partial<WaterCut> = {}): WaterCut {
     url_mapa: 'https://tupuntodeagua.esval.cl/?sisda=2916567',
     visto_en: '2026-09-23T18:30:00+00:00',
     coordinates: [-71.5412, -33.0213],
+    area: null,
     ...over,
   }
 }

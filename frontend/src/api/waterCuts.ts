@@ -12,6 +12,7 @@
  * campo obligatorio; el resto se muestra si llega.
  */
 
+import { asAreaGeometry } from '@/domain/serviceArea'
 import { apiGet } from './client'
 import { isRecord, trimmedText } from './parse'
 import type { HealthStatus } from './health'
@@ -79,6 +80,7 @@ function parseCut(raw: unknown): WaterCut | null {
     url_mapa: httpsUrl(props.url_mapa),
     visto_en: isoDate(props.visto_en),
     coordinates: point(raw.geometry),
+    area: asAreaGeometry(props.area),
   }
 }
 

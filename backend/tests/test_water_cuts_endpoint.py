@@ -74,7 +74,7 @@ def test_la_feature_trae_lo_que_muestra_el_mapa_y_nada_mas(reloj):
     props = vina["properties"]
     assert set(props) == {
         "public_id", "sisda", "comuna", "tipo", "programado", "motivo", "calles",
-        "sector", "inicio", "fin", "suministro_alternativo", "url_mapa", "visto_en",
+        "sector", "inicio", "fin", "suministro_alternativo", "url_mapa", "visto_en", "area",
     }
     assert props["comuna"] == "Viña del Mar"
     assert props["tipo"] == "emergencia"
@@ -86,7 +86,10 @@ def test_la_feature_trae_lo_que_muestra_el_mapa_y_nada_mas(reloj):
     assert props["visto_en"] == AHORA.isoformat()
     assert props["inicio"].startswith("2026-09-23T14:00")  # 11:00 en Chile
 
-    # Ni el registro original ni los polígonos: ~5 KB por corte que el mapa no usa.
+    # Los sectores, como un MultiPolygon simplificado; el registro original no.
+    area = props["area"]
+    assert area is not None and area["type"] == "MultiPolygon"
+    assert len(area["coordinates"]) >= 1
     texto = repr(vina)
     assert "_source_record" not in texto and "anillo" not in texto
 

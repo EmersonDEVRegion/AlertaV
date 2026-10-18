@@ -555,6 +555,11 @@ def resolve_status(
     return status, resolved_at
 
 
-def build_title(incident_type: IncidentType, commune: str | None) -> str:
+def build_title(
+    incident_type: IncidentType, commune: str | None, *, programado: bool = False
+) -> str:
+    """«Corte de suministro — Valparaíso». Un corte anunciado se nombra como tal."""
     base = _TITLE_BY_TYPE.get(incident_type, "Emergencia")
+    if programado and incident_type is IncidentType.POWER_OUTAGE:
+        base = "Corte programado"
     return f"{base} — {commune}" if commune else base

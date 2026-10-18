@@ -8,6 +8,7 @@
  */
 
 import type { ReportCategory } from '@/domain/reportCategories'
+import type { AreaGeometry } from '@/domain/serviceArea'
 
 /** `EventSource` — origen de una señal. */
 const EVENT_SOURCES = [
@@ -166,6 +167,15 @@ export interface OutageDetail {
    * avisan cuándo reponen: dejan de listar el corte.
    */
   vigente?: boolean | null
+  /**
+   * Área afectada: MultiPolygon GeoJSON. CGE la publica; la de Chilquinta es
+   * la mancha de los clientes de la orden. `null` (o ausente) si sólo hay pin.
+   */
+  area?: AreaGeometry | null
+  /** Barrios de OpenStreetMap que toca el área. Nombres de OSM, no de la empresa. */
+  sectores?: string[]
+  /** Corte anunciado por la empresa (desconexión programada), no una falla. */
+  programado?: boolean
 }
 
 export type UbicacionPrecision =

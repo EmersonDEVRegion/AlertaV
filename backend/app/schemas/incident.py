@@ -117,6 +117,25 @@ class OutageDetail(BaseModel):
             "repusieron: dejan de listar el corte, igual que Esval."
         ),
     )
+    area: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Área afectada, MultiPolygon GeoJSON (`[lon, lat]`). CGE la publica; "
+            "la de Chilquinta es la mancha de los clientes que lista la orden "
+            "(`core/areas.py`). `null` si el corte trae sólo un punto."
+        ),
+    )
+    sectores: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Barrios de OpenStreetMap que toca el área, del más al menos "
+            "relevante. Son nombres de OSM, no de la empresa."
+        ),
+    )
+    programado: bool = Field(
+        default=False,
+        description="Corte anunciado por la empresa (desconexión programada).",
+    )
 
 
 class IncidentRead(BaseModel):

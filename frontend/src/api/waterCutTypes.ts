@@ -11,6 +11,7 @@
  * afecta cada corte, así que ese campo no existe (y no se rellena con cero).
  */
 
+import type { AreaGeometry } from '@/domain/serviceArea'
 import type { HealthStatus } from './health'
 
 export interface WaterCut {
@@ -37,6 +38,8 @@ export interface WaterCut {
   visto_en: string | null
   /** `[lon, lat]`, o `null` si el visor de Esval no respondió al leerlo. */
   coordinates: [number, number] | null
+  /** Polígonos de los sectores afectados, del visor de Esval. `null` si no vinieron. */
+  area: AreaGeometry | null
 }
 
 export interface WaterCutSource {

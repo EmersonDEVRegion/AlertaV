@@ -47,6 +47,26 @@ sin repetirse; los del MOP siguen hasta que el MOP los retira.
 **CGE sólo de la región.** CGE publica todo el país; lo que cae fuera de las
 comunas de la V Región no se guarda (`INGEST_SOLO_REGION_FUENTES`).
 
+**Áreas de los cortes.** Las tres empresas publican más que un punto, y AlertaV
+lo usa (`core/areas.py`): Chilquinta lista los clientes de cada orden en
+`segmentos` y se dibuja su mancha (60 m de margen, sobre una grilla de 20 m;
+`ST_Buffer` tardaba 18 s en una orden de 1 718 puntos); CGE trae un `<Point>` y
+un `<Polygon>` por corte (el punto publicado manda: antes se promediaba con el
+polígono, lo que movía el pin y cambiaba el id del corte); Esval trae los
+polígonos de sus sectores. Los barrios que toca cada corte salen de OSM
+(`collectors/sectores_osm.py`).
+
+**Programados de Chilquinta.** `tipo: "inter"` es una falla; `"dx"`, una
+desconexión programada. El archivo la publica días antes y sin hora de inicio:
+entra el día en que termina, desde las 06:00 (`PROGRAMADO_DESDE_HORA`), como
+«Corte programado». Hasta el 17-10-2026 entraban como cortes en curso apenas
+aparecían (66 incidentes en 30 días). La API de `chilquinta.cl`
+(`/service-reports/company/006/…`) trae sectores e inicio, pero exige una llave
+de su web: no se usa.
+
+**CGE: «Restauración estimada».** Así escribe CGE la reposición; antes no se
+leía y todas sus señales quedaban sin hora.
+
 Los cuarteles de Bomberos (`scripts/sig_bomberos.py`) y la amenaza sísmica
 (`scripts/fetch_seismic_hazard.py`) son archivos estáticos en
 `backend/static/geo/`, regenerados a mano.
