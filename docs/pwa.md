@@ -222,6 +222,32 @@ franja (`METEO_ZONE_PALETTE`). Un aviso para toda la región pinta las cuatro.
   en `interactiveLayerIds`: una zona mide decenas de kilómetros y no es el
   lugar de un hecho.
 
+## Tránsito del MTT: «Ahora» y la capa «Tránsito»
+
+Lo que publica @TTIValparaiso (`GET /events/transito/geojson`), con el tramo
+dibujado sobre la forma real de la calle.
+
+- **En «Ahora»**, bajo los avisos de la DMC, una sección plegada «Tránsito · MTT»
+  (`components/shell/TransitoAhora.tsx`): «Marcha por Av. Pedro Montt»,
+  «Congestión en Viana, de Sucre a Von Schroeders». Primero lo que cambia qué
+  hacer (pista ocupada, marcha, congestión), al final la normalidad. Cinco a la
+  vista y «Ver todas». Abierta: el texto del MTT, «Ver en el mapa» y el enlace al
+  tuit. Lo que no pudimos ubicar se lista igual, sin «Ver en el mapa».
+- **Un color por subtipo** (`domain/transitoSymbology.ts`): rosa congestión,
+  ámbar lento, violeta semáforo, naranja pista ocupada, cian marcha y **verde la
+  normalidad**, que dura 45 min. El mismo color en el borde de la tarjeta y en
+  la línea del mapa.
+- **La capa** (`components/map/TransitoLayer.tsx`, store `lib/transitoStore.ts`):
+  línea con borde sobre la calle, disco cuando el MTT nombró sólo un lugar, halo
+  en el tramo de «Ver en el mapa». No abre ficha ni roba el toque.
+- **El azulejo «Tránsito»** de «Referencia» reemplaza a «Cortes de ruta» y
+  enciende las dos capas: los cortes del MOP y del portal del MTT (de semanas) y
+  el tránsito en vivo (de minutos). Su ficha trae un chip por subtipo que lo
+  oculta del mapa.
+- Lo vencido se descarta con el reloj del teléfono, como los avisos de la DMC.
+- **Push opcional:** la categoría «🚦 Tránsito» viene en 0 (apagada). Ver
+  `docs/notificaciones-push.md`.
+
 ## Amenaza sísmica: capa de referencia, no de emergencia
 
 `/api/v1/events/seismic/hazard` (que sirve `backend/static/geo/amenaza_sismica_valpo.json`)

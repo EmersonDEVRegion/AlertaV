@@ -13,10 +13,17 @@ Avisos al teléfono, aunque la app esté cerrada:
 |---|---|---|
 | **Emergencia cercana** (incendio, accidente, corte de luz, inundación…) | Suscripciones dentro del radio de su categoría, medido desde la última ubicación (si tiene menos de 24 h) o desde un lugar guardado | El incidente está `active`, apareció hace menos de 3 h, y además: lo confirmó CONAF/Bomberos, **o** es un corte de luz, **o** tiene confianza ≥ 30 % con al menos 2 fuentes distintas |
 | **Corte de agua programado** (Esval) | Suscripciones dentro del radio de cortes de agua | Empezó hace menos de 12 h |
+| **Tránsito** (MTT, opcional) | Sólo quien encendió «Tránsito» (apagada por defecto), dentro de su radio | Congestión con tramo ubicado, semáforo apagado, pista ocupada o marcha, publicado hace menos de 30 min y vigente. Nunca «tránsito lento» ni la normalidad |
 | **Temblor** | Suscripciones dentro del radio de percepción del sismo, desde su ubicación o sus lugares | Magnitud ≥ 3,5 (según la versión del CSN si existe) y ocurrido hace menos de 30 min |
 
 Cada persona elige un radio por categoría en la PWA (`0` la apaga). Por defecto:
-🔥 5 km · 🚗 2 km · ⚡ 1 km · 🌊 3 km · 🆘 2 km · 💧 1 km. Gana el lugar más cercano.
+🔥 5 km · 🚗 2 km · ⚡ 1 km · 🌊 3 km · 🆘 2 km · 💧 1 km · 🚦 apagado. Gana el lugar más cercano.
+
+El aviso de tránsito dice qué, a qué distancia y el tramo: «🚦 Congestión a 650 m
+de Casa» / «Viana, de Sucre a Von Schroeders · Viña del Mar · MTT». Tocarlo abre
+`/?transito=<public_id>`, que enciende la capa y encuadra el tramo. Una
+congestión sin tramo («congestión en Av. España») no avisa: sería toda la
+costanera (`services/transito.py`).
 
 Cada aviso tiene un emoji por tipo, la distancia y **desde dónde se midió** en el título, y una
 línea de cuerpo. La alerta de SENAPRED, si hay, va primero. Una ubicación de más de 24 h ya no se
@@ -136,6 +143,8 @@ campana lo muestra, y el notificador se queda dormido sin tumbar a los otros mot
 | `ENABLE_PUSH` | `1` | (start.sh) No levantar el notificador. |
 | `PUSH_POLL_INTERVAL_SECONDS` | `60` | Cadencia del notificador. |
 | `PUSH_RADIO_FIRE_M` … `PUSH_RADIO_WATER_M` | 5000, 2000, 1000, 3000, 2000, 1000 | Radio por categoría para quien no eligió el suyo. |
+| `PUSH_RADIO_TRANSITO_M` | `0` | «Tránsito» viene apagada: la enciende quien la quiere. |
+| `PUSH_TRANSITO_MAX_AGE_MINUTES` | `30` | Un aviso del MTT más viejo ya no se avisa. |
 | `PUSH_INCIDENT_RADIUS_M` | `5000` | Radio para lo que no cae en ninguna categoría. |
 | `PUSH_WATER_CUT_MAX_AGE_HOURS` | `12` | Un corte de agua más viejo ya no se avisa. |
 | `PUSH_LOCATION_MAX_AGE_HOURS` | `24` | La última ubicación deja de usarse (quedan los lugares). `0` = no vence. |

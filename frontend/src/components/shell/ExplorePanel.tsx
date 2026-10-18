@@ -19,6 +19,7 @@ import { RELATIVE_TIME_TICK_MS, useNow } from '@/hooks/useNow'
 import { setExploreTab, useExploreTab, type ExploreArea, type ExploreTab } from '@/lib/exploreStore'
 import { PropagationNotice } from '@/components/shell/PropagationNotice'
 import { MeteoWarnings } from '@/components/shell/MeteoWarnings'
+import { TransitoAhora } from '@/components/shell/TransitoAhora'
 
 /**
  * El contenido de la columna (escritorio) y de la hoja inferior (teléfono).
@@ -227,6 +228,9 @@ export const ExplorePanel = memo(function ExplorePanel({
                 {/* Lo que puede venir, antes de lo que está pasando: el viento
                     de mañana explica los cortes de mañana. */}
                 <MeteoWarnings />
+                {/* El tránsito del MTT, plegado: contexto para salir de casa,
+                    no una emergencia. Sin nada vigente no se dibuja. */}
+                <TransitoAhora />
                 <HistoryFeed {...history} scope="now" />
                 {/* «Mis lugares» acá: es la pregunta de «Ahora», ¿hay algo
                     cerca de mi casa? Sin lugares guardados es una invitación. */}

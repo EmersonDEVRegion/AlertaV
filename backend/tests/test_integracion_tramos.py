@@ -38,7 +38,12 @@ def _wkt(*puntos: tuple[float, float]) -> str:
 
 
 VIAS = [
-    ("Viana", "viana", ["vina del mar"], _wkt(LIMACHE, SUCRE, ETCHEVERS, VON_SCHROEDERS, LA_MARINA)),
+    (
+        "Viana",
+        "viana",
+        ["vina del mar"],
+        _wkt(LIMACHE, SUCRE, ETCHEVERS, VON_SCHROEDERS, LA_MARINA),
+    ),
 ]
 
 
@@ -182,11 +187,19 @@ def test_el_semaforo_apagado_queda_vinculado_al_corte_de_luz():
                 [
                     evento("corte", SUCRE, 40, "cge", "power_outage", {}),
                     evento(
-                        "semaforo", ETCHEVERS, 20, "transporte_informa", "traffic_condition",
+                        "semaforo",
+                        ETCHEVERS,
+                        20,
+                        "transporte_informa",
+                        "traffic_condition",
                         {"_mtt": {"tipo": "semaforo"}},
                     ),
                     evento(
-                        "taco", ETCHEVERS, 20, "transporte_informa", "traffic_condition",
+                        "taco",
+                        ETCHEVERS,
+                        20,
+                        "transporte_informa",
+                        "traffic_condition",
                         {"_mtt": {"tipo": "congestion"}},
                     ),
                 ]
@@ -201,3 +214,61 @@ def test_el_semaforo_apagado_queda_vinculado_al_corte_de_luz():
     assert vinculo.regla == "corte_luz_semaforo"
     assert vinculo.otro_event_id is not None
     assert 19 * 60 <= vinculo.desfase_s <= 21 * 60
+
+
+def test_el_notificador_encuentra_el_transito_que_avisa():
+    """El SQL de `recent_transito` (`has_key` sobre JSONB) contra Postgres."""
+    from app.core.database import AsyncSessionLocal
+    from app.models.enums import EventSource, EventType
+    from app.repositories.event_repository import EventRepository
+    from app.repositories.push_repository import PushRepository
+    from app.schemas.event import EventCreate
+
+    ahora = datetime.now(UTC)
+
+    def evento(external_id, tipo_evento, mtt):
+        return EventCreate(
+            timestamp=ahora - timedelta(minutes=5),
+            source=EventSource.TRANSPORTE_INFORMA,
+            type=EventType(tipo_evento),
+            lat=ETCHEVERS[0],
+            lon=ETCHEVERS[1],
+            text=f"integración {external_id}",
+            external_id=f"integracion:{external_id}",
+            raw_data={"_mtt": mtt, "comuna": "Viña del Mar"} if mtt else {},
+        )
+
+    tramo = {"metodo": "tramo", "largo_m": 900}
+
+    async def caso():
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                text("TRUNCATE alertav.incidents, alertav.raw_events RESTART IDENTITY CASCADE")
+            )
+            await session.commit()
+        async with AsyncSessionLocal() as session:
+            await EventRepository(session).upsert_many(
+                [
+                    evento(
+                        "taco",
+                        "traffic_condition",
+                        {"tipo": "congestion", "via": "Viana", "ubicacion": tramo},
+                    ),
+                    evento(
+                        "lento",
+                        "traffic_condition",
+                        {"tipo": "lento", "via": "Viana", "ubicacion": tramo},
+                    ),
+                    evento("marcha", "road_closure", {"tipo": "marcha", "via": "Viana"}),
+                    evento("portal", "road_closure", None),
+                ]
+            )
+            await session.commit()
+        async with AsyncSessionLocal() as session:
+            return await PushRepository(session).recent_transito(
+                since=ahora - timedelta(minutes=30)
+            )
+
+    vistas = correr(caso)
+    assert sorted(v.mtt["tipo"] for v in vistas) == ["congestion", "marcha"]
+    assert {v.comuna for v in vistas} == {"Viña del Mar"}

@@ -66,6 +66,9 @@ class FakeRepo:
     water_cuts: list[Any] = field(default_factory=list)
     water_recipients: dict[str, list[Recipient]] = field(default_factory=dict)
     water_queries: list[dict[str, Any]] = field(default_factory=list)
+    transito: list[Any] = field(default_factory=list)
+    transito_recipients: dict[str, list[Recipient]] = field(default_factory=dict)
+    transito_queries: list[dict[str, Any]] = field(default_factory=list)
 
     async def recent_active_incidents(self, *, since: datetime) -> list[SimpleNamespace]:
         return [i for i in self.incidents if i.first_seen_at >= since]
@@ -83,6 +86,13 @@ class FakeRepo:
 
     async def recipients_for_water_cut(self, *, subject_key: str, **_: Any) -> list[Recipient]:
         return self.water_recipients.get(subject_key, [])
+
+    async def recent_transito(self, **kwargs: Any) -> list[Any]:
+        self.transito_queries.append(kwargs)
+        return self.transito
+
+    async def recipients_for_transito(self, *, subject_key: str, **_: Any) -> list[Recipient]:
+        return self.transito_recipients.get(subject_key, [])
 
     async def recipients_for_quake(self, **kwargs: Any) -> list[Recipient]:
         self.quake_queries.append(kwargs)

@@ -41,7 +41,8 @@ from app.models.event import RawEvent
 from app.models.incident import Incident
 from app.models.push import PushDelivery, PushPlace, PushSubscription
 from app.models.seismic import SeismicDetail
-from app.services.push.radios import por_defecto
+from app.services import transito
+from app.services.push.radios import TRANSITO, por_defecto
 from app.services.push.rules import QuakeView
 
 _GEOGRAPHY = Geography(geometry_type="POINT", srid=4326)
@@ -120,6 +121,40 @@ class WaterCutView:
             fin=texto(esval.get("fin")),
             programado=programado if isinstance(programado, bool) else None,
             motivo=motivo_legible(texto(esval.get("motivo"))),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TransitoView:
+    """Lo que el aviso de tránsito del MTT necesita, fuera del ORM."""
+
+    key: str
+    public_id: str
+    lat: float
+    lon: float
+    comuna: str | None
+    mtt: dict[str, Any]
+
+    @classmethod
+    def de(cls, fila: RawEvent, *, ahora: datetime) -> TransitoView | None:
+        """Sólo lo vigente que merece aviso (`services.transito.avisa`)."""
+        mtt = transito.bloque_mtt(fila.raw_data)
+        if (
+            mtt is None
+            or fila.lat is None
+            or fila.lon is None
+            or not transito.avisa(mtt)
+            or not transito.vigente(fila.raw_data, fila.timestamp, ahora)
+        ):
+            return None
+        return cls(
+            key=fila.external_id or str(fila.public_id),
+            public_id=str(fila.public_id),
+            lat=float(fila.lat),
+            lon=float(fila.lon),
+            # La comuna del tweet («ViñadelMar» → «Viña del Mar»), ver `transito_x`.
+            comuna=fila.raw_data.get("comuna") or fila.commune,
+            mtt=dict(mtt),
         )
 
 
@@ -294,6 +329,30 @@ class PushRepository:
         filas = (await self.session.execute(stmt)).scalars().all()
         return [vista for vista in (WaterCutView.de(fila) for fila in filas) if vista is not None]
 
+    async def recent_transito(
+        self, *, since: datetime, now: datetime | None = None, limit: int = 200
+    ) -> list[TransitoView]:
+        """Avisos del MTT con punto que AlertaV vio hace poco y merecen push.
+
+        Se mide con `ingested_at`: un tweet viejo recogido tarde no se avisa
+        como nuevo, pero tampoco se pierde el que llegó con atraso de Apify.
+        """
+        ahora = now or datetime.now(UTC)
+        stmt = (
+            select(RawEvent)
+            .where(RawEvent.source == EventSource.TRANSPORTE_INFORMA)
+            .where(RawEvent.type.in_([EventType.TRAFFIC_CONDITION, EventType.ROAD_CLOSURE]))
+            .where(RawEvent.raw_data.has_key("_mtt"))
+            .where(RawEvent.lat.isnot(None), RawEvent.lon.isnot(None))
+            .where(RawEvent.ingested_at >= since)
+            .where(RawEvent.timestamp >= since)
+            .order_by(RawEvent.ingested_at.asc())
+            .limit(limit)
+        )
+        filas = (await self.session.execute(stmt)).scalars().all()
+        vistas = (TransitoView.de(fila, ahora=ahora) for fila in filas)
+        return [vista for vista in vistas if vista is not None]
+
     async def recent_quakes(self, *, since: datetime) -> list[QuakeView]:
         """Sismos de las dos redes desde `since`, con o sin magnitud.
 
@@ -398,6 +457,19 @@ class PushRepository:
         )
         return await self._cercanos(
             lat=lat, lon=lon, categoria="water", ya_avisados=already, limit=limit
+        )
+
+    async def recipients_for_transito(
+        self, *, subject_key: str, lat: float, lon: float, limit: int = 5000
+    ) -> list[Recipient]:
+        """Como `recipients_for_water_cut`, con el radio de «Tránsito» (apagado por defecto)."""
+        already = exists().where(
+            PushDelivery.subscription_id == PushSubscription.id,
+            PushDelivery.kind == "transito",
+            PushDelivery.subject_key == subject_key,
+        )
+        return await self._cercanos(
+            lat=lat, lon=lon, categoria=TRANSITO, ya_avisados=already, limit=limit
         )
 
     async def _cercanos(

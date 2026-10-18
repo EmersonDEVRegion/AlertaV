@@ -50,7 +50,7 @@ _GEOM_EXPR = "ST_SetSRID(ST_MakePoint(lon, lat), 4326)"
 
 #: Tipos de envío. `incident` y `seismic` los decide el notificador; la prueba
 #: que pide el usuario desde la PWA no se registra (ver `PushDelivery`).
-DELIVERY_KINDS = ("incident", "seismic", "water_cut")
+DELIVERY_KINDS = ("incident", "seismic", "water_cut", "transito")
 
 #: Estados de un envío. `pending` existe entre que se reserva el envío y que el
 #: servicio de push responde: si el proceso muere en ese hueco, el aviso queda

@@ -21,6 +21,7 @@ token configurado, responde 503 (falla cerrada).
 | GET | `/events/weather/tactical` | pública | Estado meteorológico de la región (widget) |
 | GET | `/events/road-closures/geojson` | pública | Cortes de ruta (MOP y MTT) |
 | GET | `/events/water-cuts/geojson` | pública | Cortes de agua vigentes de Esval |
+| GET | `/events/transito/geojson` | pública | Tránsito vigente del MTT (@TTIValparaiso): tramos sobre la calle, puntos o sin geometría |
 | GET | `/feed/vehiculos` | pública | Vehículos robados, recuperados y abandonados (GBV), 48 h |
 | GET | `/feed/noticias` | pública | Prensa local, 24 h (fuera del mapa) |
 | GET | `/feed/avisos-meteo` | pública | Avisos, alertas y alarmas vigentes de la DMC para la región (404 si la fuente está apagada) |

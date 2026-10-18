@@ -33,6 +33,7 @@ import { useRainLayer } from '@/hooks/useRainLayer'
 import { useRoadClosures } from '@/hooks/useRoadClosures'
 import { useMeteoZones } from '@/hooks/useMeteoZones'
 import { toggleMeteoZones } from '@/lib/meteoZonesStore'
+import { setTransitoEnabled, showTransitoOnMap, useTransitoState } from '@/lib/transitoStore'
 import { useSeismicHazard } from '@/hooks/useSeismicHazard'
 import { mostrarCuarteles, useCuarteles } from '@/hooks/useCuarteles'
 import { AppMenu } from '@/components/ui/AppMenu'
@@ -134,6 +135,20 @@ export default function App() {
   const cuarteles = useCuarteles()
   // Zonas de la DMC: el mapa las lee de su propio store; acá sólo el azulejo.
   const meteoZones = useMeteoZones()
+  /*
+   * «Tránsito» en Capas es un solo azulejo para dos capas: los cortes de ruta
+   * (MOP y el portal del MTT, de semanas) y el tránsito en vivo de
+   * @TTIValparaiso (de minutos). Encendido si cualquiera de las dos lo está:
+   * «Ver en el mapa» en «Ahora» enciende sólo la segunda.
+   */
+  const transitoOn = useTransitoState().enabled
+  const closuresToggle = closures.toggle
+  const closuresEnabled = closures.enabled
+  const trafficOn = closuresEnabled || transitoOn
+  const toggleTraffic = useCallback(() => {
+    if (closuresEnabled === trafficOn) closuresToggle()
+    setTransitoEnabled(!trafficOn)
+  }, [closuresEnabled, trafficOn, closuresToggle])
   // Sin `enabled`: su valor aparece justamente cuando el mapa está vacío, que
   // es cuando nadie está tocando nada y nadie iría a buscarlo.
   const health = useCollectorHealth()
@@ -435,6 +450,13 @@ export default function App() {
       return
     }
 
+    if (pendingLink.kind === 'transito') {
+      showTransitoOnMap(pendingLink.id)
+      flyTo(pendingLink.lon, pendingLink.lat, FOCUS_ZOOM)
+      clearLink()
+      return
+    }
+
     if (pendingLink.kind === 'seismic') {
       setVisibility((current) => (current.seismic ? current : { ...current, seismic: true }))
       const usgsId = usgsIdOf(pendingLink.key)
@@ -517,11 +539,12 @@ export default function App() {
       hazardError: hazard.errorMessage,
       onHazardToggle: hazard.toggle,
       onHazardRetry: hazard.retry,
-      closureEnabled: closures.enabled,
+      closureEnabled: trafficOn,
       closureStatus: closures.status,
       closureCount: closures.count,
       closureCutCount: closures.cutCount,
-      onClosureToggle: closures.toggle,
+      onClosureToggle: toggleTraffic,
+      withTransito: true,
       onClosureRetry: closures.retry,
       cuartelesEnabled: cuarteles.enabled,
       cuartelesStatus: cuarteles.status,
@@ -535,7 +558,17 @@ export default function App() {
       onMeteoToggle: toggleMeteoZones,
       theme,
     }),
-    [hazard, closures, cuarteles, meteoZones.enabled, meteoZones.status, meteoZones.data, theme],
+    [
+      hazard,
+      closures,
+      trafficOn,
+      toggleTraffic,
+      cuarteles,
+      meteoZones.enabled,
+      meteoZones.status,
+      meteoZones.data,
+      theme,
+    ],
   )
 
   /*
