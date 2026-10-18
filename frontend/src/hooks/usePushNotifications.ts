@@ -23,7 +23,12 @@ import {
   type PushSupport,
 } from '@/lib/push'
 import { getPlaces, usePlaces } from '@/lib/placesStore'
-import { getLastPosition, reportPosition, subscribePosition } from '@/lib/positionStore'
+import {
+  geolocationGranted,
+  getLastPosition,
+  reportPosition,
+  subscribePosition,
+} from '@/lib/positionStore'
 
 /**
  * Estado de los avisos en este teléfono.
@@ -160,16 +165,6 @@ function locate(): Promise<Position> {
       { enableHighAccuracy: false, timeout: 15_000, maximumAge: 10 * 60_000 },
     )
   })
-}
-
-/** ¿El permiso de ubicación ya está concedido? Sin preguntar. */
-async function geolocationGranted(): Promise<boolean> {
-  try {
-    const status = await navigator.permissions.query({ name: 'geolocation' })
-    return status.state === 'granted'
-  } catch {
-    return false
-  }
 }
 
 function readable(error: unknown): string {

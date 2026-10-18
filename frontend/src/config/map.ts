@@ -1,31 +1,12 @@
-/** Encuadre inicial y limites del mapa. */
+/**
+ * Constantes del mapa.
+ *
+ * El encuadre (zoom mínimo, límites y vista inicial) no es una caja fija:
+ * depende de la forma de la pantalla y se calcula en `lib/regionCamera.ts`
+ * sobre el contorno de la región (`domain/region.ts`).
+ */
 
 import { env } from './env'
-
-/** Centro pedido para el MVP: Región de Valparaíso. */
-export const INITIAL_VIEW_STATE = {
-  longitude: -71.5,
-  latitude: -33.0,
-  zoom: 9.4,
-  bearing: 0,
-  pitch: 0,
-} as const
-
-/**
- * Límite de paneo del mapa.
- *
- * Es la UNIÓN de `region_bbox` (incendios) y `usgs_bbox` (sismos), con margen.
- * Si se usara sólo el primero, volar a un sismo del borde sur —que el backend
- * sí entrega, porque su recorte es más ancho a propósito— quedaría bloqueado
- * por `maxBounds` y la cámara se detendría a mitad de camino sin explicación.
- *
- * La grilla de lluvia del backend (`RAIN_GRID_*`) cubre esta misma caja, para
- * que el borde del campo quede en el límite del mapa. Si esto cambia, esa
- * caja también: lo vigila `rainGridBounds.test.ts`.
- */
-export const MAP_MAX_BOUNDS: [number, number, number, number] = [
-  -73.4, -35.6, -68.6, -30.6,
-]
 
 /**
  * Zoom de aterrizaje al elegir un incidente de la lista: se ven las calles del

@@ -809,7 +809,7 @@ def resolve_bbox(args: argparse.Namespace) -> BoundingBox:
             "por defecto de la V Región",
             exc,
         )
-        return BoundingBox(west=-72.0, south=-33.8, east=-69.8, north=-32.0)
+        return BoundingBox(west=-72.0, south=-33.97, east=-69.8, north=-32.01)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

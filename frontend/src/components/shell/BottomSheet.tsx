@@ -4,6 +4,7 @@ import { cn } from '@/lib/cn'
 import { STACK } from '@/lib/stacking'
 import { useSelection } from '@/lib/selectionStore'
 import { getSheetSnap, setSheetSnap, useSheetSnap, type SheetSnap } from '@/lib/sheetStore'
+import { SHEET_PEEK_REM } from '@/lib/cameraOffset'
 import { ExplorePanel, type ExplorePanelProps } from './ExplorePanel'
 
 /**
@@ -32,9 +33,6 @@ import { ExplorePanel, type ExplorePanelProps } from './ExplorePanel'
  *   inercia nativa. Esos listeners van con `passive: false`, porque para tomar
  *   el gesto hay que cancelar el scroll del navegador.
  */
-
-/** Alto de la hoja asomada. Lo repite `index.css` (controles del mapa). */
-const SHEET_PEEK_REM = 7.25
 
 /** Alto por posición, relativo al `main` que la contiene. */
 const HEIGHT: Record<SheetSnap, string> = {
