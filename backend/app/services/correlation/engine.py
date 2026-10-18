@@ -465,7 +465,12 @@ class CorrelationEngine:
             filas_eventos = (
                 await self.session.execute(
                     select(
-                        RawEvent.id, RawEvent.type, RawEvent.lat, RawEvent.lon, RawEvent.timestamp
+                        RawEvent.id,
+                        RawEvent.type,
+                        RawEvent.lat,
+                        RawEvent.lon,
+                        RawEvent.timestamp,
+                        RawEvent.raw_data["_mtt"]["tipo"].astext.label("subtipo"),
                     )
                     .where(RawEvent.type.in_(tipos_evento))
                     .where(RawEvent.lat.isnot(None))
@@ -475,7 +480,9 @@ class CorrelationEngine:
                 )
             ).all()
             eventos = [
-                rel.Punto(e.id, e.type.value, e.lat, e.lon, _aware(e.timestamp))
+                rel.Punto(
+                    e.id, rel.tipo_de_senal(e.type, e.subtipo), e.lat, e.lon, _aware(e.timestamp)
+                )
                 for e in filas_eventos
             ]
         pares = rel.emparejar(origenes, incidentes, eventos, distancia=haversine_m)

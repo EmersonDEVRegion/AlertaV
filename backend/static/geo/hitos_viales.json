@@ -1,0 +1,13 @@
+{
+  "nota": "Lugares de referencia que el MTT usa como extremo o punto de un aviso y que no son una vía de OSM. Cada uno con su fuente. Una rotonda, enlace o puente con nombre en OSM no va acá: lo resuelve `osm_vias`. Datos © OpenStreetMap contributors, ODbL.",
+  "hitos": [
+    {"nombre": "Reloj de Flores", "alias": [], "comuna": "vina del mar", "lat": -33.0232875, "lon": -71.5671785, "fuente": "OSM, tourism=attraction (Nominatim, 17-10-2026)"},
+    {"nombre": "Caleta Abarca", "alias": [], "comuna": "vina del mar", "lat": -33.0230344, "lon": -71.5691675, "fuente": "OSM, natural=beach (Nominatim, 17-10-2026)"},
+    {"nombre": "Plaza Vergara", "alias": [], "comuna": "vina del mar", "lat": -33.0242756, "lon": -71.5515060, "fuente": "OSM, paraderos «Plaza Vergara» (Nominatim, 17-10-2026), punto medio"},
+    {"nombre": "Plaza Sucre", "alias": [], "comuna": "vina del mar", "lat": -33.0255765, "lon": -71.5521243, "fuente": "OSM, leisure=park (Nominatim, 17-10-2026)"},
+    {"nombre": "Puente Libertad", "alias": [], "comuna": "vina del mar", "lat": -33.0230312, "lon": -71.5515421, "fuente": "OSM, bridge (Nominatim, 17-10-2026)"},
+    {"nombre": "Plaza Sotomayor", "alias": [], "comuna": "valparaiso", "lat": -33.0387373, "lon": -71.6291282, "fuente": "OSM, highway=pedestrian (Nominatim, 17-10-2026)"},
+    {"nombre": "Muelle Barón", "alias": [], "comuna": "valparaiso", "lat": -33.0403043, "lon": -71.6083988, "fuente": "OSM, man_made=pier (Nominatim, 17-10-2026)"},
+    {"nombre": "Yolanda", "alias": ["sector Yolanda"], "comuna": "valparaiso", "lat": -33.0378452, "lon": -71.5978307, "fuente": "OSM, place=neighbourhood (Nominatim, 17-10-2026)"}
+  ]
+}

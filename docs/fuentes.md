@@ -40,6 +40,19 @@ cierran los avisos del MTT de las últimas 12 h que nombran la misma vía
 (`_mtt_fin`). Un aviso del MTT sale de la capa de cortes al cerrarse o a las 12 h
 sin repetirse; los del MOP siguen hasta que el MOP los retira.
 
+**Estado del tránsito del MTT.** Además de choques y pistas ocupadas,
+@TTIValparaiso informa congestión, tránsito lento, semáforos apagados, marchas
+y la vuelta a la normalidad («Tránsito normal y fluido en …»). Cada tuit recibe
+un subtipo en código (`vocabulary.subtipo_mtt`); Gemini sólo copia la vía y el
+tramo («Viana desde Sucre hasta Von Schroeders», `gemini.extraer_tramo`), y
+`collectors/tramos.py` lo dibuja sobre la forma real de la calle (`osm_vias`,
+del mismo release mensual que las esquinas). Un extremo se ubica por la esquina,
+por otra vía de OSM con ese nombre (una rotonda, un enlace), por el nomenclátor
+propio (`static/geo/hitos_viales.json`) o por Nominatim, y se descarta si queda a
+más de 500 m de la vía. Congestión, lento, semáforo y normalidad entran como
+`traffic_condition`; pista ocupada y marcha, como `road_closure`. La normalidad
+cierra (`_mtt_fin`) los avisos del MTT de la misma vía de las últimas 12 h.
+
 **Ceguera sin aviso.** Una fuente que corre bien pero no lee ni una fila en 72 h
 (120 h FIRMS) pasa a `degraded` en `/collectors/health`
 (`services/collector_health.py`).

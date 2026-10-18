@@ -60,9 +60,9 @@ jobs:
             echo "(https://www.openstreetmap.org/copyright). Extracto de Geofabrik."
           } > "$RUNNER_TEMP/notas.md"
           if gh release view osm-cruces > /dev/null 2>&1; then
-            gh release upload osm-cruces dist/osm_cruces.csv.gz dist/osm_cruces.json --clobber
+            gh release upload osm-cruces dist/osm_cruces.csv.gz dist/osm_vias.csv.gz dist/osm_cruces.json --clobber
             gh release edit osm-cruces --notes-file "$RUNNER_TEMP/notas.md"
           else
-            gh release create osm-cruces dist/osm_cruces.csv.gz dist/osm_cruces.json \
+            gh release create osm-cruces dist/osm_cruces.csv.gz dist/osm_vias.csv.gz dist/osm_cruces.json \
               --title "Índice de cruces OSM" --notes-file "$RUNNER_TEMP/notas.md" --latest=false
           fi

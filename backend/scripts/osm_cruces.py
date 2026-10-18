@@ -7,8 +7,13 @@ Qué produce
 ===========
 `osm_cruces.csv.gz`: un nodo de OSM por fila donde se tocan dos vías con
 nombre distinto, con los dos nombres, la última palabra significativa de cada
-uno (la clave de búsqueda) y las comunas a menos de ~100 m. `osm_cruces.json`:
-fecha de los datos y cantidad de filas.
+uno (la clave de búsqueda) y las comunas a menos de ~100 m.
+
+`osm_vias.csv.gz`: la forma de cada vía con nombre, una fila por nombre y
+comuna, con las piezas de OSM unidas y simplificadas a ~3 m (WKT). Sirve para
+dibujar un tramo de tránsito pegado a la calle (`app/collectors/tramos.py`).
+
+`osm_cruces.json`: fecha de los datos y cantidad de filas de los dos.
 
 Lo corre cada mes `.github/workflows/osm-cruces.yml`, que publica los dos
 archivos en el release fijo `osm-cruces`. Los workers de Render lo bajan y
@@ -70,6 +75,11 @@ ETIQUETAS_DE_NOMBRE = (
 HOLGURA_COMUNA = 0.001
 
 COLUMNAS = ("nodo", "lat", "lon", "nombre_a", "nombre_b", "ultima_a", "ultima_b", "comunas")
+COLUMNAS_VIAS = ("nombre", "ultima", "comunas", "wkt")
+
+#: Tolerancia de la simplificación de las vías, en grados (~3 m): una curva
+#: sigue siendo curva y el archivo pesa una fracción.
+SIMPLIFICAR = 0.00003
 
 
 def nombres_de(tags: dict[str, str]) -> tuple[str, ...]:
@@ -89,8 +99,17 @@ def dentro(lon: float, lat: float) -> bool:
     return oeste <= lon <= este and sur <= lat <= norte
 
 
-def leer_vias(pbf: Path) -> tuple[list[tuple[str, ...]], dict[int, list[int]], dict[int, tuple[float, float]], str | None]:
-    """Vías con nombre de la caja: sus nombres, qué vías toca cada nodo y dónde está."""
+def leer_vias(
+    pbf: Path,
+) -> tuple[
+    list[tuple[str, ...]],
+    dict[int, list[int]],
+    dict[int, tuple[float, float]],
+    str | None,
+    list[list[tuple[float, float]]],
+]:
+    """Vías con nombre de la caja: sus nombres, qué vías toca cada nodo, dónde
+    está cada nodo y el trazo de cada vía en orden (lon, lat)."""
     import osmium
 
     fecha = osmium.io.Reader(str(pbf), osmium.osm.osm_entity_bits.NOTHING).header().get(
@@ -99,6 +118,7 @@ def leer_vias(pbf: Path) -> tuple[list[tuple[str, ...]], dict[int, list[int]], d
     nombres: list[tuple[str, ...]] = []
     vias_de_nodo: dict[int, list[int]] = defaultdict(list)
     posicion: dict[int, tuple[float, float]] = {}
+    trazos: list[list[tuple[float, float]]] = []
 
     # El caché de posiciones ve todos los nodos antes que los filtros: a Python
     # sólo llegan las vías con `highway`, ya con la posición de cada nodo.
@@ -127,12 +147,13 @@ def leer_vias(pbf: Path) -> tuple[list[tuple[str, ...]], dict[int, list[int]], d
             continue
         indice = len(nombres)
         nombres.append(propios)
+        trazos.append([(lon, lat) for _, lon, lat in puntos])
         for ref, lon, lat in puntos:
             lista = vias_de_nodo[ref]
             if indice not in lista:
                 lista.append(indice)
             posicion[ref] = (lat, lon)
-    return nombres, vias_de_nodo, posicion, fecha
+    return nombres, vias_de_nodo, posicion, fecha, trazos
 
 
 def cargar_comunas(geojson: Path):
@@ -183,6 +204,43 @@ def cruces(
                     )
 
 
+def vias(nombres: list[tuple[str, ...]], trazos: list[list[tuple[float, float]]], comunas_de):
+    """Filas de `osm_vias`: por cada nombre y comuna, sus piezas unidas y simplificadas.
+
+    Una pieza va a todas las comunas que tocan su comienzo, su medio o su fin:
+    una avenida que cruza de Viña a Valparaíso queda en las dos, y un tramo
+    pedido en cualquiera de ellas la encuentra.
+    """
+    from shapely import MultiLineString, line_merge, wkt
+    from shapely.geometry import LineString
+
+    grupos: dict[tuple[tuple[str, ...], str], tuple[str, list]] = {}
+    for propios, trazo in zip(nombres, trazos, strict=True):
+        if len(trazo) < 2:
+            continue
+        muestras = (trazo[0], trazo[len(trazo) // 2], trazo[-1])
+        comunas = sorted({c for lon, lat in muestras for c in comunas_de(lon, lat)})
+        if not comunas:
+            continue
+        linea = LineString(trazo)
+        for nombre in propios:
+            clave = nombre_nucleo(nombre)
+            if not clave:
+                continue
+            for comuna in comunas:
+                grupo = grupos.setdefault((clave, comuna), (nombre, []))
+                grupo[1].append(linea)
+    for (_, comuna), (nombre, lineas) in grupos.items():
+        unida = line_merge(MultiLineString(lineas)).simplify(SIMPLIFICAR, preserve_topology=False)
+        if unida.is_empty:
+            continue
+        if unida.geom_type == "LineString":
+            unida = MultiLineString([unida])
+        elif unida.geom_type != "MultiLineString":
+            continue
+        yield (nombre, ultima_palabra(nombre) or "", comuna, wkt.dumps(unida, rounding_precision=6, trim=True))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--pbf", type=Path, required=True)
@@ -200,7 +258,7 @@ def main(argv: list[str] | None = None) -> int:
         punto = Point(lon, lat)
         return sorted({nombres_comuna[i] for i in arbol.query(punto) if poligonos[i].contains(punto)})
 
-    nombres, vias_de_nodo, posicion, fecha = leer_vias(args.pbf)
+    nombres, vias_de_nodo, posicion, fecha, trazos = leer_vias(args.pbf)
     args.salida.mkdir(parents=True, exist_ok=True)
     destino = args.salida / "osm_cruces.csv.gz"
     filas = 0
@@ -214,8 +272,17 @@ def main(argv: list[str] | None = None) -> int:
             for comuna in fila[-1].split("|"):
                 por_comuna[comuna] += 1
 
+    filas_vias = 0
+    with gzip.open(args.salida / "osm_vias.csv.gz", "wt", encoding="utf-8", newline="") as archivo:
+        escritor = csv.writer(archivo)
+        escritor.writerow(COLUMNAS_VIAS)
+        for fila in vias(nombres, trazos, comunas_de):
+            escritor.writerow(fila)
+            filas_vias += 1
+
     meta = {
         "filas": filas,
+        "filas_vias": filas_vias,
         "vias": len(nombres),
         "datos_de": fecha or None,
         "generado_en": datetime.now(UTC).isoformat(timespec="seconds"),

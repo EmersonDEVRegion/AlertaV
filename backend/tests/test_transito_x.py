@@ -121,9 +121,12 @@ def test_se_clasifica_con_el_lexico_del_mtt_y_los_choques_van_primero():
         tx.aviso_de_tuit(texto=t, identificador=str(i), publicado=AHORA, cuenta=None, url=None)
         for i, t in enumerate([DESVIO, SALUDO, CHOQUE])
     ]
-    clasificados, descartados = tx.clasificar([a for a in avisos if a])
-    assert [tipo for _, tipo in clasificados] == [EventType.ACCIDENT, EventType.ROAD_CLOSURE]
-    assert descartados == 1, "el saludo no es ni choque ni corte"
+    choques, condiciones, descartados = tx.separar([a for a in avisos if a])
+    assert [a.text for a in choques] == [avisos[2].text]
+    assert [(tx.tipo_de(sub), sub) for _, sub in condiciones] == [
+        (EventType.ROAD_CLOSURE, "pista_ocupada")
+    ]
+    assert descartados == 1, "el saludo no es ni choque ni nada del tránsito"
 
 
 def test_un_tuit_viejo_no_describe_el_presente():
@@ -350,21 +353,25 @@ def test_los_retuits_del_mtt_no_entran(entrega):
         (
             "Ahora (07:55) Tránsito normal y fluido en Av Errázuriz, #Valparaíso, tanto en "
             "dirección a Playa Ancha, como en dirección a Nudo Barón.",
-            None,
+            EventType.TRAFFIC_CONDITION,
         ),
-        ("Ahora (13:02) Tránsito lento en Av Alessandri, #ViñaDelMar.", None),
+        ("Ahora (13:02) Tránsito lento en Av Alessandri, #ViñaDelMar.", EventType.TRAFFIC_CONDITION),
         ("¡BUENOS DÍAS! #BuenViernes 16 de octubre de 2026. Recomendamos revisar…", None),
     ],
 )
 def test_los_tuits_reales_del_mtt_se_clasifican(texto, esperado):
-    clasificados, _ = tx.clasificar(
+    choques, condiciones, _ = tx.separar(
         [
             tx.aviso_de_tuit(
                 texto=texto, identificador="1", publicado=None, cuenta="TTIValparaiso", url=None
             )
         ]
     )
-    assert (clasificados[0][1] if clasificados else None) is esperado
+    if choques:
+        obtenido = EventType.ACCIDENT
+    else:
+        obtenido = tx.tipo_de(condiciones[0][1]) if condiciones else None
+    assert obtenido is esperado
 
 
 def test_la_reapertura_no_es_un_aviso_nuevo():
@@ -383,9 +390,9 @@ def test_la_reapertura_no_es_un_aviso_nuevo():
         cuenta="TTIValparaiso",
         url=None,
     )
-    clasificados, _ = tx.clasificar([reapertura, tras_choque])
-    assert clasificados == []
-    assert tx.reaperturas([reapertura, tras_choque]) == [reapertura, tras_choque]
+    choques, condiciones, _ = tx.separar([reapertura, tras_choque])
+    assert choques == [], "«habilitado tras accidente» no es un choque nuevo"
+    assert [sub for _, sub in condiciones] == ["normalidad", "normalidad"]
 
 
 def test_una_via_que_nunca_se_cerro_no_es_reapertura():
@@ -397,7 +404,8 @@ def test_una_via_que_nunca_se_cerro_no_es_reapertura():
         cuenta="TTIValparaiso",
         url=None,
     )
-    assert tx.reaperturas([aviso]) == []
+    _, condiciones, _ = tx.separar([aviso])
+    assert [sub for _, sub in condiciones] == ["marcha"]
 
 
 @pytest.mark.parametrize(
