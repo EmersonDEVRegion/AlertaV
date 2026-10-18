@@ -5,7 +5,8 @@ cada categoría tiene su radio, que cada persona elige
 con un deslizador; `0` apaga esa categoría.
 
 Las categorías son las familias del motor (`models.enums.INCIDENT_FAMILY`) más
-los cortes de agua, que no son incidentes. Se guardan en
+los cortes de agua y el tránsito del MTT, que no son incidentes. «Tránsito»
+viene apagada (`PUSH_RADIO_TRANSITO_M = 0`): la enciende quien la quiere. Se guardan en
 `push_subscriptions.radios` sólo las que la persona tocó: una categoría ausente
 usa el valor por defecto del servidor (`PUSH_RADIO_*_M`), así que cambiar un
 valor por defecto alcanza a quien nunca lo cambió.
@@ -30,9 +31,14 @@ POWER = "power"
 HYDRO = "hydro"
 OTHER = "other"
 WATER = "water"
+#: El tránsito del MTT: no son incidentes, como los cortes de agua.
+TRANSITO = "transito"
 
 #: En el orden en que los muestra la PWA.
-CATEGORIAS: tuple[str, ...] = (FIRE, TRAFFIC, POWER, HYDRO, OTHER, WATER)
+CATEGORIAS: tuple[str, ...] = (FIRE, TRAFFIC, POWER, HYDRO, OTHER, WATER, TRANSITO)
+
+#: Las que no son una familia del motor: un incidente nunca cae en ellas.
+_NO_INCIDENTES = frozenset({WATER, TRANSITO})
 
 ETIQUETAS: dict[str, str] = {
     FIRE: "Incendios",
@@ -41,6 +47,7 @@ ETIQUETAS: dict[str, str] = {
     HYDRO: "Inundaciones y derrumbes",
     OTHER: "Otras emergencias",
     WATER: "Cortes de agua",
+    TRANSITO: "Tránsito",
 }
 
 #: Un radio distinto de 0 no puede ser menor que esto: la ubicación se guarda
@@ -58,13 +65,14 @@ def por_defecto() -> dict[str, float]:
         HYDRO: settings.PUSH_RADIO_HYDRO_M,
         OTHER: settings.PUSH_RADIO_OTHER_M,
         WATER: settings.PUSH_RADIO_WATER_M,
+        TRANSITO: settings.PUSH_RADIO_TRANSITO_M,
     }
 
 
 def categoria_de(incident_type: IncidentType) -> str:
     """La categoría de aviso de un incidente: su familia, o `other`."""
     familia = family_of_incident(incident_type)
-    return familia if familia in CATEGORIAS and familia != WATER else OTHER
+    return familia if familia in CATEGORIAS and familia not in _NO_INCIDENTES else OTHER
 
 
 def validar_radio(valor: Any) -> float:
@@ -113,6 +121,7 @@ __all__ = [
     "ETIQUETAS",
     "RADIO_MAXIMO_M",
     "RADIO_MINIMO_M",
+    "TRANSITO",
     "WATER",
     "categoria_de",
     "efectivos",

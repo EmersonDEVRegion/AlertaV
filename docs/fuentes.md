@@ -52,6 +52,10 @@ propio (`static/geo/hitos_viales.json`) o por Nominatim, y se descarta si queda 
 más de 500 m de la vía. Congestión, lento, semáforo y normalidad entran como
 `traffic_condition`; pista ocupada y marcha, como `road_closure`. La normalidad
 cierra (`_mtt_fin`) los avisos del MTT de la misma vía de las últimas 12 h.
+Se muestran por `GET /events/transito/geojson` (la capa «Tránsito» y su lista en
+«Ahora») mientras siguen vigentes: congestión y lento 90 min, semáforo 6 h, pista
+ocupada y marcha 12 h, normalidad 45 min (`services/transito.py`). Lo que trae
+`_mtt` ya no sale por `/events/road-closures/geojson`, para no dibujarlo dos veces.
 
 **Ceguera sin aviso.** Una fuente que corre bien pero no lee ni una fila en 72 h
 (120 h FIRMS) pasa a `degraded` en `/collectors/health`

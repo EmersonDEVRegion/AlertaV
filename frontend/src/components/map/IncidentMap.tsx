@@ -71,6 +71,7 @@ import type {
 import { RainLayer } from './RainLayer'
 import { MeteoZonesLayer } from './MeteoZonesLayer'
 import { RoadClosureLayer } from './RoadClosureLayer'
+import { TransitoLayer } from './TransitoLayer'
 import { CuartelesLayer } from './CuartelesLayer'
 import type { CuartelesState } from '@/hooks/useCuarteles'
 import { SeismicHazardLayer } from './SeismicHazardLayer'
@@ -779,6 +780,10 @@ export const IncidentMap = memo(function IncidentMap({
       {closures.hasMounted && (
         <RoadClosureLayer data={closures.data} visible={closures.enabled} theme={theme} />
       )}
+
+      {/* El tránsito del MTT, sobre los cortes: es lo que pasa ahora en esa
+          calle. Misma ancla; se enciende solo (store propio), sin props. */}
+      <TransitoLayer theme={theme} />
 
       {/* Los sismos van debajo: son contexto, no el sujeto del mapa. */}
       {showSeismic && (

@@ -222,6 +222,16 @@ export const env = {
    */
   waterCutPollIntervalMs: num(import.meta.env.VITE_WATER_CUT_POLL_INTERVAL_MS, 300_000),
   /**
+   * Tránsito del MTT (@TTIValparaiso): la capa «Tránsito» y su lista en
+   * «Ahora». `off` es el interruptor de emergencia, sin tocar el backend.
+   */
+  transitoEnabled: flag(import.meta.env.VITE_TRANSITO, true),
+  /**
+   * El collector de X lee cada pocos minutos y un taco dura menos de una hora:
+   * dos minutos es lo que hace falta para que la lista no quede atrás.
+   */
+  transitoPollIntervalMs: num(import.meta.env.VITE_TRANSITO_POLL_INTERVAL_MS, 120_000),
+  /**
    * Clave PÚBLICA del sitio en Cloudflare Turnstile (la verificación anti-bots
    * del reporte ciudadano). Vacía = sin verificación; el backend tampoco la
    * pide mientras no tenga su `TURNSTILE_SECRET_KEY`.

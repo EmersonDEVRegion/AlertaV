@@ -21,6 +21,7 @@ const ICONO_CATEGORIA: Readonly<Record<string, IconId>> = {
   hydro: 'av-flood',
   other: 'av-alert',
   water: 'av-drop',
+  transito: 'av-barrier',
 }
 
 const iconoDe = (clave: string): IconId => ICONO_CATEGORIA[clave] ?? 'av-alert'

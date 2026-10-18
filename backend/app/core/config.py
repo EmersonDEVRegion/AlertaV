@@ -1365,6 +1365,13 @@ class Settings(BaseSettings):
     #: Avisos de cortes de agua de Esval. Sólo cortes que empezaron hace menos
     #: de esto: uno que lleva días no es novedad.
     PUSH_WATER_CUT_MAX_AGE_HOURS: int = Field(default=12, ge=1, le=72)
+    #: Tránsito del MTT (congestión con tramo, semáforos apagados, pistas
+    #: ocupadas, marchas). **Apagado por defecto**: lo enciende quien lo quiere,
+    #: con el deslizador de la categoría. Ver `app/services/transito.py`.
+    PUSH_RADIO_TRANSITO_M: float = Field(default=0.0, ge=0.0, le=20_000.0)
+    #: Sólo avisos del MTT que AlertaV vio hace menos de esto: un taco de hace
+    #: una hora ya no es noticia.
+    PUSH_TRANSITO_MAX_AGE_MINUTES: int = Field(default=30, ge=5, le=180)
     #: Horas tras las cuales la última ubicación del teléfono deja de usarse
     #: para medir distancias; desde ahí se avisa sólo por los lugares guardados.
     #: Con la app cerrada el navegador no informa la ubicación, y en un día casi

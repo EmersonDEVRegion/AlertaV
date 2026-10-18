@@ -90,6 +90,7 @@ _EMOJI: dict[IncidentType, str] = {
 }
 SEISMIC_EMOJI = "🌎"
 WATER_EMOJI = "💧"
+TRANSITO_EMOJI = "🚦"
 
 #: La alerta de SENAPRED con el color de la alerta: es lo más importante del
 #: aviso y va en la primera línea del cuerpo.
@@ -501,7 +502,52 @@ _PROBE_CATEGORIAS = (
     ("traffic", "🚗"),
     ("power", "⚡"),
     ("water", "💧"),
+    ("transito", "🚦"),
 )
+
+
+#: Un taco o un semáforo apagado dejan de ser útiles rápido.
+TRANSITO_TTL_SECONDS = 3600
+
+
+def transito_message(
+    *,
+    key: str,
+    public_id: str,
+    lat: float,
+    lon: float,
+    distance_m: float,
+    mtt: Mapping[str, Any],
+    comuna: str | None,
+    place: str | None = None,
+    located_at: datetime | None = None,
+    now: datetime | None = None,
+) -> PushMessage:
+    """Aviso del MTT cerca de la ubicación o de un lugar guardado.
+
+        🚦 Congestión a 650 m de Casa
+        Viana, de Sucre a Von Schroeders · Viña del Mar · MTT
+
+    Sólo para quien encendió la categoría «Tránsito» (apagada por defecto).
+    """
+    from app.services import transito
+
+    origin = origin_of(place=place, located_at=located_at, now=now)
+    nombre = transito.NOMBRE.get(str(mtt.get("tipo")), "Tránsito")
+    title = f"{TRANSITO_EMOJI} {nombre} a {format_distance(distance_m)} {origin.suffix}"
+    lines = [_join([transito.tramo_texto(dict(mtt)), comuna, "MTT"])]
+    if origin.note:
+        lines.append(origin.note)
+    return PushMessage(
+        title=title,
+        body="\n".join(lines),
+        tag=f"transito-{key}",
+        url="/?" + urlencode({"transito": public_id, "lat": f"{lat:.4f}", "lon": f"{lon:.4f}"}),
+        kind="transito",
+        ttl_seconds=TRANSITO_TTL_SECONDS,
+        origin=origin.kind,
+        place=origin.place,
+    )
 
 
 def probe_message(
@@ -537,6 +583,7 @@ __all__ = [
     "INCIDENT_TTL_SECONDS",
     "LAST_LOCATION",
     "SEISMIC_TTL_SECONDS",
+    "TRANSITO_TTL_SECONDS",
     "Origin",
     "OutageFacts",
     "PushMessage",
@@ -548,5 +595,6 @@ __all__ = [
     "probe_message",
     "safe_topic",
     "seismic_message",
+    "transito_message",
     "water_cut_message",
 ]

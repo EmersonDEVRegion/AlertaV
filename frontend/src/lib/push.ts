@@ -303,6 +303,7 @@ export type PushDeepLink =
   | { kind: 'incident'; code: string }
   | { kind: 'seismic'; key: string; lat: number; lon: number }
   | { kind: 'water'; id: string; lat: number; lon: number }
+  | { kind: 'transito'; id: string; lat: number; lon: number }
 
 /**
  * Lee el destino de una notificación: `/?incidente=INC-2026-00142` o
@@ -343,6 +344,11 @@ export function parseDeepLink(href: string, base = 'https://alertav.invalid'): P
   // Un corte de agua de Esval, por su `public_id` (un UUID).
   if (agua && /^[0-9a-f-]{36}$/i.test(agua) && conPunto) {
     return { kind: 'water', id: agua, lat, lon }
+  }
+  // Un aviso de tránsito del MTT, también por su `public_id`.
+  const transito = url.searchParams.get('transito')
+  if (transito && /^[0-9a-f-]{36}$/i.test(transito) && conPunto) {
+    return { kind: 'transito', id: transito, lat, lon }
   }
   return null
 }

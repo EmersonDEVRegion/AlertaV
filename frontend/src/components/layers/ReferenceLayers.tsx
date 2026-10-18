@@ -15,6 +15,7 @@ import type { HazardStatus } from '@/hooks/useSeismicHazard'
 import type { Theme } from '@/hooks/useTheme'
 import { cn } from '@/lib/cn'
 import { LayerGroupHeading, LayerTile } from './LayerTile'
+import { TransitoLeyenda } from './TransitoLeyenda'
 
 /**
  * Las capas de referencia: amenaza sísmica, cortes de ruta, cuarteles y las
@@ -60,6 +61,11 @@ export interface ReferenceLayersProps {
   meteoStatus?: MeteoZonesStatus
   meteoZoneCount?: number
   onMeteoToggle?: () => void
+  /**
+   * Suma el tránsito en vivo del MTT al azulejo de cortes, que pasa a llamarse
+   * «Tránsito». Opcional para que los tests de la ficha no necesiten la consulta.
+   */
+  withTransito?: boolean
   theme: Theme
 }
 
@@ -282,8 +288,10 @@ export function ReferenceLayers({
   meteoStatus = 'idle',
   meteoZoneCount = 0,
   onMeteoToggle,
+  withTransito = false,
   theme,
 }: ReferenceLayersProps) {
+  const closureTitle = withTransito ? 'Tránsito' : ROAD_CLOSURE_LEGEND_TEXT.title
   const hazardAccent = HAZARD_RAMP[theme].stops[2]![1]
   /*
    * Ámbar y no el rojo del extremo de la rampa: el estado normal de esta capa
@@ -318,7 +326,7 @@ export function ReferenceLayers({
           detail={hazardEnabled ? shortStatus(hazardStatus) : null}
         />
         <LayerTile
-          label={ROAD_CLOSURE_LEGEND_TEXT.title}
+          label={closureTitle}
           icon={<RoadIcon />}
           color={closureAccent}
           on={closureEnabled}
@@ -389,11 +397,21 @@ export function ReferenceLayers({
 
           {closureEnabled && (
             <LayerDetail
-              label={ROAD_CLOSURE_LEGEND_TEXT.title}
+              label={closureTitle}
               description={closureDescription(closureStatus, closureCount, closureCutCount)}
               failed={closureStatus === 'error'}
               {...(closureStatus === 'error' ? { onRetry: onClosureRetry } : {})}
             >
+              {withTransito && (
+                <div className="mb-2 border-b border-line pb-2">
+                  <TransitoLeyenda theme={theme} />
+                </div>
+              )}
+              {withTransito && (
+                <p className="mb-1 text-[10px] font-semibold text-ink-muted">
+                  {ROAD_CLOSURE_LEGEND_TEXT.title} · Vialidad y MTT
+                </p>
+              )}
               {closureStatus === 'empty' ? (
                 <p className="text-[9.5px] leading-tight text-ink-faint">
                   Ni Vialidad ni el MTT informan intervenciones vigentes en la región. La capa

@@ -58,6 +58,7 @@ from app.repositories.push_repository import (
     DeliveryOutcome,
     PushRepository,
     Recipient,
+    TransitoView,
     WaterCutView,
 )
 from app.services.push.messages import (
@@ -65,6 +66,7 @@ from app.services.push.messages import (
     PushMessage,
     incident_message,
     seismic_message,
+    transito_message,
     water_cut_message,
 )
 from app.services.push.radios import categoria_de
@@ -136,6 +138,7 @@ class NotifierPass:
     quakes_considered: int = 0
     quakes_notifiable: int = 0
     water_cuts_considered: int = 0
+    transito_considered: int = 0
     sent: int = 0
     failed: int = 0
     gone: int = 0
@@ -153,6 +156,7 @@ class NotifierPass:
             "quakes_considered": self.quakes_considered,
             "quakes_notifiable": self.quakes_notifiable,
             "water_cuts_considered": self.water_cuts_considered,
+            "transito_considered": self.transito_considered,
             "sent": self.sent,
             "failed": self.failed,
             "gone": self.gone,
@@ -221,6 +225,7 @@ class PushNotifier:
             await self._incidents(result, now=now)
             await self._quakes(result, now=now)
             await self._water_cuts(result, now=now)
+            await self._transito(result, now=now)
             result.deliveries_pruned = await self.repo.prune_deliveries(before=now - self.retention)
             await self.session.commit()
         except Exception:
@@ -413,6 +418,48 @@ class PushNotifier:
             await self._deliver(
                 kind="water_cut",
                 subject_key=corte.key,
+                recipients=recipients,
+                compose=compose,
+                now=now,
+                result=result,
+            )
+
+    # -- Tránsito del MTT ---------------------------------------------------------
+
+    async def _transito(self, result: NotifierPass, *, now: datetime) -> None:
+        """Congestión con tramo, semáforos apagados, pistas ocupadas y marchas.
+
+        Sólo a quien encendió «Tránsito» (radio 0 por defecto). Nunca el
+        tránsito lento ni la normalidad: ver `services/transito.py`.
+        """
+        avisos = await self.repo.recent_transito(
+            since=now - timedelta(minutes=settings.PUSH_TRANSITO_MAX_AGE_MINUTES), now=now
+        )
+        result.transito_considered = len(avisos)
+        for aviso in avisos:
+            recipients = await self.repo.recipients_for_transito(
+                subject_key=aviso.key, lat=aviso.lat, lon=aviso.lon
+            )
+            if not recipients:
+                continue
+
+            def compose(recipient: Recipient, aviso: TransitoView = aviso) -> PushMessage:
+                return transito_message(
+                    key=aviso.key,
+                    public_id=aviso.public_id,
+                    lat=aviso.lat,
+                    lon=aviso.lon,
+                    distance_m=recipient.distance_m,
+                    mtt=aviso.mtt,
+                    comuna=aviso.comuna,
+                    place=recipient.place,
+                    located_at=recipient.located_at,
+                    now=now,
+                )
+
+            await self._deliver(
+                kind="transito",
+                subject_key=aviso.key,
                 recipients=recipients,
                 compose=compose,
                 now=now,

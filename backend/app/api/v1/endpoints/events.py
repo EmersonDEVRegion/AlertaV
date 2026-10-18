@@ -41,7 +41,7 @@ from app.schemas.weather import (
     RainGridRead,
     TacticalWeatherRead,
 )
-from app.services import turnstile
+from app.services import transito, turnstile
 from app.services.ciudadanos import dentro_de_la_region, huellas_de, moderacion_inicial
 
 logger = logging.getLogger(__name__)
@@ -650,7 +650,13 @@ async def road_closures_geojson(
         limit=limit,
     )
     return GeoJSONFeatureCollection(
-        features=[_road_closure_feature(event) for event in events if _cierre_vigente(event, ahora)]
+        features=[
+            _road_closure_feature(event)
+            for event in events
+            # Lo que trae `_mtt` (pista ocupada, marcha) va por `/events/transito/geojson`,
+            # con su tramo dibujado: aquí sería un punto repetido.
+            if transito.bloque_mtt(event.raw_data) is None and _cierre_vigente(event, ahora)
+        ]
     )
 
 
@@ -674,6 +680,84 @@ def _cierre_vigente(event: Any, ahora: datetime) -> bool:
     if visto.tzinfo is None:
         visto = visto.replace(tzinfo=UTC)
     return ahora - visto <= MTT_CIERRE_VIGENCIA
+
+
+# --- Tránsito del MTT (@TTIValparaiso) ----------------------------------------
+#
+# Congestión, tránsito lento, semáforos apagados, pistas ocupadas, marchas y la
+# normalidad que los cierra, con el tramo dibujado sobre la forma real de la
+# calle (`osm_vias`, ver `collectors/tramos.py`). La misma ruta alimenta la capa
+# del mapa y la lista de «Ahora». Va antes de `/{public_id}`.
+#
+# Una feature sin línea ni punto (el MTT nombró un lugar que no encontramos)
+# viaja igual, con `geometry: null`: la lista la muestra, el mapa no.
+
+#: La ventana de la consulta: lo más largo que vive un subtipo (`transito.VIGENCIA`).
+TRANSITO_VENTANA = max(transito.VIGENCIA.values())
+
+
+def _transito_feature(event: Any) -> GeoJSONFeature:
+    raw: dict[str, Any] = event.raw_data if isinstance(event.raw_data, dict) else {}
+    mtt = transito.bloque_mtt(raw) or {}
+    subtipo = str(mtt.get("tipo"))
+    ubicacion = mtt.get("ubicacion") if isinstance(mtt.get("ubicacion"), dict) else {}
+    linea = mtt.get("linea")
+    if isinstance(linea, dict) and linea.get("type") in {"LineString", "MultiLineString"}:
+        geometry: dict[str, Any] | None = linea
+    elif event.lat is not None and event.lon is not None:
+        geometry = {"type": "Point", "coordinates": [event.lon, event.lat]}
+    else:
+        geometry = None
+    properties: dict[str, Any] = {
+        "public_id": str(event.public_id),
+        "timestamp": event.timestamp.isoformat(),
+        "vence": transito.vence(subtipo, event.timestamp).isoformat(),
+        "subtipo": subtipo,
+        "nombre": transito.NOMBRE.get(subtipo, "Tránsito"),
+        "titulo": transito.titulo(mtt),
+        "tramo": transito.tramo_texto(mtt),
+        "sentido": mtt.get("sentido"),
+        "metodo": ubicacion.get("metodo"),
+        "text": event.text,
+        "comuna": raw.get("comuna") or event.commune,
+        "url": raw.get("url"),
+        "lat": event.lat,
+        "lon": event.lon,
+    }
+    return GeoJSONFeature(geometry=geometry, properties=properties)
+
+
+@router.get(
+    "/transito/geojson",
+    response_model=GeoJSONFeatureCollection,
+    summary="Estado del tránsito del MTT como GeoJSON",
+    description=(
+        "Lo que publica **@TTIValparaiso** (Transporte Informa, MTT) y sigue "
+        "vigente: `subtipo` es `congestion`, `lento`, `semaforo`, "
+        "`pista_ocupada`, `marcha` o `normalidad` (el verde que confirma que "
+        "una vía se despejó).\n\n"
+        "La geometría es el **tramo sobre la forma real de la calle** cuando "
+        "se pudo ubicar (`LineString`), el punto cuando el MTT nombró sólo un "
+        "lugar, o `null` cuando no lo encontramos. `vence` es cuándo deja de "
+        "mostrarse si nadie avisa antes la normalidad.\n\n"
+        "**No son siniestros**: no crean incidentes. Más reciente primero."
+    ),
+)
+async def transito_geojson(
+    service: IngestServiceDep,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 300,
+) -> GeoJSONFeatureCollection:
+    ahora = datetime.now(UTC)
+    events = await service.repo.list_events(
+        since=ahora - TRANSITO_VENTANA,
+        sources=[EventSource.TRANSPORTE_INFORMA],
+        types=[EventType.TRAFFIC_CONDITION, EventType.ROAD_CLOSURE],
+        bbox=None,
+        limit=limit,
+    )
+    vigentes = [e for e in events if transito.vigente(e.raw_data, e.timestamp, ahora)]
+    vigentes.sort(key=lambda e: e.timestamp, reverse=True)
+    return GeoJSONFeatureCollection(features=[_transito_feature(e) for e in vigentes])
 
 
 # --- Cortes de agua (Esval) ----------------------------------------------------

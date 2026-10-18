@@ -69,6 +69,7 @@ def test_los_radios_por_defecto_son_los_acordados():
         "hydro": 3000.0,
         "other": 2000.0,
         "water": 1000.0,
+        "transito": 0.0,
     }
 
 
@@ -132,7 +133,9 @@ def test_el_estado_publica_las_categorias_y_sus_radios():
     datos = TestClient(app).get("/api/v1/push/status").json()
     assert datos["radios_por_defecto"]["power"] == 1000
     assert [c["clave"] for c in datos["categorias"]] == list(radios.CATEGORIAS)
-    assert datos["categorias"][-1]["etiqueta"] == "Cortes de agua"
+    etiquetas = [c["etiqueta"] for c in datos["categorias"]]
+    assert etiquetas[-2:] == ["Cortes de agua", "Tránsito"]
+    assert datos["radios_por_defecto"]["transito"] == 0
 
 
 def test_el_servicio_rechaza_radios_invalidos():

@@ -92,6 +92,14 @@ export const queryKeys = {
     geojson: () => ['water-cuts', 'geojson'] as const,
   },
   /**
+   * Tránsito del MTT: una sola consulta para la capa y la lista de «Ahora».
+   * Ver `api/transito.ts`.
+   */
+  transito: {
+    all: ['transito'] as const,
+    geojson: () => ['transito', 'geojson'] as const,
+  },
+  /**
    * Capa de amenaza sísmica: un artefacto que el backend sirve en
    * `/events/seismic/hazard` (ver `config/map.ts`). Vive en el mismo cliente
    * igualmente, porque lo que se busca de react-query acá no es la caché sino
