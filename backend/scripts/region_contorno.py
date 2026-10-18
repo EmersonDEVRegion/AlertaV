@@ -1,44 +1,51 @@
 #!/usr/bin/env python3
-"""Contorno de la Región de Valparaíso continental para la máscara del mapa.
+"""Contorno de la Región de Valparaíso continental y la viñeta del mapa.
 
     python -m scripts.region_contorno
     python -m scripts.region_contorno --out ../frontend/src/data/region_valpo.json
 
 Qué es
 ======
-La PWA apaga todo lo que queda fuera de la región con una máscara casi opaca y
-dibuja su borde con una línea fina. Para eso necesita un solo polígono: la unión
-de las 36 comunas continentales de `migrations/data/comunas_v_region.geojson`
-(las mismas de la tabla `comunas_region`).
+La PWA apaga lo que queda fuera de la región con una viñeta: transparente en
+el borde y cada vez más oscura hasta `VINETA_KM`. Así se ve la región como
+iluminada y lo vecino (Los Vilos, Tiltil, Colina) como contexto apagado, sin
+el escalón de una máscara pareja, que se leía como un mapa de videojuego.
 
-Las comunas se simplificaron una por una, así que sus bordes compartidos no
-calzan exacto y la unión deja rendijas. Se cierran engordando cada comuna
-~60 m, uniendo y adelgazando lo mismo. Después se descartan los islotes de
-menos de 2 km² y los agujeros, y se simplifica a ~150 m: el borde se ve desde
-zoom 7 a 17 y no necesita más. Queda en ~17 KB y va dentro del bundle (sin
-pedido extra, funciona sin conexión).
+El archivo trae:
 
-El archivo trae dos rasgos:
+- `region`: la unión de las 36 comunas continentales de
+  `migrations/data/comunas_v_region.geojson` (las mismas de la tabla
+  `comunas_region`). Lo usan el borde dibujado y «¿está en la región?». Las
+  comunas se simplificaron una por una, así que sus bordes compartidos no
+  calzan exacto y la unión deja rendijas: se cierran engordando cada comuna
+  ~60 m, uniendo y adelgazando lo mismo. Después se descartan los islotes de
+  menos de 2 km² y los agujeros, y se simplifica a ~150 m.
+- `vineta`: un rectángulo enorme con un agujero en la región engordada a cada
+  distancia de `ANILLOS_KM`. Los rectángulos se apilan: un punto a 20 km del
+  borde queda bajo todos los que tienen el agujero más chico que 20 km. Cada
+  uno lleva `f` (la oscuridad buscada entre su distancia y la siguiente, de 0
+  a 1) y `fp` (la del anterior); la PWA saca de ahí cuánto pinta cada capa para
+  que el apilado dé `f` × el tope del tema. Apilar en vez de cortar anillos
+  guarda cada borde una sola vez.
 
-- `region`: el contorno. Lo usan el borde dibujado y «¿está en la región?».
-- `visible`: el contorno más el mar de enfrente, que es lo que la máscara deja
-  sin tapar. Sin el mar, la máscara cortaba los rótulos de las ciudades de la
-  costa (Valparaíso, San Antonio, Quintero), que se dibujan sobre el agua. El
-  mar es una franja de ~40 km que sigue la costa, entre la desembocadura del
-  Rapel y el límite con Coquimbo: no se destapa tierra de otra región.
+El mar recibe el mismo degradado que la tierra. Las distancias se miden en
+kilómetros de verdad: se encoge la longitud por el coseno de la latitud antes
+de engordar y se estira después.
 
 Requiere `shapely` (`scripts/requirements-osm.txt`). Se corre a mano cuando
-cambia el archivo de comunas, o sea casi nunca.
+cambia el archivo de comunas o la forma de la viñeta.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from typing import Any
 
-from shapely.geometry import LineString, MultiPolygon, Polygon, mapping, shape
+from shapely import affinity
+from shapely.geometry import MultiPolygon, Polygon, box, mapping, shape
 from shapely.geometry.polygon import orient
 from shapely.ops import unary_union
 
@@ -53,23 +60,28 @@ TOLERANCIA = 0.0015
 #: Islotes menores que esto (en grados², ~2 km²) no aportan nada al borde.
 AREA_MINIMA = 0.0002
 DECIMALES = 4
-#: Latitudes donde la costa de la región empieza y termina: el límite con
-#: Coquimbo (al sur de Pichidangui) y la desembocadura del Rapel.
-COSTA_NORTE = -32.177
-COSTA_SUR = -33.918
-#: Ancho del mar destapado, en grados (~40 km): lo que ocupa el rótulo de una
-#: ciudad de la costa al zoom mínimo, que va a la izquierda del punto.
-MAR_ANCHO = 0.4
-#: Borde oeste del polígono con que se arma el mar, antes de recortarlo.
-MAR_OESTE = -74.0
-#: Paso con que se sigue la costa (~550 m).
-PASO_COSTA = 0.005
+
+#: Hasta dónde llega el degradado.
+VINETA_KM = 40.0
+#: Distancias de cada escalón. Cada 3 km: con el tope de la PWA (~0,8) ningún
+#: salto pasa de ~0,1 de opacidad y el ojo no los separa.
+ANILLOS_KM = [3.0 * i for i in range(1, 14)] + [VINETA_KM]
+#: Los bordes engordados son curvas suaves: ~300 m de detalle y 3 decimales
+#: (~100 m) bastan, y el archivo queda en una fracción.
+TOLERANCIA_VINETA = 0.003
+DECIMALES_VINETA = 3
+#: Lo que cubre el rectángulo exterior: mucho más que todo lo que el mapa deja
+#: mirar, para que nunca se vea su borde.
+AFUERA = box(-90.0, -60.0, -50.0, -10.0)
+#: Latitud media de la región, para pasar kilómetros a grados.
+LAT_MEDIA = -33.0
+KM_POR_GRADO = 111.32
 
 
-def _redondear(coords: Any) -> Any:
+def _redondear(coords: Any, decimales: int) -> Any:
     if isinstance(coords, tuple | list) and coords and isinstance(coords[0], int | float):
-        return [round(float(c), DECIMALES) for c in coords[:2]]
-    return [_redondear(c) for c in coords]
+        return [round(float(c), decimales) for c in coords[:2]]
+    return [_redondear(c, decimales) for c in coords]
 
 
 def contorno(coleccion: dict[str, Any]) -> Polygon | MultiPolygon:
@@ -84,52 +96,69 @@ def contorno(coleccion: dict[str, Any]) -> Polygon | MultiPolygon:
     return orient(unida)
 
 
-def mar_de_enfrente(region: Polygon | MultiPolygon) -> Polygon:
-    """La franja de mar de `MAR_ANCHO` frente a la costa de la región.
-
-    La costa, latitud por latitud, es el punto más al oeste de la región en esa
-    latitud. Todo lo que queda al oeste de ella, hasta `MAR_ANCHO` de la región,
-    es mar: así la franja sigue la forma de la costa.
-    """
-    costa: list[tuple[float, float]] = []
-    lat = COSTA_NORTE
-    while lat >= COSTA_SUR:
-        corte = LineString([(MAR_OESTE, lat), (-69.0, lat)]).intersection(region)
-        if not corte.is_empty:
-            costa.append((round(corte.bounds[0], 5), round(lat, 5)))
-        lat -= PASO_COSTA
-    anillo = [(MAR_OESTE, costa[0][1]), *costa, (MAR_OESTE, costa[-1][1])]
-    # El borde del mar toca la costa: se engorda un poco para que la unión no
-    # deje una rendija entre los dos.
-    return Polygon(anillo).buffer(COSTURA).intersection(region.buffer(MAR_ANCHO))
+def engordar(region: Polygon | MultiPolygon, km: float) -> Polygon | MultiPolygon:
+    """La región engordada `km` kilómetros de verdad en todas direcciones."""
+    escala = math.cos(math.radians(LAT_MEDIA))
+    plana = affinity.scale(region, xfact=escala, yfact=1.0, origin=(0, 0))
+    gorda = plana.buffer(km / KM_POR_GRADO, quad_segs=8)
+    vuelta = affinity.scale(gorda, xfact=1 / escala, yfact=1.0, origin=(0, 0))
+    return vuelta.simplify(TOLERANCIA_VINETA, preserve_topology=True)
 
 
-def _feature(tipo: str, geometria: Polygon | MultiPolygon) -> dict[str, Any]:
-    return {
-        "type": "Feature",
-        "properties": {"tipo": tipo},
-        "geometry": {
-            "type": geometria.geom_type,
-            "coordinates": _redondear(mapping(geometria)["coordinates"]),
-        },
-    }
+def oscuridad(km: float) -> float:
+    """De 0 en el borde a 1 en `VINETA_KM`: suave al empezar y al terminar."""
+    t = min(max(km / VINETA_KM, 0.0), 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def vineta(region: Polygon | MultiPolygon) -> list[dict[str, Any]]:
+    """Un rectángulo con agujero por distancia, del agujero más chico al más grande."""
+    capas: list[dict[str, Any]] = []
+    anterior = 0.0
+    for i, km in enumerate(ANILLOS_KM):
+        siguiente = ANILLOS_KM[i + 1] if i + 1 < len(ANILLOS_KM) else km
+        # La oscuridad del tramo [km, siguiente): la de su punto medio; la
+        # última capa cubre todo lo de más allá, al tope.
+        f = 1.0 if km >= VINETA_KM else round(oscuridad((km + siguiente) / 2), 4)
+        hueco = engordar(region, km)
+        huecos = list(hueco.geoms) if isinstance(hueco, MultiPolygon) else [hueco]
+        geometria = orient(Polygon(AFUERA.exterior, [h.exterior for h in huecos]))
+        capas.append(
+            {
+                "type": "Feature",
+                "properties": {"tipo": "vineta", "km": km, "f": f, "fp": anterior},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": _redondear(
+                        mapping(geometria)["coordinates"], DECIMALES_VINETA
+                    ),
+                },
+            }
+        )
+        anterior = f
+    return capas
 
 
 def coleccion(region: Polygon | MultiPolygon) -> dict[str, Any]:
-    visible = unary_union([region, mar_de_enfrente(region)]).simplify(
-        TOLERANCIA, preserve_topology=True
-    )
-    if isinstance(visible, MultiPolygon):
-        visible = max(visible.geoms, key=lambda p: p.area)
-    visible = orient(Polygon(visible.exterior))
     return {
         "type": "FeatureCollection",
         "metadata": {
             "nombre": "Región de Valparaíso (continental)",
             "fuente": "BCN, División Político-Administrativa (comunas_v_region.geojson)",
             "generado_por": "backend/scripts/region_contorno.py",
+            "vineta_km": VINETA_KM,
         },
-        "features": [_feature("region", region), _feature("visible", visible)],
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"tipo": "region"},
+                "geometry": {
+                    "type": region.geom_type,
+                    "coordinates": _redondear(mapping(region)["coordinates"], DECIMALES),
+                },
+            },
+            *vineta(region),
+        ],
     }
 
 
@@ -141,14 +170,12 @@ def main() -> None:
 
     geometria = contorno(json.loads(args.desde.read_text(encoding="utf-8")))
     salida = coleccion(geometria)
+    texto = json.dumps(salida, ensure_ascii=False, separators=(",", ":")) + "\n"
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(
-        json.dumps(salida, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8"
-    )
+    args.out.write_text(texto, encoding="utf-8")
     oeste, sur, este, norte = geometria.bounds
-    partes = len(geometria.geoms) if isinstance(geometria, MultiPolygon) else 1
     print(
-        f"{args.out}: {partes} polígono(s), {len(json.dumps(salida))} bytes, "
+        f"{args.out}: {len(salida['features']) - 1} capas de viñeta, {len(texto)} bytes, "
         f"caja [{oeste:.3f}, {sur:.3f}, {este:.3f}, {norte:.3f}]"
     )
 

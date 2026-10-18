@@ -17,7 +17,7 @@ describe('regionCamera', () => {
     const { minZoom } = regionCamera(PHONE, PHONE_INSETS)
     const regionWidthPx = (REGION_BBOX[2] - REGION_BBOX[0]) * pxPerLon(minZoom)
     expect(regionWidthPx).toBeLessThanOrEqual(PHONE.width)
-    expect(regionWidthPx).toBeGreaterThan(PHONE.width * 0.85) // y la llena
+    expect(regionWidthPx).toBeGreaterThan(PHONE.width * 0.75) // y la llena
   })
 
   it('en el escritorio, la región cabe a la derecha de la columna', () => {
@@ -48,12 +48,27 @@ describe('regionCamera', () => {
     }
   })
 
-  it('la vista inicial deja la región al centro de lo que no está tapado', () => {
-    const { center, minZoom } = regionCamera(DESKTOP, DESKTOP_INSETS)
-    const regionCenterLon = (REGION_BBOX[0] + REGION_BBOX[2]) / 2
-    // La columna corre el centro de la región a la derecha del centro del lienzo.
-    const shiftPx = (regionCenterLon - center.longitude) * pxPerLon(minZoom)
-    expect(shiftPx).toBeCloseTo(DESKTOP_INSETS.left / 2, 0)
+  it('la vista inicial deja la región entera en lo que no está tapado', () => {
+    for (const [viewport, insets] of [
+      [PHONE, PHONE_INSETS],
+      [DESKTOP, DESKTOP_INSETS],
+    ] as const) {
+      const { center, minZoom } = regionCamera(viewport, insets)
+      // Píxel de cada borde de la región, medido desde el borde izquierdo.
+      const px = (lon: number) =>
+        viewport.width / 2 + (lon - center.longitude) * pxPerLon(minZoom)
+      expect(px(REGION_BBOX[0])).toBeGreaterThan(insets.left)
+      expect(px(REGION_BBOX[2])).toBeLessThan(viewport.width - insets.right)
+    }
+  })
+
+  it('deja más margen al oeste: ahí van los nombres de las ciudades de la costa', () => {
+    const { center, minZoom } = regionCamera(PHONE, PHONE_INSETS)
+    const px = (lon: number) => PHONE.width / 2 + (lon - center.longitude) * pxPerLon(minZoom)
+    const west = px(REGION_BBOX[0])
+    const east = PHONE.width - px(REGION_BBOX[2])
+    expect(west).toBeGreaterThan(east * 2)
+    expect(west).toBeGreaterThan(50)
   })
 
   it('una ventana diminuta no deja un zoom mínimo absurdo', () => {

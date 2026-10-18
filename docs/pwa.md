@@ -345,16 +345,9 @@ temporizador para el instante en que algo vence: no hay reloj en `App`.
 AlertaV es de la Región de Valparaíso: lo de afuera no tiene datos y sus
 rótulos (Illapel, San Fernando, Mendoza) sólo distraen.
 
-- **Máscara casi opaca** sobre todo lo que queda fuera de la región, con el
-  borde marcado por una línea fina (`components/map/regionMaskLayers.ts`). Se
-  deja ver una franja de ~40 km de mar frente a la costa, entre el límite con
-  Coquimbo y la desembocadura del Rapel: ahí el mapa base escribe los nombres
-  de Valparaíso, San Antonio o Quintero. La máscara va encima de los campos
-  (lluvia, amenaza sísmica, zonas de la DMC), que así terminan en el borde, y
-  debajo de los marcadores: un sismo en el mar se ve igual.
-- **Contorno** (`src/data/region_valpo.json`): unión de las 36 comunas
-  continentales, simplificada a ~150 m, más la franja de mar. Lo genera
-  `backend/scripts/region_contorno.py`.
+- **Viñeta** sobre lo que queda fuera de la región (`components/map/regionMaskLayers.ts`): transparente en el borde, cada vez más oscura hasta ~40 km, donde llega al tope (0,93 en oscuro, 0,9 en claro). Lo vecino (Los Vilos, Tiltil, Colina, la costa) queda como contexto apagado; lo lejano (Illapel, San Fernando, Mendoza) casi no se lee. El mar recibe el mismo degradado. Una máscara pareja ya se probó: el salto de golpe en el borde se leía como la «zona por desbloquear» de un videojuego. El borde de la región va en una línea tenue. La viñeta va encima de los campos (lluvia, amenaza sísmica, zonas de la DMC), que se apagan con lo demás, y debajo de los marcadores: un sismo en el mar se ve igual.
+- **Cómo se arma:** 14 rectángulos apilados, cada uno con la región engordada 3, 6, 9… 40 km como agujero, en una sola capa. Cada uno pinta lo justo para que el apilado dé la oscuridad de su tramo (`vignetteOpacity`); sin antialias, para que dos capas que comparten borde no dejen un hilo.
+- **Contorno y viñeta** (`src/data/region_valpo.json`, ~60 KB): unión de las 36 comunas continentales, simplificada a ~150 m, y las capas de la viñeta. Lo genera `backend/scripts/region_contorno.py`.
 - **Zoom mínimo según la pantalla** (`lib/regionCamera.ts`): el que deja la
   región entera en lo que no tapan la hoja o la columna. Una caja fija no sirve:
   un teléfono vertical y un monitor ancho necesitan cajas opuestas. Los límites

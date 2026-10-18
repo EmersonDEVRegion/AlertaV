@@ -30,7 +30,7 @@ import type { SeismicEvent } from '@/api/seismicTypes'
 import type { Incident } from '@/api/types'
 import type { WaterCut } from '@/api/waterCutTypes'
 import { FOCUS_ZOOM, MAP_LOCALE, MAP_ATTRIBUTION, mapStyleFor } from '@/config/map'
-import { REGION, regionMask } from '@/domain/region'
+import { REGION, REGION_VIGNETTE } from '@/domain/region'
 import { useRegionCamera } from '@/hooks/useRegionCamera'
 import type { StartView } from '@/lib/initialView'
 import {
@@ -213,8 +213,6 @@ interface IncidentMapProps {
  * `deepEqual` en cada render; con un objeto nuevo compara de balde.
  */
 const MAP_STYLE_BOX = { position: 'absolute', inset: 0 } as const
-/** Polígono fijo: «todo menos la región y su mar» (`domain/region.ts`). */
-const REGION_MASK = regionMask()
 const TOUCH_ZOOM_ROTATE = { around: 'center' } as const
 const GEOLOCATE_OPTIONS = { enableHighAccuracy: true } as const
 /**
@@ -764,12 +762,12 @@ export const IncidentMap = memo(function IncidentMap({
       <WindConeSource incidents={incidents} />
 
       {/*
-        Máscara de la región: tapa casi entero lo de afuera y marca el borde.
+        Viñeta de la región: apaga de a poco lo de afuera y marca el borde.
         Justo después del cono y sin ancla: encima de todo lo que se ancla a
-        `wind-cone-fill` (campos y referencia, que así terminan en el borde) y
+        `wind-cone-fill` (campos y referencia, que se apagan con lo demás) y
         debajo de los marcadores. Ver `regionMaskLayers.ts`.
       */}
-      <Source id={REGION_MASK_SOURCE_ID} type="geojson" data={REGION_MASK}>
+      <Source id={REGION_MASK_SOURCE_ID} type="geojson" data={REGION_VIGNETTE}>
         <Layer {...maskSpecs.fill} />
       </Source>
       <Source id={REGION_EDGE_SOURCE_ID} type="geojson" data={REGION}>

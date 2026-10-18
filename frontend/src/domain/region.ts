@@ -3,8 +3,9 @@
  *
  * El contorno es la unión de las 36 comunas (`backend/scripts/region_contorno.py`
  * sobre `comunas_v_region.geojson`, las mismas de la tabla `comunas_region`),
- * simplificada a ~150 m. El mismo archivo trae lo que la máscara deja ver. Va en el bundle: la máscara tiene que estar desde el
- * primer cuadro, también sin conexión.
+ * simplificada a ~150 m. El mismo archivo trae la viñeta que apaga lo de
+ * afuera. Va en el bundle: tiene que estar desde el primer cuadro, también sin
+ * conexión.
  */
 
 import type { Feature, FeatureCollection, MultiPolygon, Polygon, Position } from 'geojson'
@@ -12,24 +13,46 @@ import regionFile from '@/data/region_valpo.json'
 
 export type Bbox = readonly [west: number, south: number, east: number, north: number]
 
-type Area = Feature<Polygon | MultiPolygon, { tipo: 'region' | 'visible' }>
-const AREAS = (regionFile as unknown as FeatureCollection<Polygon | MultiPolygon>).features as Area[]
+/**
+ * Una capa de la viñeta: un rectángulo enorme con la región engordada `km`
+ * kilómetros como agujero. `f` es la oscuridad buscada más allá de `km` (de 0
+ * a 1) y `fp` la de la capa anterior: con eso cada capa sabe cuánto pintar
+ * para que el apilado dé `f` (ver `regionMaskLayers.ts`).
+ */
+export interface VignetteProps {
+  tipo: 'vineta'
+  km: number
+  f: number
+  fp: number
+}
 
-function area(tipo: Area['properties']['tipo']): Area {
-  const found = AREAS.find((f) => f.properties.tipo === tipo)
-  if (!found) throw new Error(`region_valpo.json no trae «${tipo}»`)
+type RegionFeature = Feature<Polygon | MultiPolygon, { tipo: 'region' }>
+type VignetteFeature = Feature<Polygon, VignetteProps>
+
+const FEATURES = (regionFile as unknown as FeatureCollection).features as (
+  | RegionFeature
+  | VignetteFeature
+)[]
+
+function regionFeature(): RegionFeature {
+  const found = FEATURES.find((f): f is RegionFeature => f.properties.tipo === 'region')
+  if (!found) throw new Error('region_valpo.json no trae el contorno de la región')
   return found
 }
 
 /** El contorno de la región: el borde dibujado y «¿está en la región?». */
-export const REGION = area('region')
+export const REGION = regionFeature()
 
 /**
- * Lo que la máscara deja sin tapar: la región más el mar de enfrente. Sin el
- * mar, la máscara cortaría los rótulos de Valparaíso, San Antonio o Quintero,
- * que el mapa base dibuja sobre el agua.
+ * La viñeta: transparente en el borde de la región y cada vez más oscura hasta
+ * ~40 km, donde llega al tope del tema. Se ve la región como iluminada y lo
+ * vecino (Los Vilos, Tiltil, Colina) como contexto apagado; el mar recibe el
+ * mismo degradado. Del agujero más chico al más grande.
  */
-const VISIBLE = area('visible')
+export const REGION_VIGNETTE: FeatureCollection<Polygon, VignetteProps> = {
+  type: 'FeatureCollection',
+  features: FEATURES.filter((f): f is VignetteFeature => f.properties.tipo === 'vineta'),
+}
 
 /** Los anillos exteriores del contorno (uno por polígono). */
 function exteriorRings(geometry: Polygon | MultiPolygon): Position[][] {
@@ -61,8 +84,8 @@ export const REGION_BBOX: Bbox = bboxOf(exteriorRings(REGION.geometry))
  * Hasta dónde puede ir la cámara para mostrar un sismo: la caja de sismos del
  * backend (`USGS_*` y `CSN_*` en `backend/app/core/config.py`, lo vigila
  * `config/rainGridBounds.test.ts`). Llega a −73 por el mar, donde está la fosa;
- * por tierra, ~90 km más allá de la región. Fuera de la región todo queda
- * bajo la máscara: se puede llegar, pero sólo se ve el sismo.
+ * por tierra, ~90 km más allá de la región. Ahí la viñeta ya está al tope: se
+ * puede llegar, pero se ve sobre todo el sismo.
  */
 export const SEISMIC_BBOX: Bbox = [-73.0, -34.8, -69.2, -31.2]
 
@@ -107,36 +130,4 @@ export function signedArea(ring: readonly Position[]): number {
     sum += (xj - xi) * (yj + yi)
   }
   return sum / 2
-}
-
-function withWinding(ring: Position[], counterClockwise: boolean): Position[] {
-  return signedArea(ring) > 0 === counterClockwise ? ring : [...ring].reverse()
-}
-
-/**
- * Rectángulo mucho más grande que todo lo que el mapa deja mirar. No hace
- * falta que sea el mundo: con eso basta para que nunca se vea su borde.
- */
-const OUTSIDE: Position[] = [
-  [-90, -60],
-  [-50, -60],
-  [-50, -10],
-  [-90, -10],
-  [-90, -60],
-]
-
-/**
- * «Todo menos la región y su mar»: un polígono con `VISIBLE` como agujero.
- *
- * MapLibre decide qué anillo es agujero por el sentido en que gira (el
- * opuesto al exterior), no por su posición en el arreglo: el exterior va
- * antihorario y el agujero horario, pase lo que pase con el archivo.
- */
-export function regionMask(): Feature<Polygon> {
-  const holes = exteriorRings(VISIBLE.geometry).map((ring) => withWinding(ring, false))
-  return {
-    type: 'Feature',
-    properties: {},
-    geometry: { type: 'Polygon', coordinates: [withWinding(OUTSIDE, true), ...holes] },
-  }
 }
