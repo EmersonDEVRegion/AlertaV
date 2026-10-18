@@ -1119,6 +1119,12 @@ class Settings(BaseSettings):
     #: reemplazar a uno bueno.
     OSM_CRUCES_MIN_FILAS: int = Field(default=20_000, ge=0)
     OSM_CRUCES_MAX_BYTES: int = Field(default=80_000_000, ge=1_000_000)
+    #: La forma de las vías (`osm_vias`), en el mismo release. Se carga después
+    #: de las esquinas y con su propia versión: si el release todavía no la
+    #: trae, las esquinas siguen funcionando igual.
+    OSM_VIAS_ASSET: str = "osm_vias.csv.gz"
+    OSM_VIAS_MIN_FILAS: int = Field(default=5_000, ge=0)
+    OSM_VIAS_MAX_BYTES: int = Field(default=60_000_000, ge=1_000_000)
 
     # -- Imágenes de Viper (el punto exacto del despacho) ------------------------
     #: Leer el marcador de la imagen que la central adjunta a cada despacho.

@@ -15,29 +15,32 @@ webhook los separa por cuenta (`es_cuenta_transito`) antes de buscar tabla.
 
 Lo que sí
 ---------
-La misma tubería del portal, sin copiarla: `clasificar_transito` decide si es
-un accidente (`ACCIDENT`, al motor) o un desvío, corte o faena (`ROAD_CLOSURE`,
-la capa táctica) y descarta el resto —«Buenos días», recomendaciones,
-suspensiones de micros—; después `resolver_avisos` (delta contra lo guardado,
-Gemini y Nominatim con sus topes) y `eventos_de_avisos`. Entran como
-`EventSource.TRANSPORTE_INFORMA` con la misma confianza 0,80, en una corrida
-propia, `transporte_informa_x`, para que su salud se lea aparte de la de
-Bomberos.
+`separar` reparte cada tuit:
 
-El `external_id` es `mtt:x:<id del tuit>` (o `mtt:closure:x:<id>`). Si el MTT
-publica dos veces el mismo choque, el motor los junta por cercanía y el
-decaimiento de la regla de `transporte_informa` impide que se corroboren a sí
-mismos.
+* **Choques** (`clasificar_transito`): la tubería de siempre —`resolver_avisos`
+  (delta, Gemini y Nominatim con sus topes) y `eventos_de_avisos`—, como
+  `ACCIDENT`, al motor.
+* **El resto de lo útil** (`vocabulary.subtipo_mtt`): congestión, tránsito
+  lento, semáforo apagado, pista ocupada, marcha y normalidad. Gemini extrae
+  vía y tramo (`gemini.extraer_tramo`), `tramos.ubicar` lo dibuja sobre la
+  forma real de la calle, y entra como `ROAD_CLOSURE` (pista ocupada, marcha)
+  o `TRAFFIC_CONDITION` (lo demás), con el subtipo y la línea en `_mtt`. Ninguno
+  de los dos entra al motor.
+* Lo demás —«Buenos días», el trolebús— se descarta.
 
-Reaperturas
------------
-«Habilitado tránsito en Avenida Libertad» no es un aviso nuevo: es el MTT
-cerrando uno suyo. `es_reapertura` se consulta antes que el accidente (un
-«Habilitado tránsito tras accidente en …» no es un choque nuevo), no emite
-señal, y marca con `_mtt_fin` los avisos del MTT de las últimas
-`REAPERTURA_VENTANA` que nombran alguna de sus calles en la misma ciudad. La capa
-de cortes de ruta deja de mostrarlos, y el incidente de un choque conserva la
-hora en que el MTT liberó el paso.
+Entran como `EventSource.TRANSPORTE_INFORMA` con confianza 0,80, en una
+corrida propia, `transporte_informa_x`, para que su salud se lea aparte de la
+de Bomberos. El `external_id` es `mtt:x:<id del tuit>` (choque),
+`mtt:closure:x:<id>` (pista ocupada, marcha) o `mtt:transito:x:<id>`.
+
+Normalidad y reaperturas
+------------------------
+«Habilitado tránsito en Avenida Libertad» o «Tránsito normal y fluido en Av
+Errázuriz» no son avisos de un problema: son el MTT cerrando los suyos. Se
+consultan antes que el accidente (un «Habilitado tránsito tras accidente» no es
+un choque nuevo), marcan con `_mtt_fin` los avisos del MTT de las últimas
+`REAPERTURA_VENTANA` que nombran la misma vía en la misma ciudad, y entran como
+`TRAFFIC_CONDITION` de subtipo `normalidad`: el mapa la pinta en verde un rato.
 
 La ceguera (el Actor que deja de traer la cuenta) se mide en el canario de
 Bomberos: @TTIValparaiso está en `APIFY_X_CUENTAS_ESPERADAS`.
@@ -54,20 +57,23 @@ from typing import Any
 
 from sqlalchemy import select, update
 
+from app.collectors import tramos
 from app.collectors.geoservices import normalise_text
+from app.collectors.traffic import gemini
 from app.collectors.traffic.transporteinforma_worker import (
+    ROAD_CLOSURE_CONFIDENCE,
     TrafficNotice,
     eventos_de_avisos,
     external_id_de,
-    extract_streets_via_llm,
     resolver_avisos,
 )
-from app.collectors.vocabulary import clasificar_transito, es_reapertura
+from app.collectors.vocabulary import clasificar_transito, es_reapertura, subtipo_mtt
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.nombres_via import nombres_calzan
 from app.models.enums import CollectorStatus, EventSource, EventType
 from app.models.event import RawEvent
+from app.schemas.event import EventCreate
 from app.services.ingest_service import IngestService
 
 logger = logging.getLogger(__name__)
@@ -144,38 +150,106 @@ def es_fresco(aviso: TrafficNotice, *, ahora: datetime, max_age_minutes: int) ->
     return ahora - aviso.published_at <= timedelta(minutes=max_age_minutes)
 
 
-def clasificar(
+#: Subtipos que ocupan la vía: van a la capa de cortes como `ROAD_CLOSURE`.
+SUBTIPOS_CORTE = frozenset({"pista_ocupada", "marcha"})
+#: Subtipos que pueden pintar la vía entera («en toda su extensión»).
+SUBTIPOS_VIA_COMPLETA = frozenset({"normalidad"})
+
+
+def separar(
     avisos: Sequence[TrafficNotice],
-) -> tuple[list[tuple[TrafficNotice, EventType]], int]:
-    """Accidentes primero (compiten por el mismo cupo de Gemini y Nominatim).
+) -> tuple[list[TrafficNotice], list[tuple[TrafficNotice, str]], int]:
+    """`(choques, [(aviso, subtipo)], descartados)`.
 
-    Devuelve los clasificados y cuántos se descartaron por no ser ni accidente
-    ni intervención de la vía. Las reaperturas no entran: ver `reaperturas`.
+    La reapertura va antes que el choque: «Habilitado tránsito tras accidente en
+    Ruta 68» cierra uno, no abre otro.
     """
-    clasificados = [
-        (aviso, tipo)
-        for aviso in avisos
-        if not es_reapertura(aviso.text) and (tipo := clasificar_transito(aviso.text)) is not None
-    ]
-    clasificados.sort(key=lambda par: par[1] is not EventType.ACCIDENT)
-    return clasificados, len(avisos) - len(clasificados)
+    choques: list[TrafficNotice] = []
+    condiciones: list[tuple[TrafficNotice, str]] = []
+    descartados = 0
+    for aviso in avisos:
+        if es_reapertura(aviso.text):
+            condiciones.append((aviso, "normalidad"))
+        elif clasificar_transito(aviso.text) is EventType.ACCIDENT:
+            choques.append(aviso)
+        elif subtipo := subtipo_mtt(aviso.text):
+            condiciones.append((aviso, subtipo))
+        else:
+            descartados += 1
+    return choques, condiciones, descartados
 
 
-def reaperturas(avisos: Sequence[TrafficNotice]) -> list[TrafficNotice]:
-    """Los tuits que avisan que una vía volvió a abrirse."""
-    return [aviso for aviso in avisos if es_reapertura(aviso.text)]
+def tipo_de(subtipo: str) -> EventType:
+    return EventType.ROAD_CLOSURE if subtipo in SUBTIPOS_CORTE else EventType.TRAFFIC_CONDITION
+
+
+def external_id_condicion(aviso: TrafficNotice, subtipo: str) -> str:
+    """Los cortes conservan su prefijo de siempre; el estado del tránsito, uno propio."""
+    tipo = tipo_de(subtipo)
+    if tipo is EventType.ROAD_CLOSURE:
+        return external_id_de(aviso, tipo)
+    return f"mtt:transito:{aviso.notice_id}"
+
+
+def evento_condicion(
+    aviso: TrafficNotice,
+    subtipo: str,
+    extraccion: dict[str, Any] | None,
+    ubicacion: tramos.Ubicacion | None,
+    sin_ubicar: Sequence[str],
+    *,
+    ahora: datetime,
+) -> EventCreate:
+    """Un aviso del MTT que no es choque → `EventCreate`. Pura."""
+    momento = min(aviso.published_at or ahora, ahora)
+    datos = dict(extraccion or {})
+    comunas = tramos.comunas_de(datos.get("ciudad"))
+    return EventCreate(
+        timestamp=momento,
+        source=EventSource.TRANSPORTE_INFORMA,
+        type=tipo_de(subtipo),
+        lat=ubicacion.lat if ubicacion else None,
+        lon=ubicacion.lon if ubicacion else None,
+        text=aviso.text[:10_000],
+        external_id=external_id_condicion(aviso, subtipo),
+        confidence=ROAD_CLOSURE_CONFIDENCE,
+        raw_data={
+            **dict(aviso.raw),
+            "comuna": tramos.nombre_de_comuna(comunas),
+            "_collector": COLLECTOR_NAME,
+            "_extraction": {
+                **datos,
+                "mode": gemini.MODE_GEMINI if extraccion else gemini.MODE_HEURISTIC,
+            },
+            "_mtt": {
+                "tipo": subtipo,
+                "via": datos.get("via"),
+                "desde": datos.get("desde"),
+                "hasta": datos.get("hasta"),
+                "punto": datos.get("punto"),
+                "sentido": datos.get("sentido"),
+                "linea": ubicacion.geometria if ubicacion else None,
+                "ubicacion": ubicacion.como_dict() if ubicacion else None,
+                "sin_ubicar": list(dict.fromkeys(sin_ubicar)),
+            },
+        },
+    )
 
 
 def calles_de(extraccion: dict[str, Any] | None) -> tuple[list[str], str | None]:
-    """Calles y ciudad de una extracción (`street_1`, `street_2`, `city`)."""
+    """Calles y ciudad de una extracción: la de un choque (`street_1`, `street_2`,
+    `city`) o la de un tramo (`via`, `ciudad`)."""
     if not extraccion:
         return [], None
     calles = [
         str(extraccion.get(campo) or "").strip()
-        for campo in ("street_1", "street_2")
+        for campo in ("street_1", "street_2", "via")
         if str(extraccion.get(campo) or "").strip()
     ]
-    ciudad = str(extraccion.get("city") or "").strip() or None
+    ciudad = str(extraccion.get("city") or extraccion.get("ciudad") or "").strip() or None
+    if ciudad:
+        # «ViñadelMar» (etiqueta) y «Viña del Mar» son la misma ciudad.
+        ciudad = tramos.nombre_de_comuna(tramos.comunas_de(ciudad)) or ciudad
     return calles, ciudad
 
 
@@ -205,7 +279,11 @@ async def cerrar_reabiertos(
         await session.execute(
             select(RawEvent.id, RawEvent.raw_data)
             .where(RawEvent.source == EventSource.TRANSPORTE_INFORMA)
-            .where(RawEvent.type.in_([EventType.ACCIDENT, EventType.ROAD_CLOSURE]))
+            .where(
+                RawEvent.type.in_(
+                    [EventType.ACCIDENT, EventType.ROAD_CLOSURE, EventType.TRAFFIC_CONDITION]
+                )
+            )
             .where(RawEvent.timestamp >= hora - REAPERTURA_VENTANA)
             .where(RawEvent.timestamp <= hora)
         )
@@ -213,7 +291,7 @@ async def cerrar_reabiertos(
     cerrados = []
     for fila in filas:
         datos = fila.raw_data or {}
-        if "_mtt_fin" in datos:
+        if "_mtt_fin" in datos or (datos.get("_mtt") or {}).get("tipo") == "normalidad":
             continue
         otras, otra_ciudad = calles_de(datos.get("_extraction"))
         if cierra(calles, ciudad, otras, otra_ciudad):
@@ -278,13 +356,13 @@ async def procesar_avisos_transito(
                     )
                 ]
                 viejos = len(avisos) - len(frescos)
-                clasificados, descartados = clasificar(frescos)
-                abiertas = reaperturas(frescos)
-                descartados -= len(abiertas)
+                choques, condiciones, descartados = separar(frescos)
+                clasificados = [(aviso, EventType.ACCIDENT) for aviso in choques]
 
                 claves = [external_id_de(aviso, tipo) for aviso, tipo in clasificados]
+                claves_condicion = [external_id_condicion(a, sub) for a, sub in condiciones]
                 conocidos = await service.repo.puntos_conocidos(
-                    EventSource.TRANSPORTE_INFORMA, claves
+                    EventSource.TRANSPORTE_INFORMA, claves + claves_condicion
                 )
                 # Lo que sigue es red (Gemini, Nominatim): la conexión no puede
                 # quedar «idle in transaction» durante esa espera.
@@ -304,17 +382,52 @@ async def procesar_avisos_transito(
                     avisar=avisos_degradados.append,
                     ahora=momento,
                 )
+
+                # El resto: extraer el tramo, ubicarlo y guardarlo. Lo ya
+                # guardado no vuelve a pagar modelo ni Nominatim.
+                nuevas = [
+                    (aviso, sub, clave)
+                    for (aviso, sub), clave in zip(condiciones, claves_condicion, strict=True)
+                    if clave not in conocidos
+                ]
+                extracciones: list[tuple[TrafficNotice, str, dict[str, Any] | None]] = []
+                ubicados = 0
+                cupo_llm = settings.GEMINI_MAX_CALLS_PER_RUN
+                cupo_nominatim = settings.APIFY_X_TRANSITO_MAX_GEOCODES
+                for aviso, subtipo, _ in nuevas:
+                    extraccion = None
+                    if cupo_llm > 0:
+                        cupo_llm -= 1
+                        extraccion = await gemini.extraer_tramo(aviso.text)
+                    else:
+                        avisos_degradados.append("sin cupo de Gemini para tramos del MTT")
+                    ubicacion, sin_ubicar = await tramos.ubicar(
+                        extraccion,
+                        permitir_via_completa=subtipo in SUBTIPOS_VIA_COMPLETA,
+                        nominatim=cupo_nominatim > 0,
+                    )
+                    cupo_nominatim -= 1
+                    ubicados += ubicacion is not None
+                    eventos.append(
+                        evento_condicion(
+                            aviso, subtipo, extraccion, ubicacion, sin_ubicar, ahora=momento
+                        )
+                    )
+                    extracciones.append((aviso, subtipo, extraccion))
+
                 resultado = await service.ingest_batch(eventos) if eventos else None
                 insertados = resultado.inserted if resultado else 0
                 duplicados = resultado.duplicated if resultado else 0
 
                 # Después de ingerir: el corte que esta misma entrega trajo
-                # también puede ser el que la reapertura cierra.
+                # también puede ser el que la normalidad cierra.
                 cerrados = 0
-                for aviso in abiertas:
-                    extraccion = await extract_streets_via_llm(aviso.text)
-                    cerrados += await cerrar_reabiertos(session, aviso, extraccion, ahora=momento)
-                if abiertas:
+                for aviso, subtipo, extraccion in extracciones:
+                    if subtipo == "normalidad":
+                        cerrados += await cerrar_reabiertos(
+                            session, aviso, extraccion, ahora=momento
+                        )
+                if cerrados:
                     await session.commit()
 
                 notas = list(dict.fromkeys(avisos_degradados))
@@ -346,10 +459,10 @@ async def procesar_avisos_transito(
                         "tuits": len(avisos),
                         "viejos": viejos,
                         "descartados": descartados,
-                        "reaperturas": len(abiertas),
+                        "estado_transito": len(nuevas),
+                        "ubicados": ubicados,
                         "avisos_cerrados": cerrados,
                         "accidentes": accidentes,
-                        "cortes_de_via": len(resumen.resueltos) - accidentes,
                         "reutilizados": resumen.reutilizados,
                         "extracciones_llm": resumen.llamadas_llm,
                         "geocodificados": resumen.geocodificados,
@@ -382,15 +495,18 @@ async def procesar_avisos_transito(
 __all__ = [
     "COLLECTOR_NAME",
     "REAPERTURA_VENTANA",
+    "SUBTIPOS_CORTE",
     "aviso_de_tuit",
     "calles_de",
     "cerrar_reabiertos",
     "cierra",
-    "clasificar",
     "cuentas_transito",
     "es_cuenta_transito",
     "es_fresco",
+    "evento_condicion",
+    "external_id_condicion",
     "limpiar_texto",
     "procesar_avisos_transito",
-    "reaperturas",
+    "separar",
+    "tipo_de",
 ]

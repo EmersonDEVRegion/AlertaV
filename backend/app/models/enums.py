@@ -156,6 +156,14 @@ class EventType(str, Enum):
     #: `EVENT_TO_INCIDENT_TYPE`, como `weather_observation`. Se lee en
     #: `GET /feed/avisos-meteo`.
     WEATHER_WARNING = "weather_warning"
+    #: Estado del tránsito informado por el MTT (@TTIValparaiso): congestión,
+    #: tránsito lento, semáforo apagado o vuelta a la normalidad. El subtipo va
+    #: en `raw_data._mtt.tipo`, y el tramo, si lo hay, en `raw_data._mtt.linea`.
+    #:
+    #: Fuera de `CORRELATABLE_EVENT_TYPES` y de `EVENT_TO_INCIDENT_TYPE` por la
+    #: misma razón que `road_closure`: no es un siniestro, y un taco junto a un
+    #: choque no lo hace más cierto. Vive minutos (ver la capa de tránsito).
+    TRAFFIC_CONDITION = "traffic_condition"
     OTHER = "other"
     UNKNOWN = "unknown"
 

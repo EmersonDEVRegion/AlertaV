@@ -62,6 +62,29 @@ class OsmIndice(Base):
     datos_de: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cargado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     filas: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Versión de `osm_vias` cargada (migración 0024). Puede quedar atrás de
+    #: `version` si el release todavía no trae las vías.
+    version_vias: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
 
-__all__ = ["OsmCruce", "OsmIndice"]
+class OsmVia(Base):
+    """La forma de una vía con nombre en una comuna (migración 0024).
+
+    Las piezas de OSM con el mismo nombre y comuna, unidas y simplificadas a
+    unos metros. Sirve para dibujar un tramo de tránsito pegado a la calle
+    (`collectors/tramos.py`). Datos © OpenStreetMap contributors, ODbL.
+    """
+
+    __tablename__ = "osm_vias"
+    __table_args__ = (Index("ix_osm_vias_ultima", "ultima"), {"schema": _SCHEMA})
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    nombre: Mapped[str] = mapped_column(String(200), nullable=False)
+    ultima: Mapped[str] = mapped_column(String(80), nullable=False)
+    comunas: Mapped[list[str]] = mapped_column(ARRAY(String(40)), nullable=False)
+    geom: Mapped[Any] = mapped_column(
+        Geometry(geometry_type="MULTILINESTRING", srid=4326, spatial_index=False), nullable=False
+    )
+
+
+__all__ = ["OsmCruce", "OsmIndice", "OsmVia"]

@@ -412,7 +412,83 @@ REAPERTURA_TERMS: frozenset[str] = frozenset(
         "se reabre",
         "reabierta al transito",
         "reabierto al transito",
+        # «Incidente superado. … quedan habilitadas»: el MTT cerrando un choque.
+        "incidente superado",
+        "quedan habilitadas",
+        "queda habilitada",
     }
+)
+
+# -- Estado del tránsito (@TTIValparaiso) -------------------------------------
+#
+# Lo que no es un choque ni corta la vía pero sí cambia el viaje: taco, flujo
+# lento, un semáforo apagado, o la vuelta a la normalidad. Entra como
+# `traffic_condition` con su subtipo (`subtipo_mtt`). Se busca con `haystack`,
+# así que van sin tildes y en minúsculas.
+
+#: Tránsito normal otra vez: cierra la congestión de la vía y se pinta en verde.
+#: «Se mantiene habilitada» NO está: describe una vía que nunca se cerró.
+NORMALIDAD_TERMS: frozenset[str] = frozenset(
+    {
+        "transito normal",
+        "flujo normal",
+        "transito fluido",
+        "flujo fluido",
+        "se normaliza",
+        "normalizado",
+    }
+)
+
+SEMAFORO_TERMS: frozenset[str] = frozenset(
+    {
+        "semaforo apagado",
+        "semaforos apagados",
+        "semaforo sin funcionar",
+        "semaforos sin funcionar",
+        "semaforo en intermitente",
+        "semaforos en intermitente",
+        "semaforo con falla",
+        "semaforos con falla",
+    }
+)
+
+CONGESTION_TERMS: frozenset[str] = frozenset(
+    {
+        "congestion",
+        "alta carga vehicular",
+        "alto flujo vehicular",
+    }
+)
+
+LENTO_TERMS: frozenset[str] = frozenset(
+    {
+        "transito lento",
+        "flujo lento",
+        "avance lento",
+        "transito con lentitud",
+        "aumento en los tiempos de viaje",
+    }
+)
+
+#: Marchas y manifestaciones: ocupan la vía y se mueven.
+MARCHA_TERMS: frozenset[str] = frozenset(
+    {
+        "grupo de personas",
+        "marcha",
+        "manifestacion",
+        "manifestantes",
+        "caravana",
+    }
+)
+
+#: Subtipos de un aviso del MTT, en el orden en que se consultan.
+SUBTIPOS_MTT: tuple[str, ...] = (
+    "normalidad",
+    "semaforo",
+    "marcha",
+    "pista_ocupada",
+    "congestion",
+    "lento",
 )
 
 #: Incendios y materiales peligrosos.
@@ -2021,6 +2097,44 @@ def es_reapertura(texto: str) -> bool:
     return any(term in texto_limpio for term in REAPERTURA_TERMS)
 
 
+def subtipo_mtt(texto: str) -> str | None:
+    """Qué dice un aviso del MTT que no es un choque. None si nada útil.
+
+    El orden es el diseño, como en `clasificar_transito`:
+
+    * **Reapertura primero.** «Incidente superado… quedan habilitadas» o
+      «Habilitado tránsito en…» cierran lo que estaba abierto, aunque el tuit
+      nombre lo que hubo.
+    * **«Tránsito normal» al final.** El MTT lo agrega como contraste en un
+      aviso de taco: «Tránsito lento en Av. Alessandri… Tránsito normal en
+      dirección a Viña». Sólo es normalidad si no dice nada más.
+    * **Semáforo antes que congestión:** un semáforo apagado suele traer taco, y
+      lo que hay que saber es el semáforo.
+    * **Marcha y pista ocupada antes que congestión:** «grupo de personas…
+      se mantiene congestión» es una marcha; la congestión es su efecto.
+
+    Los choques no pasan por acá: los decide `clasificar_transito` antes.
+    """
+    texto_limpio = haystack(texto)
+    if not texto_limpio:
+        return None
+    if es_reapertura(texto):
+        return "normalidad"
+    if any(t in texto_limpio for t in SEMAFORO_TERMS):
+        return "semaforo"
+    if any(t in texto_limpio for t in MARCHA_TERMS):
+        return "marcha"
+    if any(t in texto_limpio for t in ROAD_OPS_TERMS):
+        return "pista_ocupada"
+    if any(t in texto_limpio for t in CONGESTION_TERMS):
+        return "congestion"
+    if any(t in texto_limpio for t in LENTO_TERMS):
+        return "lento"
+    if any(t in texto_limpio for t in NORMALIDAD_TERMS):
+        return "normalidad"
+    return None
+
+
 def es_accidente_vial(texto: str) -> bool:
     """¿El texto describe un siniestro vial? Síncrono, sin red.
 
@@ -2216,21 +2330,27 @@ __all__ = [
     "CBVM_NON_INCIDENT_CODES",
     "CLAVE_MEANINGS",
     "CODE_TYPES",
+    "CONGESTION_TERMS",
     "CRITICAL_TERMS",
     "DISPATCH_DEFAULT_TYPE",
     "FIRE_TERMS",
     "FLOOD_TERMS",
     "HEADLINE_VERBS",
     "LANDSLIDE_TERMS",
+    "LENTO_TERMS",
+    "MARCHA_TERMS",
     "NOISE_PHRASES",
     "NON_INCIDENT_CODES",
+    "NORMALIDAD_TERMS",
     "OPERATIONAL_TERMS",
     "PRESS_NOISE_PHRASES",
     "REAPERTURA_TERMS",
     "RESCUE_TERMS",
     "ROAD_OPS_TERMS",
     "SECUELA_TERMS",
+    "SEMAFORO_TERMS",
     "SISTEMAS_CLAVES",
+    "SUBTIPOS_MTT",
     "SUPPORT_CODES",
     "TRAFFIC_TERMS",
     "SistemaClaves",
@@ -2255,5 +2375,6 @@ __all__ = [
     "parse_key",
     "resolve_clave",
     "sistema_de_cuenta",
+    "subtipo_mtt",
     "tipo_por_verbo",
 ]

@@ -40,9 +40,10 @@ class Regla:
     nombre: str
     #: Tipos del incidente desde el que se mira.
     origen: frozenset[IncidentType]
-    #: Tipos del otro: incidentes o señales (`EventType`), uno de los dos.
+    #: Tipos del otro: incidentes, o señales. Una señal se nombra por su tipo
+    #: («road_closure») o por tipo y subtipo del MTT («traffic_condition:semaforo»).
     destino_incidentes: frozenset[IncidentType] = frozenset()
-    destino_eventos: frozenset[EventType] = frozenset()
+    destino_eventos: frozenset[str] = frozenset()
     radio_m: float = 300.0
     #: Desfase admitido (hora del otro − hora del origen).
     desde: timedelta = timedelta(0)
@@ -74,10 +75,21 @@ REGLAS: tuple[Regla, ...] = (
     Regla(
         "deslizamiento_corte_ruta",
         origen=frozenset({IncidentType.LANDSLIDE, IncidentType.FLOOD}),
-        destino_eventos=frozenset({EventType.ROAD_CLOSURE}),
+        destino_eventos=frozenset({EventType.ROAD_CLOSURE.value}),
         radio_m=500.0,
         desde=timedelta(hours=-3),
         hasta=timedelta(hours=3),
+    ),
+    # Un corte de luz apaga los semáforos de la zona. El corte es el origen (es
+    # el incidente); el semáforo, una señal del MTT. El polígono de un corte es
+    # un sector: 500 m.
+    Regla(
+        "corte_luz_semaforo",
+        origen=frozenset({IncidentType.POWER_OUTAGE}),
+        destino_eventos=frozenset({f"{EventType.TRAFFIC_CONDITION.value}:semaforo"}),
+        radio_m=500.0,
+        desde=timedelta(minutes=-30),
+        hasta=timedelta(hours=2),
     ),
 )
 
@@ -109,9 +121,16 @@ def tipos_de_origen(reglas: Iterable[Regla] = REGLAS) -> set[IncidentType]:
 
 
 def tipos_de_destino(reglas: Iterable[Regla] = REGLAS) -> tuple[set[IncidentType], set[EventType]]:
+    """Los tipos de incidente y de señal (sin subtipo) que alguna regla busca."""
     incidentes = {t for r in reglas for t in r.destino_incidentes}
-    eventos = {t for r in reglas for t in r.destino_eventos}
+    eventos = {EventType(t.split(":", 1)[0]) for r in reglas for t in r.destino_eventos}
     return incidentes, eventos
+
+
+def tipo_de_senal(tipo: object, subtipo: str | None) -> str:
+    """Cómo se nombra una señal en las reglas: «road_closure», «traffic_condition:semaforo»."""
+    valor = str(getattr(tipo, "value", tipo))
+    return f"{valor}:{subtipo}" if subtipo else valor
 
 
 def margen(reglas: Iterable[Regla] = REGLAS) -> timedelta:
@@ -141,7 +160,7 @@ def emparejar(
         tipos_origen = {_valor(t) for t in regla.origen}
         destinos: list[tuple[Punto, bool]] = [
             (p, True) for p in incidentes if p.tipo in {_valor(t) for t in regla.destino_incidentes}
-        ] + [(p, False) for p in eventos if p.tipo in {_valor(t) for t in regla.destino_eventos}]
+        ] + [(p, False) for p in eventos if p.tipo in regla.destino_eventos]
         for origen in origenes:
             if origen.tipo not in tipos_origen:
                 continue
@@ -175,6 +194,7 @@ NOMBRE_DESTINO: dict[str, str] = {
     IncidentType.LANDSLIDE.value: "Deslizamiento",
     IncidentType.FLOOD.value: "Anegamiento",
     EventType.ROAD_CLOSURE.value: "Corte de ruta",
+    f"{EventType.TRAFFIC_CONDITION.value}:semaforo": "Semáforo apagado",
 }
 
 
@@ -186,6 +206,7 @@ __all__ = [
     "Regla",
     "emparejar",
     "margen",
+    "tipo_de_senal",
     "tipos_de_destino",
     "tipos_de_origen",
 ]

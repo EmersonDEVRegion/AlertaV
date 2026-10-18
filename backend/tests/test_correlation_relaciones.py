@@ -12,6 +12,7 @@ from app.services.correlation.relaciones import (
     Punto,
     emparejar,
     margen,
+    tipo_de_senal,
     tipos_de_destino,
     tipos_de_origen,
 )
@@ -98,15 +99,34 @@ def test_tipos_y_margen_salen_de_las_reglas():
         IncidentType.STRUCTURAL_FIRE,
         IncidentType.LANDSLIDE,
         IncidentType.FLOOD,
+        IncidentType.POWER_OUTAGE,
     }
     incidentes, eventos = tipos_de_destino()
     assert incidentes == {IncidentType.POWER_OUTAGE}
-    assert eventos == {EventType.ROAD_CLOSURE}
+    assert eventos == {EventType.ROAD_CLOSURE, EventType.TRAFFIC_CONDITION}
     assert margen() == timedelta(hours=3)
 
 
 def test_cada_destino_tiene_nombre_para_la_ficha():
-    _, eventos = tipos_de_destino()
-    destinos = {t.value for r in REGLAS for t in r.destino_incidentes} | {e.value for e in eventos}
+    destinos = {t.value for r in REGLAS for t in r.destino_incidentes} | {
+        e for r in REGLAS for e in r.destino_eventos
+    }
     origenes = {t.value for t in tipos_de_origen()}
     assert destinos | origenes <= set(NOMBRE_DESTINO)
+
+
+def test_corte_de_luz_y_semaforo_apagado_del_mtt():
+    """El corte es el incidente; el semáforo, una señal con subtipo."""
+    corte = punto(1, IncidentType.POWER_OUTAGE, CHOQUE, 0)
+    semaforo = punto(9, tipo_de_senal(EventType.TRAFFIC_CONDITION, "semaforo"), LEJOS, 25)
+    congestion = punto(10, tipo_de_senal(EventType.TRAFFIC_CONDITION, "congestion"), CERCA, 25)
+    [par] = pares([corte], [corte], [semaforo, congestion])
+    assert par.regla == "corte_luz_semaforo"
+    assert (par.otro_id, par.otro_es_incidente) == (9, False)
+    assert par.desfase_s == 25 * 60
+    assert NOMBRE_DESTINO["traffic_condition:semaforo"] == "Semáforo apagado"
+
+
+def test_el_nombre_de_una_senal_con_y_sin_subtipo():
+    assert tipo_de_senal(EventType.ROAD_CLOSURE, None) == "road_closure"
+    assert tipo_de_senal(EventType.TRAFFIC_CONDITION, "semaforo") == "traffic_condition:semaforo"

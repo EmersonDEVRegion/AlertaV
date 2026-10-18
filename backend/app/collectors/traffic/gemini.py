@@ -1415,6 +1415,139 @@ async def decode_dispatch(
 DISPATCH_SYSTEM_INSTRUCTION: str = dispatch_instruction(CBV)
 
 
+
+# =============================================================================
+#  Tercer contrato: tramos del MTT
+# =============================================================================
+#
+# «Congestión en Viana desde Sucre hasta Von Schroeders», «Semáforo apagado en
+# Av Pedro Montt con calle Morris», «Bus en panne en Av. España, altura Caleta
+# Abarca». Para dibujar el tramo en el mapa hacen falta la vía y sus dos
+# extremos, o la vía y el punto. `extract_streets` devuelve dos calles sueltas
+# y pierde cuál es el extremo de qué.
+#
+# Igual que los otros dos contratos, el modelo sólo **copia nombres**. Qué es el
+# aviso (congestión, semáforo, normalidad) lo decide `vocabulary.subtipo_mtt`,
+# y dónde queda cada nombre lo decide `collectors/tramos.py` con OSM.
+
+TRAMO_INSTRUCTION = """\
+Eres un extractor de lugares para avisos de tránsito de la Región de Valparaíso, \
+Chile. Recibes un aviso y devuelves SOLO los nombres de lugares que menciona, \
+copiados tal como aparecen.
+
+Responde SOLO con un objeto JSON válido, sin markdown ni texto adicional:
+{"via": ..., "desde": ..., "hasta": ..., "punto": ..., "sentido": ..., \
+"ciudad": ..., "toda_la_via": true|false}
+
+Reglas:
+- via: la calle, avenida, ruta o camino donde ocurre lo informado. Si el aviso \
+nombra varias, la primera. null si no nombra ninguna.
+- desde / hasta: los extremos de un tramo SOLO si el aviso dice «desde X hasta \
+Y», «entre X y Y» o equivalente. Pueden ser calles o lugares (una rotonda, un \
+enlace, una plaza). Si no hay tramo, null.
+- punto: si no hay tramo, el lugar de la vía donde ocurre: la calle que cruza \
+(«con calle Morris»), o el lugar de referencia («altura Caleta Abarca», \
+«al llegar a Reloj de Flores», «pasado Avenida Argentina», «sector Yolanda»). \
+Sin las palabras «con», «altura», «al llegar a», «pasado», «sector». null si no hay.
+- sentido: hacia dónde, si lo dice («en dirección a Reñaca» → «Reñaca»). null si no.
+- ciudad: la comuna o ciudad (también si viene como etiqueta, «#ViñadelMar»). null si no.
+- toda_la_via: true SOLO si el aviso dice «en toda su extensión» o equivalente.
+- No inventes nada. No corrijas ni expandas abreviaturas. Nunca devuelvas coordenadas.\
+"""
+
+TRAMO_SCHEMA: dict[str, Any] = {
+    "type": "OBJECT",
+    "properties": {
+        "via": {"type": "STRING", "nullable": True},
+        "desde": {"type": "STRING", "nullable": True},
+        "hasta": {"type": "STRING", "nullable": True},
+        "punto": {"type": "STRING", "nullable": True},
+        "sentido": {"type": "STRING", "nullable": True},
+        "ciudad": {"type": "STRING", "nullable": True},
+        "toda_la_via": {"type": "BOOLEAN", "nullable": True},
+    },
+    "required": ["via", "desde", "hasta", "punto", "sentido", "ciudad", "toda_la_via"],
+}
+
+#: Palabras que el modelo a veces deja pegadas al punto pese a la instrucción.
+_PREFIJO_PUNTO = re.compile(
+    r"^(?:con(?: calle)?|altura(?: de)?|a la altura de|al llegar a|pasado|frente a|sector)\s+",
+    re.IGNORECASE,
+)
+
+
+def parse_tramo(raw: str, *, original: str | None = None) -> dict[str, Any] | None:
+    """Texto crudo del modelo → `{via, desde, hasta, punto, sentido, ciudad, toda_la_via}`.
+
+    None si no es un objeto o no trae vía. Un extremo sin el otro no es un
+    tramo: queda como `punto`, que es lo que se puede ubicar.
+    """
+    body = _strip_fence(raw)
+    if not body:
+        return None
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("Gemini devolvió algo que no es JSON (tramo)", extra={"muestra": body[:200]})
+        return None
+    if not isinstance(payload, dict):
+        return None
+    via = reparar_controles(_clean(payload.get("via")), original)
+    if not via:
+        return None
+    campos = {
+        campo: reparar_controles(_clean(payload.get(campo)), original)
+        for campo in ("desde", "hasta", "punto", "sentido", "ciudad")
+    }
+    if campos["punto"]:
+        campos["punto"] = _PREFIJO_PUNTO.sub("", campos["punto"]).strip() or None
+    if bool(campos["desde"]) != bool(campos["hasta"]):
+        campos["punto"] = campos["punto"] or campos["desde"] or campos["hasta"]
+        campos["desde"] = campos["hasta"] = None
+    return {"via": via, **campos, "toda_la_via": payload.get("toda_la_via") is True}
+
+
+async def extraer_tramo(text: str) -> dict[str, Any] | None:
+    """Llama a Gemini con el contrato de tramos. **Nunca lanza**; None si falla."""
+    payload = " ".join(str(text or "").split())[:MAX_INPUT_CHARS]
+    if not payload:
+        return None
+    try:
+        client = _client()
+    except GeminiUnavailableError as exc:
+        logger.warning("extracción con Gemini no disponible: %s", exc)
+        return None
+    try:
+        from google.genai import types
+
+        response = await asyncio.wait_for(
+            client.aio.models.generate_content(
+                model=settings.GEMINI_MODEL,
+                contents=payload,
+                config=types.GenerateContentConfig(
+                    system_instruction=TRAMO_INSTRUCTION,
+                    response_mime_type="application/json",
+                    response_schema=TRAMO_SCHEMA,
+                    temperature=settings.GEMINI_TEMPERATURE,
+                    max_output_tokens=256,
+                ),
+            ),
+            timeout=settings.GEMINI_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning("Gemini no respondió dentro del plazo (tramo)")
+        return None
+    except Exception as exc:
+        logger.warning(
+            "la llamada a Gemini falló (tramo)", extra={"error": f"{type(exc).__name__}: {exc}"}
+        )
+        return None
+    registrar_uso(response, "extraer_tramo")
+    raw = response_text(response)
+    if not raw:
+        return None
+    return parse_tramo(raw, original=payload)
+
 __all__ = [
     "CLAVE_GLOSSARY",
     "DISPATCH_INSTRUCTIONS",
@@ -1426,6 +1559,8 @@ __all__ = [
     "RESPONSE_SCHEMA",
     "SUMMARY_TEMPLATE",
     "SYSTEM_INSTRUCTION",
+    "TRAMO_INSTRUCTION",
+    "TRAMO_SCHEMA",
     "UBICACION_DESCONOCIDA",
     "GeminiUnavailableError",
     "build_dispatch_instruction",
@@ -1437,10 +1572,12 @@ __all__ = [
     "es_seguimiento",
     "extract_dispatch",
     "extract_streets",
+    "extraer_tramo",
     "format_dispatch_summary",
     "is_configured",
     "parse_dispatch_response",
     "parse_response",
+    "parse_tramo",
     "registrar_uso",
     "reordenar_clave_parentesis",
     "reordenar_clave_primero",

@@ -44,7 +44,7 @@ from app.schemas.incident import (
 from app.services.ciudadanos import texto_publico
 from app.services.congestion import CHILE_TZ, arteria_de, estimar
 from app.services.correlation.engine import CorrelationEngine, CorrelationPass
-from app.services.correlation.relaciones import NOMBRE_DESTINO
+from app.services.correlation.relaciones import NOMBRE_DESTINO, tipo_de_senal
 from app.services.source_links import source_label_for, source_url_for, unidades_for
 
 logger = logging.getLogger(__name__)
@@ -227,7 +227,8 @@ class IncidentService:
                 evento = eventos.get(fila.otro_event_id)
                 if evento is None:
                     continue
-                tipo, code = evento.type.value, None
+                subtipo = ((evento.raw_data or {}).get("_mtt") or {}).get("tipo")
+                tipo, code = tipo_de_senal(evento.type, subtipo), None
             else:
                 otro = incidentes.get(fila.otro_incident_id if desde_origen else fila.incident_id)
                 if otro is None or not otro.publico or otro.status in (

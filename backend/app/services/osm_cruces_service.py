@@ -13,6 +13,10 @@ de salida de Render es compartida (respondía 403 «rate limit exceeded» a la
 primera). Tampoco hace falta darle a GitHub la contraseña de la base: el
 workflow sólo publica archivos, y quien escribe en la base es el backend.
 
+El mismo release trae `osm_vias.csv.gz`, la forma de cada vía por nombre y
+comuna (`osm_vias`), con su propia versión (`osm_indice.version_vias`): se
+carga después de las esquinas y, si falla o no está, las esquinas no se tocan.
+
 Reemplazar es todo o nada, dentro de una transacción: quien busca un cruce
 mientras se carga ve el índice anterior hasta el `COMMIT`. Un archivo con
 menos de `OSM_CRUCES_MIN_FILAS` filas se rechaza: un extracto roto no puede
@@ -39,6 +43,7 @@ from app.core.identidad import nominatim_user_agent
 logger = logging.getLogger(__name__)
 
 COLUMNAS = ("nodo", "lat", "lon", "nombre_a", "nombre_b", "ultima_a", "ultima_b", "comunas")
+COLUMNAS_VIAS = ("nombre", "ultima", "comunas", "wkt")
 
 #: Estados de una revisión, para el log.
 AL_DIA = "al_dia"
@@ -107,11 +112,113 @@ def iterar_filas(comprimido: bytes) -> Iterator[Fila]:
         raise IndiceInvalidoError(f"el gzip está cortado: {exc}") from exc
 
 
+FilaVia = tuple[str, str, list[str], str]
+
+
+def iterar_vias(comprimido: bytes) -> Iterator[FilaVia]:
+    """El CSV de vías del release → filas para `COPY`. Lanza `IndiceInvalidoError`."""
+    try:
+        texto = io.TextIOWrapper(gzip.GzipFile(fileobj=io.BytesIO(comprimido)), encoding="utf-8")
+        csv.field_size_limit(10_000_000)
+        lector = csv.reader(texto)
+        encabezado = next(lector, None)
+    except (OSError, EOFError, UnicodeDecodeError) as exc:
+        raise IndiceInvalidoError(f"no es un gzip de texto: {exc}") from exc
+    if tuple(encabezado or ()) != COLUMNAS_VIAS:
+        raise IndiceInvalidoError(f"columnas inesperadas: {encabezado!r}")
+    try:
+        for numero, fila in enumerate(lector, start=2):
+            if len(fila) != len(COLUMNAS_VIAS):
+                raise IndiceInvalidoError(f"la fila {numero} tiene {len(fila)} columnas")
+            nombre, ultima, comunas, wkt = fila
+            if not wkt.startswith("MULTILINESTRING"):
+                raise IndiceInvalidoError(f"la fila {numero} no es una MULTILINESTRING")
+            yield (nombre[:200], ultima[:80], [c[:40] for c in comunas.split("|") if c], wkt)
+    except (OSError, EOFError, UnicodeDecodeError) as exc:
+        raise IndiceInvalidoError(f"el gzip está cortado: {exc}") from exc
+
+
 async def version_cargada(session: AsyncSession) -> str | None:
     resultado = await session.execute(
         text(f"SELECT version FROM {settings.DB_SCHEMA}.osm_indice WHERE id = 1")
     )
     return resultado.scalar_one_or_none()
+
+
+async def version_vias_cargada(session: AsyncSession) -> str | None:
+    resultado = await session.execute(
+        text(f"SELECT version_vias FROM {settings.DB_SCHEMA}.osm_indice WHERE id = 1")
+    )
+    return resultado.scalar_one_or_none()
+
+
+async def reemplazar_vias(
+    session: AsyncSession, filas: Iterable[FilaVia], *, version: str, minimo: int = 0
+) -> int:
+    """Reemplaza `osm_vias` entera, en una transacción. Devuelve las filas cargadas.
+
+    Va después de las esquinas: `osm_indice` ya tiene su fila.
+    """
+    esquema = settings.DB_SCHEMA
+    conexion = await session.connection()
+    crudo = (await conexion.get_raw_connection()).driver_connection
+    await session.execute(
+        text(
+            "CREATE TEMP TABLE osm_vias_nuevo ("
+            "nombre VARCHAR(200), ultima VARCHAR(80), comunas VARCHAR(40)[], wkt TEXT"
+            ") ON COMMIT DROP"
+        )
+    )
+    await crudo.copy_records_to_table(
+        "osm_vias_nuevo", records=filas, columns=list(COLUMNAS_VIAS)
+    )
+    total = int((await session.execute(text("SELECT count(*) FROM osm_vias_nuevo"))).scalar_one())
+    if total < minimo:
+        raise IndiceInvalidoError(f"{total} vías, menos que el mínimo {minimo}")
+    await session.execute(text(f"TRUNCATE {esquema}.osm_vias"))
+    await session.execute(
+        text(
+            f"INSERT INTO {esquema}.osm_vias (nombre, ultima, comunas, geom) "
+            "SELECT nombre, ultima, comunas, ST_Multi(ST_GeomFromText(wkt, 4326)) "
+            "FROM osm_vias_nuevo"
+        )
+    )
+    await session.execute(
+        text(f"UPDATE {esquema}.osm_indice SET version_vias = :version WHERE id = 1"),
+        {"version": version},
+    )
+    await session.commit()
+    return total
+
+
+async def refrescar_vias(session: AsyncSession, client: httpx.AsyncClient, version: str) -> str:
+    """Carga las vías del release si no son las de `version`. Nunca toca las esquinas."""
+    try:
+        if await version_vias_cargada(session) == version:
+            return AL_DIA
+        archivo = await client.get(url_de(settings.OSM_VIAS_ASSET))
+        if archivo.status_code == 404:
+            return SIN_RELEASE
+        archivo.raise_for_status()
+        if len(archivo.content) > settings.OSM_VIAS_MAX_BYTES:
+            raise IndiceInvalidoError(f"pesa {len(archivo.content)} bytes")
+        cargadas = await reemplazar_vias(
+            session,
+            iterar_vias(archivo.content),
+            version=version,
+            minimo=settings.OSM_VIAS_MIN_FILAS,
+        )
+        logger.info("vías de OSM cargadas", extra={"version": version, "filas": cargadas})
+        return CARGADO
+    except IndiceInvalidoError as exc:
+        await session.rollback()
+        logger.error("vías de OSM rechazadas", extra={"motivo": str(exc)})
+        return RECHAZADO
+    except httpx.HTTPError as exc:
+        # Las vías son un agregado: un release caído no puede tumbar la
+        # revisión de las esquinas, que ya quedó hecha.
+        logger.warning("no se pudieron bajar las vías de OSM", extra={"error": str(exc)})
+        return RECHAZADO
 
 
 async def reemplazar(
@@ -194,6 +301,7 @@ async def refrescar(session: AsyncSession, *, client: httpx.AsyncClient | None =
             raise IndiceInvalidoError("el JSON del release no trae generado_en")
         version, datos_de = leida
         if await version_cargada(session) == version:
+            await refrescar_vias(session, client, version)
             return AL_DIA
 
         archivo = await client.get(url_de(settings.OSM_CRUCES_ASSET))
@@ -211,6 +319,7 @@ async def refrescar(session: AsyncSession, *, client: httpx.AsyncClient | None =
             "índice de cruces cargado",
             extra={"version": version, "filas": cargadas, "datos_de": datos_de},
         )
+        await refrescar_vias(session, client, version)
         return CARGADO
     except IndiceInvalidoError as exc:
         await session.rollback()
@@ -225,14 +334,19 @@ __all__ = [
     "AL_DIA",
     "CARGADO",
     "COLUMNAS",
+    "COLUMNAS_VIAS",
     "RECHAZADO",
     "SIN_RELEASE",
     "Fila",
     "IndiceInvalidoError",
     "iterar_filas",
+    "iterar_vias",
     "reemplazar",
+    "reemplazar_vias",
     "refrescar",
+    "refrescar_vias",
     "url_de",
     "version_cargada",
     "version_de",
+    "version_vias_cargada",
 ]
