@@ -43,7 +43,8 @@ import { BottomSheet } from '@/components/shell/BottomSheet'
 import { DesktopColumn } from '@/components/shell/DesktopColumn'
 import type { ExplorePanelProps } from '@/components/shell/ExplorePanel'
 import { lastBomberosDispatch } from '@/domain/lastDispatch'
-import { fitPadding, focusOffset } from '@/lib/cameraOffset'
+import { areaBounds, asAreaGeometry } from '@/domain/serviceArea'
+import { areaFitOptions, fitPadding, focusOffset } from '@/lib/cameraOffset'
 import { PlacePicker } from '@/components/places/PlacePicker'
 import { COMUNAS } from '@/domain/comunas'
 import { sameCommune } from '@/domain/displayWindow'
@@ -356,7 +357,11 @@ export default function App() {
   const focusIncident = useCallback(
     (incident: Incident) => {
       selectIncident(incident.code)
-      flyTo(incident.lon, incident.lat, FOCUS_ZOOM)
+      // Un corte con área se encuadra entero, pin incluido: la empresa puede
+      // poner el pin en el borde del área (ver `areaBounds`).
+      const bounds = areaBounds(asAreaGeometry(incident.outage?.area), [incident.lon, incident.lat])
+      if (bounds) mapRef.current?.fitBounds(bounds, areaFitOptions(FOCUS_ZOOM, 900))
+      else flyTo(incident.lon, incident.lat, FOCUS_ZOOM)
     },
     [flyTo],
   )

@@ -1,7 +1,8 @@
 import { validateStyleMin } from '@maplibre/maplibre-gl-style-spec'
 import type { LayerSpecification, StyleSpecification } from 'maplibre-gl'
 import { describe, expect, it } from 'vitest'
-import { toServiceAreaFeatureCollection, waterAreaId } from '@/lib/geojson'
+import { areaBounds } from '@/domain/serviceArea'
+import { serviceAreaBounds, toServiceAreaFeatureCollection, waterAreaId } from '@/lib/geojson'
 import { makeIncident, makeWaterCut } from '@/test/fixtures'
 import {
   SERVICE_AREA_SOURCE_ID,
@@ -80,5 +81,24 @@ describe('toServiceAreaFeatureCollection', () => {
   it('un área rota se omite: el corte queda como pin', () => {
     const rota = outage('INC-3', { area: { type: 'MultiPolygon', coordinates: [[[[0, 0]]]] } })
     expect(toServiceAreaFeatureCollection([rota], []).features).toEqual([])
+  })
+})
+
+describe('encuadre del área al abrir un corte', () => {
+  it('la caja incluye el pin aunque quede fuera del área', () => {
+    // Como Rodelillo: el pin de la empresa al suroeste del área.
+    expect(areaBounds(AREA, [-71.59, -33.07])).toEqual([
+      [-71.59, -33.07],
+      [-71.57, -33.05],
+    ])
+    expect(areaBounds(null, [-71.59, -33.07])).toBeNull()
+  })
+
+  it('indexa por el mismo id que la selección; sin área no hay caja', () => {
+    const indice = serviceAreaBounds(
+      [outage('INC-1'), outage('INC-2', { area: null })],
+      [makeWaterCut({ area: AREA })],
+    )
+    expect([...indice.keys()]).toEqual(['INC-1', waterAreaId(makeWaterCut().id)])
   })
 })
