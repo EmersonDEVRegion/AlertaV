@@ -42,6 +42,17 @@ un choque nuevo), marcan con `_mtt_fin` los avisos del MTT de las últimas
 `REAPERTURA_VENTANA` que nombran la misma vía en la misma ciudad, y entran como
 `TRAFFIC_CONDITION` de subtipo `normalidad`: el mapa la pinta en verde un rato.
 
+Marchas
+-------
+Una marcha avanza, y el MTT la va siguiendo: «Grupo de personas avanza por Av
+Valparaíso…», veinte minutos después «…permanece en calle Arlegui…». Cada tuit
+es un punto nuevo, pero la marcha es una sola y está donde dijo el último. Por
+eso un tuit de marcha cierra (`_mtt_fin`, motivo `avanzo`) las marchas de la
+misma ciudad de las últimas `MARCHA_VENTANA` (`reemplazar_marchas`). La ciudad
+es la que las separa: el 16-10-2026 hubo una en Viña y otra en Valparaíso a la
+misma hora. Si una de las dos no dice ciudad, no se cierra nada: es preferible
+un punto de más que borrar una marcha que sigue en la calle.
+
 La ceguera (el Actor que deja de traer la cuenta) se mide en el canario de
 Bomberos: @TTIValparaiso está en `APIFY_X_CUENTAS_ESPERADAS`.
 """
@@ -81,6 +92,11 @@ logger = logging.getLogger(__name__)
 #: Cuánto hacia atrás busca una reapertura el aviso que cierra. Un corte por una
 #: marcha o un choque se despeja en horas; uno de días lo publica el MOP.
 REAPERTURA_VENTANA = timedelta(hours=12)
+
+#: Cuánto hacia atrás un tuit de marcha busca los puntos anteriores de la misma
+#: marcha. Más que lo que dura una marcha entre dos tuits del MTT (el 16-10-2026,
+#: de 20 a 30 min) y menos que lo que tardaría en empezar otra distinta.
+MARCHA_VENTANA = timedelta(hours=4)
 
 #: Nombre de la corrida en `collector_runs` (y de `raw_data._collector`).
 COLLECTOR_NAME = "transporte_informa_x"
@@ -267,6 +283,73 @@ def cierra(
     return any(nombres_calzan(a, b) or nombres_calzan(b, a) for a in calles for b in otras_calles)
 
 
+def ciudad_guardada(datos: dict[str, Any]) -> str | None:
+    """La ciudad de un aviso ya guardado: la de su extracción o, si no dijo, su comuna."""
+    _, ciudad = calles_de(datos.get("_extraction"))
+    if ciudad:
+        return ciudad
+    comuna = str(datos.get("comuna") or "").strip()
+    return tramos.nombre_de_comuna(tramos.comunas_de(comuna)) or comuna or None
+
+
+def misma_marcha(ciudad: str | None, otra_ciudad: str | None) -> bool:
+    """Dos tuits de marcha son la misma si los dos dicen ciudad y es la misma."""
+    if not ciudad or not otra_ciudad:
+        return False
+    return normalise_text(ciudad) == normalise_text(otra_ciudad)
+
+
+async def _marcar_fin(
+    session: Any, ids: Sequence[int], aviso: TrafficNotice, hora: datetime, motivo: str
+) -> None:
+    for evento_id in ids:
+        await session.execute(
+            update(RawEvent)
+            .where(RawEvent.id == evento_id)
+            .values(
+                raw_data=RawEvent.raw_data.op("||")(
+                    {
+                        "_mtt_fin": {
+                            "hora": hora.isoformat(),
+                            "texto": aviso.text[:300],
+                            "url": (aviso.raw or {}).get("url"),
+                            "motivo": motivo,
+                        }
+                    }
+                )
+            )
+        )
+
+
+async def reemplazar_marchas(
+    session: Any, marcha: TrafficNotice, extraccion: dict[str, Any] | None, *, ahora: datetime
+) -> int:
+    """Cierra los puntos anteriores de esta marcha: queda el último informado."""
+    _, ciudad = calles_de(extraccion)
+    if not ciudad:
+        return 0
+    hora = marcha.published_at or ahora
+    filas = (
+        await session.execute(
+            select(RawEvent.id, RawEvent.raw_data)
+            .where(RawEvent.source == EventSource.TRANSPORTE_INFORMA)
+            .where(RawEvent.type == EventType.ROAD_CLOSURE)
+            .where(RawEvent.timestamp >= hora - MARCHA_VENTANA)
+            .where(RawEvent.timestamp < hora)
+        )
+    ).all()
+    anteriores = [
+        fila.id
+        for fila in filas
+        if (datos := fila.raw_data or {})
+        and "_mtt_fin" not in datos
+        and (datos.get("_mtt") or {}).get("tipo") == "marcha"
+        and misma_marcha(ciudad, ciudad_guardada(datos))
+    ]
+    await _marcar_fin(session, anteriores, marcha, hora, "avanzo")
+    return len(anteriores)
+
+
 async def cerrar_reabiertos(
     session: Any, reapertura: TrafficNotice, extraccion: dict[str, Any] | None, *, ahora: datetime
 ) -> int:
@@ -296,22 +379,7 @@ async def cerrar_reabiertos(
         otras, otra_ciudad = calles_de(datos.get("_extraction"))
         if cierra(calles, ciudad, otras, otra_ciudad):
             cerrados.append(fila.id)
-    for evento_id in cerrados:
-        await session.execute(
-            update(RawEvent)
-            .where(RawEvent.id == evento_id)
-            .values(
-                raw_data=RawEvent.raw_data.op("||")(
-                    {
-                        "_mtt_fin": {
-                            "hora": hora.isoformat(),
-                            "texto": reapertura.text[:300],
-                            "url": (reapertura.raw or {}).get("url"),
-                        }
-                    }
-                )
-            )
-        )
+    await _marcar_fin(session, cerrados, reapertura, hora, "normalidad")
     return len(cerrados)
 
 
@@ -422,12 +490,17 @@ async def procesar_avisos_transito(
                 # Después de ingerir: el corte que esta misma entrega trajo
                 # también puede ser el que la normalidad cierra.
                 cerrados = 0
+                marchas_reemplazadas = 0
                 for aviso, subtipo, extraccion in extracciones:
                     if subtipo == "normalidad":
                         cerrados += await cerrar_reabiertos(
                             session, aviso, extraccion, ahora=momento
                         )
-                if cerrados:
+                    elif subtipo == "marcha":
+                        marchas_reemplazadas += await reemplazar_marchas(
+                            session, aviso, extraccion, ahora=momento
+                        )
+                if cerrados or marchas_reemplazadas:
                     await session.commit()
 
                 notas = list(dict.fromkeys(avisos_degradados))
@@ -462,6 +535,7 @@ async def procesar_avisos_transito(
                         "estado_transito": len(nuevas),
                         "ubicados": ubicados,
                         "avisos_cerrados": cerrados,
+                        "marchas_reemplazadas": marchas_reemplazadas,
                         "accidentes": accidentes,
                         "reutilizados": resumen.reutilizados,
                         "extracciones_llm": resumen.llamadas_llm,
@@ -494,19 +568,23 @@ async def procesar_avisos_transito(
 
 __all__ = [
     "COLLECTOR_NAME",
+    "MARCHA_VENTANA",
     "REAPERTURA_VENTANA",
     "SUBTIPOS_CORTE",
     "aviso_de_tuit",
     "calles_de",
     "cerrar_reabiertos",
     "cierra",
+    "ciudad_guardada",
     "cuentas_transito",
     "es_cuenta_transito",
     "es_fresco",
     "evento_condicion",
     "external_id_condicion",
     "limpiar_texto",
+    "misma_marcha",
     "procesar_avisos_transito",
+    "reemplazar_marchas",
     "separar",
     "tipo_de",
 ]

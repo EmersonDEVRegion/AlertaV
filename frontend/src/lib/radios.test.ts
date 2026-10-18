@@ -4,6 +4,7 @@ import {
   formatRadio,
   metrosDePosicion,
   posicionDeMetros,
+  radioAlEncender,
   radiosEfectivos,
 } from './radios'
 
@@ -46,5 +47,14 @@ describe('radiosEfectivos', () => {
     expect(r.fire).toBe(6000)
     expect(r.power).toBe(0)
     expect(r.traffic).toBe(2000)
+  })
+})
+
+describe('radioAlEncender', () => {
+  it('el tránsito parte en 2 km; las demás, en su radio por defecto', () => {
+    expect(radioAlEncender('transito', { transito: 0 })).toBe(2000)
+    expect(radioAlEncender('fire', { fire: 5000 })).toBe(5000)
+    expect(radioAlEncender('power', undefined)).toBe(1000)
+    expect(radioAlEncender('desconocida', undefined)).toBe(2000)
   })
 })

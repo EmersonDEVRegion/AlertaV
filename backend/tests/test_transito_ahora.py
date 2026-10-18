@@ -70,7 +70,7 @@ def evento(tipo: str, *, hace: timedelta = timedelta(minutes=10), **raw: Any) ->
         ("lento", timedelta(minutes=90)),
         ("semaforo", timedelta(hours=6)),
         ("pista_ocupada", timedelta(hours=12)),
-        ("marcha", timedelta(hours=12)),
+        ("marcha", timedelta(hours=4)),
         ("normalidad", timedelta(minutes=45)),
     ],
 )

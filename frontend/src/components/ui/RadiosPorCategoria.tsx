@@ -10,6 +10,7 @@ import {
   formatRadio,
   metrosDePosicion,
   posicionDeMetros,
+  radioAlEncender,
   radiosEfectivos,
 } from '@/lib/radios'
 
@@ -136,11 +137,13 @@ export function RadiosPorCategoria({ push }: { push: PushNotificationsState }) {
           icono={iconoDe(clave)}
           etiqueta={etiqueta}
           metros={borrador[clave] ?? guardados[clave] ?? 0}
+          alEncender={radioAlEncender(clave, push.server?.radios_por_defecto)}
           onCambio={(metros) => cambiar(clave, metros)}
         />
       ))}
       <p className="pt-0.5 text-[9.5px] leading-snug text-ink-faint">
-        Todo a la izquierda: no avisar. Vale también para tus lugares guardados.
+        Todo a la izquierda: no avisar. «Activar» la deja en su distancia de partida. Vale
+        también para tus lugares guardados.
       </p>
     </fieldset>
   )
@@ -150,11 +153,14 @@ function FilaRadio({
   icono,
   etiqueta,
   metros,
+  alEncender,
   onCambio,
 }: {
   icono: IconId
   etiqueta: string
   metros: number
+  /** Con cuánto queda al tocar «Activar» desde «No avisar». */
+  alEncender: number
   onCambio: (metros: number) => void
 }) {
   const id = useId()
@@ -181,14 +187,23 @@ function FilaRadio({
         className="range-thin w-full"
         style={{ '--pct': `${(posicion / PASOS) * 100}%` } as CSSProperties}
       />
-      <span
-        className={cn(
-          'text-right text-[10.5px] tabular-nums',
-          metros > 0 ? 'font-semibold text-ink' : 'text-ink-faint',
-        )}
-      >
-        {metros > 0 ? texto : 'No'}
-      </span>
+      {metros > 0 ? (
+        <span className="text-right text-[10.5px] font-semibold tabular-nums text-ink">
+          {texto}
+        </span>
+      ) : (
+        // Apagada, la barra parte en 300 m: «Activar» la deja en una distancia
+        // que sirve (2 km para el tránsito) sin tener que arrastrar.
+        <button
+          type="button"
+          onClick={() => onCambio(alEncender)}
+          aria-label={`Activar avisos de ${etiqueta}: ${formatRadio(alEncender)}`}
+          className="text-right text-[10.5px] font-semibold text-accent hover:underline
+            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        >
+          Activar
+        </button>
+      )}
     </div>
   )
 }
