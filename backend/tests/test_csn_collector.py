@@ -47,7 +47,7 @@ from app.models.enums import (
 #: Filas reales del catálogo del CSN del 19 de agosto de 2026, copiadas tal cual.
 #:
 #: La selección no es arbitraria: **dos caen dentro** del recorte espacial de la
-#: capa sísmica (lat −35…−31, lon −73…−69) y **dos caen fuera**, y la última
+#: capa sísmica (lat −34,8…−31,2, lon −73…−69,2) y **dos caen fuera**, y la última
 #: cruza la medianoche local — su fecha local es del 18 y su fecha UTC del 19.
 #: Esa mezcla es la que permite verificar el parseo, el recorte y el manejo de
 #: fechas con un solo fixture, sin inventar datos que el CSN nunca publicó.

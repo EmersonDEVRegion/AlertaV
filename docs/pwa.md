@@ -202,9 +202,9 @@ vigentes para la región, de lo más severo a lo menos.
   guardada puede tener horas.
 - **«Ver en el mapa»** (en la tarjeta abierta) enciende la capa «Avisos DMC»,
   resalta con un contorno grueso las zonas de ese aviso y las encuadra; en el
-  teléfono baja la hoja. La región mide ~220 km de norte a sur y con la hoja
-  abierta no cabe sobre el zoom mínimo (7): en ese caso se centra al zoom
-  mínimo en vez de dejar que `fitBounds` la descentre.
+  teléfono baja la hoja. Con la hoja abierta la región no cabe sobre el zoom
+  mínimo (ver «El mapa es la región»): en ese caso se centra al zoom mínimo en
+  vez de dejar que `fitBounds` la descentre.
 
 ### Capa «Avisos DMC»
 
@@ -339,6 +339,32 @@ algo que ya salió del mapa lo marca con un pin fantasma gris.
 Una sola consulta alimenta mapa e historial (`hours=48` con `active`,
 `controlled`, `stale` y `extinguished`). `useDisplaySplit` agenda un único
 temporizador para el instante en que algo vence: no hay reloj en `App`.
+
+## El mapa es la región
+
+AlertaV es de la Región de Valparaíso: lo de afuera no tiene datos y sus
+rótulos (Illapel, San Fernando, Mendoza) sólo distraen.
+
+- **Máscara casi opaca** sobre todo lo que queda fuera de la región, con el
+  borde marcado por una línea fina (`components/map/regionMaskLayers.ts`). Se
+  deja ver una franja de ~40 km de mar frente a la costa, entre el límite con
+  Coquimbo y la desembocadura del Rapel: ahí el mapa base escribe los nombres
+  de Valparaíso, San Antonio o Quintero. La máscara va encima de los campos
+  (lluvia, amenaza sísmica, zonas de la DMC), que así terminan en el borde, y
+  debajo de los marcadores: un sismo en el mar se ve igual.
+- **Contorno** (`src/data/region_valpo.json`): unión de las 36 comunas
+  continentales, simplificada a ~150 m, más la franja de mar. Lo genera
+  `backend/scripts/region_contorno.py`.
+- **Zoom mínimo según la pantalla** (`lib/regionCamera.ts`): el que deja la
+  región entera en lo que no tapan la hoja o la columna. Una caja fija no sirve:
+  un teléfono vertical y un monitor ancho necesitan cajas opuestas. Los límites
+  son esa vista más la caja de sismos (`SEISMIC_BBOX`, la misma `USGS_*` y
+  `CSN_*` del backend), para poder llegar a un sismo en el mar.
+- **Al abrir** (`lib/initialView.ts`): un enlace manda; si no, la ubicación si
+  el permiso ya está concedido (nunca se pregunta al abrir); si no, Casa (o el
+  primer lugar guardado); si no, la región entera. Alejarse al máximo siempre
+  vuelve a la región entera. Si en lo que tarda el GPS alguien movió el mapa,
+  la lectura sólo pone al día los avisos.
 
 ## Una columna en escritorio, una hoja en el teléfono
 

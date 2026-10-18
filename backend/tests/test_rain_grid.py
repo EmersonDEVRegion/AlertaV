@@ -48,9 +48,9 @@ class TestGeometria:
         assert len(grid.points()) == 255
 
     def test_la_caja_configurada_cubre_el_mapa_y_cabe_en_el_presupuesto(self) -> None:
-        # La caja es `MAP_MAX_BOUNDS` de la PWA: el borde del campo queda en el
-        # límite del mapa y no a la vista. La PWA compara la caja con
-        # MAP_MAX_BOUNDS (`frontend/src/config/rainGridBounds.test.ts`).
+        # La caja es la región más 4 celdas por lado: el borde difuminado del
+        # campo queda bajo la máscara de la PWA. La PWA compara la caja con el
+        # contorno de la región (`frontend/src/config/rainGridBounds.test.ts`).
         grid = build_grid(
             west=settings.RAIN_GRID_WEST,
             south=settings.RAIN_GRID_SOUTH,
@@ -58,7 +58,7 @@ class TestGeometria:
             north=settings.RAIN_GRID_NORTH,
             step=settings.RAIN_GRID_STEP_DEGREES,
         )
-        assert (grid.nx, grid.ny) == (25, 26)
+        assert (grid.nx, grid.ny) == (18, 19)
         east = grid.west + (grid.nx - 1) * grid.step
         south = grid.north - (grid.ny - 1) * grid.step
         assert east == pytest.approx(settings.RAIN_GRID_EAST)
@@ -67,6 +67,9 @@ class TestGeometria:
         # cada 30 min (1728).
         corridas = 86_400 // settings.RAIN_GRID_POLL_INTERVAL_SECONDS
         assert len(grid.points()) * corridas + 1728 < 10_000
+        # Cubre la región entera con margen.
+        assert grid.west < settings.REGION_WEST and east > settings.REGION_EAST
+        assert south < settings.REGION_SOUTH and grid.north > settings.REGION_NORTH
 
     def test_filas_de_norte_a_sur_y_columnas_de_oeste_a_este(self) -> None:
         grid = build_grid(west=-72.0, south=-33.2, east=-71.8, north=-33.0, step=0.1)
@@ -143,7 +146,7 @@ class TestCorrida:
         session: Any = FakeSession()
         assert await refresh_rain_grid(session, now=NOW, fetch=fetch)
         assert repo.saved is not None and repo.saved["key"] == "lluvia"
-        assert len(repo.saved["values"]) == 650  # 25 × 26: la caja de MAP_MAX_BOUNDS
+        assert len(repo.saved["values"]) == 342  # 18 × 19: la región más 4 celdas por lado
         assert repo.saved["hours"] == settings.RAIN_GRID_HOURS
 
     async def test_un_fallo_se_anota_y_no_pisa_la_foto(

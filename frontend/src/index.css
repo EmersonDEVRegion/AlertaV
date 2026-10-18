@@ -974,7 +974,7 @@ html.dark .maplibregl-map .maplibregl-ctrl-attrib-button {
  * escritorio, la escala quedaba debajo del panel; con la hoja del teléfono,
  * las dos quedaban debajo de la hoja asomada. Se corren lo que ocupa cada una:
  * 22 rem + 0,75 de margen de la columna, y los 7,25 rem de la hoja asomada
- * (`SHEET_PEEK_REM` en `components/shell/BottomSheet.tsx`).
+ * (`SHEET_PEEK_REM` en `lib/cameraOffset.ts`).
  */
 [data-shell='column'] .maplibregl-ctrl-bottom-left {
   left: 22.75rem;
@@ -1030,7 +1030,7 @@ html.dark .maplibregl-map .maplibregl-ctrl-attrib-button {
  * ni en un iPhone chico. Lo que no cabe se desplaza dentro del panel.
  *
  * `--app-header-h` lo publica `AppHeader` (mide la barra), y `--sheet-peek`
- * repite `SHEET_PEEK_REM` de `components/shell/BottomSheet.tsx`. El quiebre es
+ * repite `SHEET_PEEK_REM` de `lib/cameraOffset.ts`. El quiebre es
  * `COMPACT_BREAKPOINT` de `hooks/useMediaQuery.ts`.
  */
 :root {

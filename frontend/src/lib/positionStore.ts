@@ -38,6 +38,19 @@ export function subscribePosition(listener: () => void): () => void {
   }
 }
 
+/**
+ * ¿El permiso de ubicación ya está concedido? Sin preguntar: un navegador sin
+ * la API de permisos (o que la rechaza) cuenta como «no».
+ */
+export async function geolocationGranted(): Promise<boolean> {
+  try {
+    const status = await navigator.permissions.query({ name: 'geolocation' })
+    return status.state === 'granted'
+  } catch {
+    return false
+  }
+}
+
 /** Sólo para los tests. */
 export function resetPosition(): void {
   last = null

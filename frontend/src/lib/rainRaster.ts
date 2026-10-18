@@ -61,8 +61,9 @@ export function sampleGrid(grid: RainGrid, gx: number, gy: number): number | nul
  * caja y el modelo no: sin esto, un frente que cruza el borde se vería cortado
  * a cuchillo en una línea recta que no existe.
  *
- * La caja es la misma que `MAP_MAX_BOUNDS`, así que el borde sólo se
- * ve en el límite del mapa. Con celdas de 0,2°, dos celdas son ~40 km.
+ * La caja es la región más 4 celdas por lado (`RAIN_GRID_*` en el backend),
+ * así que el difuminado queda entero bajo la máscara de la región. Con celdas
+ * de 0,2°, dos celdas son ~40 km.
  */
 const EDGE_FEATHER_CELLS = 2
 

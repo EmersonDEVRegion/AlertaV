@@ -105,7 +105,7 @@ GET {base}/api/area/csv/{MAP_KEY}/{SENSOR}/{west,south,east,north}/{day_range}
 ```
 
 Sensores por defecto: `VIIRS_SNPP_NRT`, `VIIRS_NOAA20_NRT`, `VIIRS_NOAA21_NRT`,
-`MODIS_NRT`. Bounding box por defecto: `-72.0,-33.8,-69.8,-32.0`.
+`MODIS_NRT`. Bounding box por defecto: `-72.0,-33.97,-69.8,-32.01`.
 
 Tres detalles que no son obvios y están cubiertos por tests:
 

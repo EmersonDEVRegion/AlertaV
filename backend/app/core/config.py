@@ -174,10 +174,14 @@ class Settings(BaseSettings):
     DB_DISABLE_PREPARED_STATEMENTS: bool = False
 
     # -- Dominio geográfico: Región de Valparaíso (continental) --------------
+    #: La caja de las 36 comunas continentales (`comunas_v_region.geojson`) con
+    #: ~1 km de margen. Santo Domingo llega a −33,956 y Petorca a −32,021: con
+    #: −33,8 el sur rural de Santo Domingo quedaba fuera de FIRMS, CONAF, cortes
+    #: de luz y agua.
     REGION_WEST: float = -72.0
-    REGION_SOUTH: float = -33.8
+    REGION_SOUTH: float = -33.97
     REGION_EAST: float = -69.8
-    REGION_NORTH: float = -32.0
+    REGION_NORTH: float = -32.01
     # Durante la ventana de recolección conviene NO descartar datos: se marcan
     # como fuera de región y se decide después. Ponerlo en True sólo cuando el
     # dataset esté calibrado.
@@ -301,14 +305,16 @@ class Settings(BaseSettings):
     USGS_SOURCES: str = (
         "geojson|https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson"
     )
-    #: Caja de la zona central de Chile. **No** es `region_bbox`: un sismo a 200 km
-    #: de Valparaíso se siente en Valparaíso, así que el recorte útil para sismos
-    #: es más ancho que el de incendios. Se filtra en el cliente porque el feed
-    #: resumen es global y no admite parámetros de consulta.
+    #: Caja de los sismos. **No** es `region_bbox`: un sismo a 100 km de
+    #: Valparaíso se siente en Valparaíso, así que el recorte útil para sismos
+    #: es más ancho que el de incendios. Llega ~90 km más allá de la región por
+    #: tierra y hasta −73 por el mar, donde está la fosa. Más lejos (Illapel, San
+    #: Fernando, Mendoza) el mapa ya no muestra nada. Se filtra en el cliente
+    #: porque el feed resumen es global y no admite parámetros de consulta.
     USGS_WEST: float = -73.0
-    USGS_SOUTH: float = -35.0
-    USGS_EAST: float = -69.0
-    USGS_NORTH: float = -31.0
+    USGS_SOUTH: float = -34.8
+    USGS_EAST: float = -69.2
+    USGS_NORTH: float = -31.2
     #: Magnitud mínima a ingerir, sobre la que ya trae el feed. 0.0 = todo lo que
     #: llegue. Subirlo filtra micro-sismicidad sin cambiar de feed.
     USGS_MIN_MAGNITUDE: float = Field(default=0.0, ge=0.0, le=10.0)
@@ -443,9 +449,9 @@ class Settings(BaseSettings):
     #: aplicarle a un fenómeno de escala regional el criterio pensado para
     #: incendios puntuales dejaría fuera justo el contexto que da valor al dato.
     CSN_WEST: float = -73.0
-    CSN_SOUTH: float = -35.0
-    CSN_EAST: float = -69.0
-    CSN_NORTH: float = -31.0
+    CSN_SOUTH: float = -34.8
+    CSN_EAST: float = -69.2
+    CSN_NORTH: float = -31.2
     CSN_TIMEOUT_SECONDS: float = 30.0
     CSN_POLL_INTERVAL_SECONDS: int = 300  # 5 min
 
@@ -912,18 +918,19 @@ class Settings(BaseSettings):
     #: de la capa). La guarda un trabajo del proceso de workers en
     #: `weather_grids`; ver `app/services/rain_grid_service.py`.
     #:
-    #: La caja es la MISMA que `MAP_MAX_BOUNDS` de la PWA (`config/map.ts`):
-    #: todo lo que el mapa deja mirar tiene dato, y el único borde del campo queda
-    #: en el límite del mapa, adonde casi nadie llega. Con la caja de la región,
-    #: el corte se vería como una recta sobre la cordillera.
-    #: Si se cambia `MAP_MAX_BOUNDS`, se cambia esto: lo vigila
-    #: `frontend/src/config/rainGridBounds.test.ts`.
+    #: La PWA tapa todo lo que queda fuera de la región con una máscara casi
+    #: opaca, así que la grilla sólo tiene que cubrir la región y lo que el
+    #: borde difuminado de la imagen necesita para no comerse su orilla: la caja
+    #: de la región más 4 celdas (0,8°) por lado; el difuminado ocupa hasta 3,4
+    #: (`EDGE_FEATHER_CELLS` + `EDGE_WOBBLE_CELLS` en `lib/rainRaster.ts`). Lo
+    #: vigila `frontend/src/config/rainGridBounds.test.ts` contra el contorno de
+    #: la región.
     #:
-    #: Presupuesto: con paso 0,2° la caja son 25 × 26 = 650 puntos, leídos cada
-    #: 3 h (8 corridas al día). Si Open-Meteo contara cada punto como una llamada
-    #: (su página de precios no lo aclara), son 5200 al día, que sumadas a las
-    #: 1728 de las comunas quedan en 6928, bajo las 10.000 del nivel abierto y por
-    #: debajo de las 8568 que gastaba la caja anterior leída cada hora.
+    #: Presupuesto: con paso 0,2° la caja son 18 × 19 = 342 puntos (antes 650,
+    #: cuando cubría todo lo que el mapa dejaba mirar), leídos cada 3 h (8
+    #: corridas al día). Si Open-Meteo contara cada punto como una llamada (su
+    #: página de precios no lo aclara), son 2736 al día, que sumadas a las 1728
+    #: de las comunas quedan en 4464, bajo las 10.000 del nivel abierto.
     #:
     #: Por qué cada 3 h y no cada hora: los modelos globales se recalculan cada 3
     #: a 6 h, así que leer cada hora devolvía casi siempre la misma foto. Y por qué
@@ -931,10 +938,10 @@ class Settings(BaseSettings):
     #: presupuesto; la interpolación bilineal de la PWA suaviza la diferencia.
     RAIN_GRID_ENABLED: bool = True
     RAIN_GRID_STEP_DEGREES: float = Field(default=0.2, ge=0.05, le=1.0)
-    RAIN_GRID_WEST: float = -73.4
-    RAIN_GRID_SOUTH: float = -35.6
-    RAIN_GRID_EAST: float = -68.6
-    RAIN_GRID_NORTH: float = -30.6
+    RAIN_GRID_WEST: float = -72.6
+    RAIN_GRID_SOUTH: float = -34.8
+    RAIN_GRID_EAST: float = -69.2
+    RAIN_GRID_NORTH: float = -31.2
     RAIN_GRID_POLL_INTERVAL_SECONDS: int = Field(default=10_800, ge=900, le=86_400)
     #: Puntos por petición. Una sola variable × 48 pasos por punto: 25 puntos
     #: dejan cada respuesta en ~40 KB, lejos del truncado que describe

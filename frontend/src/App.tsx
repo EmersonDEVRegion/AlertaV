@@ -72,6 +72,10 @@ import {
   prefetchWhenIdle,
 } from '@/lib/lazyChunks'
 import { usgsIdOf } from '@/lib/push'
+import { getPlaces } from '@/lib/placesStore'
+import { startView as startViewFor } from '@/lib/initialView'
+import { currentRegionCamera } from '@/lib/regionCamera'
+import { useStartPosition } from '@/hooks/useStartPosition'
 
 /*
  * El radar entero va en un chunk aparte: con `VITE_VEHICLE_RADAR` apagado —así
@@ -439,6 +443,16 @@ export default function App() {
    */
   const { link: pendingLink, clear: clearLink } = useNotificationDeepLink()
 
+  /*
+   * Dónde nace el mapa: Casa o la región entera, y después la ubicación si el
+   * permiso ya está concedido (`lib/initialView`). Con un enlace, manda el
+   * enlace: el mapa nace en la región y el efecto de abajo vuela al destino.
+   */
+  const [startView] = useState(() =>
+    startViewFor(pendingLink ? [] : getPlaces(), currentRegionCamera()),
+  )
+  useStartPosition(mapRef, startView, pendingLink !== null)
+
   useEffect(() => {
     if (!pendingLink) return
 
@@ -647,6 +661,7 @@ export default function App() {
       <main className="relative flex-1" data-shell={isCompact ? 'sheet' : 'column'}>
         <IncidentMap
           mapRef={mapRef}
+          startView={startView}
           theme={theme}
           reach={reachCollection}
           hazard={hazard}
