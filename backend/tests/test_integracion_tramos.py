@@ -272,3 +272,74 @@ def test_el_notificador_encuentra_el_transito_que_avisa():
     vistas = correr(caso)
     assert sorted(v.mtt["tipo"] for v in vistas) == ["congestion", "marcha"]
     assert {v.comuna for v in vistas} == {"Viña del Mar"}
+
+
+def test_la_marcha_nueva_cierra_sus_puntos_anteriores_y_no_la_otra_ciudad():
+    """Las marchas del 16-10-2026: una por Viña (Av. Valparaíso → Arlegui) y otra
+    por Valparaíso (Blanco), en paralelo. El tuit de Arlegui deja a la de Viña en
+    su último punto y no toca la de Valparaíso."""
+    from app.collectors.traffic import transito_x as tx
+    from app.core.database import AsyncSessionLocal
+    from app.models.enums import EventSource, EventType
+    from app.models.event import RawEvent
+    from app.repositories.event_repository import EventRepository
+    from app.schemas.event import EventCreate
+    from app.services import transito
+
+    ahora = datetime.now(UTC)
+
+    def marcha(external_id, punto, minutos, ciudad, via):
+        return EventCreate(
+            timestamp=ahora - timedelta(minutes=minutos),
+            source=EventSource.TRANSPORTE_INFORMA,
+            type=EventType.ROAD_CLOSURE,
+            lat=punto[0],
+            lon=punto[1],
+            text=f"Grupo de personas avanza por {via}",
+            external_id=f"integracion:{external_id}",
+            raw_data={
+                "_mtt": {"tipo": "marcha", "via": via},
+                "_extraction": {"via": via, "ciudad": ciudad},
+                "comuna": ciudad,
+            },
+        )
+
+    async def caso():
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                text("TRUNCATE alertav.incidents, alertav.raw_events RESTART IDENTITY CASCADE")
+            )
+            await session.commit()
+        async with AsyncSessionLocal() as session:
+            await EventRepository(session).upsert_many(
+                [
+                    marcha("av-valparaiso", ETCHEVERS, 40, "Viña del Mar", "Avenida Valparaíso"),
+                    marcha("blanco", (-33.0405, -71.6290), 25, "Valparaíso", "Blanco"),
+                    marcha("vieja", SUCRE, 300, "Viña del Mar", "Viana"),
+                ]
+            )
+            await session.commit()
+        nuevo = tx.aviso_de_tuit(
+            texto="Grupo de personas permanece en calle Arlegui pasado calle Quillota, #ViñaDelMar.",
+            identificador="77",
+            publicado=ahora - timedelta(minutes=10),
+            cuenta="TTIValparaiso",
+            url="https://x.com/TTIValparaiso/status/77",
+        )
+        async with AsyncSessionLocal() as session:
+            cerradas = await tx.reemplazar_marchas(
+                session, nuevo, {"via": "Arlegui", "ciudad": "Viña del Mar"}, ahora=ahora
+            )
+            await session.commit()
+        async with AsyncSessionLocal() as session:
+            filas = (await session.execute(select(RawEvent))).scalars().all()
+        return cerradas, {f.external_id.split(":")[1]: f for f in filas}
+
+    cerradas, filas = correr(caso)
+    assert cerradas == 1
+    assert filas["av-valparaiso"].raw_data["_mtt_fin"]["motivo"] == "avanzo"
+    assert "_mtt_fin" not in filas["blanco"].raw_data
+    # Fuera de la ventana de 4 h: ya no se mostraba, y no se toca.
+    assert "_mtt_fin" not in filas["vieja"].raw_data
+    assert not transito.vigente(filas["av-valparaiso"].raw_data, filas["av-valparaiso"].timestamp, ahora)
+    assert transito.vigente(filas["blanco"].raw_data, filas["blanco"].timestamp, ahora)

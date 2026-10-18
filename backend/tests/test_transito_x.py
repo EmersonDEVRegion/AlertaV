@@ -419,3 +419,26 @@ def test_una_via_que_nunca_se_cerro_no_es_reapertura():
 )
 def test_la_reapertura_cierra_la_misma_via(calles, ciudad, otras, otra_ciudad, cierra):
     assert tx.cierra(calles, ciudad, otras, otra_ciudad) is cierra
+
+
+# --- Marchas: queda el último punto informado ---------------------------------
+
+
+@pytest.mark.parametrize(
+    ("ciudad", "otra", "misma"),
+    [
+        ("Viña del Mar", "Viña del Mar", True),
+        ("Viña del Mar", "Valparaíso", False),
+        (None, "Viña del Mar", False),
+        ("Valparaíso", None, False),
+    ],
+)
+def test_una_marcha_es_la_misma_solo_en_la_misma_ciudad(ciudad, otra, misma):
+    """El 16-10-2026 hubo una marcha en Viña y otra en Valparaíso a la misma hora."""
+    assert tx.misma_marcha(ciudad, otra) is misma
+
+
+def test_la_ciudad_guardada_sale_de_la_extraccion_o_de_la_comuna():
+    assert tx.ciudad_guardada({"_extraction": {"ciudad": "ViñadelMar"}}) == "Viña del Mar"
+    assert tx.ciudad_guardada({"_extraction": {}, "comuna": "Valparaíso"}) == "Valparaíso"
+    assert tx.ciudad_guardada({}) is None

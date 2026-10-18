@@ -51,10 +51,14 @@ por otra vía de OSM con ese nombre (una rotonda, un enlace), por el nomencláto
 propio (`static/geo/hitos_viales.json`) o por Nominatim, y se descarta si queda a
 más de 500 m de la vía. Congestión, lento, semáforo y normalidad entran como
 `traffic_condition`; pista ocupada y marcha, como `road_closure`. La normalidad
-cierra (`_mtt_fin`) los avisos del MTT de la misma vía de las últimas 12 h.
+cierra (`_mtt_fin`) los avisos del MTT de la misma vía de las últimas 12 h. Una
+marcha es una sola aunque el MTT la informe varias veces mientras avanza: cada
+tuit nuevo cierra los puntos anteriores de la marcha de la misma ciudad de las
+últimas 4 h (`reemplazar_marchas`), y queda el último informado. Si un tuit no
+dice ciudad, no cierra nada.
 Se muestran por `GET /events/transito/geojson` (la capa «Tránsito» y su lista en
 «Ahora») mientras siguen vigentes: congestión y lento 90 min, semáforo 6 h, pista
-ocupada y marcha 12 h, normalidad 45 min (`services/transito.py`). Lo que trae
+ocupada 12 h, marcha 4 h, normalidad 45 min (`services/transito.py`). Lo que trae
 `_mtt` ya no sale por `/events/road-closures/geojson`, para no dibujarlo dos veces.
 
 **Ceguera sin aviso.** Una fuente que corre bien pero no lee ni una fila en 72 h

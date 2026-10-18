@@ -143,7 +143,7 @@ campana lo muestra, y el notificador se queda dormido sin tumbar a los otros mot
 | `ENABLE_PUSH` | `1` | (start.sh) No levantar el notificador. |
 | `PUSH_POLL_INTERVAL_SECONDS` | `60` | Cadencia del notificador. |
 | `PUSH_RADIO_FIRE_M` … `PUSH_RADIO_WATER_M` | 5000, 2000, 1000, 3000, 2000, 1000 | Radio por categoría para quien no eligió el suyo. |
-| `PUSH_RADIO_TRANSITO_M` | `0` | «Tránsito» viene apagada: la enciende quien la quiere. |
+| `PUSH_RADIO_TRANSITO_M` | `0` | «Tránsito» viene apagada: la enciende quien la quiere. «Activar» en el panel la deja en 2 km (`RADIOS_AL_ENCENDER` en `frontend/src/lib/radios.ts`). |
 | `PUSH_TRANSITO_MAX_AGE_MINUTES` | `30` | Un aviso del MTT más viejo ya no se avisa. |
 | `PUSH_INCIDENT_RADIUS_M` | `5000` | Radio para lo que no cae en ninguna categoría. |
 | `PUSH_WATER_CUT_MAX_AGE_HOURS` | `12` | Un corte de agua más viejo ya no se avisa. |

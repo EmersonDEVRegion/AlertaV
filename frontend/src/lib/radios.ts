@@ -18,6 +18,7 @@ export const CATEGORIAS_RESPALDO: readonly CategoriaAviso[] = [
   { clave: 'hydro', etiqueta: 'Inundaciones y derrumbes' },
   { clave: 'other', etiqueta: 'Otras emergencias' },
   { clave: 'water', etiqueta: 'Cortes de agua' },
+  { clave: 'transito', etiqueta: 'Tránsito' },
 ]
 
 const RADIOS_RESPALDO: Readonly<Record<string, number>> = {
@@ -27,6 +28,29 @@ const RADIOS_RESPALDO: Readonly<Record<string, number>> = {
   hydro: 3000,
   other: 2000,
   water: 1000,
+  // Apagado: lo enciende quien lo quiere (`PUSH_RADIO_TRANSITO_M`).
+  transito: 0,
+}
+
+/**
+ * Con cuánto queda una categoría apagada al tocar «Activar». El tránsito parte
+ * en 2 km: cerca de donde uno está, que es lo que cambia por dónde ir. Las
+ * demás vuelven a su radio por defecto.
+ */
+const RADIOS_AL_ENCENDER: Readonly<Record<string, number>> = {
+  transito: 2000,
+}
+
+/** El radio con que se enciende una categoría que estaba en «No avisar». */
+export function radioAlEncender(
+  clave: string,
+  porDefecto: Readonly<Record<string, number>> | undefined,
+): number {
+  const propio = RADIOS_AL_ENCENDER[clave]
+  if (propio) return propio
+  const servidor = porDefecto?.[clave] ?? 0
+  if (servidor > 0) return servidor
+  return RADIOS_RESPALDO[clave] || 2000
 }
 
 const RADIO_MINIMO_M = 300

@@ -91,7 +91,12 @@ describe('NotificationPanel', () => {
         'aria-valuetext',
         '5 km',
       )
-      expect(screen.getAllByRole('slider')).toHaveLength(6)
+      // Las seis de siempre y «Tránsito», que viene apagada.
+      expect(screen.getAllByRole('slider')).toHaveLength(7)
+      expect(screen.getByRole('slider', { name: 'Tránsito' })).toHaveAttribute(
+        'aria-valuetext',
+        'No avisar',
+      )
 
       // Todo a la izquierda: no avisar.
       fireEvent.change(luz, { target: { value: '0' } })
@@ -243,7 +248,7 @@ describe('NotificationPanel', () => {
   it('tocar una ficha de distancia abre el editor (§D)', () => {
     render(<NotificationPanel push={state({ phase: 'on', locatedAt: Date.now() })} />)
     fireEvent.click(screen.getByRole('button', { name: 'Incendios: 5 km' }))
-    expect(screen.getAllByRole('slider')).toHaveLength(6)
+    expect(screen.getAllByRole('slider')).toHaveLength(7)
     expect(screen.getByRole('button', { name: 'Listo' })).toHaveAttribute('aria-expanded', 'true')
   })
 

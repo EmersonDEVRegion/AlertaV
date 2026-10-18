@@ -7,7 +7,10 @@ Cada subtipo vive lo que tarda en dejar de ser cierto sin que nadie lo diga:
 
 * congestión y tránsito lento, 90 min (un taco se disuelve solo);
 * semáforo apagado, 6 h (alguien tiene que repararlo);
-* pista ocupada y marcha, 12 h (como los cortes del MTT);
+* pista ocupada, 12 h (como los cortes del MTT);
+* marcha, 4 h: se mueve o se disuelve, y si el MTT deja de informarla ya no se
+  sabe dónde está. Un tuit nuevo de la misma marcha cierra el anterior
+  (`transito_x.reemplazar_marchas`): queda el último punto informado;
 * normalidad, 45 min: es el verde que confirma que se despejó, no un estado.
 
 Y se cierra antes si el MTT avisa la normalidad de esa vía (`_mtt_fin`, ver
@@ -24,7 +27,7 @@ VIGENCIA: dict[str, timedelta] = {
     "lento": timedelta(minutes=90),
     "semaforo": timedelta(hours=6),
     "pista_ocupada": timedelta(hours=12),
-    "marcha": timedelta(hours=12),
+    "marcha": timedelta(hours=4),
     "normalidad": timedelta(minutes=45),
 }
 
